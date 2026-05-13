@@ -7,17 +7,22 @@ import {
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin
 } from 'lucide-react';
 import {
+  DEFAULT_THRESHOLDS,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   formatDistance, formatDuration, formatSpeed, getScoreColor
 } from '@/lib/tripEngine';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import { scheduleLongTripReminder, cancelLongTripReminder, notifyTripCompleted } from '@/lib/notificationService';
-import { requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
+import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
+import { startActivityRecognition, shouldAutoStartTracking, shouldAutoStopTracking } from '@/lib/activityRecognition';
+import { isAndroid } from '@/lib/nativePlatform';
 import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
+
+const MIN_MANUAL_SAVE_SECONDS = 5;
 
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
@@ -26,8 +31,23 @@ export default function Dashboard() {
   const [elapsed, setElapsed] = useState(0);
   const [locationError, setLocationError] = useState(null);
   const locationService = useRef(null);
+  const autoLocationService = useRef(null);
+  const activityStopRef = useRef(null);
+  const activeTripRef = useRef(null);
+  const trackingRef = useRef(false);
+  const latestActivityRef = useRef(null);
+  const recentMovingSinceRef = useRef(null);
+  const stillSinceRef = useRef(null);
   const timerRef = useRef(null);
   const settings = localSettings.get();
+
+  useEffect(() => {
+    activeTripRef.current = activeTrip;
+  }, [activeTrip]);
+
+  useEffect(() => {
+    trackingRef.current = tracking;
+  }, [tracking]);
 
   // Load recent trips
   const { data: recentTrips = [], refetch } = useQuery({
@@ -89,8 +109,24 @@ export default function Dashboard() {
     );
   }, []);
 
-  const handleStartTrip = async () => {
-    const useBackground = settings.background_tracking_enabled || settings.tracking_mode === 'background_auto';
+  const handleStartTrip = useCallback(async ({ autoStarted = false } = {}) => {
+    if (trackingRef.current) return;
+
+    const cfg = localSettings.get();
+    if (cfg.tracking_paused) {
+      setLocationError('Tracking is paused in Settings.');
+      return;
+    }
+
+    const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    if ((autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual') && isAndroid()) {
+      const activityGranted = await requestActivityRecognitionPermission();
+      if (!activityGranted) {
+        setLocationError('Physical activity permission is required for auto trip detection.');
+        return;
+      }
+    }
+
     const granted = useBackground
       ? await requestBackgroundLocationPermission()
       : await requestForegroundLocationPermission();
@@ -107,7 +143,8 @@ export default function Dashboard() {
       status: 'active',
       route_points: [],
       driving_events: [],
-      background_tracking: settings.background_tracking_enabled || settings.tracking_mode === 'background_auto',
+      background_tracking: useBackground,
+      start_source: autoStarted ? 'auto' : 'manual',
     };
 
     activeTripStore.set(tripData);
@@ -116,10 +153,11 @@ export default function Dashboard() {
     startTimer(new Date());
     startGPS();
     scheduleLongTripReminder(tripData.start_time);
-  };
+  }, [startGPS]);
 
   const handleEndTrip = async () => {
-    if (!activeTrip) return;
+    const tripToEnd = activeTripRef.current || activeTrip;
+    if (!tripToEnd) return;
 
     locationService.current?.stop();
     locationService.current = null;
@@ -127,14 +165,23 @@ export default function Dashboard() {
     await cancelLongTripReminder();
 
     const endTime = new Date().toISOString();
-    const pts = activeTrip.route_points || [];
-    const stats = calculateTripStats(pts, activeTrip.start_time, endTime);
+    const pts = tripToEnd.route_points || [];
+    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime);
 
-    // Skip if trip is too short
-    if (stats.distance_km < 0.1 || stats.duration_seconds < 30) {
+    const isManualTrip = tripToEnd.start_source !== 'auto';
+    const shouldDiscard = isManualTrip
+      ? pts.length === 0 || stats.duration_seconds < MIN_MANUAL_SAVE_SECONDS
+      : stats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
+        stats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
+
+    if (shouldDiscard) {
       activeTripStore.clear();
       setActiveTrip(null);
       setTracking(false);
+      setElapsed(0);
+      setLocationError(isManualTrip
+        ? 'Trip was not saved because GPS did not get a fix yet. Wait a few seconds after Start, then stop again.'
+        : 'Auto-detected trip was ignored because it was too short.');
       return;
     }
 
@@ -152,12 +199,14 @@ export default function Dashboard() {
 
     const completedTrip = {
       ...stats,
-      start_time: activeTrip.start_time,
+      start_time: tripToEnd.start_time,
       end_time: endTime,
       route_points: pts,
       driving_events: events,
       ...scores,
       status: 'completed',
+      background_tracking: tripToEnd.background_tracking,
+      start_source: tripToEnd.start_source || 'manual',
     };
 
     await tripService.create(completedTrip);

@@ -298,13 +298,17 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
  * @returns {Object} Trip statistics
  */
 export function calculateTripStats(points, startTime, endTime) {
+  const start = new Date(startTime);
+  const end = endTime ? new Date(endTime) : new Date();
+  const durationSeconds = Math.max(0, (end - start) / 1000);
+
   if (!points || points.length < 2) {
     return {
       distance_km: 0,
       avg_speed_kmh: 0,
       max_speed_kmh: 0,
       idle_time_seconds: 0,
-      duration_seconds: 0,
+      duration_seconds: Math.round(durationSeconds),
       night_driving: false,
     };
   }
@@ -329,10 +333,6 @@ export function calculateTripStats(points, startTime, endTime) {
       idleTime += dt;
     }
   }
-
-  const start = new Date(startTime);
-  const end = endTime ? new Date(endTime) : new Date();
-  const durationSeconds = Math.max(0, (end - start) / 1000);
 
   // Night driving: any point between 22:00 and 06:00 local time
   const nightDriving = points.some(p => {

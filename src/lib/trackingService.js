@@ -47,6 +47,16 @@ export function createDrivingTrackingService({ background = false } = {}) {
     onPoint(point);
   };
 
+  const emitInitialPoint = async (onPoint) => {
+    if (!isNativePlatform()) return;
+    try {
+      const position = await Geolocation.getCurrentPosition(watchOptions);
+      emitPoint(position, onPoint);
+    } catch {
+      // A watcher below can still recover when GPS gets a fix.
+    }
+  };
+
   return {
     async start(onPoint, onError) {
       try {
@@ -58,6 +68,8 @@ export function createDrivingTrackingService({ background = false } = {}) {
           onError?.({ message: 'Location permission is required to track a trip.' });
           return;
         }
+
+        await emitInitialPoint(onPoint);
 
         if (background && isNativePlatform()) {
           watcherId = await BackgroundGeolocation.addWatcher(
