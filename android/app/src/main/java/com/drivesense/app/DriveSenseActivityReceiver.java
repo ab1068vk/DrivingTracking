@@ -14,6 +14,7 @@ public class DriveSenseActivityReceiver extends BroadcastReceiver {
         ActivityRecognitionResult result = ActivityRecognitionResult.extractResult(intent);
         if (result == null) return;
         DetectedActivity activity = result.getMostProbableActivity();
+        DriveSenseAutoTrackingService.handleActivityBroadcast(context, activity);
         DriveSenseActivityRecognitionPlugin.publishActivity(activity);
     }
 }

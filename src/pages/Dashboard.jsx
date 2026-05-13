@@ -15,7 +15,13 @@ import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import { scheduleLongTripReminder, cancelLongTripReminder, notifyTripCompleted } from '@/lib/notificationService';
 import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
-import { startActivityRecognition, shouldAutoStartTracking, shouldAutoStopTracking } from '@/lib/activityRecognition';
+import {
+  startActivityRecognition,
+  startNativeAutoTracking,
+  stopNativeAutoTracking,
+  shouldAutoStartTracking,
+  shouldAutoStopTracking,
+} from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
@@ -122,9 +128,16 @@ export default function Dashboard() {
     }
 
     const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    let pausedNativeAuto = false;
+    if (!autoStarted && useBackground && isAndroid()) {
+      await stopNativeAutoTracking().catch(() => {});
+      pausedNativeAuto = true;
+    }
+
     if ((autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual') && isAndroid()) {
       const activityGranted = await requestActivityRecognitionPermission();
       if (!activityGranted) {
+        if (pausedNativeAuto) await startNativeAutoTracking().catch(() => {});
         setLocationError('Physical activity permission is required for auto trip detection.');
         return;
       }
@@ -135,6 +148,7 @@ export default function Dashboard() {
       : await requestForegroundLocationPermission();
 
     if (!granted) {
+      if (pausedNativeAuto) await startNativeAutoTracking().catch(() => {});
       setLocationError(useBackground
         ? 'Background tracking needs location and notification permission before a trip can start.'
         : 'Location permission denied. Please enable location to start a trip.');
@@ -148,6 +162,7 @@ export default function Dashboard() {
       driving_events: [],
       background_tracking: useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
+      resume_native_auto: !autoStarted && useBackground && isAndroid(),
     };
 
     activeTripStore.set(tripData);
@@ -186,6 +201,7 @@ export default function Dashboard() {
       setActiveTrip(null);
       setTracking(false);
       setElapsed(0);
+      if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
       setLocationError(isManualTrip
         ? 'Trip was not saved because GPS did not get a fix yet. Wait a few seconds after Start, then stop again.'
         : 'Auto-detected trip was ignored because it was too short.');
@@ -224,6 +240,7 @@ export default function Dashboard() {
     setActiveTrip(null);
     setTracking(false);
     setElapsed(0);
+    if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
     refetch();
   };
 
@@ -235,6 +252,7 @@ export default function Dashboard() {
       cfg.tracking_mode === 'background_auto'
     ) && !cfg.tracking_paused;
 
+    if (isAndroid() && cfg.tracking_mode === 'background_auto') return undefined;
     if (!autoEnabled || tracking) return undefined;
 
     let cancelled = false;

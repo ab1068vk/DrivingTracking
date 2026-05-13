@@ -3,6 +3,7 @@ package com.drivesense.app;
 import android.Manifest;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 
 import com.getcapacitor.JSObject;
@@ -16,6 +17,8 @@ import com.getcapacitor.annotation.PermissionCallback;
 import com.google.android.gms.location.ActivityRecognition;
 import com.google.android.gms.location.ActivityRecognitionClient;
 import com.google.android.gms.location.DetectedActivity;
+
+import androidx.core.content.ContextCompat;
 
 import java.lang.ref.WeakReference;
 
@@ -104,6 +107,48 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             .addOnFailureListener(error -> call.reject(error.getMessage()));
     }
 
+    @PluginMethod
+    public void startNativeAutoTracking(PluginCall call) {
+        if (!hasNativeAutoTrackingPermissions()) {
+            call.reject("Location, background location, notification, and physical activity permissions are required for native auto tracking.");
+            return;
+        }
+
+        DriveSenseAutoTrackingService.start(getContext());
+        JSObject payload = new JSObject();
+        payload.put("enabled", true);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void stopNativeAutoTracking(PluginCall call) {
+        DriveSenseAutoTrackingService.stop(getContext());
+        JSObject payload = new JSObject();
+        payload.put("enabled", false);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void nativeAutoTrackingStatus(PluginCall call) {
+        JSObject payload = new JSObject();
+        payload.put("enabled", DriveSenseNativeTripStore.isServiceEnabled(getContext()));
+        payload.put("completedTripsCount", DriveSenseNativeTripStore.getCompletedTrips(getContext()).length());
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void getNativeCompletedTrips(PluginCall call) {
+        JSObject payload = new JSObject();
+        payload.put("trips", DriveSenseNativeTripStore.getCompletedTrips(getContext()));
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void clearNativeCompletedTrips(PluginCall call) {
+        DriveSenseNativeTripStore.clearCompletedTrips(getContext());
+        call.resolve();
+    }
+
     static void publishActivity(DetectedActivity activity) {
         DriveSenseActivityRecognitionPlugin plugin = instance != null ? instance.get() : null;
         if (plugin == null || activity == null) return;
@@ -136,6 +181,17 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         if (state == PermissionState.GRANTED) return "granted";
         if (state == PermissionState.DENIED) return "denied";
         return "prompt";
+    }
+
+    private boolean hasNativeAutoTrackingPermissions() {
+        boolean fineLocation = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean backgroundLocation = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean activity = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED;
+        boolean notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        return fineLocation && backgroundLocation && activity && notifications;
     }
 
     private static String mapType(int type) {

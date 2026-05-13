@@ -1,4 +1,8 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
+import { isAndroid } from '@/lib/nativePlatform';
+import { calculateTripScores, calculateTripStats, detectDrivingEvents } from '@/lib/tripEngine';
+import { localSettings } from '@/lib/trackingStore';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DB_NAME = 'drivesense_mobile';
@@ -56,6 +60,50 @@ const putTrip = async (trip) => {
   }
 };
 
+let importingNativeTrips = false;
+
+const importNativeCompletedTrips = async () => {
+  if (!isAndroid() || importingNativeTrips) return;
+
+  importingNativeTrips = true;
+  try {
+    const nativeTrips = await getNativeCompletedTrips();
+    if (!nativeTrips.length) return;
+
+    for (const trip of nativeTrips) {
+      const routePoints = trip.route_points || [];
+      const settings = localSettings.get();
+      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time);
+      const events = detectDrivingEvents(routePoints, {
+        HARSH_BRAKE_MS2: settings.threshold_harsh_brake_ms2 || 4.5,
+        RAPID_ACCEL_MS2: settings.threshold_rapid_accel_ms2 || 3.5,
+        SHARP_TURN_DEG_PER_S: settings.threshold_sharp_turn_degs || 45,
+        SPEEDING_FALLBACK_KMH: settings.threshold_speeding_kmh || 130,
+        IDLE_SPEED_KMH: 5,
+        IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 60,
+        LONG_DRIVE_MINUTES: settings.threshold_long_drive_minutes || 120,
+      });
+      const scores = calculateTripScores(events, stats);
+
+      await putTrip({
+        ...trip,
+        ...stats,
+        ...scores,
+        route_points: routePoints,
+        driving_events: events,
+        imported_from_native: true,
+        updated_at: trip.updated_at || new Date().toISOString(),
+      });
+    }
+
+    await clearNativeCompletedTrips();
+  } catch {
+    // The existing JS store remains usable if the native bridge is unavailable.
+  } finally {
+    importingNativeTrips = false;
+  }
+};
+
 const deleteTrip = async (id) => {
   try {
     const db = await openDb();
@@ -86,11 +134,13 @@ const withId = (trip) => ({
 
 export const localTripRepository = {
   async list({ sort = '-start_time', limit = 100 } = {}) {
+    await importNativeCompletedTrips();
     const trips = await getAllTrips();
     return sortTrips(trips, sort).slice(0, limit);
   },
 
   async getById(id) {
+    await importNativeCompletedTrips();
     const trips = await getAllTrips();
     const trip = trips.find((item) => String(item.id) === String(id));
     if (!trip) throw new Error('Trip not found');

@@ -44,6 +44,12 @@
             android:exported="false"
             android:foregroundServiceType="location"
             tools:replace="android:exported,android:foregroundServiceType" />
+
+        <service
+            android:name=".DriveSenseAutoTrackingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
 
     <!-- Permissions -->

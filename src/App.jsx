@@ -8,6 +8,8 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { useEffect, useState } from 'react';
 import { localSettings } from '@/lib/trackingStore';
 import { configureNotificationChannels } from '@/lib/notificationService';
+import { startNativeAutoTracking } from '@/lib/activityRecognition';
+import { isAndroid } from '@/lib/nativePlatform';
 
 // Page imports
 import Layout from '@/components/Layout';
@@ -29,6 +31,9 @@ const AuthenticatedApp = () => {
     configureNotificationChannels();
     const settings = localSettings.get();
     setOnboardingDone(settings.onboarding_completed);
+    if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
+      startNativeAutoTracking().catch(() => {});
+    }
 
     // Apply dark mode
     const mode = settings.dark_mode || 'system';

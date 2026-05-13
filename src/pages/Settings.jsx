@@ -18,6 +18,7 @@ import {
   requestNotificationPermission,
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
+import { startNativeAutoTracking, stopNativeAutoTracking } from '@/lib/activityRecognition';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -89,6 +90,7 @@ export default function Settings() {
 
   const enableTrackingMode = async (mode) => {
     if (mode === 'manual') {
+      if (isAndroid()) await stopNativeAutoTracking();
       updateCfg({
         tracking_mode: 'manual',
         auto_tracking_enabled: false,
@@ -118,6 +120,16 @@ export default function Settings() {
         await refreshPermissions();
         return;
       }
+
+      if (isAndroid()) {
+        try {
+          await startNativeAutoTracking();
+        } catch (error) {
+          alert(error.message || 'Could not start native background auto tracking.');
+          await refreshPermissions();
+          return;
+        }
+      }
     }
 
     updateCfg({
@@ -125,6 +137,7 @@ export default function Settings() {
       auto_tracking_enabled: mode !== 'manual',
       background_tracking_enabled: mode === 'background_auto',
     });
+    if (mode !== 'background_auto' && isAndroid()) await stopNativeAutoTracking();
     await refreshPermissions();
   };
 
@@ -220,6 +233,7 @@ export default function Settings() {
                 await enableTrackingMode('auto_detect');
                 return;
               }
+              if (isAndroid()) await stopNativeAutoTracking();
               updateCfg({ auto_tracking_enabled: false, tracking_mode: 'manual' });
             }} />
           </SettingRow>
@@ -233,6 +247,7 @@ export default function Settings() {
                 await enableTrackingMode('background_auto');
                 return;
               }
+              if (isAndroid()) await stopNativeAutoTracking();
               updateCfg({ background_tracking_enabled: false, auto_tracking_enabled: false, tracking_mode: 'manual' });
               await refreshPermissions();
             }} />

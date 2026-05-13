@@ -9,6 +9,7 @@ import {
   requestNotificationPermission,
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
+import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { useNavigate } from 'react-router-dom';
 
 const STEPS = [
@@ -112,6 +113,11 @@ export default function Onboarding() {
     if (trackingMode === 'background_auto') {
       await requestNotificationPermission();
       await requestBackgroundLocationPermission();
+      if (isAndroid()) {
+        try {
+          await startNativeAutoTracking();
+        } catch {}
+      }
     }
   };
 

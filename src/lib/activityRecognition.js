@@ -36,6 +36,34 @@ export async function startActivityRecognition(onActivity, onError) {
   }
 }
 
+export async function startNativeAutoTracking() {
+  if (!isAndroid()) return false;
+  const result = await ActivityRecognition.startNativeAutoTracking();
+  return result?.enabled === true;
+}
+
+export async function stopNativeAutoTracking() {
+  if (!isAndroid()) return false;
+  const result = await ActivityRecognition.stopNativeAutoTracking();
+  return result?.enabled === false;
+}
+
+export async function getNativeAutoTrackingStatus() {
+  if (!isAndroid()) return { enabled: false, completedTripsCount: 0 };
+  return ActivityRecognition.nativeAutoTrackingStatus();
+}
+
+export async function getNativeCompletedTrips() {
+  if (!isAndroid()) return [];
+  const result = await ActivityRecognition.getNativeCompletedTrips();
+  return Array.isArray(result?.trips) ? result.trips : [];
+}
+
+export async function clearNativeCompletedTrips() {
+  if (!isAndroid()) return;
+  await ActivityRecognition.clearNativeCompletedTrips();
+}
+
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
   return vehicleConfidence >= 70 && currentSpeedKmh >= 12 && recentMovingSeconds >= 20;
