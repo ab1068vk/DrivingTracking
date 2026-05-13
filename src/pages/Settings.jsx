@@ -209,10 +209,11 @@ export default function Settings() {
     alert('All trips deleted.');
   };
 
-  const handleExportAll = () => {
+  const handleExportAll = async () => {
     const completed = allTrips.filter(t => t.status === 'completed');
     const csv = tripsToCSV(completed);
-    downloadCSV(csv, `drivesense-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
+    const result = await downloadCSV(csv, `drivesense-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
+    if (result?.native) alert(`Export saved to Documents as ${result.filename}.`);
   };
 
   return (

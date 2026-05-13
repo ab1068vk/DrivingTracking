@@ -50,7 +50,7 @@ describe('tripEngine', () => {
 
     expect(stats.distance_km).toBeGreaterThan(0.2);
     expect(stats.duration_seconds).toBe(70);
-    expect(stats.avg_speed_kmh).toBe(20);
+    expect(stats.avg_speed_kmh).toBe(11.4);
     expect(stats.max_speed_kmh).toBe(40);
     expect(stats.idle_time_seconds).toBe(60);
   });
@@ -68,6 +68,21 @@ describe('tripEngine', () => {
     expect(cleanRoutePoints(points)).toHaveLength(3);
     expect(summary.stats.distance_km).toBeGreaterThan(0.2);
     expect(summary.scores.score_overall).toBeGreaterThan(0);
+  });
+
+  it('does not turn stationary GPS jitter into speed or distance', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 0, 12),
+      point(43.653235, -79.383225, 12, 16, 18),
+      point(43.65318, -79.38326, 30, 14, 20),
+      point(43.65322, -79.38321, 50, 15, 18),
+    ];
+
+    const stats = calculateTripStats(points, points[0].timestamp, points[3].timestamp);
+
+    expect(stats.distance_km).toBe(0);
+    expect(stats.avg_speed_kmh).toBe(0);
+    expect(stats.max_speed_kmh).toBe(0);
   });
 });
 

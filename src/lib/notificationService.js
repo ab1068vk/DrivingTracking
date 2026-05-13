@@ -9,6 +9,15 @@ const LONG_TRIP_REMINDER_ID = 2001;
 const TRIP_STARTED_ID = 2003;
 const WEEKLY_REPORT_ID = 2101;
 const SAFE_DRIVING_ID = 2102;
+const SAFE_DRIVING_TIPS = [
+  'Leave extra space ahead so you can brake once, early, and smoothly.',
+  'Ease into acceleration for the first few seconds after every stop.',
+  'Scan two intersections ahead so turns and stops never feel sudden.',
+  'On longer drives, take a short break before fatigue shows up in your score.',
+  'Keep your phone mounted and let DriveSense record without handling it.',
+  'Rain, snow, and night driving need slower inputs and a larger following gap.',
+  'A steady speed usually beats hard acceleration followed by hard braking.',
+];
 
 const notificationsEnabled = (key) => {
   const settings = localSettings.get();
@@ -21,6 +30,11 @@ const nextAt = ({ dayOffset = 1, hour = 9, minute = 0 }) => {
   date.setHours(hour, minute, 0, 0);
   if (date <= new Date()) date.setDate(date.getDate() + 1);
   return date;
+};
+
+const todaysSafeDrivingTip = () => {
+  const dayIndex = Math.floor(Date.now() / 86400000);
+  return SAFE_DRIVING_TIPS[dayIndex % SAFE_DRIVING_TIPS.length];
 };
 
 export async function configureNotificationChannels() {
@@ -120,19 +134,19 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
     notifications.push({
       id: WEEKLY_REPORT_ID,
       title: 'Weekly driving report',
-      body: 'Open DriveSense to review your latest trips and driving score.',
+      body: 'Your weekly DriveSense report is ready. Review distance, score, and risky events.',
       channelId: SUMMARY_CHANNEL_ID,
-      schedule: { at: nextAt({ dayOffset: 7, hour: 9, minute: 0 }), allowWhileIdle: true },
+      schedule: { on: { weekday: 2, hour: 9, minute: 0 }, allowWhileIdle: true },
     });
   }
 
   if (settings.safe_driving_reminder) {
     notifications.push({
       id: SAFE_DRIVING_ID,
-      title: 'Drive safe',
-      body: 'Smooth acceleration and steady braking help improve your score.',
+      title: 'Safe driving tip',
+      body: todaysSafeDrivingTip(),
       channelId: SUMMARY_CHANNEL_ID,
-      schedule: { at: nextAt({ dayOffset: 1, hour: 8, minute: 0 }), allowWhileIdle: true },
+      schedule: { on: { hour: 8, minute: 0 }, allowWhileIdle: true },
     });
   }
 

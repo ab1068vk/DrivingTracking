@@ -53,6 +53,9 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double MIN_TRIP_KM = 0.1d;
     private static final long AUTO_STOP_STILL_MS = 180_000L;
     private static final float MAX_ACCURACY_M = 75f;
+    private static final double MIN_POINT_DISTANCE_M = 8d;
+    private static final double STATIONARY_SPEED_KMH = 5d;
+    private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
 
     private ActivityRecognitionClient activityClient;
@@ -218,9 +221,10 @@ public class DriveSenseAutoTrackingService extends Service {
         if (previousLocation != null) {
             long dtMs = Math.max(1L, location.getTime() - previousLocation.getTime());
             double distanceKm = previousLocation.distanceTo(location) / 1000d;
+            double distanceM = distanceKm * 1000d;
             double impliedSpeed = distanceKm / (dtMs / 3_600_000d);
             double reportedSpeed = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : impliedSpeed;
-            if (distanceKm < 0.005d && dtMs < 10_000L) return;
+            if (isNoise(distanceM, impliedSpeed, reportedSpeed, accuracyOf(previousLocation), accuracyOf(location)) && dtMs < 45_000L) return;
             if (impliedSpeed > MAX_SPEED_KMH || reportedSpeed > MAX_SPEED_KMH) return;
         }
 
@@ -310,7 +314,6 @@ public class DriveSenseAutoTrackingService extends Service {
         stats.durationSeconds = Math.max(0L, (endMs - startMs) / 1000L);
         if (points == null || points.length() < 2) return stats;
 
-        double speedSum = 0d;
         for (int i = 1; i < points.length(); i++) {
             JSONObject prev = points.optJSONObject(i - 1);
             JSONObject curr = points.optJSONObject(i);
@@ -322,23 +325,58 @@ public class DriveSenseAutoTrackingService extends Service {
                 curr.optDouble("lat"),
                 curr.optDouble("lng")
             );
-            stats.distanceKm += distance;
-
-            double speed = curr.optDouble("speed_kmh", 0d);
-            speedSum += speed;
-            stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
-
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
             long dt = Math.max(0L, (currMs - prevMs) / 1000L);
-            if (speed < 5d && dt > 0L && dt < 120L) stats.idleSeconds += dt;
+            if (dt <= 0L || dt >= 120L) continue;
+
+            double impliedSpeed = distance / (dt / 3600d);
+            double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
+            double distanceM = distance * 1000d;
+            if (isNoise(distanceM, impliedSpeed, reportedSpeed, prev.optDouble("accuracy", 0d), curr.optDouble("accuracy", 0d))) {
+                continue;
+            }
+
+            double speed = reliableSpeed(impliedSpeed, reportedSpeed);
+            stats.distanceKm += distance;
+            stats.speedSamples += 1;
+            stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
+
+            if (speed < STATIONARY_SPEED_KMH) stats.idleSeconds += dt;
 
             int hour = Integer.parseInt(new SimpleDateFormat("H", Locale.US).format(new Date(currMs)));
             if (hour >= 22 || hour < 6) stats.nightDriving = true;
         }
 
-        stats.avgSpeedKmh = points.length() > 1 ? speedSum / (points.length() - 1) : 0d;
+        stats.avgSpeedKmh = stats.durationSeconds > 0L && stats.distanceKm > 0d
+            ? stats.distanceKm / (stats.durationSeconds / 3600d)
+            : 0d;
+        if (stats.speedSamples == 0) stats.maxSpeedKmh = 0d;
         return stats;
+    }
+
+    private double accuracyOf(Location location) {
+        return location != null && location.hasAccuracy() ? location.getAccuracy() : 0d;
+    }
+
+    private double noiseFloor(double previousAccuracy, double currentAccuracy) {
+        double bestAccuracy = Math.max(Math.max(0d, previousAccuracy), Math.max(0d, currentAccuracy));
+        return Math.max(MIN_POINT_DISTANCE_M, Math.min(25d, bestAccuracy * 0.6d));
+    }
+
+    private boolean isNoise(double distanceM, double impliedSpeedKmh, double reportedSpeedKmh, double previousAccuracy, double currentAccuracy) {
+        double floor = noiseFloor(previousAccuracy, currentAccuracy);
+        boolean tinyMovement = distanceM < floor;
+        boolean displacementSaysStill = impliedSpeedKmh < STATIONARY_SPEED_KMH && distanceM < floor * 1.5d;
+        boolean reportedDisagrees = reportedSpeedKmh < MIN_TRUSTED_SPEED_KMH && displacementSaysStill;
+        return tinyMovement || reportedDisagrees;
+    }
+
+    private double reliableSpeed(double impliedSpeedKmh, double reportedSpeedKmh) {
+        boolean reportedCloseToImplied = impliedSpeedKmh >= STATIONARY_SPEED_KMH ||
+            reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH ||
+            Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12d;
+        return Math.max(0d, reportedCloseToImplied ? reportedSpeedKmh : impliedSpeedKmh);
     }
 
     private double haversineKm(double lat1, double lng1, double lat2, double lng2) {
@@ -426,6 +464,7 @@ public class DriveSenseAutoTrackingService extends Service {
         double maxSpeedKmh = 0d;
         long idleSeconds = 0L;
         long durationSeconds = 0L;
+        int speedSamples = 0;
         boolean nightDriving = false;
     }
 }

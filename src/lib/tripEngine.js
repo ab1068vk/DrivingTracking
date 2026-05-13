@@ -29,6 +29,12 @@ export const DEFAULT_THRESHOLDS = {
   MIN_TRIP_DURATION_SECONDS: 30,
   // GPS accuracy filter: ignore points with accuracy > 50m
   MAX_GPS_ACCURACY_M: 50,
+  // Ignore small point-to-point hops that are inside normal GPS drift.
+  MIN_POINT_DISTANCE_M: 8,
+  // Do not trust low-speed GPS speed unless movement also backs it up.
+  MIN_TRUSTED_SPEED_KMH: 18,
+  // Stationary / crawling speed used to suppress jitter in stats and events.
+  STATIONARY_SPEED_KMH: 5,
 };
 
 // ─── Haversine Distance ────────────────────────────────────────────────────────
@@ -106,6 +112,84 @@ export function calculateAcceleration(speed1Kmh, speed2Kmh, durationSeconds) {
   return (v2 - v1) / durationSeconds;
 }
 
+function timestampMs(point) {
+  const value = point?.timestamp ?? point?.time;
+  const ms = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+function accuracyMeters(point) {
+  return Number.isFinite(point?.accuracy) ? Math.max(0, point.accuracy) : 0;
+}
+
+function movementNoiseFloorMeters(point, previousPoint, thresholds = DEFAULT_THRESHOLDS) {
+  const bestAccuracy = Math.max(accuracyMeters(point), accuracyMeters(previousPoint));
+  return Math.max(
+    thresholds.MIN_POINT_DISTANCE_M ?? 8,
+    Math.min(25, bestAccuracy * 0.6)
+  );
+}
+
+export function calculateSegmentMetrics(previousPoint, point, thresholds = DEFAULT_THRESHOLDS) {
+  if (!previousPoint || !point) {
+    return {
+      dt: 0,
+      distanceKm: 0,
+      distanceM: 0,
+      impliedSpeedKmh: 0,
+      reportedSpeedKmh: Number.isFinite(point?.speed_kmh) ? Math.max(0, point.speed_kmh) : null,
+      reliableSpeedKmh: 0,
+      isNoise: false,
+    };
+  }
+
+  const dt = (timestampMs(point) - timestampMs(previousPoint)) / 1000;
+  if (dt <= 0) {
+    return {
+      dt,
+      distanceKm: 0,
+      distanceM: 0,
+      impliedSpeedKmh: 0,
+      reportedSpeedKmh: Number.isFinite(point.speed_kmh) ? Math.max(0, point.speed_kmh) : null,
+      reliableSpeedKmh: 0,
+      isNoise: true,
+    };
+  }
+
+  const distanceKm = haversineDistance(previousPoint.lat, previousPoint.lng, point.lat, point.lng);
+  const distanceM = distanceKm * 1000;
+  const impliedSpeedKmh = calculateSpeedKmh(distanceKm, dt);
+  const reportedSpeedKmh = Number.isFinite(point.speed_kmh) ? Math.max(0, point.speed_kmh) : null;
+  const noiseFloorM = movementNoiseFloorMeters(point, previousPoint, thresholds);
+  const stationarySpeed = thresholds.STATIONARY_SPEED_KMH ?? 5;
+  const trustedSpeed = thresholds.MIN_TRUSTED_SPEED_KMH ?? 18;
+
+  const tinyMovement = distanceM < noiseFloorM;
+  const displacementSaysStill = impliedSpeedKmh < stationarySpeed && distanceM < noiseFloorM * 1.5;
+  const reportedDisagreesWithDisplacement = reportedSpeedKmh != null &&
+    reportedSpeedKmh < trustedSpeed &&
+    displacementSaysStill;
+  const isNoise = tinyMovement || reportedDisagreesWithDisplacement;
+
+  let reliableSpeedKmh = impliedSpeedKmh;
+  if (!isNoise && reportedSpeedKmh != null) {
+    const reportedCloseToImplied = impliedSpeedKmh >= stationarySpeed ||
+      reportedSpeedKmh >= trustedSpeed ||
+      Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12;
+    reliableSpeedKmh = reportedCloseToImplied ? reportedSpeedKmh : impliedSpeedKmh;
+  }
+
+  return {
+    dt,
+    distanceKm,
+    distanceM,
+    impliedSpeedKmh,
+    reportedSpeedKmh,
+    reliableSpeedKmh: isNoise ? 0 : Math.max(0, reliableSpeedKmh),
+    isNoise,
+  };
+}
+
 export function normalizeLocationPoint(input) {
   if (!input) return null;
 
@@ -135,11 +219,11 @@ export function shouldAcceptLocationPoint(point, previousPoint = null, threshold
   const dt = (new Date(point.timestamp) - new Date(previousPoint.timestamp)) / 1000;
   if (dt <= 0) return false;
 
-  const distanceKm = haversineDistance(previousPoint.lat, previousPoint.lng, point.lat, point.lng);
-  if (distanceKm < 0.005 && dt < 10) return false;
+  const segment = calculateSegmentMetrics(previousPoint, point, thresholds);
+  if (segment.isNoise && dt < 45) return false;
 
-  const impliedSpeed = calculateSpeedKmh(distanceKm, dt);
-  const reportedSpeed = point.speed_kmh ?? impliedSpeed;
+  const impliedSpeed = segment.impliedSpeedKmh;
+  const reportedSpeed = segment.reportedSpeedKmh ?? impliedSpeed;
   if (impliedSpeed > 220 || reportedSpeed > 220) return false;
 
   return true;
@@ -185,8 +269,12 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     const dt = (new Date(curr.timestamp) - new Date(prev.timestamp)) / 1000; // seconds
     if (dt <= 0 || dt > 120) continue; // skip gaps > 2 minutes (possible pause)
 
-    const speed1 = prev.speed_kmh || 0;
-    const speed2 = curr.speed_kmh || 0;
+    const prevSegment = i > 1 ? calculateSegmentMetrics(points[i - 2], prev, thresholds) : null;
+    const currSegment = calculateSegmentMetrics(prev, curr, thresholds);
+    if (currSegment.isNoise) continue;
+
+    const speed1 = prevSegment && !prevSegment.isNoise ? prevSegment.reliableSpeedKmh : (prev.speed_kmh || 0);
+    const speed2 = currSegment.reliableSpeedKmh;
     const accel = calculateAcceleration(speed1, speed2, dt);
 
     // ── Harsh Braking
@@ -298,11 +386,12 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
  * @returns {Object} Trip statistics
  */
 export function calculateTripStats(points, startTime, endTime) {
+  const routePoints = cleanRoutePoints(points);
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
   const durationSeconds = Math.max(0, (end - start) / 1000);
 
-  if (!points || points.length < 2) {
+  if (!routePoints || routePoints.length < 2) {
     return {
       distance_km: 0,
       avg_speed_kmh: 0,
@@ -315,34 +404,43 @@ export function calculateTripStats(points, startTime, endTime) {
 
   let totalDistance = 0;
   let maxSpeed = 0;
-  let speedSum = 0;
+  let movingSeconds = 0;
   let idleTime = 0;
 
-  for (let i = 1; i < points.length; i++) {
-    const p = points[i - 1];
-    const c = points[i];
-    const dist = haversineDistance(p.lat, p.lng, c.lat, c.lng);
-    totalDistance += dist;
+  for (let i = 1; i < routePoints.length; i++) {
+    const p = routePoints[i - 1];
+    const c = routePoints[i];
+    const segment = calculateSegmentMetrics(p, c);
+    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
 
-    const spd = c.speed_kmh || 0;
+    totalDistance += segment.distanceKm;
+
+    const spd = segment.reliableSpeedKmh;
     if (spd > maxSpeed) maxSpeed = spd;
-    speedSum += spd;
+    if (spd >= DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH) movingSeconds += segment.dt;
 
-    const dt = (new Date(c.timestamp) - new Date(p.timestamp)) / 1000;
-    if (spd < DEFAULT_THRESHOLDS.IDLE_SPEED_KMH && dt > 0 && dt < 120) {
-      idleTime += dt;
+    if (spd < DEFAULT_THRESHOLDS.IDLE_SPEED_KMH) {
+      idleTime += segment.dt;
     }
   }
 
+  if (totalDistance * 1000 < DEFAULT_THRESHOLDS.MIN_POINT_DISTANCE_M) {
+    totalDistance = 0;
+    maxSpeed = 0;
+  }
+
   // Night driving: any point between 22:00 and 06:00 local time
-  const nightDriving = points.some(p => {
+  const nightDriving = routePoints.some(p => {
     const h = new Date(p.timestamp).getHours();
     return h >= DEFAULT_THRESHOLDS.NIGHT_START_HOUR || h < DEFAULT_THRESHOLDS.NIGHT_END_HOUR;
   });
+  const avgSpeed = durationSeconds > 0 && totalDistance > 0
+    ? calculateSpeedKmh(totalDistance, durationSeconds)
+    : 0;
 
   return {
     distance_km: Math.round(totalDistance * 1000) / 1000,
-    avg_speed_kmh: points.length > 1 ? Math.round(speedSum / (points.length - 1) * 10) / 10 : 0,
+    avg_speed_kmh: movingSeconds > 0 ? Math.round(avgSpeed * 10) / 10 : 0,
     max_speed_kmh: Math.round(maxSpeed * 10) / 10,
     idle_time_seconds: Math.round(idleTime),
     duration_seconds: Math.round(durationSeconds),
@@ -632,12 +730,42 @@ export function tripsToCSV(trips) {
   return [headers, ...rows].map(r => r.map(escape).join(',')).join('\n');
 }
 
-export function downloadCSV(content, filename) {
+export async function downloadCSV(content, filename) {
+  const safeFilename = filename.replace(/[\\/:*?"<>|]+/g, '-');
+
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor.isNativePlatform()) {
+      const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
+      const result = await Filesystem.writeFile({
+        path: safeFilename,
+        data: content,
+        directory: Directory.Documents,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+      return {
+        native: true,
+        uri: result.uri,
+        filename: safeFilename,
+      };
+    }
+  } catch (error) {
+    console.warn('Native CSV export failed, falling back to browser download.', error);
+  }
+
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = safeFilename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   URL.revokeObjectURL(url);
+  return {
+    native: false,
+    filename: safeFilename,
+  };
 }

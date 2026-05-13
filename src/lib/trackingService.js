@@ -1,6 +1,6 @@
 import { registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
-import { normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/tripEngine';
+import { calculateSegmentMetrics, normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/tripEngine';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import {
   requestBackgroundLocationPermission,
@@ -43,8 +43,12 @@ export function createDrivingTrackingService({ background = false } = {}) {
   const emitPoint = (rawPoint, onPoint) => {
     const point = normalizeLocationPoint(rawPoint);
     if (!shouldAcceptLocationPoint(point, previousPoint)) return;
-    previousPoint = point;
-    onPoint(point);
+    const segment = calculateSegmentMetrics(previousPoint, point);
+    const normalizedPoint = previousPoint
+      ? { ...point, speed_kmh: segment.reliableSpeedKmh }
+      : { ...point, speed_kmh: point.speed_kmh != null && point.speed_kmh >= 18 ? point.speed_kmh : 0 };
+    previousPoint = normalizedPoint;
+    onPoint(normalizedPoint);
   };
 
   const emitInitialPoint = async (onPoint) => {

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
+  cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   formatDistance, formatDuration, formatSpeed, getScoreColor
 } from '@/lib/tripEngine';
@@ -186,12 +187,14 @@ export default function Dashboard() {
     await cancelLongTripReminder();
 
     const endTime = new Date().toISOString();
-    const pts = tripToEnd.route_points || [];
+    const pts = cleanRoutePoints(tripToEnd.route_points || []);
     const stats = calculateTripStats(pts, tripToEnd.start_time, endTime);
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
     const shouldDiscard = isManualTrip
-      ? pts.length === 0 || stats.duration_seconds < MIN_MANUAL_SAVE_SECONDS
+      ? pts.length < 2 ||
+        stats.duration_seconds < MIN_MANUAL_SAVE_SECONDS ||
+        stats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM
       : stats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
         stats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
 
@@ -204,7 +207,7 @@ export default function Dashboard() {
       setElapsed(0);
       if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
       setLocationError(isManualTrip
-        ? 'Trip was not saved because GPS did not get a fix yet. Wait a few seconds after Start, then stop again.'
+        ? 'Trip was not saved because DriveSense did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
       return;
     }

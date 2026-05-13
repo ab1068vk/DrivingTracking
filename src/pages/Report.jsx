@@ -96,9 +96,10 @@ export default function Reports() {
     speeding: 'Speeding',
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const csv = tripsToCSV(trips);
-    downloadCSV(csv, `drivesense-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
+    const result = await downloadCSV(csv, `drivesense-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
+    if (result?.native) alert(`Export saved to Documents as ${result.filename}.`);
   };
 
   const { color: bestColor } = getScoreColor(summary.best_trip?.score_overall || 0);
