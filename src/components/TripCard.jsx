@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { MapPin, Clock, Gauge, Navigation, ChevronRight } from 'lucide-react';
+import { Clock, Gauge, Navigation, ChevronRight } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
 import { useNavigate } from 'react-router-dom';
 

@@ -1,14 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import {
-  Settings as SettingsIcon, Moon, Sun, Monitor, Bell, BellOff,
-  Trash2, Download, Shield, ChevronRight, Info, AlertTriangle, Check
+  Moon, Sun, Monitor, Trash2, Download, Shield, ChevronRight, Info, AlertTriangle, Check
 } from 'lucide-react';
 import { localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
+import {
+  getPermissionExplanation,
+  getPermissionStatus,
+  openNativeSettings,
+  requestActivityRecognitionPermission,
+  requestBackgroundLocationPermission,
+  requestForegroundLocationPermission,
+  requestNotificationPermission,
+} from '@/lib/permissions';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -47,8 +55,20 @@ function Toggle({ value, onChange }) {
   );
 }
 
+function PermissionBadge({ value }) {
+  const granted = value === 'granted';
+  return (
+    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+      granted ? 'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
+    }`}>
+      {granted ? 'Granted' : value === 'denied' ? 'Denied' : 'Needs setup'}
+    </span>
+  );
+}
+
 export default function Settings() {
   const [saved, setSaved] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState(null);
   const qc = useQueryClient();
 
   // Load settings from local storage
@@ -65,6 +85,14 @@ export default function Settings() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+
+  const refreshPermissions = async () => {
+    setPermissionStatus(await getPermissionStatus());
+  };
+
+  useEffect(() => {
+    refreshPermissions();
+  }, []);
 
   const handleDeleteAllTrips = async () => {
     if (!confirm('Delete ALL trips? This cannot be undone.')) return;
@@ -139,6 +167,68 @@ export default function Settings() {
             sublabel="Temporarily disable trip detection"
           >
             <Toggle value={cfg.tracking_paused} onChange={v => updateCfg({ tracking_paused: v })} />
+          </SettingRow>
+          <SettingRow
+            icon={Shield}
+            label="Auto-Tracking"
+            sublabel="Start only after you enable it and driving signals are strong"
+          >
+            <Toggle value={cfg.auto_tracking_enabled} onChange={v => updateCfg({ auto_tracking_enabled: v, tracking_mode: v ? 'auto_detect' : 'manual' })} />
+          </SettingRow>
+          <SettingRow
+            icon={Shield}
+            label="Background Tracking"
+            sublabel="Keeps recording after the app is minimized with a persistent notification"
+          >
+            <Toggle value={cfg.background_tracking_enabled} onChange={async v => {
+              if (v) {
+                const granted = await requestBackgroundLocationPermission();
+                if (!granted) {
+                  alert(getPermissionExplanation('backgroundLocation'));
+                  await refreshPermissions();
+                  return;
+                }
+              }
+              updateCfg({ background_tracking_enabled: v, tracking_mode: v ? 'background_auto' : 'manual' });
+              await refreshPermissions();
+            }} />
+          </SettingRow>
+        </div>
+
+        {/* Android Permissions */}
+        <SectionTitle>Android Permissions</SectionTitle>
+        <div className="space-y-1">
+          {[
+            { key: 'foregroundLocation', label: 'Location', sub: getPermissionExplanation('foregroundLocation'), action: requestForegroundLocationPermission },
+            { key: 'backgroundLocation', label: 'Background Location', sub: getPermissionExplanation('backgroundLocation'), action: requestBackgroundLocationPermission },
+            { key: 'activityRecognition', label: 'Physical Activity', sub: getPermissionExplanation('activityRecognition'), action: requestActivityRecognitionPermission },
+            { key: 'notifications', label: 'Notifications', sub: getPermissionExplanation('notifications'), action: requestNotificationPermission },
+          ].map(({ key, label, sub, action }) => (
+            <SettingRow key={key} icon={Info} label={label} sublabel={sub}>
+              <div className="flex items-center gap-2">
+                <PermissionBadge value={permissionStatus?.[key]} />
+                {permissionStatus?.[key] !== 'granted' && (
+                  <button
+                    className="text-xs font-semibold text-primary"
+                    onClick={async e => {
+                      e.stopPropagation();
+                      await action();
+                      await refreshPermissions();
+                    }}
+                  >
+                    Enable
+                  </button>
+                )}
+              </div>
+            </SettingRow>
+          ))}
+          <SettingRow
+            icon={AlertTriangle}
+            label="Battery Optimization"
+            sublabel="Open Android app settings if long background trips are being stopped"
+            onClick={openNativeSettings}
+          >
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
         </div>
 
@@ -270,6 +360,21 @@ export default function Settings() {
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
           <SettingRow
+            icon={Info}
+            label="Data Retention"
+            sublabel="Keep local trip history on this device"
+          >
+            <select
+              value={cfg.data_retention_days}
+              onChange={e => updateCfg({ data_retention_days: Number(e.target.value) })}
+              className="bg-card border border-border rounded-lg text-xs px-2 py-1"
+            >
+              <option value={90}>90 days</option>
+              <option value={365}>1 year</option>
+              <option value={0}>Forever</option>
+            </select>
+          </SettingRow>
+          <SettingRow
             icon={Trash2}
             label="Delete All Trips"
             sublabel="Permanently removes all trip data"
@@ -284,7 +389,7 @@ export default function Settings() {
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-semibold text-foreground text-sm">DriveSense</div>
-        <div>Version 1.0.0 (Web PWA)</div>
+        <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
         <div>Data: Stored locally · No cloud sync · No ads · No analytics</div>
       </div>

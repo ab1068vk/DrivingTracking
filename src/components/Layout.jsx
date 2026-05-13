@@ -1,8 +1,7 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, Smartphone } from 'lucide-react';
+import { Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { localSettings } from '@/lib/trackingStore';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -22,7 +21,7 @@ export default function Layout() {
   useEffect(() => {
     const checkTracking = () => {
       try {
-        const raw = sessionStorage.getItem('drivesense_active_trip');
+        const raw = localStorage.getItem('drivesense_active_trip');
         setTrackingActive(!!raw);
       } catch {}
     };
@@ -38,7 +37,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Top Header */}
-      <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
             <Car className="w-4 h-4 text-white" />
@@ -140,7 +139,7 @@ export default function Layout() {
       </main>
 
       {/* Bottom Mobile Nav */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/90 backdrop-blur-xl border-t border-border/50">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/90 backdrop-blur-xl border-t border-border/50 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around h-16 px-2">
           {navItems.map(item => {
             const Icon = item.icon;

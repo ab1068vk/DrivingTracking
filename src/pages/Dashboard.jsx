@@ -3,15 +3,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { tripService } from '@/api/trips';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Car, Play, Square, Navigation, TrendingUp, Clock, Gauge,
+  Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin
 } from 'lucide-react';
 import {
   calculateTripStats, detectDrivingEvents, calculateTripScores,
-  formatDistance, formatDuration, formatSpeed, getScoreColor, formatTime
+  formatDistance, formatDuration, formatSpeed, getScoreColor
 } from '@/lib/tripEngine';
-import { activeTripStore, localSettings, requestLocationPermission } from '@/lib/trackingStore';
-import { createLocationService } from '@/lib/tripEngine';
+import { activeTripStore, localSettings } from '@/lib/trackingStore';
+import { createDrivingTrackingService } from '@/lib/trackingService';
+import { scheduleLongTripReminder, cancelLongTripReminder, notifyTripCompleted } from '@/lib/notificationService';
+import { requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
 import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
@@ -66,8 +68,10 @@ export default function Dashboard() {
   };
 
   const startGPS = useCallback(() => {
+    const cfg = localSettings.get();
+    const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
     if (!locationService.current) {
-      locationService.current = createLocationService();
+      locationService.current = createDrivingTrackingService({ background: useBackground });
     }
     locationService.current.start(
       (point) => {
@@ -86,9 +90,15 @@ export default function Dashboard() {
   }, []);
 
   const handleStartTrip = async () => {
-    const granted = await requestLocationPermission();
+    const useBackground = settings.background_tracking_enabled || settings.tracking_mode === 'background_auto';
+    const granted = useBackground
+      ? await requestBackgroundLocationPermission()
+      : await requestForegroundLocationPermission();
+
     if (!granted) {
-      setLocationError('Location permission denied. Please enable location in your browser settings.');
+      setLocationError(useBackground
+        ? 'Background tracking needs location and notification permission before a trip can start.'
+        : 'Location permission denied. Please enable location to start a trip.');
       return;
     }
 
@@ -97,6 +107,7 @@ export default function Dashboard() {
       status: 'active',
       route_points: [],
       driving_events: [],
+      background_tracking: settings.background_tracking_enabled || settings.tracking_mode === 'background_auto',
     };
 
     activeTripStore.set(tripData);
@@ -104,13 +115,16 @@ export default function Dashboard() {
     setTracking(true);
     startTimer(new Date());
     startGPS();
+    scheduleLongTripReminder(tripData.start_time);
   };
 
   const handleEndTrip = async () => {
     if (!activeTrip) return;
 
     locationService.current?.stop();
+    locationService.current = null;
     stopTimer();
+    await cancelLongTripReminder();
 
     const endTime = new Date().toISOString();
     const pts = activeTrip.route_points || [];
@@ -147,6 +161,7 @@ export default function Dashboard() {
     };
 
     await tripService.create(completedTrip);
+    if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
     activeTripStore.clear();
     setActiveTrip(null);
     setTracking(false);

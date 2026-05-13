@@ -3,8 +3,8 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import {
-  BarChart3, TrendingUp, Calendar, Award, AlertTriangle,
-  Download, Car, Clock, Navigation, ChevronDown
+  BarChart3, TrendingUp, Award, AlertTriangle,
+  Download, Car, Clock, Navigation
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -12,8 +12,6 @@ import {
 } from 'recharts';
 import { generateReportSummary, formatDistance, formatDuration, formatDate, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import ScoreRing from '@/components/ScoreRing';
-import TripCard from '@/components/TripCard';
 
 const PERIODS = [
   { id: 'week', label: 'This Week', days: 7 },

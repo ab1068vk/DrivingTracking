@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { useEffect, useState } from 'react';
 import { localSettings } from '@/lib/trackingStore';
+import { configureNotificationChannels } from '@/lib/notificationService';
 
 // Page imports
 import Layout from '@/components/Layout';
@@ -25,6 +26,7 @@ const AuthenticatedApp = () => {
   const [onboardingDone, setOnboardingDone] = useState(null);
 
   useEffect(() => {
+    configureNotificationChannels();
     const settings = localSettings.get();
     setOnboardingDone(settings.onboarding_completed);
 

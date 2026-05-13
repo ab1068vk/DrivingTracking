@@ -13,10 +13,15 @@ export const DEFAULT_SETTINGS = {
   units: 'metric',
   dark_mode: 'system',
   notifications_enabled: true,
+  notification_permission_granted: false,
   trip_start_notification: true,
   trip_end_notification: true,
   weekly_report_notification: true,
   safe_driving_reminder: false,
+  background_tracking_enabled: false,
+  auto_tracking_enabled: false,
+  activity_permission_granted: false,
+  data_retention_days: 365,
   threshold_harsh_brake_ms2: 4.5,
   threshold_rapid_accel_ms2: 3.5,
   threshold_sharp_turn_degs: 45,
@@ -62,7 +67,7 @@ export const localSettings = {
 export const activeTripStore = {
   get() {
     try {
-      const raw = sessionStorage.getItem(ACTIVE_TRIP_KEY);
+      const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -70,11 +75,11 @@ export const activeTripStore = {
   },
   set(trip) {
     try {
-      sessionStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip));
+      localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip));
     } catch {}
   },
   clear() {
-    sessionStorage.removeItem(ACTIVE_TRIP_KEY);
+    localStorage.removeItem(ACTIVE_TRIP_KEY);
   },
   addPoint(point) {
     const trip = this.get();

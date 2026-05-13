@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { requestLocationPermission } from '@/lib/trackingStore';
 import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
+import { getCurrentLocation } from '@/lib/trackingService';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -39,19 +39,14 @@ export default function MapScreen() {
   const selectedTrip = allCompleted.find(t => t.id === selectedTripId);
 
   const handleShowMyLocation = async () => {
-    const granted = await requestLocationPermission();
-    if (!granted) {
-      setLocError('Location access denied');
-      return;
+    try {
+      const point = await getCurrentLocation();
+      setCurrentLocation({ lat: point.lat, lng: point.lng });
+      setShowCurrentLoc(true);
+      setLocError(null);
+    } catch {
+      setLocError('Could not get location. Check location permission and GPS settings.');
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCurrentLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setShowCurrentLoc(true);
-        setLocError(null);
-      },
-      () => setLocError('Could not get location')
-    );
   };
 
   return (

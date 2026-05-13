@@ -1,0 +1,137 @@
+import { registerPlugin } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { isAndroid, isNativePlatform, openNativeSettings } from '@/lib/nativePlatform';
+import { localSettings } from '@/lib/trackingStore';
+
+const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
+
+const asState = (value) => value || 'unknown';
+
+export async function getPermissionStatus() {
+  const status = {
+    foregroundLocation: 'unknown',
+    backgroundLocation: 'unknown',
+    activityRecognition: 'unknown',
+    notifications: 'unknown',
+  };
+
+  try {
+    if (isNativePlatform()) {
+      const location = await Geolocation.checkPermissions();
+      status.foregroundLocation = asState(location.location);
+    } else if (navigator.permissions) {
+      const location = await navigator.permissions.query({ name: 'geolocation' });
+      status.foregroundLocation = asState(location.state);
+    }
+  } catch {}
+
+  try {
+    if (isNativePlatform()) {
+      const notifications = await LocalNotifications.checkPermissions();
+      status.notifications = asState(notifications.display);
+    } else if ('Notification' in window) {
+      status.notifications = Notification.permission;
+    }
+  } catch {}
+
+  try {
+    if (isAndroid()) {
+      const activity = await ActivityRecognition.checkPermissions();
+      status.activityRecognition = asState(activity.activityRecognition);
+      status.backgroundLocation = asState(activity.backgroundLocation);
+    }
+  } catch {}
+
+  if (status.backgroundLocation === 'unknown') {
+    status.backgroundLocation = localSettings.get().background_location_granted ? 'granted' : 'not_requested';
+  }
+
+  localSettings.update({
+    location_permission_granted: status.foregroundLocation === 'granted',
+    notification_permission_granted: status.notifications === 'granted',
+    activity_permission_granted: status.activityRecognition === 'granted',
+    background_location_granted: status.backgroundLocation === 'granted',
+  });
+
+  return status;
+}
+
+export async function requestForegroundLocationPermission() {
+  if (isNativePlatform()) {
+    const result = await Geolocation.requestPermissions({ permissions: ['location'] });
+    localSettings.update({ location_permission_granted: result.location === 'granted' });
+    return result.location === 'granted';
+  }
+
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(false);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      () => resolve(true),
+      () => resolve(false),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+}
+
+export async function requestNotificationPermission() {
+  if (isNativePlatform()) {
+    const result = await LocalNotifications.requestPermissions();
+    localSettings.update({ notification_permission_granted: result.display === 'granted' });
+    return result.display === 'granted';
+  }
+
+  if (!('Notification' in window)) return false;
+  const result = await Notification.requestPermission();
+  return result === 'granted';
+}
+
+export async function requestActivityRecognitionPermission() {
+  if (!isAndroid()) return false;
+  try {
+    const result = await ActivityRecognition.requestPermissions();
+    const granted = result.activityRecognition === 'granted';
+    localSettings.update({ activity_permission_granted: granted });
+    return granted;
+  } catch {
+    return false;
+  }
+}
+
+export async function requestBackgroundLocationPermission() {
+  const foregroundGranted = await requestForegroundLocationPermission();
+  if (!foregroundGranted) return false;
+
+  const notificationsGranted = await requestNotificationPermission();
+  if (!notificationsGranted) return false;
+
+  if (isAndroid()) {
+    try {
+      const result = await ActivityRecognition.requestBackgroundLocation();
+      const granted = result.backgroundLocation === 'granted';
+      localSettings.update({ background_location_granted: granted });
+      if (!granted) await openNativeSettings();
+      return granted;
+    } catch {
+      return false;
+    }
+  }
+
+  localSettings.update({ background_location_granted: true });
+  return true;
+}
+
+export function getPermissionExplanation(kind) {
+  const copy = {
+    foregroundLocation: 'DriveSense needs precise location while you start a trip so it can record your route, speed, distance, and driving events.',
+    backgroundLocation: 'Background location is only used after you start tracking or enable background auto-tracking. Android requires a persistent notification while this is active.',
+    activityRecognition: 'Physical activity helps DriveSense tell driving apart from walking, cycling, and still time before auto-tracking starts.',
+    notifications: 'Notifications are used for the persistent tracking notice, long-trip reminders, and completed-trip summaries.',
+  };
+  return copy[kind] || '';
+}
+
+export { openNativeSettings };

@@ -4,7 +4,7 @@ import { tripService } from '@/api/trips';
 import { motion } from 'framer-motion';
 import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap,
-  CornerUpRight, AlertTriangle, Moon, Edit3, Trash2, MapPin
+  CornerUpRight, AlertTriangle, Moon, Trash2
 } from 'lucide-react';
 import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';

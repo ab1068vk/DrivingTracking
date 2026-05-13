@@ -106,6 +106,62 @@ export function calculateAcceleration(speed1Kmh, speed2Kmh, durationSeconds) {
   return (v2 - v1) / durationSeconds;
 }
 
+export function normalizeLocationPoint(input) {
+  if (!input) return null;
+
+  const coords = input.coords || input;
+  const lat = coords.latitude ?? input.lat;
+  const lng = coords.longitude ?? input.lng;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const timestampMs = input.timestamp ?? input.time ?? Date.now();
+  return {
+    lat,
+    lng,
+    speed_kmh: coords.speed != null ? Math.max(0, coords.speed * 3.6) : input.speed_kmh ?? null,
+    heading: coords.heading ?? coords.bearing ?? coords.course ?? input.heading ?? null,
+    accuracy: coords.accuracy ?? input.accuracy ?? null,
+    altitude: coords.altitude ?? input.altitude ?? null,
+    altitude_accuracy: coords.altitudeAccuracy ?? input.altitudeAccuracy ?? null,
+    timestamp: new Date(timestampMs).toISOString(),
+  };
+}
+
+export function shouldAcceptLocationPoint(point, previousPoint = null, thresholds = DEFAULT_THRESHOLDS) {
+  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return false;
+  if (point.accuracy != null && point.accuracy > thresholds.MAX_GPS_ACCURACY_M) return false;
+  if (!previousPoint) return true;
+
+  const dt = (new Date(point.timestamp) - new Date(previousPoint.timestamp)) / 1000;
+  if (dt <= 0) return false;
+
+  const distanceKm = haversineDistance(previousPoint.lat, previousPoint.lng, point.lat, point.lng);
+  if (distanceKm < 0.005 && dt < 10) return false;
+
+  const impliedSpeed = calculateSpeedKmh(distanceKm, dt);
+  const reportedSpeed = point.speed_kmh ?? impliedSpeed;
+  if (impliedSpeed > 220 || reportedSpeed > 220) return false;
+
+  return true;
+}
+
+export function cleanRoutePoints(points, thresholds = DEFAULT_THRESHOLDS) {
+  return (points || []).reduce((accepted, rawPoint) => {
+    const point = normalizeLocationPoint(rawPoint) || rawPoint;
+    const previous = accepted[accepted.length - 1] || null;
+    if (shouldAcceptLocationPoint(point, previous, thresholds)) accepted.push(point);
+    return accepted;
+  }, []);
+}
+
+export function calculateRouteSummary(points, startTime, endTime) {
+  const cleaned = cleanRoutePoints(points);
+  const stats = calculateTripStats(cleaned, startTime, endTime);
+  const events = detectDrivingEvents(cleaned);
+  const scores = calculateTripScores(events, stats);
+  return { points: cleaned, stats, events, scores };
+}
+
 // ─── Event Detection ───────────────────────────────────────────────────────────
 /**
  * Analyze route points to detect driving behavior events.

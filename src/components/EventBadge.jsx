@@ -1,4 +1,4 @@
-import { Zap, TrendingDown, CornerUpRight, Gauge, Clock, AlertTriangle } from 'lucide-react';
+import { Zap, TrendingDown, CornerUpRight, Gauge, Clock } from 'lucide-react';
 
 const EVENT_CONFIG = {
   harsh_brake: {
