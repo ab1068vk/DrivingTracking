@@ -218,6 +218,112 @@ export default function Dashboard() {
     refetch();
   };
 
+  useEffect(() => {
+    const cfg = localSettings.get();
+    const autoEnabled = (
+      cfg.auto_tracking_enabled ||
+      cfg.tracking_mode === 'auto_detect' ||
+      cfg.tracking_mode === 'background_auto'
+    ) && !cfg.tracking_paused;
+
+    if (!autoEnabled || tracking) return undefined;
+
+    let cancelled = false;
+
+    const stopAutoWatchers = async () => {
+      await autoLocationService.current?.stop();
+      autoLocationService.current = null;
+      await activityStopRef.current?.();
+      activityStopRef.current = null;
+      latestActivityRef.current = null;
+      recentMovingSinceRef.current = null;
+      stillSinceRef.current = null;
+    };
+
+    const maybeAutoStart = async (point) => {
+      if (cancelled || trackingRef.current) return;
+
+      const speed = point.speed_kmh || 0;
+      if (speed >= 12) {
+        recentMovingSinceRef.current ??= Date.now();
+      } else {
+        recentMovingSinceRef.current = null;
+      }
+
+      if (speed < 5) {
+        stillSinceRef.current ??= Date.now();
+      } else {
+        stillSinceRef.current = null;
+      }
+
+      const recentMovingSeconds = recentMovingSinceRef.current
+        ? (Date.now() - recentMovingSinceRef.current) / 1000
+        : 0;
+      const stillSeconds = stillSinceRef.current
+        ? (Date.now() - stillSinceRef.current) / 1000
+        : 0;
+      const activity = latestActivityRef.current;
+      const activitySaysDrive = shouldAutoStartTracking({ activity, currentSpeedKmh: speed, recentMovingSeconds });
+      const speedOnlyDrive = !isAndroid() && speed >= 18 && recentMovingSeconds >= 20;
+
+      if (activitySaysDrive || speedOnlyDrive) {
+        await stopAutoWatchers();
+        await handleStartTrip({ autoStarted: true });
+      } else if (shouldAutoStopTracking({ activity, currentSpeedKmh: speed, stillSeconds })) {
+        recentMovingSinceRef.current = null;
+      }
+    };
+
+    const startAutoWatchers = async () => {
+      const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+
+      if (isAndroid()) {
+        const activityGranted = await requestActivityRecognitionPermission();
+        if (cancelled) return;
+        if (!activityGranted) {
+          setLocationError('Physical activity permission is required for auto trip detection.');
+          return;
+        }
+
+        activityStopRef.current = await startActivityRecognition(
+          (activity) => {
+            latestActivityRef.current = activity;
+          },
+          (err) => setLocationError(err.message)
+        );
+      }
+
+      const locationGranted = useBackground
+        ? await requestBackgroundLocationPermission()
+        : await requestForegroundLocationPermission();
+      if (cancelled) return;
+
+      if (!locationGranted) {
+        setLocationError(useBackground
+          ? 'Background auto tracking needs background location and notification permission.'
+          : 'Auto tracking needs location permission.');
+        return;
+      }
+
+      autoLocationService.current = createDrivingTrackingService({ background: useBackground });
+      await autoLocationService.current.start(
+        (point) => {
+          setCurrentLocation(point);
+          setLocationError(null);
+          maybeAutoStart(point);
+        },
+        (err) => setLocationError(err.message)
+      );
+    };
+
+    startAutoWatchers();
+
+    return () => {
+      cancelled = true;
+      stopAutoWatchers();
+    };
+  }, [tracking, handleStartTrip]);
+
   // Stats
   const totalTrips = completedTrips.length;
   const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
@@ -335,7 +441,7 @@ export default function Dashboard() {
                 <div className="text-muted-foreground text-xs mt-1">Tap to begin tracking your route</div>
               </div>
               <button
-                onClick={handleStartTrip}
+                onClick={() => handleStartTrip()}
                 className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
               >
                 <Play className="w-7 h-7 text-white ml-0.5" />

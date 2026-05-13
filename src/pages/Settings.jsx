@@ -17,6 +17,7 @@ import {
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
+import { isAndroid } from '@/lib/nativePlatform';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -86,6 +87,47 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 1500);
   };
 
+  const enableTrackingMode = async (mode) => {
+    if (mode === 'manual') {
+      updateCfg({
+        tracking_mode: 'manual',
+        auto_tracking_enabled: false,
+        background_tracking_enabled: false,
+      });
+      return;
+    }
+
+    const locationGranted = await requestForegroundLocationPermission();
+    if (!locationGranted) {
+      alert(getPermissionExplanation('foregroundLocation'));
+      await refreshPermissions();
+      return;
+    }
+
+    const activityGranted = !isAndroid() || await requestActivityRecognitionPermission();
+    if (!activityGranted) {
+      alert(getPermissionExplanation('activityRecognition'));
+      await refreshPermissions();
+      return;
+    }
+
+    if (mode === 'background_auto') {
+      const backgroundGranted = await requestBackgroundLocationPermission();
+      if (!backgroundGranted) {
+        alert('Android requires "Allow all the time" location access for background auto tracking. Enable it in the app settings screen that opens.');
+        await refreshPermissions();
+        return;
+      }
+    }
+
+    updateCfg({
+      tracking_mode: mode,
+      auto_tracking_enabled: mode !== 'manual',
+      background_tracking_enabled: mode === 'background_auto',
+    });
+    await refreshPermissions();
+  };
+
   const refreshPermissions = async () => {
     setPermissionStatus(await getPermissionStatus());
   };
@@ -146,7 +188,7 @@ export default function Settings() {
               ].map(opt => (
                 <button
                   key={opt.id}
-                  onClick={() => updateCfg({ tracking_mode: opt.id })}
+                  onClick={() => enableTrackingMode(opt.id)}
                   className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
                     cfg.tracking_mode === opt.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
                   }`}
@@ -173,7 +215,13 @@ export default function Settings() {
             label="Auto-Tracking"
             sublabel="Start only after you enable it and driving signals are strong"
           >
-            <Toggle value={cfg.auto_tracking_enabled} onChange={v => updateCfg({ auto_tracking_enabled: v, tracking_mode: v ? 'auto_detect' : 'manual' })} />
+            <Toggle value={cfg.auto_tracking_enabled} onChange={async v => {
+              if (v) {
+                await enableTrackingMode('auto_detect');
+                return;
+              }
+              updateCfg({ auto_tracking_enabled: false, tracking_mode: 'manual' });
+            }} />
           </SettingRow>
           <SettingRow
             icon={Shield}
@@ -182,14 +230,10 @@ export default function Settings() {
           >
             <Toggle value={cfg.background_tracking_enabled} onChange={async v => {
               if (v) {
-                const granted = await requestBackgroundLocationPermission();
-                if (!granted) {
-                  alert(getPermissionExplanation('backgroundLocation'));
-                  await refreshPermissions();
-                  return;
-                }
+                await enableTrackingMode('background_auto');
+                return;
               }
-              updateCfg({ background_tracking_enabled: v, tracking_mode: v ? 'background_auto' : 'manual' });
+              updateCfg({ background_tracking_enabled: false, auto_tracking_enabled: false, tracking_mode: 'manual' });
               await refreshPermissions();
             }} />
           </SettingRow>

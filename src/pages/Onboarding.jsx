@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Car, MapPin, Activity, Bell, Shield, ChevronRight, Check, AlertCircle } from 'lucide-react';
-import { localSettings, requestLocationPermission } from '@/lib/trackingStore';
+import { localSettings } from '@/lib/trackingStore';
+import {
+  requestActivityRecognitionPermission,
+  requestBackgroundLocationPermission,
+  requestForegroundLocationPermission,
+  requestNotificationPermission,
+} from '@/lib/permissions';
+import { isAndroid } from '@/lib/nativePlatform';
 import { useNavigate } from 'react-router-dom';
 
 const STEPS = [
@@ -91,18 +98,32 @@ export default function Onboarding() {
 
   const handleLocationRequest = async () => {
     setRequesting(true);
-    const granted = await requestLocationPermission();
+    const granted = await requestForegroundLocationPermission();
     setLocationGranted(granted);
     localSettings.update({ location_permission_granted: granted });
     setRequesting(false);
   };
 
+  const requestTrackingModePermissions = async () => {
+    if (trackingMode === 'manual') return;
+
+    await requestForegroundLocationPermission();
+    if (isAndroid()) await requestActivityRecognitionPermission();
+    if (trackingMode === 'background_auto') {
+      await requestNotificationPermission();
+      await requestBackgroundLocationPermission();
+    }
+  };
+
   const handleNext = async () => {
     if (isLast) {
+      await requestTrackingModePermissions();
       // Save settings and complete onboarding
       localSettings.update({
         onboarding_completed: true,
         tracking_mode: trackingMode,
+        auto_tracking_enabled: trackingMode !== 'manual',
+        background_tracking_enabled: trackingMode === 'background_auto',
       });
       navigate('/');
       return;
