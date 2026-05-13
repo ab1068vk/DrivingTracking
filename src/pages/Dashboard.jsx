@@ -61,6 +61,8 @@ export default function Dashboard() {
   useEffect(() => {
     const recovered = activeTripStore.get();
     if (recovered) {
+      activeTripRef.current = recovered;
+      trackingRef.current = true;
       setActiveTrip(recovered);
       setTracking(true);
       startTimer(new Date(recovered.start_time));
@@ -102,6 +104,7 @@ export default function Dashboard() {
           if (!prev) return prev;
           const updated = { ...prev, route_points: [...(prev.route_points || []), point] };
           activeTripStore.set(updated);
+          activeTripRef.current = updated;
           return updated;
         });
       },
@@ -148,6 +151,8 @@ export default function Dashboard() {
     };
 
     activeTripStore.set(tripData);
+    activeTripRef.current = tripData;
+    trackingRef.current = true;
     setActiveTrip(tripData);
     setTracking(true);
     startTimer(new Date());
@@ -176,6 +181,8 @@ export default function Dashboard() {
 
     if (shouldDiscard) {
       activeTripStore.clear();
+      activeTripRef.current = null;
+      trackingRef.current = false;
       setActiveTrip(null);
       setTracking(false);
       setElapsed(0);
@@ -212,6 +219,8 @@ export default function Dashboard() {
     await tripService.create(completedTrip);
     if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
     activeTripStore.clear();
+    activeTripRef.current = null;
+    trackingRef.current = false;
     setActiveTrip(null);
     setTracking(false);
     setElapsed(0);
