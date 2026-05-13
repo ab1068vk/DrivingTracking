@@ -1,0 +1,250 @@
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Car, MapPin, Activity, Bell, Shield, ChevronRight, Check, AlertCircle } from 'lucide-react';
+import { localSettings, requestLocationPermission } from '@/lib/trackingStore';
+import { useNavigate } from 'react-router-dom';
+
+const STEPS = [
+  {
+    id: 'welcome',
+    icon: Car,
+    title: 'Welcome to DriveSense',
+    subtitle: 'Your intelligent driving companion',
+    description: 'DriveSense tracks your driving trips, analyzes your habits, and helps you become a safer, more efficient driver. All data stays on your device.',
+    color: 'gradient-primary',
+    textColor: 'text-white',
+  },
+  {
+    id: 'location',
+    icon: MapPin,
+    title: 'Location Access',
+    subtitle: 'Required for trip tracking',
+    description: 'DriveSense needs your GPS location to track routes, calculate speed, and detect driving events. Location is only used when you are actively tracking a trip.',
+    color: 'gradient-success',
+    textColor: 'text-white',
+    permissionType: 'location',
+  },
+  {
+    id: 'activity',
+    icon: Activity,
+    title: 'Motion & Activity',
+    subtitle: 'For smarter trip detection',
+    description: 'We use device motion sensors to detect acceleration, braking, and turns. This helps us accurately score your driving without draining your battery.',
+    color: 'bg-gradient-to-br from-purple-500 to-purple-700',
+    textColor: 'text-white',
+  },
+  {
+    id: 'notifications',
+    icon: Bell,
+    title: 'Notifications',
+    subtitle: 'Optional but recommended',
+    description: 'Get notified when a trip starts or ends, receive your weekly driving report, and get reminders to stay safe on long drives. You can turn these off at any time.',
+    color: 'bg-gradient-to-br from-orange-400 to-orange-600',
+    textColor: 'text-white',
+  },
+  {
+    id: 'tracking_mode',
+    icon: Shield,
+    title: 'Tracking Mode',
+    subtitle: 'You are in control',
+    description: 'Choose how DriveSense detects your trips. You can change this at any time in Settings.',
+    color: 'bg-gradient-to-br from-slate-700 to-slate-900',
+    textColor: 'text-white',
+    isChoice: true,
+  },
+];
+
+const TRACKING_OPTIONS = [
+  {
+    id: 'manual',
+    title: 'Manual Only',
+    description: 'Tap "Start Trip" to begin tracking. No background activity.',
+    icon: '🕹️',
+    recommended: false,
+  },
+  {
+    id: 'auto_detect',
+    title: 'Auto-Detect',
+    description: 'App detects when you start driving while open in foreground.',
+    icon: '🔍',
+    recommended: true,
+  },
+  {
+    id: 'background_auto',
+    title: 'Background Auto',
+    description: 'Tracks trips automatically, even when app is closed. Uses more battery.',
+    icon: '🌐',
+    recommended: false,
+    warning: 'Uses more battery. Requires background location permission.',
+  },
+];
+
+export default function Onboarding() {
+  const [step, setStep] = useState(0);
+  const [trackingMode, setTrackingMode] = useState('manual');
+  const [locationGranted, setLocationGranted] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const navigate = useNavigate();
+
+  const currentStep = STEPS[step];
+  const isLast = step === STEPS.length - 1;
+
+  const handleLocationRequest = async () => {
+    setRequesting(true);
+    const granted = await requestLocationPermission();
+    setLocationGranted(granted);
+    localSettings.update({ location_permission_granted: granted });
+    setRequesting(false);
+  };
+
+  const handleNext = async () => {
+    if (isLast) {
+      // Save settings and complete onboarding
+      localSettings.update({
+        onboarding_completed: true,
+        tracking_mode: trackingMode,
+      });
+      navigate('/');
+      return;
+    }
+
+    // Request location permission when on location step
+    if (currentStep.id === 'location' && !locationGranted) {
+      await handleLocationRequest();
+    }
+
+    setStep(s => s + 1);
+  };
+
+  const handleSkip = () => {
+    setStep(s => s + 1);
+  };
+
+  const Icon = currentStep.icon;
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
+      {/* Progress dots */}
+      <div className="flex gap-2 mb-8">
+        {STEPS.map((_, i) => (
+          <div
+            key={i}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              i === step ? 'w-8 bg-primary' : i < step ? 'w-3 bg-primary/50' : 'w-3 bg-border'
+            }`}
+          />
+        ))}
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={step}
+          initial={{ opacity: 0, x: 30 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -30 }}
+          transition={{ duration: 0.25 }}
+          className="w-full max-w-sm"
+        >
+          {/* Icon card */}
+          <div className={`w-24 h-24 rounded-3xl ${currentStep.color} flex items-center justify-center mx-auto mb-8 shadow-2xl`}>
+            <Icon className={`w-12 h-12 ${currentStep.textColor}`} />
+          </div>
+
+          {/* Text */}
+          <div className="text-center mb-8">
+            <div className="text-xs text-primary font-semibold uppercase tracking-widest mb-2">
+              {currentStep.subtitle}
+            </div>
+            <h1 className="text-3xl font-grotesk font-bold mb-4 leading-tight">
+              {currentStep.title}
+            </h1>
+            <p className="text-muted-foreground leading-relaxed">
+              {currentStep.description}
+            </p>
+          </div>
+
+          {/* Location permission status */}
+          {currentStep.id === 'location' && (
+            <div className="mb-6">
+              {locationGranted ? (
+                <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-xl text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50">
+                  <Check className="w-4 h-4" />
+                  <span className="text-sm font-medium">Location access granted</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleLocationRequest}
+                  disabled={requesting}
+                  className="w-full p-3 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl text-sm font-medium transition-colors border border-primary/20"
+                >
+                  {requesting ? 'Requesting...' : 'Grant Location Access'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Tracking mode choices */}
+          {currentStep.isChoice && (
+            <div className="space-y-3 mb-6">
+              {TRACKING_OPTIONS.map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => setTrackingMode(opt.id)}
+                  className={`w-full p-4 rounded-2xl border-2 text-left transition-all ${
+                    trackingMode === opt.id
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-card hover:border-border/80'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{opt.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm">{opt.title}</span>
+                        {opt.recommended && (
+                          <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-medium">
+                            Recommended
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{opt.description}</p>
+                      {opt.warning && (
+                        <div className="flex items-center gap-1 mt-1 text-xs text-orange-500">
+                          <AlertCircle className="w-3 h-3" />
+                          {opt.warning}
+                        </div>
+                      )}
+                    </div>
+                    {trackingMode === opt.id && (
+                      <Check className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Actions */}
+      <div className="w-full max-w-sm mt-4 flex flex-col gap-3">
+        <button
+          onClick={handleNext}
+          className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold rounded-2xl shadow-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+        >
+          {isLast ? 'Get Started' : 'Continue'}
+          <ChevronRight className="w-4 h-4" />
+        </button>
+
+        {!isLast && step > 0 && (
+          <button
+            onClick={handleSkip}
+            className="w-full py-3 text-muted-foreground text-sm hover:text-foreground transition-colors"
+          >
+            Skip for now
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

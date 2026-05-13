@@ -1,0 +1,132 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 25% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+    --primary: 217 91% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 15% 94%;
+    --secondary-foreground: 220 25% 20%;
+    --muted: 220 15% 94%;
+    --muted-foreground: 220 15% 50%;
+    --accent: 142 71% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 217 91% 50%;
+    --radius: 0.75rem;
+
+    /* Custom DriveSense tokens */
+    --ds-blue: 217 91% 50%;
+    --ds-green: 142 71% 45%;
+    --ds-orange: 32 95% 55%;
+    --ds-red: 0 84% 60%;
+    --ds-purple: 262 83% 58%;
+    --ds-surface: 220 20% 97%;
+    --ds-card: 0 0% 100%;
+    --ds-glass: 0 0% 100% / 0.7;
+    --chart-1: 217 91% 50%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 32 95% 55%;
+    --chart-4: 262 83% 58%;
+    --chart-5: 0 84% 60%;
+  }
+
+  .dark {
+    --background: 222 28% 8%;
+    --foreground: 220 15% 92%;
+    --card: 222 25% 12%;
+    --card-foreground: 220 15% 92%;
+    --popover: 222 25% 12%;
+    --popover-foreground: 220 15% 92%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 20% 18%;
+    --secondary-foreground: 220 15% 80%;
+    --muted: 222 20% 18%;
+    --muted-foreground: 220 15% 55%;
+    --accent: 142 71% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 20% 20%;
+    --input: 222 20% 20%;
+    --ring: 217 91% 60%;
+
+    --ds-surface: 222 28% 8%;
+    --ds-card: 222 25% 12%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 142 71% 50%;
+    --chart-3: 32 95% 60%;
+    --chart-4: 262 83% 65%;
+    --chart-5: 0 70% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-inter antialiased;
+  }
+}
+
+@layer utilities {
+  .font-inter { font-family: 'Inter', sans-serif; }
+  .font-grotesk { font-family: 'Space Grotesk', sans-serif; }
+
+  .glass-card {
+    @apply bg-white/70 dark:bg-card/70 backdrop-blur-xl border border-white/50 dark:border-border/50;
+  }
+
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--ds-blue)), hsl(var(--ds-purple)));
+  }
+
+  .gradient-success {
+    background: linear-gradient(135deg, hsl(var(--ds-green)), hsl(142 71% 35%));
+  }
+
+  .gradient-warning {
+    background: linear-gradient(135deg, hsl(var(--ds-orange)), hsl(32 95% 45%));
+  }
+
+  .gradient-danger {
+    background: linear-gradient(135deg, hsl(var(--ds-red)), hsl(0 84% 50%));
+  }
+
+  .score-ring {
+    filter: drop-shadow(0 0 8px hsl(var(--ds-blue) / 0.4));
+  }
+
+  .animate-pulse-subtle {
+    animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse-subtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+
+  .map-container {
+    @apply rounded-xl overflow-hidden;
+    min-height: 300px;
+  }
+
+  /* Custom scrollbar */
+  .thin-scrollbar::-webkit-scrollbar { width: 4px; }
+  .thin-scrollbar::-webkit-scrollbar-track { @apply bg-transparent; }
+  .thin-scrollbar::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
+}

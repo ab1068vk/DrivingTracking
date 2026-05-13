@@ -1,0 +1,587 @@
+/**
+ * DriveSense Trip Engine
+ * Core logic for trip tracking, event detection, and scoring.
+ * All thresholds are configurable via the THRESHOLDS object.
+ */
+
+// ─── Default Thresholds ────────────────────────────────────────────────────────
+export const DEFAULT_THRESHOLDS = {
+  // Harsh braking: deceleration > 4.5 m/s² (≈ 16 km/h per second drop)
+  HARSH_BRAKE_MS2: 4.5,
+  // Rapid acceleration: > 3.5 m/s² (≈ 12.6 km/h per second gain)
+  RAPID_ACCEL_MS2: 3.5,
+  // Sharp turn: heading change > 45° per GPS sample at > 30 km/h
+  SHARP_TURN_DEG_PER_S: 45,
+  // Speeding fallback: above 130 km/h (when no speed limit data)
+  SPEEDING_FALLBACK_KMH: 130,
+  // Idle threshold: speed < 5 km/h
+  IDLE_SPEED_KMH: 5,
+  // Idle event: idling for > 60 consecutive seconds
+  IDLE_EVENT_SECONDS: 60,
+  // Long drive: > 120 continuous minutes
+  LONG_DRIVE_MINUTES: 120,
+  // Night driving: 22:00 - 06:00
+  NIGHT_START_HOUR: 22,
+  NIGHT_END_HOUR: 6,
+  // Minimum trip distance to save (< 0.1 km = likely noise)
+  MIN_TRIP_DISTANCE_KM: 0.1,
+  // Minimum trip duration
+  MIN_TRIP_DURATION_SECONDS: 30,
+  // GPS accuracy filter: ignore points with accuracy > 50m
+  MAX_GPS_ACCURACY_M: 50,
+};
+
+// ─── Haversine Distance ────────────────────────────────────────────────────────
+/**
+ * Calculate great-circle distance between two GPS points using Haversine formula.
+ * @param {number} lat1 - Latitude of point 1 in degrees
+ * @param {number} lng1 - Longitude of point 1 in degrees
+ * @param {number} lat2 - Latitude of point 2 in degrees
+ * @param {number} lng2 - Longitude of point 2 in degrees
+ * @returns {number} Distance in kilometers
+ */
+export function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Earth radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function toRad(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+// ─── Heading Calculation ───────────────────────────────────────────────────────
+/**
+ * Calculate bearing (heading) between two GPS points.
+ * @returns {number} Bearing in degrees (0-360)
+ */
+export function calculateBearing(lat1, lng1, lat2, lng2) {
+  const dLng = toRad(lng2 - lng1);
+  const rlat1 = toRad(lat1);
+  const rlat2 = toRad(lat2);
+  const y = Math.sin(dLng) * Math.cos(rlat2);
+  const x = Math.cos(rlat1) * Math.sin(rlat2) - Math.sin(rlat1) * Math.cos(rlat2) * Math.cos(dLng);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/**
+ * Get the smallest angular difference between two headings.
+ * @returns {number} Angle in degrees (0-180)
+ */
+export function headingDiff(h1, h2) {
+  let diff = Math.abs(h1 - h2) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+// ─── Speed Calculation ─────────────────────────────────────────────────────────
+/**
+ * Calculate speed between two GPS points.
+ * @param {number} distKm - Distance in km
+ * @param {number} durationSeconds - Time elapsed in seconds
+ * @returns {number} Speed in km/h
+ */
+export function calculateSpeedKmh(distKm, durationSeconds) {
+  if (durationSeconds <= 0) return 0;
+  return (distKm / durationSeconds) * 3600;
+}
+
+// ─── Acceleration Detection ────────────────────────────────────────────────────
+/**
+ * Calculate acceleration/deceleration from two speed readings.
+ * Formula: a = (v2 - v1) / t
+ * @param {number} speed1Kmh - Initial speed in km/h
+ * @param {number} speed2Kmh - Final speed in km/h
+ * @param {number} durationSeconds - Time elapsed in seconds
+ * @returns {number} Acceleration in m/s² (negative = braking)
+ */
+export function calculateAcceleration(speed1Kmh, speed2Kmh, durationSeconds) {
+  if (durationSeconds <= 0) return 0;
+  const v1 = speed1Kmh / 3.6; // convert to m/s
+  const v2 = speed2Kmh / 3.6;
+  return (v2 - v1) / durationSeconds;
+}
+
+// ─── Event Detection ───────────────────────────────────────────────────────────
+/**
+ * Analyze route points to detect driving behavior events.
+ * Returns an array of DrivingEvent objects.
+ *
+ * @param {Array} points - Array of { lat, lng, speed_kmh, timestamp, heading }
+ * @param {Object} thresholds - Configurable thresholds
+ * @returns {Array} Detected events
+ */
+export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
+  const events = [];
+  if (!points || points.length < 3) return events;
+
+  let idleStart = null;
+  let idleAccum = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+
+    const dt = (new Date(curr.timestamp) - new Date(prev.timestamp)) / 1000; // seconds
+    if (dt <= 0 || dt > 120) continue; // skip gaps > 2 minutes (possible pause)
+
+    const speed1 = prev.speed_kmh || 0;
+    const speed2 = curr.speed_kmh || 0;
+    const accel = calculateAcceleration(speed1, speed2, dt);
+
+    // ── Harsh Braking
+    // Threshold: deceleration > 4.5 m/s² while above 20 km/h (to avoid parking noise)
+    if (accel < -thresholds.HARSH_BRAKE_MS2 && speed1 > 20) {
+      events.push({
+        type: 'harsh_brake',
+        severity: Math.abs(accel) > 6 ? 'high' : Math.abs(accel) > 5 ? 'medium' : 'low',
+        lat: curr.lat,
+        lng: curr.lng,
+        timestamp: curr.timestamp,
+        value: Math.abs(accel),
+      });
+    }
+
+    // ── Rapid Acceleration
+    // Threshold: acceleration > 3.5 m/s² from speed > 5 km/h
+    if (accel > thresholds.RAPID_ACCEL_MS2 && speed1 > 5) {
+      events.push({
+        type: 'rapid_acceleration',
+        severity: accel > 5 ? 'high' : accel > 4 ? 'medium' : 'low',
+        lat: curr.lat,
+        lng: curr.lng,
+        timestamp: curr.timestamp,
+        value: accel,
+      });
+    }
+
+    // ── Sharp Turn
+    // Heading change > 45°/s while above 30 km/h. At lower speeds turns are normal.
+    if (speed2 > 30) {
+      const h1 = prev.heading ?? calculateBearing(
+        i > 1 ? points[i - 2].lat : prev.lat,
+        i > 1 ? points[i - 2].lng : prev.lng,
+        prev.lat, prev.lng
+      );
+      const h2 = curr.heading ?? calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
+      const hdiff = headingDiff(h1, h2);
+      const turnRate = dt > 0 ? hdiff / dt : 0; // degrees per second
+
+      if (turnRate > thresholds.SHARP_TURN_DEG_PER_S) {
+        events.push({
+          type: 'sharp_turn',
+          severity: turnRate > 90 ? 'high' : turnRate > 60 ? 'medium' : 'low',
+          lat: curr.lat,
+          lng: curr.lng,
+          timestamp: curr.timestamp,
+          value: turnRate,
+        });
+      }
+    }
+
+    // ── Speeding (fallback – no speed limit data)
+    // Flag when speed exceeds the fallback threshold (default 130 km/h)
+    if (speed2 > thresholds.SPEEDING_FALLBACK_KMH) {
+      events.push({
+        type: 'speeding',
+        severity: speed2 > 160 ? 'high' : speed2 > 140 ? 'medium' : 'low',
+        lat: curr.lat,
+        lng: curr.lng,
+        timestamp: curr.timestamp,
+        value: speed2,
+      });
+    }
+
+    // ── Idle accumulation
+    if (speed2 < thresholds.IDLE_SPEED_KMH) {
+      if (!idleStart) idleStart = curr.timestamp;
+      idleAccum += dt;
+    } else {
+      if (idleAccum >= thresholds.IDLE_EVENT_SECONDS) {
+        events.push({
+          type: 'idle',
+          severity: idleAccum > 300 ? 'high' : idleAccum > 120 ? 'medium' : 'low',
+          lat: curr.lat,
+          lng: curr.lng,
+          timestamp: idleStart,
+          value: idleAccum,
+        });
+      }
+      idleStart = null;
+      idleAccum = 0;
+    }
+  }
+
+  // Final idle check
+  if (idleAccum >= thresholds.IDLE_EVENT_SECONDS) {
+    const last = points[points.length - 1];
+    events.push({
+      type: 'idle',
+      severity: idleAccum > 300 ? 'high' : idleAccum > 120 ? 'medium' : 'low',
+      lat: last.lat,
+      lng: last.lng,
+      timestamp: idleStart,
+      value: idleAccum,
+    });
+  }
+
+  return events;
+}
+
+// ─── Trip Statistics ───────────────────────────────────────────────────────────
+/**
+ * Calculate aggregate trip statistics from route points.
+ *
+ * @param {Array} points - GPS route points
+ * @param {string} startTime - ISO timestamp
+ * @param {string} endTime - ISO timestamp
+ * @returns {Object} Trip statistics
+ */
+export function calculateTripStats(points, startTime, endTime) {
+  if (!points || points.length < 2) {
+    return {
+      distance_km: 0,
+      avg_speed_kmh: 0,
+      max_speed_kmh: 0,
+      idle_time_seconds: 0,
+      duration_seconds: 0,
+      night_driving: false,
+    };
+  }
+
+  let totalDistance = 0;
+  let maxSpeed = 0;
+  let speedSum = 0;
+  let idleTime = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i - 1];
+    const c = points[i];
+    const dist = haversineDistance(p.lat, p.lng, c.lat, c.lng);
+    totalDistance += dist;
+
+    const spd = c.speed_kmh || 0;
+    if (spd > maxSpeed) maxSpeed = spd;
+    speedSum += spd;
+
+    const dt = (new Date(c.timestamp) - new Date(p.timestamp)) / 1000;
+    if (spd < DEFAULT_THRESHOLDS.IDLE_SPEED_KMH && dt > 0 && dt < 120) {
+      idleTime += dt;
+    }
+  }
+
+  const start = new Date(startTime);
+  const end = endTime ? new Date(endTime) : new Date();
+  const durationSeconds = Math.max(0, (end - start) / 1000);
+
+  // Night driving: any point between 22:00 and 06:00 local time
+  const nightDriving = points.some(p => {
+    const h = new Date(p.timestamp).getHours();
+    return h >= DEFAULT_THRESHOLDS.NIGHT_START_HOUR || h < DEFAULT_THRESHOLDS.NIGHT_END_HOUR;
+  });
+
+  return {
+    distance_km: Math.round(totalDistance * 1000) / 1000,
+    avg_speed_kmh: points.length > 1 ? Math.round(speedSum / (points.length - 1) * 10) / 10 : 0,
+    max_speed_kmh: Math.round(maxSpeed * 10) / 10,
+    idle_time_seconds: Math.round(idleTime),
+    duration_seconds: Math.round(durationSeconds),
+    night_driving: nightDriving,
+  };
+}
+
+// ─── Scoring Engine ────────────────────────────────────────────────────────────
+/**
+ * Calculate trip scores from events and statistics.
+ *
+ * Scoring methodology:
+ * - Start with 100 points
+ * - Deduct for each risky event (severity-weighted)
+ * - Apply bonuses for clean driving
+ * - Sub-scores: Safety, Smoothness, Eco
+ * - Overall = weighted average of sub-scores
+ *
+ * Safety (40%):    based on harsh brakes, speeding, sharp turns
+ * Smoothness (35%): based on rapid accel, harsh brakes, turn smoothness
+ * Eco (25%):        based on speeding, rapid accel, idle time
+ *
+ * @param {Array} events - Detected driving events
+ * @param {Object} stats - Trip statistics (distance, duration, etc.)
+ * @returns {Object} { overall, safety, smoothness, eco }
+ */
+export function calculateTripScores(events, stats) {
+  const penalties = {
+    harsh_brake: { low: 3, medium: 6, high: 12 },
+    rapid_acceleration: { low: 2, medium: 5, high: 10 },
+    sharp_turn: { low: 2, medium: 5, high: 10 },
+    speeding: { low: 5, medium: 10, high: 20 },
+    idle: { low: 1, medium: 3, high: 5 },
+  };
+
+  // Count events
+  const counts = {
+    harsh_brake: 0,
+    rapid_acceleration: 0,
+    sharp_turn: 0,
+    speeding: 0,
+    idle: 0,
+  };
+  let safetyPenalty = 0;
+  let smoothnessPenalty = 0;
+  let ecoPenalty = 0;
+
+  for (const evt of events) {
+    const p = penalties[evt.type]?.[evt.severity] ?? 0;
+    if (counts[evt.type] !== undefined) counts[evt.type]++;
+
+    // Safety: deducts from harsh_brake, speeding, sharp_turn
+    if (['harsh_brake', 'speeding', 'sharp_turn'].includes(evt.type)) safetyPenalty += p;
+    // Smoothness: deducts from harsh_brake, rapid_acceleration, sharp_turn
+    if (['harsh_brake', 'rapid_acceleration', 'sharp_turn'].includes(evt.type)) smoothnessPenalty += p;
+    // Eco: deducts from speeding, rapid_acceleration, idle
+    if (['speeding', 'rapid_acceleration', 'idle'].includes(evt.type)) ecoPenalty += p;
+  }
+
+  // Night driving penalty (minor)
+  if (stats.night_driving) safetyPenalty += 5;
+
+  // Long drive penalty (fatigue risk)
+  const driveMins = (stats.duration_seconds || 0) / 60;
+  if (driveMins > DEFAULT_THRESHOLDS.LONG_DRIVE_MINUTES) {
+    safetyPenalty += Math.floor((driveMins - DEFAULT_THRESHOLDS.LONG_DRIVE_MINUTES) / 30) * 3;
+  }
+
+  // Normalize per km (avoid penalizing long trips too harshly)
+  const distFactor = Math.max(1, (stats.distance_km || 1));
+  const normalize = (p) => Math.max(0, 100 - Math.min(p * (5 / distFactor), 80));
+
+  const safety = Math.round(normalize(safetyPenalty));
+  const smoothness = Math.round(normalize(smoothnessPenalty));
+  const eco = Math.round(normalize(ecoPenalty));
+
+  // Overall = weighted combination
+  const overall = Math.round(safety * 0.4 + smoothness * 0.35 + eco * 0.25);
+
+  return {
+    score_overall: overall,
+    score_safety: safety,
+    score_smoothness: smoothness,
+    score_eco: eco,
+    harsh_brakes_count: counts.harsh_brake,
+    rapid_accel_count: counts.rapid_acceleration,
+    sharp_turns_count: counts.sharp_turn,
+    speeding_events_count: counts.speeding,
+  };
+}
+
+// ─── Score Color Utility ───────────────────────────────────────────────────────
+export function getScoreColor(score) {
+  if (score >= 85) return { color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-950/30', label: 'Excellent' };
+  if (score >= 70) return { color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30', label: 'Good' };
+  if (score >= 55) return { color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30', label: 'Fair' };
+  if (score >= 40) return { color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30', label: 'Poor' };
+  return { color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30', label: 'Risky' };
+}
+
+export function getScoreGradient(score) {
+  if (score >= 85) return 'from-green-400 to-emerald-500';
+  if (score >= 70) return 'from-blue-400 to-blue-600';
+  if (score >= 55) return 'from-yellow-400 to-orange-400';
+  if (score >= 40) return 'from-orange-400 to-red-400';
+  return 'from-red-500 to-red-700';
+}
+
+// ─── Format Utilities ──────────────────────────────────────────────────────────
+export function formatDuration(seconds) {
+  if (!seconds) return '0m';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+export function formatDistance(km, units = 'metric') {
+  if (units === 'imperial') {
+    const miles = km * 0.621371;
+    return `${miles.toFixed(1)} mi`;
+  }
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1)} km`;
+}
+
+export function formatSpeed(kmh, units = 'metric') {
+  if (units === 'imperial') return `${Math.round(kmh * 0.621371)} mph`;
+  return `${Math.round(kmh)} km/h`;
+}
+
+export function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+export function formatTime(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+export function formatDateTime(dateStr) {
+  if (!dateStr) return '';
+  return `${formatDate(dateStr)} ${formatTime(dateStr)}`;
+}
+
+// ─── Report Calculations ───────────────────────────────────────────────────────
+/**
+ * Generate a summary report for a set of trips.
+ *
+ * @param {Array} trips - Array of completed trips
+ * @returns {Object} Report summary
+ */
+export function generateReportSummary(trips) {
+  if (!trips || trips.length === 0) {
+    return {
+      total_trips: 0,
+      total_distance_km: 0,
+      total_duration_seconds: 0,
+      avg_score: 0,
+      best_trip: null,
+      worst_trip: null,
+      total_harsh_brakes: 0,
+      total_rapid_accels: 0,
+      total_sharp_turns: 0,
+      total_speeding_events: 0,
+      most_common_risk: null,
+    };
+  }
+
+  const completed = trips.filter(t => t.status === 'completed');
+  const totalDistance = completed.reduce((s, t) => s + (t.distance_km || 0), 0);
+  const totalDuration = completed.reduce((s, t) => s + (t.duration_seconds || 0), 0);
+  const scores = completed.filter(t => t.score_overall > 0).map(t => t.score_overall);
+  const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+
+  const sorted = [...completed].sort((a, b) => (b.score_overall || 0) - (a.score_overall || 0));
+  const bestTrip = sorted[0] || null;
+  const worstTrip = sorted[sorted.length - 1] || null;
+
+  const hb = completed.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
+  const ra = completed.reduce((s, t) => s + (t.rapid_accel_count || 0), 0);
+  const st = completed.reduce((s, t) => s + (t.sharp_turns_count || 0), 0);
+  const sp = completed.reduce((s, t) => s + (t.speeding_events_count || 0), 0);
+
+  const riskMap = { harsh_brake: hb, rapid_acceleration: ra, sharp_turn: st, speeding: sp };
+  const mostCommonRisk = Object.entries(riskMap).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+  return {
+    total_trips: completed.length,
+    total_distance_km: Math.round(totalDistance * 10) / 10,
+    total_duration_seconds: totalDuration,
+    avg_score: avgScore,
+    best_trip: bestTrip,
+    worst_trip: worstTrip,
+    total_harsh_brakes: hb,
+    total_rapid_accels: ra,
+    total_sharp_turns: st,
+    total_speeding_events: sp,
+    most_common_risk: mostCommonRisk,
+    score_trend: scores,
+  };
+}
+
+// ─── GPS Location Service (Browser) ───────────────────────────────────────────
+/**
+ * Live GPS tracking service using the Web Geolocation API.
+ * Returns an object with start/stop methods and a callback for new points.
+ */
+export function createLocationService() {
+  let watchId = null;
+  let onPoint = null;
+  let onError = null;
+
+  return {
+    start(onPointCb, onErrorCb) {
+      onPoint = onPointCb;
+      onError = onErrorCb;
+
+      if (!navigator.geolocation) {
+        onError?.({ message: 'Geolocation not supported' });
+        return;
+      }
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (pos.coords.accuracy > DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M) return; // filter noisy points
+          onPoint?.({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            speed_kmh: pos.coords.speed != null ? pos.coords.speed * 3.6 : null,
+            accuracy: pos.coords.accuracy,
+            heading: pos.coords.heading,
+            timestamp: new Date(pos.timestamp).toISOString(),
+          });
+        },
+        (err) => onError?.({ message: err.message, code: err.code }),
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        }
+      );
+    },
+    stop() {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+    },
+    isActive: () => watchId !== null,
+  };
+}
+
+// ─── CSV Export ────────────────────────────────────────────────────────────────
+export function tripsToCSV(trips) {
+  const headers = [
+    'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
+    'Avg Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
+    'Eco', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events', 'Night Driving',
+  ];
+
+  const rows = trips.map(t => [
+    t.id,
+    t.start_time,
+    t.end_time,
+    t.duration_seconds ? (t.duration_seconds / 60).toFixed(1) : '',
+    t.distance_km ?? '',
+    t.avg_speed_kmh ?? '',
+    t.max_speed_kmh ?? '',
+    t.score_overall ?? '',
+    t.score_safety ?? '',
+    t.score_smoothness ?? '',
+    t.score_eco ?? '',
+    t.harsh_brakes_count ?? '',
+    t.rapid_accel_count ?? '',
+    t.sharp_turns_count ?? '',
+    t.speeding_events_count ?? '',
+    t.night_driving ? 'Yes' : 'No',
+  ]);
+
+  const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  return [headers, ...rows].map(r => r.map(escape).join(',')).join('\n');
+}
+
+export function downloadCSV(content, filename) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
