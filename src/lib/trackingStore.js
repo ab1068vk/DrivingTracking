@@ -63,6 +63,24 @@ export const localSettings = {
   },
 };
 
+export function applyThemeMode(mode = localSettings.get().dark_mode || 'system') {
+  if (typeof document === 'undefined') return;
+
+  if (mode === 'dark') {
+    document.documentElement.classList.add('dark');
+    return;
+  }
+
+  if (mode === 'light') {
+    document.documentElement.classList.remove('dark');
+    return;
+  }
+
+  const prefersDark = typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+  document.documentElement.classList.toggle('dark', !!prefersDark);
+}
+
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────
 export const activeTripStore = {
   get() {

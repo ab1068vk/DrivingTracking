@@ -116,6 +116,22 @@ const deleteTrip = async (id) => {
   }
 };
 
+const pruneExpiredTrips = async () => {
+  const retentionDays = Number(localSettings.get().data_retention_days || 0);
+  if (!retentionDays) return;
+
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const trips = await getAllTrips();
+  const expired = trips.filter((trip) => {
+    const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
+    return Number.isFinite(when) && when > 0 && when < cutoff;
+  });
+
+  for (const trip of expired) {
+    await deleteTrip(trip.id);
+  }
+};
+
 const sortTrips = (trips, sort) => {
   const field = sort?.replace('-', '') || 'start_time';
   const dir = sort?.startsWith('-') ? -1 : 1;
@@ -135,12 +151,14 @@ const withId = (trip) => ({
 export const localTripRepository = {
   async list({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
+    await pruneExpiredTrips();
     const trips = await getAllTrips();
     return sortTrips(trips, sort).slice(0, limit);
   },
 
   async getById(id) {
     await importNativeCompletedTrips();
+    await pruneExpiredTrips();
     const trips = await getAllTrips();
     const trip = trips.find((item) => String(item.id) === String(id));
     if (!trip) throw new Error('Trip not found');
@@ -150,6 +168,7 @@ export const localTripRepository = {
   async create(trip) {
     const saved = withId({ ...trip, created_at: new Date().toISOString() });
     await putTrip(saved);
+    await pruneExpiredTrips();
     return saved;
   },
 

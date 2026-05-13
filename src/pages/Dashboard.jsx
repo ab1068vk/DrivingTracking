@@ -13,7 +13,7 @@ import {
 } from '@/lib/tripEngine';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
-import { scheduleLongTripReminder, cancelLongTripReminder, notifyTripCompleted } from '@/lib/notificationService';
+import { scheduleLongTripReminder, cancelLongTripReminder, notifyTripCompleted, notifyTripStarted } from '@/lib/notificationService';
 import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
 import {
   startActivityRecognition,
@@ -172,6 +172,7 @@ export default function Dashboard() {
     setTracking(true);
     startTimer(new Date());
     startGPS();
+    notifyTripStarted();
     scheduleLongTripReminder(tripData.start_time);
   }, [startGPS]);
 

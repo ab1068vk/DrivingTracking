@@ -6,8 +6,8 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { useEffect, useState } from 'react';
-import { localSettings } from '@/lib/trackingStore';
-import { configureNotificationChannels } from '@/lib/notificationService';
+import { applyThemeMode, localSettings } from '@/lib/trackingStore';
+import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 
@@ -28,23 +28,15 @@ const AuthenticatedApp = () => {
   const [onboardingDone, setOnboardingDone] = useState(null);
 
   useEffect(() => {
-    configureNotificationChannels();
+    configureNotificationChannels().catch(() => {});
     const settings = localSettings.get();
+    syncReminderNotifications(settings, { requestPermission: false }).catch(() => {});
     setOnboardingDone(settings.onboarding_completed);
     if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
       startNativeAutoTracking().catch(() => {});
     }
 
-    // Apply dark mode
-    const mode = settings.dark_mode || 'system';
-    if (mode === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else if (mode === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.classList.toggle('dark', prefersDark);
-    }
+    applyThemeMode(settings.dark_mode);
   }, []);
 
   if (isLoadingPublicSettings || isLoadingAuth || onboardingDone === null) {

@@ -3,9 +3,9 @@ import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Shield, ChevronRight, Info, AlertTriangle, Check
+  Moon, Sun, Monitor, Trash2, Download, Shield, ChevronRight, Info, AlertTriangle, Check, Bell
 } from 'lucide-react';
-import { localSettings } from '@/lib/trackingStore';
+import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -19,6 +19,7 @@ import {
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking, stopNativeAutoTracking } from '@/lib/activityRecognition';
+import { syncReminderNotifications } from '@/lib/notificationService';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -86,6 +87,55 @@ export default function Settings() {
     setCfg(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+    return updated;
+  };
+
+  const updateTheme = (mode) => {
+    const updated = updateCfg({ dark_mode: mode });
+    applyThemeMode(updated.dark_mode);
+  };
+
+  const updateNotificationSetting = async (patch) => {
+    const wantsNotifications = patch.notifications_enabled === true ||
+      Object.entries(patch).some(([key, value]) => key !== 'notifications_enabled' && value === true);
+
+    if (wantsNotifications) {
+      const granted = await requestNotificationPermission();
+      if (!granted) {
+        alert(getPermissionExplanation('notifications'));
+        await refreshPermissions();
+        return;
+      }
+    }
+
+    const updated = updateCfg(patch);
+    await syncReminderNotifications(updated);
+    await refreshPermissions();
+  };
+
+  const updateRetention = async (days) => {
+    updateCfg({ data_retention_days: days });
+    await qc.invalidateQueries();
+  };
+
+  const showPrivacyPolicy = () => {
+    alert('DriveSense stores trip, route, score, vehicle, and settings data locally on this device. The app does not upload trips to a cloud service, does not sell data, and does not use ads or analytics. Deleting trips in Settings removes local trip history from this device.');
+  };
+
+  const updateTrackingPaused = async (paused) => {
+    const updated = updateCfg({ tracking_paused: paused });
+    if (!isAndroid()) return;
+
+    if (paused) {
+      await stopNativeAutoTracking();
+      return;
+    }
+
+    if (updated.tracking_mode === 'background_auto') {
+      try {
+        await startNativeAutoTracking();
+      } catch {}
+    }
   };
 
   const enableTrackingMode = async (mode) => {
@@ -221,7 +271,7 @@ export default function Settings() {
             label="Pause All Tracking"
             sublabel="Temporarily disable trip detection"
           >
-            <Toggle value={cfg.tracking_paused} onChange={v => updateCfg({ tracking_paused: v })} />
+            <Toggle value={cfg.tracking_paused} onChange={updateTrackingPaused} />
           </SettingRow>
           <SettingRow
             icon={Shield}
@@ -304,7 +354,7 @@ export default function Settings() {
               ].map(({ id, icon: Icon, label }) => (
                 <button
                   key={id}
-                  onClick={() => updateCfg({ dark_mode: id })}
+                  onClick={() => updateTheme(id)}
                   className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all ${
                     cfg.dark_mode === id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
                   }`}
@@ -340,6 +390,13 @@ export default function Settings() {
         {/* Notifications */}
         <SectionTitle>Notifications</SectionTitle>
         <div>
+          <SettingRow
+            icon={Bell}
+            label="Enable Notifications"
+            sublabel="Master switch for all DriveSense reminders and summaries"
+          >
+            <Toggle value={cfg.notifications_enabled !== false} onChange={v => updateNotificationSetting({ notifications_enabled: v })} />
+          </SettingRow>
           {[
             { key: 'trip_start_notification', label: 'Trip Started', sub: 'Notify when a trip begins' },
             { key: 'trip_end_notification', label: 'Trip Ended', sub: 'Summary when trip finishes' },
@@ -347,7 +404,7 @@ export default function Settings() {
             { key: 'safe_driving_reminder', label: 'Safe Driving Tips', sub: 'Occasional driving reminders' },
           ].map(({ key, label, sub }) => (
             <SettingRow key={key} label={label} sublabel={sub}>
-              <Toggle value={cfg[key]} onChange={v => updateCfg({ [key]: v })} />
+              <Toggle value={cfg.notifications_enabled !== false && cfg[key]} onChange={v => updateNotificationSetting({ [key]: v })} />
             </SettingRow>
           ))}
         </div>
@@ -407,6 +464,7 @@ export default function Settings() {
             icon={Shield}
             label="Privacy Policy"
             sublabel="All data is stored locally on your device"
+            onClick={showPrivacyPolicy}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
@@ -425,7 +483,7 @@ export default function Settings() {
           >
             <select
               value={cfg.data_retention_days}
-              onChange={e => updateCfg({ data_retention_days: Number(e.target.value) })}
+              onChange={e => updateRetention(Number(e.target.value))}
               className="bg-card border border-border rounded-lg text-xs px-2 py-1"
             >
               <option value={90}>90 days</option>
