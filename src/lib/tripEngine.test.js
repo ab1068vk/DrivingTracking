@@ -14,8 +14,18 @@ import {
 import {
   buildScoreTips,
   buildSpeedSegments,
+  buildDrivingCoachInsights,
   calculateAchievementBadges,
+  calculateFatigueRisk,
+  calculateDrivingConsistency,
+  calculateNoHarshBrakeStreak,
+  calculateRiskEventRate,
+  calculateSpeedDiscipline,
+  calculateWeeklyDrivingGoals,
+  detectTripStops,
   estimateTripEconomics,
+  analyzeDayOfWeek,
+  analyzeTimeOfDay,
   getMaintenanceStatus,
   getVehicleOdometerKm,
 } from '@/lib/tripInsights';
@@ -168,5 +178,48 @@ describe('trip insights', () => {
     expect(estimateTripEconomics(trips[0], vehicle).co2_kg).toBe(23.1);
     expect(buildScoreTips(trips)[0]).toContain('excellent');
     expect(calculateAchievementBadges(trips).find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
+  });
+
+  it('detects stops and summarizes driver-focused analytics', () => {
+    const stoppedPoints = [
+      point(43.6532, -79.3832, 0, 30),
+      point(43.6532, -79.3832, 10, 0),
+      point(43.6532, -79.3832, 130, 0),
+      point(43.6542, -79.3832, 150, 25),
+    ];
+    const now = new Date();
+    const todayTrip = {
+      id: 'today',
+      status: 'completed',
+      start_time: now.toISOString(),
+      duration_seconds: 150 * 60,
+      distance_km: 50,
+      score_overall: 82,
+      harsh_brakes_count: 0,
+      rapid_accel_count: 1,
+      sharp_turns_count: 0,
+      speeding_events_count: 1,
+      night_driving: false,
+      route_points: [
+        point(43.6532, -79.3832, 0, 45),
+        point(43.6542, -79.3832, 10, 145),
+      ],
+    };
+
+    expect(detectTripStops(stoppedPoints)).toHaveLength(1);
+    expect(calculateNoHarshBrakeStreak([todayTrip])).toBe(1);
+    expect(calculateFatigueRisk([todayTrip], { threshold_long_drive_minutes: 120 }).level).toBe('medium');
+    expect(calculateWeeklyDrivingGoals([todayTrip], {
+      weekly_goal_harsh_brakes: 0,
+      weekly_goal_speeding_events: 0,
+      weekly_goal_min_avg_score: 80,
+      weekly_goal_max_night_trips: 0,
+    }).find((goal) => goal.id === 'speeding').met).toBe(false);
+    expect(calculateRiskEventRate([todayTrip]).events_per_100km).toBe(4);
+    expect(calculateSpeedDiscipline([todayTrip], { threshold_speeding_kmh: 130 }).level).toBe('needs_attention');
+    expect(calculateDrivingConsistency([todayTrip]).consistency_score).toBe(100);
+    expect(buildDrivingCoachInsights([todayTrip], { threshold_speeding_kmh: 130 }).focus_area).toBe('acceleration');
+    expect(analyzeTimeOfDay([todayTrip]).reduce((sum, bucket) => sum + bucket.trips, 0)).toBe(1);
+    expect(analyzeDayOfWeek([todayTrip]).reduce((sum, day) => sum + day.trips, 0)).toBe(1);
   });
 });

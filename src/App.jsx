@@ -22,6 +22,8 @@ import Reports from '@/pages/Report';
 import Settings from '@/pages/Settings';
 import AndroidReference from '@/pages/AndroidReference';
 import Vehicles from '@/pages/Vehicles';
+import Achievements from '@/pages/Achievements';
+import DrivingCoach from '@/pages/DrivingCoach';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -71,6 +73,8 @@ const AuthenticatedApp = () => {
         <Route path="/trips" element={<TripHistory />} />
         <Route path="/trips/:id" element={<TripDetail />} />
         <Route path="/map" element={<MapScreen />} />
+        <Route path="/coach" element={<DrivingCoach />} />
+        <Route path="/achievements" element={<Achievements />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/android" element={<AndroidReference />} />

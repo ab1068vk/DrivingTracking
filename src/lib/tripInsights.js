@@ -8,6 +8,21 @@ export const DEFAULT_MAINTENANCE_ITEMS = [
   { id: 'inspection', label: 'Inspection', interval_km: 20000, last_service_km: 0 },
 ];
 
+const DAY_MS = 86400000;
+
+const startOfDay = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const startOfWeek = (date = new Date()) => {
+  const d = startOfDay(date);
+  const day = d.getDay();
+  d.setDate(d.getDate() - day);
+  return d;
+};
+
 export function getSpeedColor(speedKmh = 0) {
   if (speedKmh >= 120) return '#ef4444';
   if (speedKmh >= 90) return '#f97316';
@@ -42,6 +57,55 @@ export function buildSpeedSegments(points = []) {
   }
 
   return segments;
+}
+
+export function detectTripStops(points = [], { minStopSeconds = 90, maxSpeedKmh = 5 } = {}) {
+  const stops = [];
+  let stopStart = null;
+  let lastStoppedPoint = null;
+
+  for (const point of points) {
+    const time = new Date(point.timestamp).getTime();
+    if (!Number.isFinite(time)) continue;
+    const speed = Number(point.speed_kmh) || 0;
+    const stopped = speed <= maxSpeedKmh;
+
+    if (stopped) {
+      stopStart ??= point;
+      lastStoppedPoint = point;
+      continue;
+    }
+
+    if (stopStart && lastStoppedPoint) {
+      const durationSeconds = Math.round((new Date(lastStoppedPoint.timestamp).getTime() - new Date(stopStart.timestamp).getTime()) / 1000);
+      if (durationSeconds >= minStopSeconds) {
+        stops.push({
+          lat: stopStart.lat,
+          lng: stopStart.lng,
+          start_time: stopStart.timestamp,
+          end_time: lastStoppedPoint.timestamp,
+          duration_seconds: durationSeconds,
+        });
+      }
+    }
+    stopStart = null;
+    lastStoppedPoint = null;
+  }
+
+  if (stopStart && lastStoppedPoint) {
+    const durationSeconds = Math.round((new Date(lastStoppedPoint.timestamp).getTime() - new Date(stopStart.timestamp).getTime()) / 1000);
+    if (durationSeconds >= minStopSeconds) {
+      stops.push({
+        lat: stopStart.lat,
+        lng: stopStart.lng,
+        start_time: stopStart.timestamp,
+        end_time: lastStoppedPoint.timestamp,
+        duration_seconds: durationSeconds,
+      });
+    }
+  }
+
+  return stops;
 }
 
 export function getVehicleTripDistanceKm(vehicle, trips = []) {
@@ -139,6 +203,304 @@ export function buildScoreTips(trips = []) {
   }
 
   return tips.slice(0, 3);
+}
+
+export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
+  const weekStart = startOfWeek();
+  const weekTrips = trips.filter((trip) => (
+    trip.status === 'completed' &&
+    new Date(trip.start_time).getTime() >= weekStart.getTime()
+  ));
+  const harshBrakes = weekTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
+  const speedingEvents = weekTrips.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0);
+  const nightTrips = weekTrips.filter((trip) => trip.night_driving).length;
+  const scoreCount = weekTrips.filter((trip) => trip.score_overall > 0).length;
+  const avgScore = scoreCount
+    ? Math.round(weekTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount)
+    : 0;
+
+  return [
+    {
+      id: 'harsh_brakes',
+      label: 'Harsh brakes',
+      value: harshBrakes,
+      target: Number(settings.weekly_goal_harsh_brakes ?? 5),
+      direction: 'under',
+      met: harshBrakes <= Number(settings.weekly_goal_harsh_brakes ?? 5),
+    },
+    {
+      id: 'speeding',
+      label: 'Speeding events',
+      value: speedingEvents,
+      target: Number(settings.weekly_goal_speeding_events ?? 3),
+      direction: 'under',
+      met: speedingEvents <= Number(settings.weekly_goal_speeding_events ?? 3),
+    },
+    {
+      id: 'avg_score',
+      label: 'Average score',
+      value: avgScore,
+      target: Number(settings.weekly_goal_min_avg_score ?? 80),
+      direction: 'over',
+      met: scoreCount > 0 && avgScore >= Number(settings.weekly_goal_min_avg_score ?? 80),
+    },
+    {
+      id: 'night_trips',
+      label: 'Night trips',
+      value: nightTrips,
+      target: Number(settings.weekly_goal_max_night_trips ?? 3),
+      direction: 'under',
+      met: nightTrips <= Number(settings.weekly_goal_max_night_trips ?? 3),
+    },
+  ];
+}
+
+export function calculateNoHarshBrakeStreak(trips = []) {
+  const completed = trips.filter((trip) => trip.status === 'completed');
+  if (!completed.length) return 0;
+
+  const byDay = new Map();
+  completed.forEach((trip) => {
+    const day = startOfDay(trip.start_time).toISOString().slice(0, 10);
+    const current = byDay.get(day) || { trips: 0, harshBrakes: 0 };
+    current.trips += 1;
+    current.harshBrakes += trip.harsh_brakes_count || 0;
+    byDay.set(day, current);
+  });
+
+  let cursor = startOfDay(new Date());
+  if (!byDay.has(cursor.toISOString().slice(0, 10))) {
+    const latestTripDay = completed
+      .map((trip) => startOfDay(trip.start_time).getTime())
+      .sort((a, b) => b - a)[0];
+    cursor = new Date(latestTripDay);
+  }
+
+  let streak = 0;
+  while (true) {
+    const key = cursor.toISOString().slice(0, 10);
+    const day = byDay.get(key);
+    if (!day) break;
+    if (day.harshBrakes > 0) break;
+    streak += 1;
+    cursor = new Date(cursor.getTime() - DAY_MS);
+  }
+  return streak;
+}
+
+export function analyzeTimeOfDay(trips = []) {
+  const buckets = [
+    { id: 'morning', label: 'Morning', range: '5a-12p', from: 5, to: 12 },
+    { id: 'afternoon', label: 'Afternoon', range: '12p-5p', from: 12, to: 17 },
+    { id: 'evening', label: 'Evening', range: '5p-10p', from: 17, to: 22 },
+    { id: 'night', label: 'Night', range: '10p-5a', from: 22, to: 29 },
+  ];
+
+  return buckets.map((bucket) => {
+    const bucketTrips = trips.filter((trip) => {
+      if (trip.status !== 'completed') return false;
+      const hour = new Date(trip.start_time).getHours();
+      const normalized = hour < 5 ? hour + 24 : hour;
+      return normalized >= bucket.from && normalized < bucket.to;
+    });
+    const scoreCount = bucketTrips.filter((trip) => trip.score_overall > 0).length;
+    const events = bucketTrips.reduce((sum, trip) => (
+      sum +
+      (trip.harsh_brakes_count || 0) +
+      (trip.rapid_accel_count || 0) +
+      (trip.sharp_turns_count || 0) +
+      (trip.speeding_events_count || 0)
+    ), 0);
+    return {
+      ...bucket,
+      trips: bucketTrips.length,
+      avgScore: scoreCount
+        ? Math.round(bucketTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount)
+        : null,
+      events,
+    };
+  });
+}
+
+export function analyzeDayOfWeek(trips = []) {
+  const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return labels.map((label, index) => {
+    const dayTrips = trips.filter((trip) => trip.status === 'completed' && new Date(trip.start_time).getDay() === index);
+    const scoreCount = dayTrips.filter((trip) => trip.score_overall > 0).length;
+    const events = dayTrips.reduce((sum, trip) => (
+      sum +
+      (trip.harsh_brakes_count || 0) +
+      (trip.rapid_accel_count || 0) +
+      (trip.sharp_turns_count || 0) +
+      (trip.speeding_events_count || 0)
+    ), 0);
+    return {
+      day: label,
+      trips: dayTrips.length,
+      avgScore: scoreCount ? Math.round(dayTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount) : null,
+      events,
+    };
+  });
+}
+
+export function calculateFatigueRisk(trips = [], settings = {}) {
+  const thresholdMinutes = Number(settings.threshold_long_drive_minutes || 120);
+  const longTrips = trips.filter((trip) => (trip.duration_seconds || 0) / 60 >= thresholdMinutes);
+  const totalLongMinutes = longTrips.reduce((sum, trip) => sum + (trip.duration_seconds || 0) / 60, 0);
+  const longestTripMinutes = trips.reduce((max, trip) => Math.max(max, (trip.duration_seconds || 0) / 60), 0);
+  return {
+    threshold_minutes: thresholdMinutes,
+    long_trip_count: longTrips.length,
+    total_long_minutes: Math.round(totalLongMinutes),
+    longest_trip_minutes: Math.round(longestTripMinutes),
+    level: longTrips.length >= 3 || longestTripMinutes >= thresholdMinutes * 1.5 ? 'high' : longTrips.length > 0 ? 'medium' : 'low',
+  };
+}
+
+export function calculateRiskEventRate(trips = []) {
+  const completed = trips.filter((trip) => trip.status === 'completed');
+  const distanceKm = completed.reduce((sum, trip) => sum + (trip.distance_km || 0), 0);
+  const totals = {
+    harsh_brakes: completed.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0),
+    rapid_accel: completed.reduce((sum, trip) => sum + (trip.rapid_accel_count || 0), 0),
+    sharp_turns: completed.reduce((sum, trip) => sum + (trip.sharp_turns_count || 0), 0),
+    speeding: completed.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0),
+  };
+  const totalEvents = Object.values(totals).reduce((sum, count) => sum + count, 0);
+  const per100Km = distanceKm > 0 ? Math.round((totalEvents / distanceKm) * 1000) / 10 : 0;
+  const worst = Object.entries(totals).sort((a, b) => b[1] - a[1])[0] || ['none', 0];
+
+  return {
+    distance_km: Math.round(distanceKm * 10) / 10,
+    total_events: totalEvents,
+    events_per_100km: per100Km,
+    worst_event: worst[0],
+    worst_event_count: worst[1],
+    totals,
+  };
+}
+
+export function calculateSpeedDiscipline(trips = [], settings = {}) {
+  const speedLimit = Number(settings.threshold_speeding_kmh || 130);
+  const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 10);
+  const points = trips
+    .filter((trip) => trip.status === 'completed')
+    .flatMap((trip) => Array.isArray(trip.route_points) ? trip.route_points : [])
+    .filter((point) => Number.isFinite(Number(point.speed_kmh)));
+
+  if (!points.length) {
+    return {
+      sample_points: 0,
+      max_speed_kmh: 0,
+      avg_speed_kmh: 0,
+      over_limit_points: 0,
+      over_warn_points: 0,
+      over_limit_percent: 0,
+      level: 'unknown',
+    };
+  }
+
+  const speeds = points.map((point) => Number(point.speed_kmh) || 0);
+  const overLimit = speeds.filter((speed) => speed > speedLimit).length;
+  const overWarn = speeds.filter((speed) => speed > warnLimit).length;
+  const overLimitPercent = Math.round((overLimit / speeds.length) * 100);
+
+  return {
+    sample_points: speeds.length,
+    max_speed_kmh: Math.round(Math.max(...speeds)),
+    avg_speed_kmh: Math.round(speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length),
+    over_limit_points: overLimit,
+    over_warn_points: overWarn,
+    over_limit_percent: overLimitPercent,
+    level: overWarn > 0 || overLimitPercent >= 10 ? 'needs_attention' : overLimitPercent > 0 ? 'watch' : 'steady',
+  };
+}
+
+export function calculateDrivingConsistency(trips = []) {
+  const scores = trips
+    .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
+    .map((trip) => Number(trip.score_overall));
+
+  if (scores.length < 2) {
+    return {
+      trip_count: scores.length,
+      avg_score: scores[0] || 0,
+      score_variation: 0,
+      consistency_score: scores.length ? 100 : 0,
+      level: scores.length ? 'steady' : 'unknown',
+    };
+  }
+
+  const avg = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+  const variance = scores.reduce((sum, score) => sum + (score - avg) ** 2, 0) / scores.length;
+  const deviation = Math.sqrt(variance);
+  const consistencyScore = Math.max(0, Math.round(100 - deviation * 2));
+
+  return {
+    trip_count: scores.length,
+    avg_score: Math.round(avg),
+    score_variation: Math.round(deviation),
+    consistency_score: consistencyScore,
+    level: consistencyScore >= 85 ? 'steady' : consistencyScore >= 70 ? 'mixed' : 'inconsistent',
+  };
+}
+
+export function buildDrivingCoachInsights(trips = [], settings = {}) {
+  const completed = trips.filter((trip) => trip.status === 'completed');
+  const riskRate = calculateRiskEventRate(completed);
+  const speed = calculateSpeedDiscipline(completed, settings);
+  const consistency = calculateDrivingConsistency(completed);
+  const fatigue = calculateFatigueRisk(completed, settings);
+  const timeOfDay = analyzeTimeOfDay(completed);
+  const bestWindow = timeOfDay
+    .filter((bucket) => bucket.trips > 0 && bucket.avgScore !== null)
+    .sort((a, b) => b.avgScore - a.avgScore || a.events - b.events)[0] || null;
+
+  const eventLabels = {
+    harsh_brakes: 'braking',
+    rapid_accel: 'acceleration',
+    sharp_turns: 'cornering',
+    speeding: 'speed control',
+  };
+  const focusArea = riskRate.worst_event_count > 0
+    ? eventLabels[riskRate.worst_event]
+    : speed.level === 'needs_attention'
+      ? 'speed control'
+      : fatigue.level === 'high'
+        ? 'fatigue breaks'
+        : 'consistency';
+
+  const actions = [];
+  if (riskRate.worst_event === 'harsh_brakes' && riskRate.worst_event_count > 0) {
+    actions.push('Brake earlier for the next five stops and leave one extra car length ahead.');
+  } else if (riskRate.worst_event === 'rapid_accel' && riskRate.worst_event_count > 0) {
+    actions.push('Use a three-second throttle ramp after each stop instead of jumping to cruising speed.');
+  } else if (riskRate.worst_event === 'sharp_turns' && riskRate.worst_event_count > 0) {
+    actions.push('Set corner speed before the turn, then accelerate only after the steering wheel starts straightening.');
+  } else if (riskRate.worst_event === 'speeding' && riskRate.worst_event_count > 0) {
+    actions.push('Pick a cruise target 5 km/h below your alert threshold for the next week.');
+  }
+
+  if (speed.level === 'needs_attention') {
+    actions.push('Review route replay for red/orange speed segments and find the roads where speed climbs most often.');
+  }
+  if (fatigue.level !== 'low') {
+    actions.push(`Take a break before ${fatigue.threshold_minutes} minutes on long drives.`);
+  }
+  if (bestWindow) {
+    actions.push(`Your strongest driving window is ${bestWindow.label.toLowerCase()}; compare tougher trips against that baseline.`);
+  }
+
+  return {
+    trip_count: completed.length,
+    focus_area: focusArea,
+    risk_rate: riskRate,
+    speed_discipline: speed,
+    consistency,
+    fatigue,
+    best_window: bestWindow,
+    actions: actions.length ? actions.slice(0, 4) : ['Record more trips to build a personalized driving plan.'],
+  };
 }
 
 export function calculateAchievementBadges(trips = []) {

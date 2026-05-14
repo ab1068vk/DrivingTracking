@@ -5,10 +5,13 @@ import { localSettings } from '@/lib/trackingStore';
 
 export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
 export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
+export const ACHIEVEMENT_CHANNEL_ID = 'drivesense_achievements';
 const LONG_TRIP_REMINDER_ID = 2001;
 const TRIP_STARTED_ID = 2003;
 const WEEKLY_REPORT_ID = 2101;
 const SAFE_DRIVING_ID = 2102;
+const ACHIEVEMENT_BASE_ID = 3000;
+const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
 const SAFE_DRIVING_TIPS = [
   'Leave extra space ahead so you can brake once, early, and smoothly.',
   'Ease into acceleration for the first few seconds after every stop.',
@@ -24,18 +27,30 @@ const notificationsEnabled = (key) => {
   return settings.notifications_enabled !== false && settings[key] !== false;
 };
 
-const nextAt = ({ dayOffset = 1, hour = 9, minute = 0 }) => {
-  const date = new Date();
-  date.setDate(date.getDate() + dayOffset);
-  date.setHours(hour, minute, 0, 0);
-  if (date <= new Date()) date.setDate(date.getDate() + 1);
-  return date;
-};
-
 const todaysSafeDrivingTip = () => {
   const dayIndex = Math.floor(Date.now() / 86400000);
   return SAFE_DRIVING_TIPS[dayIndex % SAFE_DRIVING_TIPS.length];
 };
+
+const readNotifiedAchievementIds = () => {
+  try {
+    const raw = localStorage.getItem(NOTIFIED_ACHIEVEMENTS_KEY);
+    const ids = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const writeNotifiedAchievementIds = (ids) => {
+  try {
+    localStorage.setItem(NOTIFIED_ACHIEVEMENTS_KEY, JSON.stringify([...ids]));
+  } catch {}
+};
+
+const achievementNotificationId = (achievementId) => (
+  ACHIEVEMENT_BASE_ID + [...String(achievementId)].reduce((sum, char) => sum + char.charCodeAt(0), 0)
+);
 
 export async function configureNotificationChannels() {
   if (!isNativePlatform()) return;
@@ -53,6 +68,14 @@ export async function configureNotificationChannels() {
     id: SUMMARY_CHANNEL_ID,
     name: 'Trip Summaries',
     description: 'Trip completion and driving summary notifications.',
+    importance: 3,
+    visibility: 1,
+  });
+
+  await LocalNotifications.createChannel({
+    id: ACHIEVEMENT_CHANNEL_ID,
+    name: 'Achievements',
+    description: 'Achievement unlock notifications.',
     importance: 3,
     visibility: 1,
   });
@@ -151,4 +174,38 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
   }
 
   if (notifications.length) await LocalNotifications.schedule({ notifications });
+}
+
+export async function syncAchievementNotifications(achievements = [], { requestPermission = true } = {}) {
+  const earned = achievements.filter((achievement) => achievement.earned);
+  if (!earned.length) return [];
+
+  const notifiedIds = readNotifiedAchievementIds();
+  const newAchievements = earned.filter((achievement) => !notifiedIds.has(achievement.id));
+  if (!newAchievements.length) return [];
+
+  if (!isNativePlatform() || !notificationsEnabled('achievement_notifications')) {
+    return newAchievements;
+  }
+
+  const permission = await LocalNotifications.checkPermissions();
+  const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
+  if (!granted) return [];
+
+  await LocalNotifications.schedule({
+    notifications: newAchievements.map((achievement) => ({
+      id: achievementNotificationId(achievement.id),
+      title: 'Achievement unlocked',
+      body: `${achievement.label}: ${achievement.description}`,
+      channelId: ACHIEVEMENT_CHANNEL_ID,
+    })),
+  });
+
+  newAchievements.forEach((achievement) => notifiedIds.add(achievement.id));
+  writeNotifiedAchievementIds(notifiedIds);
+  return newAchievements;
+}
+
+export function getNotifiedAchievementIds() {
+  return [...readNotifiedAchievementIds()];
 }

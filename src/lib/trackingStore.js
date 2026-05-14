@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = {
   trip_start_notification: true,
   trip_end_notification: true,
   weekly_report_notification: true,
+  achievement_notifications: true,
   safe_driving_reminder: false,
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
@@ -28,6 +29,10 @@ export const DEFAULT_SETTINGS = {
   threshold_speeding_kmh: 130,
   threshold_idle_seconds: 60,
   threshold_long_drive_minutes: 120,
+  weekly_goal_harsh_brakes: 5,
+  weekly_goal_speeding_events: 3,
+  weekly_goal_min_avg_score: 80,
+  weekly_goal_max_night_trips: 3,
   onboarding_completed: true, // true by default for web; native Android handles its own onboarding
   location_permission_granted: false,
   background_location_granted: false,

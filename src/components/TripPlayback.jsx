@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, Gauge } from 'lucide-react';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 
@@ -48,7 +48,7 @@ export default function TripPlayback({ trip, height = '380px' }) {
   const points = trip?.route_points || [];
   const events = trip?.driving_events || [];
   const totalPoints = points.length;
-  const speedSegments = buildSpeedSegments(points);
+  const speedSegments = useMemo(() => buildSpeedSegments(points), [points]);
 
   useEffect(() => {
     setCurrentIdx(0);

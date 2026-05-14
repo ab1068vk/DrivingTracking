@@ -128,13 +128,19 @@ public class DriveSenseAutoTrackingService extends Service {
     static void start(Context context) {
         Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
         intent.setAction(ACTION_START);
-        ContextCompat.startForegroundService(context, intent);
+        try {
+            ContextCompat.startForegroundService(context, intent);
+        } catch (Exception ignored) {}
     }
 
     static void stop(Context context) {
         Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
         intent.setAction(ACTION_STOP);
-        ContextCompat.startForegroundService(context, intent);
+        try {
+            ContextCompat.startForegroundService(context, intent);
+        } catch (Exception ignored) {
+            DriveSenseNativeTripStore.setServiceEnabled(context, false);
+        }
     }
 
     static void handleActivityBroadcast(Context context, DetectedActivity activity) {
@@ -145,7 +151,9 @@ public class DriveSenseAutoTrackingService extends Service {
         intent.setAction(ACTION_ACTIVITY);
         intent.putExtra(EXTRA_ACTIVITY_TYPE, activity.getType());
         intent.putExtra(EXTRA_ACTIVITY_CONFIDENCE, activity.getConfidence());
-        ContextCompat.startForegroundService(context, intent);
+        try {
+            ContextCompat.startForegroundService(context, intent);
+        } catch (Exception ignored) {}
     }
 
     private void handleActivity(int type, int confidence) {

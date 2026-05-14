@@ -4,14 +4,14 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
 import {
-  ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car,
+  ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf
 } from 'lucide-react';
 import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
 import { formatDistance, formatDuration, formatDateTime, formatSpeed, getScoreColor } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { estimateTripEconomics } from '@/lib/tripInsights';
+import { calculateFatigueRisk, detectTripStops, estimateTripEconomics } from '@/lib/tripInsights';
 
 export default function TripDetail() {
   const { id } = useParams();
@@ -64,6 +64,8 @@ export default function TripDetail() {
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
   const tripVehicle = vehicles.find((vehicle) => String(vehicle.id) === String(trip.vehicle_id));
   const economics = estimateTripEconomics(trip, tripVehicle, settings);
+  const stops = detectTripStops(trip.route_points || []);
+  const fatigueRisk = calculateFatigueRisk([trip], settings);
 
   return (
     <div className="space-y-5 pb-4">
@@ -181,6 +183,46 @@ export default function TripDetail() {
             </div>
           )}
         </div>
+      </motion.div>
+
+      {/* Driving behavior detail */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.22 }}
+        className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+      >
+        <h2 className="font-semibold mb-4">Driving Pattern</h2>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-secondary/50 rounded-xl p-3">
+            <MapPin className="w-4 h-4 text-primary mb-2" />
+            <div className="font-grotesk font-bold text-xl">{stops.length}</div>
+            <div className="text-xs text-muted-foreground">detected stops</div>
+          </div>
+          <div className="bg-secondary/50 rounded-xl p-3">
+            <AlertTriangle className={`w-4 h-4 mb-2 ${fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500'}`} />
+            <div className="font-grotesk font-bold text-xl capitalize">{fatigueRisk.level}</div>
+            <div className="text-xs text-muted-foreground">fatigue risk</div>
+          </div>
+        </div>
+
+        {stops.length > 0 ? (
+          <div className="space-y-2 max-h-44 overflow-y-auto thin-scrollbar">
+            {stops.slice(0, 8).map((stop, index) => (
+              <div key={`${stop.start_time}-${index}`} className="flex items-center justify-between border border-border rounded-xl p-2 text-sm">
+                <div>
+                  <div className="font-medium">Stop {index + 1}</div>
+                  <div className="text-xs text-muted-foreground">{new Date(stop.start_time).toLocaleTimeString()}</div>
+                </div>
+                <div className="text-xs font-semibold text-primary">{formatDuration(stop.duration_seconds)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
+            No meaningful stops detected on this trip.
+          </div>
+        )}
       </motion.div>
 
       {/* Driving Events */}

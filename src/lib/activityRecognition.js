@@ -53,6 +53,23 @@ export async function getNativeAutoTrackingStatus() {
   return ActivityRecognition.nativeAutoTrackingStatus();
 }
 
+export async function openAndroidLocationSettings() {
+  if (!isAndroid()) return false;
+  await ActivityRecognition.openAppLocationSettings();
+  return true;
+}
+
+export async function openAndroidBatteryOptimizationSettings() {
+  if (!isAndroid()) return false;
+  await ActivityRecognition.openBatteryOptimizationSettings();
+  return true;
+}
+
+export async function getAndroidBatteryOptimizationStatus() {
+  if (!isAndroid()) return { batteryOptimizationIgnored: true };
+  return ActivityRecognition.batteryOptimizationStatus();
+}
+
 export async function getNativeCompletedTrips() {
   if (!isAndroid()) return [];
   const result = await ActivityRecognition.getNativeCompletedTrips();

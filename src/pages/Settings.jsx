@@ -12,14 +12,19 @@ import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
   getPermissionStatus,
-  openNativeSettings,
   requestActivityRecognitionPermission,
   requestBackgroundLocationPermission,
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
-import { startNativeAutoTracking, stopNativeAutoTracking } from '@/lib/activityRecognition';
+import {
+  getAndroidBatteryOptimizationStatus,
+  getNativeAutoTrackingStatus,
+  openAndroidBatteryOptimizationSettings,
+  startNativeAutoTracking,
+  stopNativeAutoTracking,
+} from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
 import { exportDriveSenseBackup, importDriveSenseBackup } from '@/lib/dataBackup';
 
@@ -75,6 +80,8 @@ function PermissionBadge({ value }) {
 export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
+  const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
+  const [batteryStatus, setBatteryStatus] = useState(null);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -187,7 +194,7 @@ export default function Settings() {
     if (mode === 'background_auto') {
       const backgroundGranted = await requestBackgroundLocationPermission();
       if (!backgroundGranted) {
-        alert('Android requires "Allow all the time" location access for background auto tracking. Enable it in the app settings screen that opens.');
+        alert('Android requires Location permission set to "Allow all the time" for background auto tracking. In the app settings screen that opened, tap Permissions > Location > Allow all the time, then return to DriveSense and turn Background Tracking on again.');
         await refreshPermissions();
         return;
       }
@@ -196,7 +203,7 @@ export default function Settings() {
         try {
           await startNativeAutoTracking();
         } catch (error) {
-          alert(error.message || 'Could not start native background auto tracking.');
+          alert(error.message || 'Could not start native background auto tracking. Check Location, Physical Activity, Notifications, and Battery Optimization settings.');
           await refreshPermissions();
           return;
         }
@@ -214,12 +221,56 @@ export default function Settings() {
   };
 
   const refreshPermissions = async () => {
-    setPermissionStatus(await getPermissionStatus());
+    const status = await getPermissionStatus();
+    setPermissionStatus(status);
+
+    if (isAndroid()) {
+      try {
+        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+      } catch {}
+      try {
+        setBatteryStatus(await getAndroidBatteryOptimizationStatus());
+      } catch {}
+    }
   };
 
   useEffect(() => {
     refreshPermissions();
   }, []);
+
+  useEffect(() => {
+    if (!isAndroid()) return undefined;
+
+    const refreshAndRestartIfReady = async () => {
+      await refreshPermissions();
+      const latest = localSettings.get();
+      if (latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
+        try {
+          await startNativeAutoTracking();
+          setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        } catch {}
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshAndRestartIfReady();
+    };
+    window.addEventListener('focus', refreshAndRestartIfReady);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', refreshAndRestartIfReady);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  const handleBatteryOptimization = async () => {
+    try {
+      await openAndroidBatteryOptimizationSettings();
+      await refreshPermissions();
+    } catch {
+      alert('Could not open the Android battery optimization screen. Open Android Settings > Apps > DriveSense > Battery and choose Unrestricted.');
+    }
+  };
 
   const handleDeleteAllTrips = async () => {
     if (!confirm('Delete ALL trips? This cannot be undone.')) return;
@@ -341,7 +392,7 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Background Tracking"
-            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : 'Keeps recording after the app is minimized with a persistent notification'}
+            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : nativeTrackingStatus?.enabled ? 'Native background auto tracking is running' : 'Keeps recording after the app is minimized with a persistent notification'}
           >
             <Toggle value={!cfg.tracking_paused && cfg.background_tracking_enabled} onChange={async v => {
               if (v) {
@@ -358,6 +409,15 @@ export default function Settings() {
         {/* Android Permissions */}
         <SectionTitle>Android Permissions</SectionTitle>
         <div className="space-y-1">
+          {isAndroid() && (
+            <SettingRow
+              icon={Shield}
+              label="Native Auto Tracking"
+              sublabel={nativeTrackingStatus?.enabled ? 'Android service is armed and waiting for driving motion' : 'Android service is not running'}
+            >
+              <PermissionBadge value={nativeTrackingStatus?.enabled ? 'granted' : 'not_requested'} />
+            </SettingRow>
+          )}
           {[
             { key: 'foregroundLocation', label: 'Location', sub: getPermissionExplanation('foregroundLocation'), action: requestForegroundLocationPermission },
             { key: 'backgroundLocation', label: 'Background Location', sub: getPermissionExplanation('backgroundLocation'), action: requestBackgroundLocationPermission },
@@ -385,10 +445,15 @@ export default function Settings() {
           <SettingRow
             icon={AlertTriangle}
             label="Battery Optimization"
-            sublabel="Open Android app settings if long background trips are being stopped"
-            onClick={openNativeSettings}
+            sublabel={batteryStatus?.batteryOptimizationIgnored ? 'Battery optimization is already unrestricted for DriveSense' : 'Open Android battery settings and allow unrestricted background activity'}
+            onClick={handleBatteryOptimization}
           >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            <div className="flex items-center gap-2">
+              {isAndroid() && (
+                <PermissionBadge value={batteryStatus?.batteryOptimizationIgnored ? 'granted' : 'not_requested'} />
+              )}
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            </div>
           </SettingRow>
         </div>
 
@@ -451,12 +516,43 @@ export default function Settings() {
           {[
             { key: 'trip_start_notification', label: 'Trip Started', sub: 'Notify when a trip begins' },
             { key: 'trip_end_notification', label: 'Trip Ended', sub: 'Summary when trip finishes' },
+            { key: 'achievement_notifications', label: 'Achievements', sub: 'Notify when a driving achievement unlocks' },
             { key: 'weekly_report_notification', label: 'Weekly Report', sub: 'Weekly driving summary' },
             { key: 'safe_driving_reminder', label: 'Safe Driving Tips', sub: 'Occasional driving reminders' },
           ].map(({ key, label, sub }) => (
             <SettingRow key={key} label={label} sublabel={sub}>
               <Toggle value={cfg.notifications_enabled !== false && cfg[key]} onChange={v => updateNotificationSetting({ [key]: v })} />
             </SettingRow>
+          ))}
+        </div>
+
+        {/* Driving Goals */}
+        <SectionTitle>Driving Goals</SectionTitle>
+        <p className="text-xs text-muted-foreground px-1 mb-3">
+          Weekly targets used by the Dashboard goals card.
+        </p>
+        <div className="space-y-4">
+          {[
+            { key: 'weekly_goal_harsh_brakes', label: 'Max harsh brakes', min: 0, max: 20, step: 1 },
+            { key: 'weekly_goal_speeding_events', label: 'Max speeding events', min: 0, max: 20, step: 1 },
+            { key: 'weekly_goal_min_avg_score', label: 'Minimum average score', min: 50, max: 100, step: 5 },
+            { key: 'weekly_goal_max_night_trips', label: 'Max night trips', min: 0, max: 14, step: 1 },
+          ].map(({ key, label, min, max, step }) => (
+            <div key={key} className="px-1">
+              <div className="flex justify-between text-xs mb-1.5">
+                <span className="font-medium">{label}</span>
+                <span className="text-primary font-semibold">{cfg[key]}</span>
+              </div>
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={cfg[key]}
+                onChange={e => updateCfg({ [key]: Number(e.target.value) })}
+                className="w-full accent-primary"
+              />
+            </div>
           ))}
         </div>
 

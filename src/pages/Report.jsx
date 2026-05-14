@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  BarChart3, TrendingUp, Award, AlertTriangle,
+  BarChart3, TrendingUp, AlertTriangle,
   Download, Car, Clock, Navigation, Fuel, Leaf
 } from 'lucide-react';
 import {
@@ -13,7 +13,13 @@ import {
 } from 'recharts';
 import { generateReportSummary, formatDistance, formatDuration, formatDate, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { buildScoreTips, calculateAchievementBadges, estimateTripEconomics } from '@/lib/tripInsights';
+import {
+  analyzeDayOfWeek,
+  analyzeTimeOfDay,
+  buildScoreTips,
+  calculateFatigueRisk,
+  estimateTripEconomics,
+} from '@/lib/tripInsights';
 
 const PERIODS = [
   { id: 'week', label: 'This Week', days: 7 },
@@ -55,7 +61,9 @@ export default function Reports() {
     };
   }, { cost: 0, liters: 0, co2: 0 });
   const tips = buildScoreTips(trips);
-  const badges = calculateAchievementBadges(completed);
+  const timeOfDayData = analyzeTimeOfDay(trips);
+  const dayOfWeekData = analyzeDayOfWeek(trips);
+  const fatigueRisk = calculateFatigueRisk(trips, settings);
 
   // Build 6-month monthly event trend data (always uses all completed trips)
   const eventTrendData = (() => {
@@ -211,25 +219,75 @@ export default function Reports() {
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.19 }}
+            transition={{ delay: 0.195 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
-            <h2 className="font-semibold mb-3">Badges</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {badges.map((badge) => (
-                <div
-                  key={badge.id}
-                  className={`rounded-2xl p-3 border ${
-                    badge.earned
-                      ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40'
-                      : 'bg-secondary/30 border-border'
-                  }`}
-                >
-                  <div className="font-semibold text-sm">{badge.label}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{badge.description}</div>
+            <h2 className="font-semibold mb-1">Fatigue Risk</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Long-drive threshold: {fatigueRisk.threshold_minutes} minutes
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className={`font-grotesk font-bold text-xl capitalize ${
+                  fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500'
+                }`}>
+                  {fatigueRisk.level}
                 </div>
-              ))}
+                <div className="text-xs text-muted-foreground">Risk</div>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{fatigueRisk.long_trip_count}</div>
+                <div className="text-xs text-muted-foreground">Long drives</div>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{fatigueRisk.longest_trip_minutes}m</div>
+                <div className="text-xs text-muted-foreground">Longest</div>
+              </div>
             </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.197 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-1">Time of Day</h2>
+            <p className="text-xs text-muted-foreground mb-4">Average score and risky events by trip start time</p>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={timeOfDayData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                />
+                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
+                <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
+              </BarChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.198 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-1">Day of Week</h2>
+            <p className="text-xs text-muted-foreground mb-4">Which days produce the safest drives</p>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={dayOfWeekData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                />
+                <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
+                <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
+              </BarChart>
+            </ResponsiveContainer>
           </motion.div>
 
           {/* Score trend chart */}

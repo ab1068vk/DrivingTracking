@@ -110,12 +110,23 @@ export async function requestBackgroundLocationPermission() {
 
   if (isAndroid()) {
     try {
+      let status = await ActivityRecognition.checkPermissions();
+      if (status.backgroundLocation === 'granted') {
+        localSettings.update({ background_location_granted: true });
+        return true;
+      }
+
       const result = await ActivityRecognition.requestBackgroundLocation();
       const granted = result.backgroundLocation === 'granted';
       localSettings.update({ background_location_granted: granted });
-      if (!granted) await openNativeSettings();
+      if (!granted) {
+        await ActivityRecognition.openAppLocationSettings();
+      }
       return granted;
     } catch {
+      try {
+        await ActivityRecognition.openAppLocationSettings();
+      } catch {}
       return false;
     }
   }

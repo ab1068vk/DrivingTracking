@@ -5,7 +5,7 @@ import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
-  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin
+  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
@@ -15,7 +15,13 @@ import {
 } from '@/lib/tripEngine';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
-import { scheduleLongTripReminder, cancelLongTripReminder, notifyTripCompleted, notifyTripStarted } from '@/lib/notificationService';
+import {
+  scheduleLongTripReminder,
+  cancelLongTripReminder,
+  notifyTripCompleted,
+  notifyTripStarted,
+  syncAchievementNotifications,
+} from '@/lib/notificationService';
 import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
 import {
   startActivityRecognition,
@@ -29,7 +35,13 @@ import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
-import { buildScoreTips, calculateAchievementBadges } from '@/lib/tripInsights';
+import {
+  buildScoreTips,
+  calculateAchievementBadges,
+  calculateFatigueRisk,
+  calculateNoHarshBrakeStreak,
+  calculateWeeklyDrivingGoals,
+} from '@/lib/tripInsights';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -61,7 +73,7 @@ export default function Dashboard() {
   // Load recent trips
   const { data: recentTrips = [], refetch } = useQuery({
     queryKey: ['recent-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 20 }),
+    queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
   });
 
   const { data: vehicles = [] } = useQuery({
@@ -246,6 +258,7 @@ export default function Dashboard() {
 
     await tripService.create(completedTrip);
     if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
+    await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch(() => {});
     activeTripStore.clear();
     activeTripRef.current = null;
     trackingRef.current = false;
@@ -374,8 +387,9 @@ export default function Dashboard() {
   const latestTrip = completedTrips[0];
   const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: t.score_overall || 0 }));
   const tips = buildScoreTips(completedTrips);
-  const badges = calculateAchievementBadges(completedTrips);
-  const earnedBadges = badges.filter((badge) => badge.earned);
+  const weeklyGoals = calculateWeeklyDrivingGoals(completedTrips, settings);
+  const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
+  const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
 
   const { color: scoreColor } = getScoreColor(avgScore);
   const units = settings.units || 'metric';
@@ -511,6 +525,55 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* Driver goals */}
+      {completedTrips.length > 0 && (
+        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-base">Weekly Driver Goals</h2>
+            <Target className="w-4 h-4 text-primary" />
+          </div>
+          <div className="space-y-2">
+            {weeklyGoals.map((goal) => {
+              const pct = goal.direction === 'under'
+                ? Math.min(100, goal.target > 0 ? (goal.value / goal.target) * 100 : 100)
+                : Math.min(100, goal.target > 0 ? (goal.value / goal.target) * 100 : 0);
+              return (
+                <div key={goal.id}>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="font-medium">{goal.label}</span>
+                    <span className={goal.met ? 'text-emerald-500 font-semibold' : 'text-orange-500 font-semibold'}>
+                      {goal.value}/{goal.target}{goal.direction === 'over' ? '+' : ''}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${goal.met ? 'bg-emerald-500' : 'bg-orange-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Driver streak and fatigue */}
+      {completedTrips.length > 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <Flame className="w-5 h-5 text-orange-500 mb-2" />
+            <div className="font-grotesk font-bold text-2xl">{noHarshBrakeStreak}</div>
+            <div className="text-xs text-muted-foreground">days without harsh braking</div>
+          </div>
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <AlertTriangle className={`w-5 h-5 mb-2 ${fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500'}`} />
+            <div className="font-grotesk font-bold text-2xl capitalize">{fatigueRisk.level}</div>
+            <div className="text-xs text-muted-foreground">{fatigueRisk.long_trip_count} long drives this week</div>
+          </div>
+        </div>
+      )}
+
       {/* Score & Trend */}
       <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
         <div className="flex items-start justify-between mb-4">
@@ -554,33 +617,6 @@ export default function Dashboard() {
             {tips.map((tip) => (
               <div key={tip} className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
                 {tip}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Achievements */}
-      {badges.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-base">Achievements</h2>
-            <span className="text-xs text-muted-foreground">{earnedBadges.length}/{badges.length} earned</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {badges.slice(0, 4).map((badge) => (
-              <div
-                key={badge.id}
-                className={`rounded-2xl p-4 border ${
-                  badge.earned
-                    ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40'
-                    : 'bg-card border-border'
-                }`}
-              >
-                <div className={`text-sm font-semibold ${badge.earned ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
-                  {badge.label}
-                </div>
-                <div className="text-xs text-muted-foreground mt-1">{badge.description}</div>
               </div>
             ))}
           </div>
