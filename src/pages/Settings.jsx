@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Shield, ChevronRight, Info, AlertTriangle, Check, Bell
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell
 } from 'lucide-react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
@@ -20,6 +21,7 @@ import {
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking, stopNativeAutoTracking } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
+import { exportDriveSenseBackup, importDriveSenseBackup } from '@/lib/dataBackup';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -47,11 +49,12 @@ function SettingRow({ icon: Icon, label, sublabel, children, onClick, danger }) 
   );
 }
 
-function Toggle({ value, onChange }) {
+function Toggle({ value, onChange, disabled = false }) {
   return (
     <button
+      disabled={disabled}
       onClick={(e) => { e.stopPropagation(); onChange(!value); }}
-      className={`relative w-12 h-6 rounded-full transition-colors ${value ? 'bg-primary' : 'bg-secondary border border-border'}`}
+      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-primary' : 'bg-secondary border border-border'}`}
     >
       <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${value ? 'left-6' : 'left-0.5'}`} />
     </button>
@@ -72,6 +75,7 @@ function PermissionBadge({ value }) {
 export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
+  const importInputRef = useRef(null);
   const qc = useQueryClient();
 
   // Load settings from local storage
@@ -79,7 +83,12 @@ export default function Settings() {
 
   const { data: allTrips = [] } = useQuery({
     queryKey: ['settings-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    queryFn: () => tripService.list({ sort: '-start_time', limit: 5000 }),
+  });
+
+  const { data: allVehicles = [] } = useQuery({
+    queryKey: ['settings-vehicles'],
+    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 200 }),
   });
 
   const updateCfg = (patch) => {
@@ -123,7 +132,14 @@ export default function Settings() {
   };
 
   const updateTrackingPaused = async (paused) => {
-    const updated = updateCfg({ tracking_paused: paused });
+    const updated = paused
+      ? updateCfg({
+        tracking_paused: true,
+        tracking_mode: 'manual',
+        auto_tracking_enabled: false,
+        background_tracking_enabled: false,
+      })
+      : updateCfg({ tracking_paused: false });
     if (!isAndroid()) return;
 
     if (paused) {
@@ -139,12 +155,17 @@ export default function Settings() {
   };
 
   const enableTrackingMode = async (mode) => {
+    if (cfg.tracking_paused && mode !== 'manual') {
+      updateCfg({ tracking_paused: false });
+    }
+
     if (mode === 'manual') {
       if (isAndroid()) await stopNativeAutoTracking();
       updateCfg({
         tracking_mode: 'manual',
         auto_tracking_enabled: false,
         background_tracking_enabled: false,
+        tracking_paused: false,
       });
       return;
     }
@@ -186,6 +207,7 @@ export default function Settings() {
       tracking_mode: mode,
       auto_tracking_enabled: mode !== 'manual',
       background_tracking_enabled: mode === 'background_auto',
+      tracking_paused: false,
     });
     if (mode !== 'background_auto' && isAndroid()) await stopNativeAutoTracking();
     await refreshPermissions();
@@ -215,6 +237,34 @@ export default function Settings() {
     const result = await downloadCSV(csv, `drivesense-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
     if (result?.native) alert(`Export saved to Documents as ${result.filename}.`);
   };
+
+  const handleExportBackup = async () => {
+    const result = await exportDriveSenseBackup({
+      trips: allTrips,
+      vehicles: allVehicles,
+      settings: cfg,
+    });
+    if (result?.native) alert(`Full backup saved to Documents as ${result.filename}.`);
+  };
+
+  const handleImportBackup = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!confirm('Import this DriveSense backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
+
+    try {
+      const result = await importDriveSenseBackup(file);
+      setCfg(localSettings.get());
+      applyThemeMode(localSettings.get().dark_mode);
+      await qc.invalidateQueries();
+      alert(`Import complete: ${result.trips} trips and ${result.vehicles} vehicles merged.`);
+    } catch (error) {
+      alert(error.message || 'Could not import backup.');
+    }
+  };
+
+  const effectiveTrackingMode = cfg.tracking_paused ? 'manual' : cfg.tracking_mode;
 
   return (
     <div className="space-y-4 pb-6">
@@ -254,14 +304,14 @@ export default function Settings() {
                   key={opt.id}
                   onClick={() => enableTrackingMode(opt.id)}
                   className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
-                    cfg.tracking_mode === opt.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
+                    effectiveTrackingMode === opt.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
                   }`}
                 >
                   <div>
                     <div className="text-sm font-medium">{opt.label}</div>
                     <div className="text-xs text-muted-foreground">{opt.sub}</div>
                   </div>
-                  {cfg.tracking_mode === opt.id && <Check className="w-4 h-4 text-primary" />}
+                  {effectiveTrackingMode === opt.id && <Check className="w-4 h-4 text-primary" />}
                 </button>
               ))}
             </div>
@@ -277,9 +327,9 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Auto-Tracking"
-            sublabel="Start only after you enable it and driving signals are strong"
+            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : 'Start only after you enable it and driving signals are strong'}
           >
-            <Toggle value={cfg.auto_tracking_enabled} onChange={async v => {
+            <Toggle value={!cfg.tracking_paused && cfg.auto_tracking_enabled} onChange={async v => {
               if (v) {
                 await enableTrackingMode('auto_detect');
                 return;
@@ -291,9 +341,9 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Background Tracking"
-            sublabel="Keeps recording after the app is minimized with a persistent notification"
+            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : 'Keeps recording after the app is minimized with a persistent notification'}
           >
-            <Toggle value={cfg.background_tracking_enabled} onChange={async v => {
+            <Toggle value={!cfg.tracking_paused && cfg.background_tracking_enabled} onChange={async v => {
               if (v) {
                 await enableTrackingMode('background_auto');
                 return;
@@ -478,6 +528,22 @@ export default function Settings() {
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
           <SettingRow
+            icon={Download}
+            label="Export Full Backup"
+            sublabel="JSON with trips, GPS route points, events, vehicles, and settings"
+            onClick={handleExportBackup}
+          >
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </SettingRow>
+          <SettingRow
+            icon={Upload}
+            label="Import Backup"
+            sublabel="Restore a DriveSense JSON backup into local storage"
+            onClick={() => importInputRef.current?.click()}
+          >
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </SettingRow>
+          <SettingRow
             icon={Info}
             label="Data Retention"
             sublabel="Keep local trip history on this device"
@@ -503,6 +569,14 @@ export default function Settings() {
           </SettingRow>
         </div>
       </div>
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={handleImportBackup}
+      />
 
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">

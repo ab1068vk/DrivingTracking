@@ -3,13 +3,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { Car, Plus, Pencil, Trash2, Check, Star, X } from 'lucide-react';
+import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
+import { estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 
 function VehicleForm({ initial = {}, onSave, onCancel }) {
-  const [form, setForm] = useState({ name: '', make: '', model: '', year: '', color: '#3b82f6', plate: '', ...initial });
+  const [form, setForm] = useState({
+    name: '',
+    make: '',
+    model: '',
+    year: '',
+    color: '#3b82f6',
+    plate: '',
+    odometer_km: 0,
+    fuel_efficiency_l_per_100km: 8.5,
+    fuel_price_per_liter: 1.65,
+    ...initial,
+  });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
@@ -43,6 +55,21 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
           <input value={form.plate} onChange={e => set('plate', e.target.value.toUpperCase())} placeholder="ABC 123"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Odometer (km)</label>
+          <input value={form.odometer_km} onChange={e => set('odometer_km', e.target.value)} placeholder="42000" type="number"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Fuel L/100km</label>
+          <input value={form.fuel_efficiency_l_per_100km} onChange={e => set('fuel_efficiency_l_per_100km', e.target.value)} placeholder="8.5" type="number" step="0.1"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs text-muted-foreground mb-1 block">Fuel Price ($/L)</label>
+          <input value={form.fuel_price_per_liter} onChange={e => set('fuel_price_per_liter', e.target.value)} placeholder="1.65" type="number" step="0.01"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
       </div>
       <div>
         <label className="text-xs text-muted-foreground mb-1.5 block">Color</label>
@@ -60,7 +87,12 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
           <X className="w-3.5 h-3.5" /> Cancel
         </button>
         <button
-          onClick={() => form.name.trim() && onSave(form)}
+          onClick={() => form.name.trim() && onSave({
+            ...form,
+            odometer_km: Number(form.odometer_km) || 0,
+            fuel_efficiency_l_per_100km: Number(form.fuel_efficiency_l_per_100km) || 8.5,
+            fuel_price_per_liter: Number(form.fuel_price_per_liter) || 1.65,
+          })}
           disabled={!form.name.trim()}
           className="flex-1 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-40"
         >
@@ -110,12 +142,33 @@ export default function Vehicles() {
     invalidate();
   };
 
-  const tripCountFor = (vehicleId) => trips.filter(t => t.vehicle_id === vehicleId && t.status === 'completed').length;
-  const avgScoreFor = (vehicleId) => {
-    const vTrips = trips.filter(t => t.vehicle_id === vehicleId && t.status === 'completed');
+  const handleServiceDone = async (vehicle, item, odometerKm) => {
+    const items = getMaintenanceStatus(vehicle, trips).map((entry) => (
+      entry.id === item.id
+        ? { ...entry, last_service_km: odometerKm }
+        : entry
+    ));
+    await vehicleService.update(vehicle.id, { maintenance_items: items });
+    invalidate();
+  };
+
+  const tripListFor = (vehicle) => trips.filter(t => (
+    t.status === 'completed' &&
+    (t.vehicle_id === vehicle.id || (vehicle.is_default && !t.vehicle_id))
+  ));
+  const tripCountFor = (vehicle) => tripListFor(vehicle).length;
+  const avgScoreFor = (vehicle) => {
+    const vTrips = tripListFor(vehicle);
     if (!vTrips.length) return null;
     return Math.round(vTrips.reduce((s, t) => s + (t.score_overall || 0), 0) / vTrips.length);
   };
+  const fuelTotalsFor = (vehicle) => tripListFor(vehicle).reduce((totals, trip) => {
+    const estimate = estimateTripEconomics(trip, vehicle);
+    return {
+      cost: totals.cost + estimate.cost,
+      co2: totals.co2 + estimate.co2_kg,
+    };
+  }, { cost: 0, co2: 0 });
 
   return (
     <div className="space-y-5 pb-6">
@@ -162,9 +215,13 @@ export default function Vehicles() {
 
       <div className="space-y-3">
         {vehicles.map((v, i) => {
-          const count = tripCountFor(v.id);
-          const score = avgScoreFor(v.id);
+          const count = tripCountFor(v);
+          const score = avgScoreFor(v);
           const isEditing = editId === v.id;
+          const odometerKm = getVehicleOdometerKm(v, trips);
+          const maintenance = getMaintenanceStatus(v, trips);
+          const dueMaintenance = maintenance.filter((item) => item.status !== 'ok');
+          const fuelTotals = fuelTotalsFor(v);
 
           return (
             <motion.div key={v.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
@@ -203,6 +260,7 @@ export default function Vehicles() {
                         {score !== null && (
                           <span className="font-semibold text-primary">Avg score: {score}</span>
                         )}
+                        <span>{odometerKm.toLocaleString()} km</span>
                       </div>
                     </div>
                     {/* Actions */}
@@ -220,6 +278,49 @@ export default function Vehicles() {
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Fuel className="w-3.5 h-3.5" />
+                        Fuel estimate
+                      </div>
+                      <div className="font-semibold text-sm mt-1">${fuelTotals.cost.toFixed(2)}</div>
+                      <div className="text-xs text-muted-foreground">{fuelTotals.co2.toFixed(1)} kg CO2</div>
+                    </div>
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Wrench className="w-3.5 h-3.5" />
+                        Maintenance
+                      </div>
+                      <div className={`font-semibold text-sm mt-1 ${dueMaintenance.length ? 'text-orange-500' : 'text-emerald-500'}`}>
+                        {dueMaintenance.length ? `${dueMaintenance.length} due soon` : 'All good'}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{v.fuel_efficiency_l_per_100km || 8.5} L/100km</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 mt-3">
+                    {maintenance.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between gap-3 text-xs border border-border rounded-xl p-2">
+                        <div className="min-w-0">
+                          <div className="font-medium">{item.label}</div>
+                          <div className={`mt-0.5 ${
+                            item.status === 'due' ? 'text-red-500' : item.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
+                          }`}>
+                            {item.status === 'due'
+                              ? `${Math.abs(item.remaining_km).toLocaleString()} km overdue`
+                              : `${item.remaining_km.toLocaleString()} km left`}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleServiceDone(v, item, odometerKm)}
+                          className="px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground whitespace-nowrap"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

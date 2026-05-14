@@ -60,6 +60,12 @@ const putTrip = async (trip) => {
   }
 };
 
+const putTrips = async (incomingTrips) => {
+  for (const trip of incomingTrips) {
+    await putTrip(trip);
+  }
+};
+
 let importingNativeTrips = false;
 
 const importNativeCompletedTrips = async () => {
@@ -182,5 +188,15 @@ export const localTripRepository = {
   async delete(id) {
     await deleteTrip(id);
     return { success: true };
+  },
+
+  async upsertMany(trips = []) {
+    const normalized = trips.map((trip) => withId({
+      ...trip,
+      created_at: trip.created_at || trip.start_time || new Date().toISOString(),
+    }));
+    await putTrips(normalized);
+    await pruneExpiredTrips();
+    return normalized;
   },
 };

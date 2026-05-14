@@ -15,28 +15,51 @@ const SORT_OPTIONS = [
   { id: 'distance_asc', label: 'Shortest' },
 ];
 
+const DATE_FILTERS = [
+  { id: 'this_month', label: 'This Month' },
+  { id: 'last_30', label: 'Last 30 Days' },
+  { id: 'last_90', label: 'Last 90 Days' },
+  { id: 'all_time', label: 'All Time' },
+];
+
 const FILTER_OPTIONS = [
   { id: 'all', label: 'All Trips' },
-  { id: 'excellent', label: '≥85' },
-  { id: 'good', label: '70–84' },
-  { id: 'fair', label: '55–69' },
+  { id: 'excellent', label: '85+' },
+  { id: 'good', label: '70-84' },
+  { id: 'fair', label: '55-69' },
   { id: 'poor', label: '<55' },
-  { id: 'night', label: '🌙 Night' },
-  { id: 'harsh_braking', label: '🛑 Harsh Braking' },
-  { id: 'tag_work', label: '💼 Work' },
-  { id: 'tag_personal', label: '🏠 Personal' },
-  { id: 'tag_errands', label: '🛒 Errands' },
+  { id: 'night', label: 'Night' },
+  { id: 'harsh_braking', label: 'Harsh Braking' },
+  { id: 'tag_work', label: 'Work' },
+  { id: 'tag_personal', label: 'Personal' },
+  { id: 'tag_errands', label: 'Errands' },
 ];
 
 const TAG_OPTIONS = [
-  { id: 'work', label: '💼 Work', color: 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/50' },
-  { id: 'personal', label: '🏠 Personal', color: 'bg-green-50 dark:bg-green-950/30 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800/50' },
-  { id: 'errands', label: '🛒 Errands', color: 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800/50' },
+  { id: 'work', label: 'Work', color: 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/50' },
+  { id: 'personal', label: 'Personal', color: 'bg-green-50 dark:bg-green-950/30 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800/50' },
+  { id: 'errands', label: 'Errands', color: 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800/50' },
 ];
+
+const isSameMonth = (value, now = new Date()) => {
+  const date = new Date(value);
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+};
+
+const matchesDateFilter = (trip, dateFilter) => {
+  const start = new Date(trip.start_time).getTime();
+  if (!Number.isFinite(start)) return false;
+  const now = Date.now();
+  if (dateFilter === 'this_month') return isSameMonth(trip.start_time);
+  if (dateFilter === 'last_30') return start >= now - 30 * 86400000;
+  if (dateFilter === 'last_90') return start >= now - 90 * 86400000;
+  return true;
+};
 
 export default function TripHistory() {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
+  const [dateFilter, setDateFilter] = useState('this_month');
   const [filterBy, setFilterBy] = useState('all');
   const [taggingId, setTaggingId] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -46,7 +69,7 @@ export default function TripHistory() {
 
   const { data: trips = [], isLoading } = useQuery({
     queryKey: ['all-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 100 }),
+    queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
   });
 
   const tagMut = useMutation({
@@ -55,9 +78,9 @@ export default function TripHistory() {
   });
 
   const completed = trips.filter(t => t.status === 'completed');
+  const dateScoped = completed.filter(t => matchesDateFilter(t, dateFilter));
 
-  // Filter
-  const filtered = completed.filter(t => {
+  const filtered = dateScoped.filter(t => {
     if (filterBy === 'excellent' && (t.score_overall ?? 0) < 85) return false;
     if (filterBy === 'good' && ((t.score_overall ?? 0) < 70 || (t.score_overall ?? 0) >= 85)) return false;
     if (filterBy === 'fair' && ((t.score_overall ?? 0) < 55 || (t.score_overall ?? 0) >= 70)) return false;
@@ -76,7 +99,6 @@ export default function TripHistory() {
     return true;
   });
 
-  // Sort
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
       case 'date_desc': return new Date(b.start_time) - new Date(a.start_time);
@@ -91,13 +113,11 @@ export default function TripHistory() {
 
   return (
     <div className="space-y-5 pb-4">
-      {/* Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
-        <p className="text-muted-foreground text-sm mt-1">{completed.length} trips recorded</p>
+        <p className="text-muted-foreground text-sm mt-1">{dateScoped.length} of {completed.length} completed trips shown by date</p>
       </motion.div>
 
-      {/* Search */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <input
@@ -109,7 +129,6 @@ export default function TripHistory() {
         />
       </div>
 
-      {/* Filter/Sort row */}
       <div className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
         <button
           onClick={() => setShowFilters(!showFilters)}
@@ -120,6 +139,16 @@ export default function TripHistory() {
           <Filter className="w-3.5 h-3.5" />
           Filter
         </button>
+
+        <select
+          value={dateFilter}
+          onChange={e => setDateFilter(e.target.value)}
+          className="flex-shrink-0 bg-card border border-border rounded-xl text-xs font-medium px-3 py-2 text-muted-foreground outline-none"
+        >
+          {DATE_FILTERS.map(o => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
 
         <select
           value={sortBy}
@@ -146,7 +175,6 @@ export default function TripHistory() {
         ))}
       </div>
 
-      {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
@@ -155,14 +183,13 @@ export default function TripHistory() {
         </div>
       )}
 
-      {/* Results */}
       {!isLoading && sorted.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
             <Car className="w-8 h-8 text-muted-foreground" />
           </div>
           <div className="font-semibold mb-1">No trips found</div>
-          <div className="text-muted-foreground text-sm">Try adjusting your filters</div>
+          <div className="text-muted-foreground text-sm">Try adjusting your month, search, or filters</div>
         </div>
       )}
 
@@ -171,7 +198,6 @@ export default function TripHistory() {
           {sorted.map((trip, i) => (
             <div key={trip.id}>
               <TripCard trip={trip} units={units} index={i} />
-              {/* Tag row below each card */}
               <div className="flex items-center gap-2 mt-1.5 px-1">
                 {trip.tag ? (
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${

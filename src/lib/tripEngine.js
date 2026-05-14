@@ -705,6 +705,7 @@ export function tripsToCSV(trips) {
     'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
     'Avg Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
     'Eco', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events', 'Night Driving',
+    'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];
 
   const rows = trips.map(t => [
@@ -724,6 +725,9 @@ export function tripsToCSV(trips) {
     t.sharp_turns_count ?? '',
     t.speeding_events_count ?? '',
     t.night_driving ? 'Yes' : 'No',
+    t.route_points?.length || 0,
+    JSON.stringify(t.route_points || []),
+    JSON.stringify(t.driving_events || []),
   ]);
 
   const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;

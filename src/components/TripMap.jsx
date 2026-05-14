@@ -53,6 +53,7 @@ function loadLeaflet() {
 
 export default function TripMap({
   routePoints = [],
+  routes = null,
   events = [],
   showCurrentLocation = false,
   currentLocation = null,
@@ -105,16 +106,38 @@ export default function TripMap({
 
     layers.clearLayers();
 
-    if (routePoints && routePoints.length > 1) {
-      const latLngs = routePoints.map(p => [p.lat, p.lng]);
-      const polyline = window.L.polyline(latLngs, {
-        color: '#3b82f6',
-        weight: 4,
-        opacity: 0.85,
-        smoothFactor: 1.5,
-      }).addTo(layers);
+    const routeSets = Array.isArray(routes)
+      ? routes
+      : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+    const validRoutes = routeSets
+      .map((route) => ({
+        ...route,
+        color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
+        opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
+        route_points: (route.route_points || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+      }))
+      .filter((route) => route.route_points.length > 1);
 
-      map.fitBounds(polyline.getBounds(), { padding: [20, 20] });
+    if (validRoutes.length > 0) {
+      const bounds = window.L.latLngBounds([]);
+
+      validRoutes.forEach((route) => {
+        const latLngs = route.route_points.map(p => [p.lat, p.lng]);
+        latLngs.forEach((latLng) => bounds.extend(latLng));
+        window.L.polyline(latLngs, {
+          color: route.color,
+          weight: route.selected ? 5 : 3,
+          opacity: route.opacity,
+          smoothFactor: 1.5,
+        })
+          .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
+          .addTo(layers);
+      });
+
+      map.fitBounds(bounds, { padding: [20, 20] });
+
+      const primaryRoute = validRoutes.find((route) => route.selected) || validRoutes[0];
+      const latLngs = primaryRoute.route_points.map(p => [p.lat, p.lng]);
 
       const startIcon = window.L.divIcon({
         html: '<div style="width:14px;height:14px;background:#22c55e;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>',
@@ -168,7 +191,7 @@ export default function TripMap({
         .bindPopup('<b>You are here</b>')
         .addTo(layers);
     }
-  }, [ready, routePoints, events, showCurrentLocation, currentLocation]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;

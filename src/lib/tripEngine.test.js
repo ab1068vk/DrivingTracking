@@ -11,6 +11,14 @@ import {
   shouldAutoStopTracking,
   ACTIVITY_TYPES,
 } from '@/lib/activityRecognition';
+import {
+  buildScoreTips,
+  buildSpeedSegments,
+  calculateAchievementBadges,
+  estimateTripEconomics,
+  getMaintenanceStatus,
+  getVehicleOdometerKm,
+} from '@/lib/tripInsights';
 
 const point = (lat, lng, seconds, speedKmh = 40, accuracy = 8) => ({
   lat,
@@ -113,5 +121,52 @@ describe('auto tracking decision logic', () => {
       currentSpeedKmh: 8,
       stillSeconds: 30,
     })).toBe(false);
+  });
+});
+
+describe('trip insights', () => {
+  it('builds speed-colored route segments from GPS points', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 20),
+      point(43.6542, -79.3832, 10, 65),
+      point(43.6552, -79.3832, 20, 125),
+    ];
+
+    const segments = buildSpeedSegments(points);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[0].label).toBe('Cruise');
+    expect(segments[1].label).toBe('Risk');
+  });
+
+  it('estimates odometer, maintenance, fuel cost, CO2, tips, and badges', () => {
+    const trips = [
+      {
+        id: 't1',
+        vehicle_id: 'v1',
+        status: 'completed',
+        start_time: new Date().toISOString(),
+        distance_km: 100,
+        score_overall: 96,
+        harsh_brakes_count: 0,
+        rapid_accel_count: 0,
+        sharp_turns_count: 0,
+        speeding_events_count: 0,
+      },
+    ];
+    const vehicle = {
+      id: 'v1',
+      odometer_km: 7000,
+      fuel_efficiency_l_per_100km: 10,
+      fuel_price_per_liter: 2,
+      maintenance_items: [{ id: 'oil', label: 'Oil change', interval_km: 8000, last_service_km: 0 }],
+    };
+
+    expect(getVehicleOdometerKm(vehicle, trips)).toBe(7100);
+    expect(getMaintenanceStatus(vehicle, trips)[0].status).toBe('soon');
+    expect(estimateTripEconomics(trips[0], vehicle).cost).toBe(20);
+    expect(estimateTripEconomics(trips[0], vehicle).co2_kg).toBe(23.1);
+    expect(buildScoreTips(trips)[0]).toContain('excellent');
+    expect(calculateAchievementBadges(trips).find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
   });
 });

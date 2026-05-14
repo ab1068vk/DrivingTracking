@@ -1,15 +1,17 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
 import {
-  ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap,
-  CornerUpRight, AlertTriangle, Moon, Trash2
+  ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car,
+  CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf
 } from 'lucide-react';
 import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
 import { formatDistance, formatDuration, formatDateTime, formatSpeed, getScoreColor } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
+import { estimateTripEconomics } from '@/lib/tripInsights';
 
 export default function TripDetail() {
   const { id } = useParams();
@@ -21,6 +23,11 @@ export default function TripDetail() {
   const { data: trip, isLoading } = useQuery({
     queryKey: ['trip', id],
     queryFn: () => tripService.getById(id),
+  });
+
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles'],
+    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
 
   const deleteMutation = useMutation({
@@ -55,6 +62,8 @@ export default function TripDetail() {
   }
 
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
+  const tripVehicle = vehicles.find((vehicle) => String(vehicle.id) === String(trip.vehicle_id));
+  const economics = estimateTripEconomics(trip, tripVehicle, settings);
 
   return (
     <div className="space-y-5 pb-4">
@@ -132,6 +141,8 @@ export default function TripDetail() {
             { icon: Clock, label: 'Duration', value: formatDuration(trip.duration_seconds) },
             { icon: Gauge, label: 'Avg Speed', value: formatSpeed(trip.avg_speed_kmh || 0, units) },
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
+            { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}` },
+            { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
           ].map(({ icon: Icon, label, value }) => (
             <div key={label} className="flex items-start gap-3 p-3 bg-secondary/50 rounded-xl">
               <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />
@@ -160,6 +171,13 @@ export default function TripDetail() {
             <div className="flex items-center gap-2 text-sm text-purple-600 dark:text-purple-400">
               <Moon className="w-4 h-4" />
               <span>Night driving detected</span>
+            </div>
+          )}
+          {tripVehicle && (
+            <div className="flex items-center gap-2 text-sm">
+              <Car className="w-4 h-4 text-muted-foreground" />
+              <span className="text-muted-foreground">Vehicle:</span>
+              <span className="font-medium">{tripVehicle.name}</span>
             </div>
           )}
         </div>

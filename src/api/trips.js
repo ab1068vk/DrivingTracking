@@ -31,4 +31,14 @@ export const tripService = {
     const local = repository();
     return local ? local.delete(id) : apiClient.delete(`/trips/${encodeURIComponent(id)}`);
   },
+
+  upsertMany: (trips) => {
+    const local = repository();
+    if (local) return local.upsertMany(trips);
+    return Promise.all(trips.map((trip) => (
+      trip.id
+        ? apiClient.patch(`/trips/${encodeURIComponent(trip.id)}`, trip).catch(() => apiClient.post("/trips", trip))
+        : apiClient.post("/trips", trip)
+    )));
+  },
 };

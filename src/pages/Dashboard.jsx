@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { tripService } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
@@ -28,6 +29,7 @@ import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
+import { buildScoreTips, calculateAchievementBadges } from '@/lib/tripInsights';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -60,6 +62,11 @@ export default function Dashboard() {
   const { data: recentTrips = [], refetch } = useQuery({
     queryKey: ['recent-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 20 }),
+  });
+
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles'],
+    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
   });
 
   const completedTrips = recentTrips.filter(t => t.status === 'completed');
@@ -228,6 +235,7 @@ export default function Dashboard() {
       ...stats,
       start_time: tripToEnd.start_time,
       end_time: endTime,
+      vehicle_id: vehicles.find((vehicle) => vehicle.is_default)?.id || vehicles[0]?.id || null,
       route_points: pts,
       driving_events: events,
       ...scores,
@@ -365,6 +373,9 @@ export default function Dashboard() {
     : 0;
   const latestTrip = completedTrips[0];
   const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: t.score_overall || 0 }));
+  const tips = buildScoreTips(completedTrips);
+  const badges = calculateAchievementBadges(completedTrips);
+  const earnedBadges = badges.filter((badge) => badge.earned);
 
   const { color: scoreColor } = getScoreColor(avgScore);
   const units = settings.units || 'metric';
@@ -534,6 +545,47 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Coaching tips */}
+      {completedTrips.length > 0 && (
+        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+          <h2 className="font-semibold text-base mb-3">Score Tips</h2>
+          <div className="space-y-2">
+            {tips.map((tip) => (
+              <div key={tip} className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
+                {tip}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Achievements */}
+      {badges.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-base">Achievements</h2>
+            <span className="text-xs text-muted-foreground">{earnedBadges.length}/{badges.length} earned</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {badges.slice(0, 4).map((badge) => (
+              <div
+                key={badge.id}
+                className={`rounded-2xl p-4 border ${
+                  badge.earned
+                    ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40'
+                    : 'bg-card border-border'
+                }`}
+              >
+                <div className={`text-sm font-semibold ${badge.earned ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
+                  {badge.label}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">{badge.description}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick event stats */}
       {completedTrips.length > 0 && (() => {

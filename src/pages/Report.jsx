@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
 import {
   BarChart3, TrendingUp, Award, AlertTriangle,
-  Download, Car, Clock, Navigation
+  Download, Car, Clock, Navigation, Fuel, Leaf
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -12,6 +13,7 @@ import {
 } from 'recharts';
 import { generateReportSummary, formatDistance, formatDuration, formatDate, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
+import { buildScoreTips, calculateAchievementBadges, estimateTripEconomics } from '@/lib/tripInsights';
 
 const PERIODS = [
   { id: 'week', label: 'This Week', days: 7 },
@@ -29,7 +31,13 @@ export default function Reports() {
     queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
   });
 
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles'],
+    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+  });
+
   const completed = allTrips.filter(t => t.status === 'completed');
+  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
 
   // Filter by period
   const now = Date.now();
@@ -38,6 +46,16 @@ export default function Reports() {
   const trips = completed.filter(t => new Date(t.start_time).getTime() >= cutoff);
 
   const summary = generateReportSummary(trips);
+  const economics = trips.reduce((totals, trip) => {
+    const estimate = estimateTripEconomics(trip, vehicleById.get(String(trip.vehicle_id)), settings);
+    return {
+      cost: totals.cost + estimate.cost,
+      liters: totals.liters + estimate.liters,
+      co2: totals.co2 + estimate.co2_kg,
+    };
+  }, { cost: 0, liters: 0, co2: 0 });
+  const tips = buildScoreTips(trips);
+  const badges = calculateAchievementBadges(completed);
 
   // Build 6-month monthly event trend data (always uses all completed trips)
   const eventTrendData = (() => {
@@ -156,6 +174,8 @@ export default function Reports() {
               { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), gradient: 'gradient-success' },
               { icon: Clock, label: 'Drive Time', value: formatDuration(summary.total_duration_seconds), gradient: 'bg-gradient-to-br from-purple-500 to-purple-700' },
               { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score, gradient: getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
+              { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}`, gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
+              { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },
             ].map(({ icon: Icon, label, value, gradient }, i) => (
               <motion.div
                 key={label}
@@ -171,6 +191,46 @@ export default function Reports() {
               </motion.div>
             ))}
           </div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.18 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-3">Improvement Tips</h2>
+            <div className="space-y-2">
+              {tips.map((tip) => (
+                <div key={tip} className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
+                  {tip}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.19 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-3">Badges</h2>
+            <div className="grid grid-cols-2 gap-3">
+              {badges.map((badge) => (
+                <div
+                  key={badge.id}
+                  className={`rounded-2xl p-3 border ${
+                    badge.earned
+                      ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40'
+                      : 'bg-secondary/30 border-border'
+                  }`}
+                >
+                  <div className="font-semibold text-sm">{badge.label}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{badge.description}</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
 
           {/* Score trend chart */}
           <motion.div
