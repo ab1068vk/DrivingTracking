@@ -2,6 +2,8 @@
 
 DriveSense is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, and stores trip history on the device.
 
+For full app documentation, see [APP_DOCUMENTATION.md](APP_DOCUMENTATION.md).
+
 ## Local Setup
 
 ```bash

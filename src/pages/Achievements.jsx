@@ -8,19 +8,18 @@ import { syncAchievementNotifications } from '@/lib/notificationService';
 
 const progressLabel = (badge) => {
   if (badge.earned) return 'Unlocked';
-  if (badge.progress === undefined) return 'Locked';
-  if (badge.id === 'hundred_km') return `${badge.progress}/100 km`;
-  if (badge.id === 'smooth_driver') return `${badge.progress}/10 trips`;
-  if (badge.id === 'night_owl') return `${badge.progress}/5 night drives`;
+  if (badge.target) {
+    const unit = badge.unit ? ` ${badge.unit}` : '';
+    return `${badge.current || 0}/${badge.target}${unit}`;
+  }
+  if (badge.progress !== undefined) return `${badge.progress}%`;
   return 'In progress';
 };
 
 const progressValue = (badge) => {
   if (badge.earned) return 100;
-  if (badge.progress === undefined) return 0;
-  if (badge.id === 'hundred_km') return Math.min(100, badge.progress);
-  if (badge.id === 'smooth_driver') return Math.min(100, (badge.progress / 10) * 100);
-  if (badge.id === 'night_owl') return Math.min(100, (badge.progress / 5) * 100);
+  if (badge.target) return Math.min(100, ((badge.current || 0) / badge.target) * 100);
+  if (badge.progress !== undefined) return Math.min(100, badge.progress);
   return 0;
 };
 
@@ -98,6 +97,11 @@ export default function Achievements() {
                         {progressLabel(badge)}
                       </span>
                     </div>
+                    {badge.category && (
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-primary mt-1">
+                        {badge.category}
+                      </div>
+                    )}
                     <p className="text-xs text-muted-foreground mt-1">{badge.description}</p>
                     <div className="h-2 rounded-full bg-secondary overflow-hidden mt-3">
                       <div

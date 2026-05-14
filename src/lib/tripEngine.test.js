@@ -177,7 +177,48 @@ describe('trip insights', () => {
     expect(estimateTripEconomics(trips[0], vehicle).cost).toBe(20);
     expect(estimateTripEconomics(trips[0], vehicle).co2_kg).toBe(23.1);
     expect(buildScoreTips(trips)[0]).toContain('excellent');
-    expect(calculateAchievementBadges(trips).find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
+    const badges = calculateAchievementBadges(trips);
+    expect(badges).toHaveLength(17);
+    expect(badges.find((badge) => badge.id === 'first_drive').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'hundred_km').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'five_hundred_km').current).toBe(100);
+  });
+
+  it('unlocks expanded achievement milestones from driving behavior', () => {
+    const routePoints = Array.from({ length: 20 }, (_, index) => ({
+      lat: 43.6532 + index * 0.0001,
+      lng: -79.3832,
+      speed_kmh: 45,
+      timestamp: new Date(Date.now() + index * 1000).toISOString(),
+    }));
+    const trips = Array.from({ length: 10 }, (_, index) => ({
+      id: `trip-${index}`,
+      status: 'completed',
+      start_time: new Date(Date.now() - index * 86400000).toISOString(),
+      duration_seconds: index === 0 ? 70 * 60 : 20 * 60,
+      distance_km: 55,
+      score_overall: 88,
+      harsh_brakes_count: 0,
+      rapid_accel_count: 0,
+      sharp_turns_count: 0,
+      speeding_events_count: 0,
+      night_driving: index < 5,
+      route_points: index === 0 ? routePoints : [],
+    }));
+
+    const badges = calculateAchievementBadges(trips);
+
+    expect(badges.find((badge) => badge.id === 'ten_trips').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'five_hundred_km').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'steady_five').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'gentle_brakes').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'smooth_starts').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'corner_control').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'speed_sentinel').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'route_replay_ready').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'long_drive_clean').earned).toBe(true);
+    expect(badges.find((badge) => badge.id === 'night_owl').earned).toBe(true);
   });
 
   it('detects stops and summarizes driver-focused analytics', () => {

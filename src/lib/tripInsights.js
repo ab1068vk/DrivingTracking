@@ -506,6 +506,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
 export function calculateAchievementBadges(trips = []) {
   const completed = trips.filter((trip) => trip.status === 'completed');
   const totalKm = completed.reduce((sum, trip) => sum + (trip.distance_km || 0), 0);
+  const nightCount = completed.filter((trip) => trip.night_driving).length;
   const cleanTrips = completed.filter((trip) => (
     (trip.harsh_brakes_count || 0) === 0 &&
     (trip.rapid_accel_count || 0) === 0 &&
@@ -515,43 +516,193 @@ export function calculateAchievementBadges(trips = []) {
   const weekAgo = Date.now() - 7 * 86400000;
   const weekTrips = completed.filter((trip) => new Date(trip.start_time).getTime() >= weekAgo);
   const weekHarshBrakes = weekTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
+  const noHarshTrips = completed.filter((trip) => (trip.harsh_brakes_count || 0) === 0).length;
+  const noRapidTrips = completed.filter((trip) => (trip.rapid_accel_count || 0) === 0).length;
+  const noSharpTrips = completed.filter((trip) => (trip.sharp_turns_count || 0) === 0).length;
+  const noSpeedingTrips = completed.filter((trip) => (trip.speeding_events_count || 0) === 0).length;
+  const routeReplayTrips = completed.filter((trip) => {
+    const points = Array.isArray(trip.route_points) ? trip.route_points : [];
+    return points.length >= 20 && points.some((point) => Number(point.speed_kmh) > 0);
+  }).length;
+  const cleanLongTrips = cleanTrips.filter((trip) => (trip.duration_seconds || 0) >= 60 * 60).length;
+  const recentFive = [...completed]
+    .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+    .slice(0, 5);
+  const recentFiveAvg = recentFive.length
+    ? recentFive.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / recentFive.length
+    : 0;
   const avgScore = completed.length
     ? completed.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / completed.length
     : 0;
 
   return [
     {
+      id: 'first_drive',
+      label: 'First Drive',
+      description: 'Save your first completed trip.',
+      category: 'Getting Started',
+      earned: completed.length >= 1,
+      current: Math.min(1, completed.length),
+      target: 1,
+      unit: 'trip',
+    },
+    {
+      id: 'five_trips',
+      label: 'Getting Rolling',
+      description: 'Complete 5 tracked trips.',
+      category: 'Consistency',
+      earned: completed.length >= 5,
+      current: Math.min(5, completed.length),
+      target: 5,
+      unit: 'trips',
+    },
+    {
+      id: 'ten_trips',
+      label: 'Road Regular',
+      description: 'Complete 10 tracked trips.',
+      category: 'Consistency',
+      earned: completed.length >= 10,
+      current: Math.min(10, completed.length),
+      target: 10,
+      unit: 'trips',
+    },
+    {
       id: 'perfect_trip',
       label: 'Perfect Trip',
       description: 'Complete a 95+ score trip with no risky events.',
+      category: 'Score',
       earned: completed.some((trip) => (trip.score_overall || 0) >= 95 && cleanTrips.includes(trip)),
+      current: completed.some((trip) => (trip.score_overall || 0) >= 95 && cleanTrips.includes(trip)) ? 1 : 0,
+      target: 1,
     },
     {
       id: 'clean_week',
       label: 'Clean Week',
       description: 'Finish the last 7 days with no harsh braking.',
+      category: 'Safety',
       earned: weekTrips.length > 0 && weekHarshBrakes === 0,
+      current: weekTrips.length > 0 && weekHarshBrakes === 0 ? 1 : 0,
+      target: 1,
     },
     {
       id: 'hundred_km',
       label: '100 km Club',
       description: 'Record 100 km of completed driving.',
+      category: 'Distance',
       earned: totalKm >= 100,
-      progress: Math.min(100, Math.round(totalKm)),
+      current: Math.min(100, Math.round(totalKm)),
+      target: 100,
+      unit: 'km',
+    },
+    {
+      id: 'five_hundred_km',
+      label: '500 km Club',
+      description: 'Record 500 km of completed driving.',
+      category: 'Distance',
+      earned: totalKm >= 500,
+      current: Math.min(500, Math.round(totalKm)),
+      target: 500,
+      unit: 'km',
     },
     {
       id: 'smooth_driver',
       label: 'Smooth Driver',
       description: 'Average 85+ over at least 10 trips.',
+      category: 'Score',
       earned: completed.length >= 10 && avgScore >= 85,
-      progress: Math.min(10, completed.length),
+      current: Math.min(10, completed.length),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'steady_five',
+      label: 'Steady Five',
+      description: 'Average 85+ across your last 5 trips.',
+      category: 'Score',
+      earned: recentFive.length >= 5 && recentFiveAvg >= 85,
+      current: Math.min(5, recentFive.length),
+      target: 5,
+      unit: 'trips',
+    },
+    {
+      id: 'gentle_brakes',
+      label: 'Gentle Brakes',
+      description: 'Complete 10 trips without harsh braking.',
+      category: 'Safety',
+      earned: noHarshTrips >= 10,
+      current: Math.min(10, noHarshTrips),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'smooth_starts',
+      label: 'Smooth Starts',
+      description: 'Complete 10 trips without rapid acceleration.',
+      category: 'Safety',
+      earned: noRapidTrips >= 10,
+      current: Math.min(10, noRapidTrips),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'corner_control',
+      label: 'Corner Control',
+      description: 'Complete 10 trips without sharp turns.',
+      category: 'Safety',
+      earned: noSharpTrips >= 10,
+      current: Math.min(10, noSharpTrips),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'speed_sentinel',
+      label: 'Speed Sentinel',
+      description: 'Complete 10 trips without speeding events.',
+      category: 'Speed',
+      earned: noSpeedingTrips >= 10,
+      current: Math.min(10, noSpeedingTrips),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'daily_driver',
+      label: 'Daily Driver',
+      description: 'Complete 5 trips in the last 7 days.',
+      category: 'Consistency',
+      earned: weekTrips.length >= 5,
+      current: Math.min(5, weekTrips.length),
+      target: 5,
+      unit: 'trips',
+    },
+    {
+      id: 'route_replay_ready',
+      label: 'Route Replay Ready',
+      description: 'Record a trip with 20+ GPS points and speed data.',
+      category: 'Routes',
+      earned: routeReplayTrips >= 1,
+      current: Math.min(1, routeReplayTrips),
+      target: 1,
+      unit: 'trip',
+    },
+    {
+      id: 'long_drive_clean',
+      label: 'Clean Long Drive',
+      description: 'Complete a 60+ minute trip with no risky events.',
+      category: 'Endurance',
+      earned: cleanLongTrips >= 1,
+      current: Math.min(1, cleanLongTrips),
+      target: 1,
+      unit: 'trip',
     },
     {
       id: 'night_owl',
       label: 'Night Owl',
       description: 'Complete 5 night drives.',
+      category: 'Conditions',
       earned: completed.filter((trip) => trip.night_driving).length >= 5,
-      progress: Math.min(5, completed.filter((trip) => trip.night_driving).length),
+      current: Math.min(5, nightCount),
+      target: 5,
+      unit: 'drives',
     },
   ];
 }
