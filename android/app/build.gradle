@@ -24,6 +24,37 @@ android {
     }
 }
 
+def webProjectDir = file("../..")
+def androidPublicAssetsDir = file("src/main/assets/public")
+def npmCommand = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows") ? "npm.cmd" : "npm"
+
+tasks.register("drivesenseBuildWeb", Exec) {
+    group = "drivesense"
+    description = "Builds the current Vite web app before Android packaging."
+    workingDir webProjectDir
+    commandLine npmCommand, "run", "build"
+    inputs.files(
+        fileTree("${webProjectDir}/src"),
+        "${webProjectDir}/index.html",
+        "${webProjectDir}/package.json",
+        "${webProjectDir}/package-lock.json",
+        "${webProjectDir}/vite.config.js",
+        "${webProjectDir}/tailwind.config.js",
+        "${webProjectDir}/postcss.config.js"
+    )
+    outputs.dir("${webProjectDir}/dist")
+}
+
+tasks.register("drivesenseSyncWebAssets", Sync) {
+    group = "drivesense"
+    description = "Copies the freshly built web app into Capacitor's Android assets."
+    dependsOn tasks.named("drivesenseBuildWeb")
+    from "${webProjectDir}/dist"
+    into androidPublicAssetsDir
+}
+
+preBuild.dependsOn tasks.named("drivesenseSyncWebAssets")
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
