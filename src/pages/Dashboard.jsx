@@ -5,10 +5,11 @@ import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
-  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame
+  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
+  calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   formatDistance, formatDuration, formatSpeed, getScoreColor, simplifyRoute
@@ -19,6 +20,7 @@ import {
   scheduleLongTripReminder,
   cancelLongTripReminder,
   notifyTripCompleted,
+  notifyStayAlert,
   notifyTripStarted,
   syncAchievementNotifications,
 } from '@/lib/notificationService';
@@ -41,6 +43,8 @@ import {
   calculateFatigueRisk,
   calculateNoHarshBrakeStreak,
   computePersonalBaseline,
+  calculatePeakHourStress,
+  estimateTripEconomics,
   calculateWeeklyDrivingGoals,
 } from '@/lib/tripInsights';
 
@@ -61,6 +65,8 @@ export default function Dashboard() {
   const recentMovingSinceRef = useRef(null);
   const stillSinceRef = useRef(null);
   const timerRef = useRef(null);
+  const stayAlertSentRef = useRef(false);
+  const lastStayAlertAtRef = useRef(0);
   const settings = localSettings.get();
 
   useEffect(() => {
@@ -69,7 +75,28 @@ export default function Dashboard() {
 
   useEffect(() => {
     trackingRef.current = tracking;
+    if (!tracking) {
+      stayAlertSentRef.current = false;
+      lastStayAlertAtRef.current = 0;
+    }
   }, [tracking]);
+
+  useEffect(() => {
+    if (!tracking || Date.now() - lastStayAlertAtRef.current < 10 * 60 * 1000) return;
+    const points = activeTrip?.route_points || [];
+    const lastFiveMinutes = points.filter((point) => new Date(point.timestamp).getTime() >= Date.now() - 5 * 60 * 1000);
+    const headings = lastFiveMinutes
+      .map((point) => Number(point.heading))
+      .filter((heading) => Number.isFinite(heading));
+    const highwayShare = lastFiveMinutes.length
+      ? lastFiveMinutes.filter((point) => (point.speed_kmh || 0) > 80).length / lastFiveMinutes.length
+      : 0;
+    if (lastFiveMinutes.length >= 8 && headings.length >= 5 && highwayShare >= 0.8 && calculateAngularStdDev(headings) > 8) {
+      stayAlertSentRef.current = true;
+      lastStayAlertAtRef.current = Date.now();
+      notifyStayAlert().catch(() => {});
+    }
+  }, [activeTrip, tracking]);
 
   // Load recent trips
   const { data: recentTrips = [], refetch } = useQuery({
@@ -232,7 +259,8 @@ export default function Dashboard() {
       return;
     }
 
-    const events = detectDrivingEvents(pts, {
+    const thresholds = {
+      ...DEFAULT_THRESHOLDS,
       HARSH_BRAKE_MS2: settings.threshold_harsh_brake_ms2 || 4.5,
       RAPID_ACCEL_MS2: settings.threshold_rapid_accel_ms2 || 3.5,
       TAILGATE_DECEL_MS2: settings.threshold_tailgate_decel_ms2 || 2.5,
@@ -245,20 +273,32 @@ export default function Dashboard() {
       LONG_DRIVE_MINUTES: settings.threshold_long_drive_minutes || 120,
       MIN_SPEED_RAPID_ACCEL_KMH: settings.min_speed_rapid_accel_kmh || 15,
       MIN_SPEED_HARSH_BRAKE_KMH: settings.min_speed_harsh_brake_kmh || 25,
-    });
+      threshold_harsh_brake_ms2: settings.threshold_harsh_brake_ms2 || 4.5,
+      threshold_near_miss_brake_ms2: settings.threshold_near_miss_brake_ms2 || 3.5,
+      threshold_near_miss_turn_degs: settings.threshold_near_miss_turn_degs || 30,
+      threshold_drowsy_heading_std: settings.threshold_drowsy_heading_std || 8,
+      threshold_phone_proxy_oscillations: settings.threshold_phone_proxy_oscillations || 3,
+      threshold_speed_creep_kmh: settings.threshold_speed_creep_kmh || 10,
+      threshold_overtake_accel_ms2: settings.threshold_overtake_accel_ms2 || 3.0,
+    };
+    const events = detectDrivingEvents(pts, thresholds);
 
-    const scores = calculateTripScores(events, stats, pts);
-    const simplifiedPoints = simplifyRoute(pts, 10, events);
+    const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds);
+    const tripEvents = scores.driving_events || events;
+    const simplifiedPoints = simplifyRoute(pts, 10, tripEvents);
+    const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
+    const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
 
     const completedTrip = {
       ...stats,
       start_time: tripToEnd.start_time,
       end_time: endTime,
-      vehicle_id: vehicles.find((vehicle) => vehicle.is_default)?.id || vehicles[0]?.id || null,
+      vehicle_id: completedVehicle?.id || null,
       route_points: simplifiedPoints,
       route_points_raw_count: pts.length,
-      driving_events: events,
+      driving_events: tripEvents,
       ...scores,
+      co2_saved_kg: economics.co2_saved_kg,
       status: 'completed',
       background_tracking: tripToEnd.background_tracking,
       start_source: tripToEnd.start_source || 'manual',
@@ -399,6 +439,7 @@ export default function Dashboard() {
   const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
   const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
   const baseline = computePersonalBaseline(completedTrips);
+  const peakStress = calculatePeakHourStress(completedTrips);
   const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
     const points = activeTrip?.route_points || [];
     if (points.length < 12) return false;
@@ -411,8 +452,8 @@ export default function Dashboard() {
     const lastEvents = detectDrivingEvents(lastPoints);
     const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
     const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
-    return calculateTripScores(lastEvents, lastStats, lastPoints).score_overall <
-      calculateTripScores(firstEvents, firstStats, firstPoints).score_overall - 15;
+    return calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds).score_overall <
+      calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds).score_overall - 15;
   })();
 
   const { color: scoreColor } = getScoreColor(avgScore);
@@ -572,7 +613,7 @@ export default function Dashboard() {
               {baseline.trend}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3 mt-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
             <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.this_week_avg ?? '-'}</div>
               <div className="text-xs text-muted-foreground">this week</div>
@@ -584,6 +625,17 @@ export default function Dashboard() {
             <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.percentile ?? 0}%</div>
               <div className="text-xs text-muted-foreground">percentile</div>
+            </div>
+            <div className="bg-secondary/50 rounded-xl p-3">
+              <div className="flex items-center gap-2">
+                <TrafficCone className={`w-4 h-4 ${
+                  peakStress.peak_stress_label === 'consistent' ? 'text-emerald-500' :
+                    peakStress.peak_stress_label === 'slightly stressed' ? 'text-yellow-500' :
+                      peakStress.peak_stress_label === 'traffic-affected' ? 'text-orange-500' : 'text-red-500'
+                }`} />
+                <div className="font-grotesk font-bold text-sm capitalize">{peakStress.peak_stress_label}</div>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">rush hour behaviour</div>
             </div>
           </div>
         </div>

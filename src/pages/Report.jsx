@@ -11,16 +11,20 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell
 } from 'recharts';
-import { generateReportSummary, formatDistance, formatDuration, formatDate, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import ScoreRing from '@/components/ScoreRing';
 import { localSettings } from '@/lib/trackingStore';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
   buildScoreTips,
   calculateFatigueRisk,
+  calculateCarbonImpact,
   calculateSpeedDiscipline,
   computePersonalBaseline,
   estimateTripEconomics,
+  identifyCommutePatterns,
+  calculatePeakHourStress,
 } from '@/lib/tripInsights';
 
 const PERIODS = [
@@ -69,6 +73,9 @@ export default function Reports() {
   const fatigueRisk = calculateFatigueRisk(trips, settings);
   const speedDiscipline = calculateSpeedDiscipline(trips, settings);
   const baseline = computePersonalBaseline(completed);
+  const carbonImpact = calculateCarbonImpact(trips);
+  const commutePatterns = identifyCommutePatterns(trips);
+  const peakHourStress = calculatePeakHourStress(trips);
   const roadTypeData = ['highway', 'urban', 'mixed', 'residential']
     .map((type) => ({
       name: type[0].toUpperCase() + type.slice(1),
@@ -76,6 +83,17 @@ export default function Reports() {
     }))
     .filter((item) => item.value > 0);
   const roadColors = ['#3b82f6', '#f59e0b', '#64748b', '#22c55e'];
+  const efficiencyBandsData = [{
+    name: 'Selected',
+    cityCrawl: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.city_crawl_ratio || 0), 0) / trips.length) : 0,
+    cruise: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.optimal_band_ratio || 0), 0) / trips.length) : 0,
+    highSpeed: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.high_speed_ratio || 0), 0) / trips.length) : 0,
+  }];
+  efficiencyBandsData[0].city = Math.max(0, 100 - efficiencyBandsData[0].cityCrawl - efficiencyBandsData[0].cruise - efficiencyBandsData[0].highSpeed);
+  const peakComparisonData = [
+    { label: 'Peak', rate: peakHourStress.peak_trips_event_rate },
+    { label: 'Off-peak', rate: peakHourStress.off_peak_trips_event_rate },
+  ];
 
   // Build 6-month monthly event trend data (always uses all completed trips)
   const eventTrendData = (() => {
@@ -107,7 +125,7 @@ export default function Reports() {
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now - i * 86400000);
       const key = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      map[key] = { date: key, distance: 0, trips: 0, score: 0, scoreCount: 0 };
+      map[key] = { date: key, distance: 0, trips: 0, score: 0, scoreCount: 0, svi: 0, sviCount: 0 };
     }
     trips.forEach(t => {
       const key = new Date(t.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -118,12 +136,17 @@ export default function Reports() {
           map[key].score += t.score_overall;
           map[key].scoreCount += 1;
         }
+        if (t.svi_score) {
+          map[key].svi += t.svi_score;
+          map[key].sviCount += 1;
+        }
       }
     });
     return Object.values(map).map(d => ({
       ...d,
       distance: Math.round(d.distance * 10) / 10,
       avgScore: d.scoreCount > 0 ? Math.round(d.score / d.scoreCount) : null,
+      avgSviScore: d.sviCount > 0 ? Math.round(d.svi / d.sviCount) : null,
     }));
   })();
 
@@ -135,6 +158,8 @@ export default function Reports() {
     lane_change: 'Lane Changes',
     tailgate_cycle: 'Following Gap',
     erratic_speed: 'Erratic Speed',
+    near_miss: 'Near-Miss',
+    aggressive_overtake: 'Aggressive Overtakes',
   };
 
   const handleExport = async () => {
@@ -159,7 +184,7 @@ export default function Reports() {
           className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors"
         >
           <Download className="w-4 h-4" />
-          Export CSV
+          Export {trips.length} Trips
         </button>
       </motion.div>
 
@@ -278,6 +303,78 @@ export default function Reports() {
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.187 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-1">Drive Efficiency Bands</h2>
+            <p className="text-xs text-muted-foreground mb-4">Average moving time by speed band</p>
+            <ResponsiveContainer width="100%" height={130}>
+              <BarChart data={efficiencyBandsData} layout="vertical" margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                <XAxis type="number" domain={[0, 100]} hide />
+                <YAxis type="category" dataKey="name" hide />
+                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} formatter={(v) => [`${v}%`, 'Share']} />
+                <Bar dataKey="cityCrawl" stackId="a" fill="#ef4444" name="City crawl" />
+                <Bar dataKey="city" stackId="a" fill="#f97316" name="City" />
+                <Bar dataKey="cruise" stackId="a" fill="#22c55e" name="Cruise band" />
+                <Bar dataKey="highSpeed" stackId="a" fill="#dc2626" name="High speed" />
+              </BarChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.188 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <div className="flex items-start gap-3">
+              <Leaf className="w-5 h-5 text-emerald-500 mt-1" />
+              <div>
+                <h2 className="font-semibold mb-1">Your Environmental Impact</h2>
+                <div className="font-grotesk font-bold text-2xl">{carbonImpact.trees_equivalent} tree-years of CO2 offset</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  You saved {carbonImpact.total_co2_saved_kg} kg CO2 vs. the average driver.
+                </p>
+                <span className="mt-3 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                  {carbonImpact.carbon_grade}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+
+          {commutePatterns.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.189 }}
+              className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+            >
+              <h2 className="font-semibold mb-1">Your Routes</h2>
+              <p className="text-xs text-muted-foreground mb-4">Recurring start/end patterns across your trip history</p>
+              <div className="space-y-3">
+                {commutePatterns.map((pattern) => (
+                  <div key={pattern.route_key} className="flex items-center gap-3 rounded-2xl border border-border p-3">
+                    <ScoreRing score={pattern.avg_score} size={56} strokeWidth={5} sublabel="avg" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">{pattern.trip_count} trips</div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatDistance(pattern.avg_distance_km, units)} avg, {pattern.avg_duration_minutes}m avg, {pattern.weekly_minutes_estimate}m/week
+                      </div>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${
+                      pattern.score_trend === 'improving' ? 'bg-emerald-100 text-emerald-700' :
+                        pattern.score_trend === 'declining' ? 'bg-red-100 text-red-700' :
+                          'bg-secondary text-muted-foreground'
+                    }`}>{pattern.score_trend}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.19 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
@@ -339,6 +436,25 @@ export default function Reports() {
                 />
                 <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
                 <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
+              </BarChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1975 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-1">Peak Vs Off-Peak</h2>
+            <p className="text-xs text-muted-foreground mb-4">Risk event rate per km by traffic window</p>
+            <ResponsiveContainer width="100%" height={150}>
+              <BarChart data={peakComparisonData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                <Bar dataKey="rate" fill="#f97316" radius={[4, 4, 0, 0]} name="Events/km" />
               </BarChart>
             </ResponsiveContainer>
           </motion.div>
@@ -413,6 +529,7 @@ export default function Reports() {
                   formatter={(v) => [v, 'Score']}
                 />
                 <Line type="monotone" dataKey="avgScore" stroke="hsl(var(--accent))" strokeWidth={2.5} dot={{ fill: 'hsl(var(--accent))', r: 3 }} />
+                <Line type="monotone" dataKey="avgSviScore" stroke="#14b8a6" strokeWidth={2} dot={false} name="Speed Smoothness" />
               </LineChart>
             </ResponsiveContainer>
           </motion.div>

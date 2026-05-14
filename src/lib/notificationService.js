@@ -10,6 +10,7 @@ const LONG_TRIP_REMINDER_ID = 2001;
 const TRIP_STARTED_ID = 2003;
 const WEEKLY_REPORT_ID = 2101;
 const SAFE_DRIVING_ID = 2102;
+const STAY_ALERT_ID = 2005;
 const ACHIEVEMENT_BASE_ID = 3000;
 const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
 const SAFE_DRIVING_TIPS = [
@@ -125,11 +126,34 @@ export async function notifyTripCompleted(trip) {
   const granted = await requestNotificationPermission();
   if (!granted) return;
 
+  const additions = [];
+  if ((trip.near_miss_count || 0) > 0) additions.push(`${trip.near_miss_count} near-miss event(s) detected.`);
+  if (trip.drowsy_risk_level === 'high') additions.push('High drowsiness risk detected.');
+  if (trip.aggressive_grade === 'aggressive') additions.push('Aggressive driving pattern recorded.');
+  const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`;
+  const body = [baseBody, ...additions].join(' ').slice(0, 160);
+
   await LocalNotifications.schedule({
     notifications: [{
       id: 2002,
       title: 'Trip saved',
-      body: `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`,
+      body,
+      channelId: SUMMARY_CHANNEL_ID,
+    }],
+  });
+}
+
+export async function notifyStayAlert() {
+  if (!isNativePlatform()) return;
+  if (!notificationsEnabled('safe_driving_reminder')) return;
+  const granted = await requestNotificationPermission();
+  if (!granted) return;
+
+  await LocalNotifications.schedule({
+    notifications: [{
+      id: STAY_ALERT_ID,
+      title: 'Stay Alert',
+      body: 'Heading drift detected - take a break if you can.',
       channelId: SUMMARY_CHANNEL_ID,
     }],
   });

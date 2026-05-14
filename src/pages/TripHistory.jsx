@@ -30,6 +30,11 @@ const FILTER_OPTIONS = [
   { id: 'poor', label: '<55' },
   { id: 'night', label: 'Night' },
   { id: 'harsh_braking', label: 'Harsh Braking' },
+  { id: 'near_miss', label: 'Near-Miss Trips' },
+  { id: 'aggressive', label: 'Aggressive Driving' },
+  { id: 'distraction', label: 'Distraction Risk' },
+  { id: 'drowsy', label: 'Drowsy Risk' },
+  { id: 'perfect_eco', label: 'Perfect Eco' },
   { id: 'tag_work', label: 'Work' },
   { id: 'tag_personal', label: 'Personal' },
   { id: 'tag_errands', label: 'Errands' },
@@ -87,6 +92,11 @@ export default function TripHistory() {
     if (filterBy === 'poor' && (t.score_overall ?? 0) >= 55) return false;
     if (filterBy === 'night' && !t.night_driving) return false;
     if (filterBy === 'harsh_braking' && !(t.harsh_brakes_count > 0)) return false;
+    if (filterBy === 'near_miss' && !(t.near_miss_count > 0)) return false;
+    if (filterBy === 'aggressive' && t.aggressive_grade !== 'aggressive') return false;
+    if (filterBy === 'distraction' && (!t.phone_proxy_risk || t.phone_proxy_risk === 'none')) return false;
+    if (filterBy === 'drowsy' && (!t.drowsy_risk_level || t.drowsy_risk_level === 'none')) return false;
+    if (filterBy === 'perfect_eco' && (t.fuel_band_score ?? 0) < 80) return false;
     if (filterBy === 'tag_work' && t.tag !== 'work') return false;
     if (filterBy === 'tag_personal' && t.tag !== 'personal') return false;
     if (filterBy === 'tag_errands' && t.tag !== 'errands') return false;

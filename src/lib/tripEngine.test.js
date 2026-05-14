@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   calculateNightPenalty,
   calculateJerkScore,
+  calculateFuelBandScore,
+  calculateSmoothBrakingRatio,
+  calculateSpeedVariabilityIndex,
   classifyRoadType,
   calculateRouteSummary,
   calculateTripScores,
@@ -173,6 +176,23 @@ describe('tripEngine', () => {
     expect(detectLaneChanges(highwayPoints).length).toBeGreaterThan(0);
   });
 
+  it('computes second-wave advanced score components from route points', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 70),
+      point(43.6542, -79.3832, 5, 72),
+      point(43.6552, -79.3832, 10, 74),
+      point(43.6562, -79.3832, 15, 20),
+      point(43.6572, -79.3832, 20, 0),
+    ];
+
+    expect(calculateSpeedVariabilityIndex(points).svi_score).toBeLessThan(100);
+    expect(calculateFuelBandScore(points).fuel_band_score).toBeGreaterThan(0);
+    expect(calculateSmoothBrakingRatio(points).total_stops_detected).toBe(1);
+    const scores = calculateTripScores([], { distance_km: 2, fatigue_risk_score: 0, intersection_score: 100 }, points);
+    expect(scores.defensive_driving_score).toBeGreaterThan(0);
+    expect(scores.aggressive_driving_score).toBeGreaterThan(0);
+  });
+
   it('scales night penalty by night and deep-night route share', () => {
     const day = point(43.6532, -79.3832, 0, 40);
     const night = { ...day, timestamp: new Date(2026, 0, 1, 23, 0, 0).toISOString() };
@@ -280,7 +300,7 @@ describe('trip insights', () => {
     expect(estimateTripEconomics(trips[0], vehicle).co2_kg).toBe(23.1);
     expect(buildScoreTips(trips)[0]).toContain('excellent');
     const badges = calculateAchievementBadges(trips);
-    expect(badges).toHaveLength(17);
+    expect(badges).toHaveLength(26);
     expect(badges.find((badge) => badge.id === 'first_drive').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'hundred_km').earned).toBe(true);

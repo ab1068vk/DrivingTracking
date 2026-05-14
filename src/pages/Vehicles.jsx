@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity } from 'lucide-react';
+import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import { calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
 
@@ -223,6 +223,10 @@ export default function Vehicles() {
           const dueMaintenance = maintenance.filter((item) => item.status !== 'ok');
           const fuelTotals = fuelTotalsFor(v);
           const healthImpact = calculateVehicleHealthImpact(tripListFor(v), v);
+          const vehicleTrips = tripListFor(v);
+          const avgEngineStress = vehicleTrips.length
+            ? Math.round(vehicleTrips.reduce((sum, trip) => sum + (trip.engine_stress_score ?? 100), 0) / vehicleTrips.length)
+            : null;
 
           return (
             <motion.div key={v.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
@@ -318,6 +322,24 @@ export default function Vehicles() {
                       </div>
                       <div className="font-semibold text-sm mt-1">{healthImpact.adjusted_oil_change_km.toLocaleString()} km oil</div>
                       <div className="text-xs text-muted-foreground">{healthImpact.aggressive_ratio}% aggressive km</div>
+                    </div>
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Activity className="w-3.5 h-3.5" />
+                        Engine stress
+                      </div>
+                      <div className="font-semibold text-sm mt-1">{avgEngineStress ?? '-'} score</div>
+                      <div className="text-xs text-muted-foreground">High-speed acceleration adds engine and transmission wear.</div>
+                    </div>
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <AlertTriangle className={`w-3.5 h-3.5 ${
+                          ['elevated', 'accelerated'].includes(healthImpact.tire_wear_grade) ? 'text-yellow-500' : ''
+                        }`} />
+                        Tire wear impact
+                      </div>
+                      <div className="font-semibold text-sm mt-1 capitalize">{healthImpact.tire_wear_grade}</div>
+                      <div className="text-xs text-muted-foreground">{healthImpact.tire_life_impact_km.toLocaleString()} km estimated tire life reduction</div>
                     </div>
                   </div>
 

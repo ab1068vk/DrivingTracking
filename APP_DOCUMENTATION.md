@@ -2104,7 +2104,65 @@ UI surfaces updated:
 - `Vehicles.jsx` shows driving impact, extra wear kilometers, adjusted service intervals, and health grade.
 - `Settings.jsx` exposes `threshold_tailgate_decel_ms2`.
 
-## 24. Known Maintenance Notes
+## 24. Advanced Feature Expansion Implemented
+
+The second advanced driving-habit expansion is also implemented as real calculations in the scoring and insights pipeline.
+
+Additional engine metrics in `src/lib/tripEngine.js`:
+
+- `calculateAggressiveDrivingScore(events, stats)` returns `aggressive_driving_score`, `aggressive_grade`, and `aggression_penalty_raw`.
+- `near_miss` events are emitted from combined braking and evasive heading movement, with `near_miss_count` and `near_miss_score`.
+- `detectHighwayMergeBehavior(points)` returns `merge_event_count`, `poor_merge_count`, `harsh_merge_count`, and `merge_score`.
+- `calculateHillDrivingScore(points)` returns climb/descent distance, hill infractions, and nullable `hill_driving_score`.
+- `calculateSpeedVariabilityIndex(points)` returns `speed_variability_index`, `svi_score`, and `svi_label`.
+- `calculateSmoothBrakingRatio(points, thresholds)` returns stop-normalized smooth braking fields.
+- `calculateEngineStressScore(events, stats)` returns `engine_stress_score`, `engine_stress_grade`, and `high_speed_accel_count`.
+- `calculateTireWearUnits(events)` returns `trip_tire_wear_units`.
+- `detectDrowsyDrivingSignature(points, durationSeconds)` returns drowsy window count, risk score, and risk level.
+- `detectDrowsyDriving(points, durationSeconds, thresholds)` is the threshold-aware wrapper used by tests and live alert wiring.
+- `detectSpeedCreep(points)` returns straight-road speed creep count, max creep, and score.
+- `calculateDefensiveDrivingScore(scores)` returns `defensive_driving_score` and `defensive_grade`.
+- `detectPhoneUsageProxy(points, thresholds)` / `detectPhoneProxy(points, thresholds)` return `phone_proxy_count` and `phone_proxy_risk`.
+- `detectNearMisses(points, thresholds)` is exported for direct unit coverage; `detectDrivingEvents` also emits `near_miss`.
+- `analyzeParkingApproach(points, thresholds)` returns `parking_approach_score` and grade.
+- `calculateFuelBandScore(points)` returns optimal cruise-band, high-speed, and city-crawl ratios.
+- `detectAggressiveOvertakes(points, thresholds)` emits `aggressive_overtake` events and drives `overtake_event_count` / `overtake_score`.
+
+Additional insight exports in `src/lib/tripInsights.js`:
+
+- `calculatePeakHourStress(completedTrips)` compares peak vs off-peak event rates.
+- `identifyCommutePatterns(completedTrips)` groups recurring routes by quantized start/end cells.
+- `calculateCarbonImpact(completedTrips)` summarizes CO2 saved, tree-year equivalent, and carbon grade.
+- `calculateTireWearUnits(events)` is also exported for insight-level wear calculations.
+- `buildDrivingCoachInsights` returns `peak_stress`, `peak_hour_stress`, `commute_patterns`, and `carbon_impact`.
+
+Storage and backup changes:
+
+- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 2`.
+- Completed trips missing `defensive_driving_score`, marked `needs_rescore`, or from an older schema are rescored on read/write with the current thresholds.
+- JSON backups now export version `2`; version `1` imports mark trips with `needs_rescore` before upsert.
+- CSV export now includes aggressive, defensive, near-miss, smooth braking, SVI, fuel band, engine stress, tire wear, hill, merge, parking, overtake, phone proxy, drowsy, speed creep, and CO2-saved columns.
+
+New advanced threshold settings:
+
+- `threshold_near_miss_brake_ms2`
+- `threshold_near_miss_turn_degs`
+- `threshold_drowsy_heading_std`
+- `threshold_phone_proxy_oscillations`
+- `threshold_speed_creep_kmh`
+- `threshold_overtake_accel_ms2`
+
+Additional UI/documented behavior:
+
+- `TripDetail.jsx` now surfaces near-miss, phone proxy, overtake warnings, aggressive/defensive score rings, SVI, fuel band, engine stress, parking, drowsy, hill control, and braking quality.
+- `Dashboard.jsx` sends a native "Stay Alert" notification when the active trip shows highway heading drift and adds rush-hour behavior to the personal baseline card.
+- `DrivingCoach.jsx` shows highway merge, SVI, peak-hour stress, commute pattern, phone, drowsy, and speed-creep context.
+- `Report.jsx` includes efficiency bands, peak-vs-off-peak event rate, commute patterns, and carbon impact.
+- `Vehicles.jsx` includes engine stress and tire wear impact.
+- `TripHistory.jsx` adds filters for near-miss, aggressive driving, distraction risk, drowsy risk, and perfect eco trips.
+- `calculateAchievementBadges` includes Feather Foot, Defensive Driver, Distraction-Free, Highway Diplomat, Tree Planter, Green Fleet, Climate Champion, Cruise Master, and Clear Path.
+
+## 25. Known Maintenance Notes
 
 - The Android Reference page contains Kotlin/Compose example snippets, while the production Android implementation is Capacitor plus Java native plugin/service code.
 - Some source comments and UI strings appear to contain mojibake characters from encoding issues. Prefer plain ASCII or correctly encoded UTF-8 when editing those files.
@@ -2113,7 +2171,7 @@ UI surfaces updated:
 - There is no road-speed-limit integration yet.
 - Leaflet is dynamically loaded rather than installed as an npm dependency.
 
-## 25. Main Files By Responsibility
+## 26. Main Files By Responsibility
 
 Bootstrap and routing:
 

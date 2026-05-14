@@ -2,7 +2,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { localSettings } from '@/lib/trackingStore';
 
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 
@@ -75,7 +75,10 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
   const backup = parseDriveSenseBackup(text);
 
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
-  const importedTrips = await tripService.upsertMany(backup.trips);
+  const tripsToImport = backup.version < 2
+    ? backup.trips.map((trip) => ({ ...trip, needs_rescore: true }))
+    : backup.trips;
+  const importedTrips = await tripService.upsertMany(tripsToImport);
 
   if (includeSettings && backup.settings) {
     localSettings.set({ ...localSettings.get(), ...backup.settings });

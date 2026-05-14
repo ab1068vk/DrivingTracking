@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Clock, Gauge, Navigation, ChevronRight } from 'lucide-react';
+import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
 import { useNavigate } from 'react-router-dom';
 
@@ -89,6 +89,26 @@ export default function TripCard({ trip, units = 'metric', index = 0 }) {
               {trip.speeding_events_count > 0 && (
                 <span className="text-xs bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800/40 px-1.5 py-0.5 rounded-md">
                   🚀 {trip.speeding_events_count} speed
+                </span>
+              )}
+            </div>
+          )}
+
+          {((trip.near_miss_count || 0) > 0 || trip.aggressive_grade === 'aggressive' || ['possible', 'likely'].includes(trip.phone_proxy_risk)) && (
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              {(trip.near_miss_count || 0) > 0 && (
+                <span title={`${trip.near_miss_count} near-miss event(s)`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
+                  <ShieldAlert className="w-3 h-3" /> {trip.near_miss_count}
+                </span>
+              )}
+              {trip.aggressive_grade === 'aggressive' && (
+                <span title="Aggressive driving pattern" className="inline-flex items-center text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
+                  <Flame className="w-3 h-3" />
+                </span>
+              )}
+              {['possible', 'likely'].includes(trip.phone_proxy_risk) && (
+                <span title={`Phone distraction risk: ${trip.phone_proxy_risk}`} className="inline-flex items-center text-xs bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800/40 px-1.5 py-0.5 rounded-md">
+                  <Smartphone className="w-3 h-3" />
                 </span>
               )}
             </div>

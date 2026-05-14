@@ -582,6 +582,32 @@ export default function Settings() {
               />
             </div>
           ))}
+          <div className="pt-3 border-t border-border/70">
+            <h3 className="text-sm font-semibold px-1 mb-3">Advanced Safety Detection</h3>
+            <div className="space-y-4">
+              {[
+                { key: 'threshold_near_miss_brake_ms2', label: 'Near-Miss Brake Threshold', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'How much braking force is needed before DriveSense considers a combined brake-and-turn a near miss.' },
+                { key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as a near-miss manoeuvre.' },
+                { key: 'threshold_drowsy_heading_std', label: 'Drowsy Heading Drift', unit: 'degrees', min: 5, max: 15, step: 1, help: 'How much highway heading drift is allowed before a fatigue warning can trigger.' },
+                { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are needed before distraction risk is flagged.' },
+                { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before DriveSense logs speed creep.' },
+                { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity', unit: 'm/s²', min: 2.0, max: 5.0, step: 0.5, help: 'How hard acceleration must be to start the aggressive-overtake signature.' },
+              ].map(({ key, label, unit, min, max, step, help }) => (
+                <div key={key} className="px-1">
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className="font-medium">{label}</span>
+                    <span className="text-primary font-semibold">{cfg[key]} {unit}</span>
+                  </div>
+                  <input
+                    type="range" min={min} max={max} step={step} value={cfg[key]}
+                    onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
+                    className="w-full accent-primary"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">{help}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Speed Warning */}

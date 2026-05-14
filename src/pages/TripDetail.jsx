@@ -7,7 +7,8 @@ import { motion } from 'framer-motion';
 import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
-  Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag
+  Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag,
+  ParkingSquare
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
@@ -173,6 +174,24 @@ export default function TripDetail() {
         </motion.div>
       )}
 
+      {(trip.near_miss_count || 0) > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
+          {trip.near_miss_count} near-miss event{trip.near_miss_count === 1 ? '' : 's'} detected on this trip. Review your route for hazardous zones.
+        </div>
+      )}
+
+      {['possible', 'likely'].includes(trip.phone_proxy_risk) && (
+        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3 text-sm font-medium text-yellow-700 dark:border-yellow-800/50 dark:bg-yellow-950/30 dark:text-yellow-300">
+          Possible phone distraction detected ({trip.phone_proxy_count || 0} instance{(trip.phone_proxy_count || 0) === 1 ? '' : 's'}). Consider enabling Do Not Disturb while driving.
+        </div>
+      )}
+
+      {(trip.overtake_event_count || 0) > 0 && (
+        <div className="rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm font-medium text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
+          Aggressive overtaking detected. This pattern significantly increases collision risk.
+        </div>
+      )}
+
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
         <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
@@ -209,6 +228,25 @@ export default function TripDetail() {
             })}
           </div>
         </div>
+        <div className="grid grid-cols-2 gap-3 mt-5">
+          {[
+            { label: 'Aggression', score: trip.aggressive_driving_score, grade: trip.aggressive_grade },
+            { label: 'Defensive', score: trip.defensive_driving_score, grade: trip.defensive_grade },
+          ].map(({ label, score, grade }) => (
+            <div key={label} className="flex items-center gap-3 rounded-2xl bg-secondary/50 p-3">
+              <ScoreRing score={score ?? 0} size={64} strokeWidth={5} sublabel={label.toLowerCase()} />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">{label}</div>
+                <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
+                  ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
+                    grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :
+                      ['assertive', 'average'].includes(grade) ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' :
+                        'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                }`}>{grade || 'unknown'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </motion.div>
 
       {/* Trip metadata */}
@@ -229,6 +267,8 @@ export default function TripDetail() {
             { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}` },
             { icon: Leaf, label: 'Fuel Saved', value: `${economics.fuel_saved_liters.toFixed(2)} L` },
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
+            { icon: Leaf, label: 'CO2 Saved vs Average', value: `${trip.co2_saved_kg ?? economics.co2_saved_kg ?? 0} kg` },
+            { icon: ParkingSquare, label: 'Parking', value: `${trip.parking_approach_score ?? 100}` },
           ].map(({ icon: Icon, label, value }) => (
             <div key={label} className="flex items-start gap-3 p-3 bg-secondary/50 rounded-xl">
               <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />
@@ -292,6 +332,12 @@ export default function TripDetail() {
             { icon: ShieldCheck, label: 'following score', value: trip.following_distance_score ?? '-', color: 'text-blue-500' },
             { icon: Focus, label: 'focus score', value: trip.distraction_score ?? '-', color: 'text-violet-500' },
             { icon: TimerReset, label: 'intersection score', value: trip.intersection_score ?? '-', color: 'text-amber-500' },
+            { icon: Gauge, label: 'SVI', value: trip.speed_variability_index ?? '-', color: 'text-indigo-500' },
+            { icon: Fuel, label: 'fuel band', value: trip.fuel_band_score ?? '-', color: 'text-lime-500' },
+            { icon: Car, label: 'engine stress', value: trip.engine_stress_score ?? '-', color: 'text-orange-500' },
+            { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
+            { icon: AlertTriangle, label: 'drowsy risk', value: trip.drowsy_risk_level ?? 'none', color: 'text-red-500', capitalize: true },
+            ...(trip.hill_driving_score != null ? [{ icon: Milestone, label: 'hill control', value: trip.hill_driving_score, color: 'text-emerald-500' }] : []),
           ].map(({ icon: Icon, label, value, color, capitalize }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3">
               <Icon className={`w-4 h-4 mb-2 ${color}`} />
@@ -315,6 +361,32 @@ export default function TripDetail() {
                 <Area type="monotone" dataKey="score" stroke={fatigueColor} fill={fatigueColor} fillOpacity={0.18} strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+        )}
+
+        {Number.isFinite(trip.smooth_braking_ratio) && (
+          <div className="mb-4 rounded-xl bg-secondary/50 p-3">
+            <div className="mb-2 flex items-center justify-between text-sm">
+              <span className="font-medium">Braking Quality</span>
+              <span className="font-semibold">{trip.smooth_braking_ratio}% smooth</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-background">
+              <div
+                className={`h-full rounded-full ${
+                  trip.smooth_braking_ratio >= 80 ? 'bg-emerald-500' : trip.smooth_braking_ratio >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                }`}
+                style={{ width: `${Math.max(0, Math.min(100, trip.smooth_braking_ratio))}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {trip.hill_driving_score != null && (
+          <div className="mb-4 rounded-xl bg-secondary/50 p-3 text-sm">
+            <div className="font-medium">Hill Control</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {trip.climb_distance_km ?? 0} km climbing, {trip.descent_distance_km ?? 0} km descending. Use engine braking on descents rather than braking repeatedly.
+            </div>
           </div>
         )}
 
@@ -362,6 +434,8 @@ export default function TripDetail() {
               { label: 'Lane Changes', value: trip.lane_changes_count, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
               { label: 'Tailgate', value: trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
+              { label: 'Near-Miss', value: trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+              { label: 'Overtakes', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
             ].map(({ label, value, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />
@@ -382,6 +456,11 @@ export default function TripDetail() {
                 sharp_turn: { label: 'Sharp Turn', icon: '↰', color: 'text-blue-600' },
                 speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
+                near_miss: { label: 'Near-Miss', icon: '!', color: 'text-red-700' },
+                aggressive_overtake: { label: 'Aggressive Overtake', icon: '>>', color: 'text-orange-600' },
+                lane_change: { label: 'Lane Change', icon: '<>', color: 'text-sky-600' },
+                tailgate_cycle: { label: 'Tailgate Cycle', icon: '!!', color: 'text-red-600' },
+                erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
               };
               const cfg = labels[evt.type] || { label: evt.type, icon: '⚠', color: 'text-foreground' };
               return (

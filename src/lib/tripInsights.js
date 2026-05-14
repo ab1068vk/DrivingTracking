@@ -177,13 +177,17 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const cost = liters * fuelPrice;
   const co2Kg = actualLiters * GASOLINE_CO2_KG_PER_LITER;
   const fuelSavedLiters = Math.max(0, liters - actualLiters);
+  const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
+  const avgCo2Kg = distanceKm * 12.0 / 100;
+  const co2SavedKg = Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
 
   return {
     liters: Math.round(actualLiters * 100) / 100,
     baseline_liters: Math.round(liters * 100) / 100,
     cost: Math.round(actualLiters * fuelPrice * 100) / 100,
     baseline_cost: Math.round(cost * 100) / 100,
-    co2_kg: Math.round(co2Kg * 100) / 100,
+    co2_kg: roundedCo2Kg,
+    co2_saved_kg: co2SavedKg,
     l_per_100km: lPer100Km,
     actual_l_per_100km: Math.round(actualLPer100Km * 10) / 10,
     fuel_saved_liters: Math.round(fuelSavedLiters * 100) / 100,
@@ -423,6 +427,8 @@ export function calculateRiskEventRate(trips = []) {
     lane_changes: completed.reduce((sum, trip) => sum + (trip.lane_changes_count || 0), 0),
     tailgate_cycles: completed.reduce((sum, trip) => sum + (trip.tailgate_cycle_count || 0), 0),
     erratic_speed: completed.reduce((sum, trip) => sum + (trip.distraction_events_count || 0), 0),
+    near_miss: completed.reduce((sum, trip) => sum + (trip.near_miss_count || 0), 0),
+    aggressive_overtake: completed.reduce((sum, trip) => sum + (trip.overtake_event_count || 0), 0),
   };
   const totalEvents = Object.values(totals).reduce((sum, count) => sum + count, 0);
   const per100Km = distanceKm > 0 ? Math.round((totalEvents / distanceKm) * 1000) / 10 : 0;
@@ -443,7 +449,7 @@ function isoWeekKey(dateInput) {
   const day = date.getDay() || 7;
   date.setDate(date.getDate() + 4 - day);
   const yearStart = new Date(date.getFullYear(), 0, 1);
-  const week = Math.ceil((((date - yearStart) / DAY_MS) + 1) / 7);
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / DAY_MS) + 1) / 7);
   return `${date.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
@@ -494,6 +500,120 @@ export function computePersonalBaseline(completedTrips = []) {
   };
 }
 
+export function calculatePeakHourStress(completedTrips = []) {
+  const peakHours = new Set([7, 8, 16, 17, 18]);
+  const peakRates = [];
+  const offPeakRates = [];
+
+  completedTrips
+    .filter((trip) => trip.status === 'completed')
+    .forEach((trip) => {
+      const hour = new Date(trip.start_time).getHours();
+      const eventCount =
+        (trip.harsh_brakes_count || 0) +
+        (trip.rapid_accel_count || 0) +
+        (trip.sharp_turns_count || 0) +
+        (trip.speeding_events_count || 0);
+      const eventsPerKm = eventCount / Math.max(1, trip.distance_km || 0);
+      if (peakHours.has(hour)) peakRates.push(eventsPerKm);
+      else offPeakRates.push(eventsPerKm);
+    });
+
+  const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const peakAvg = mean(peakRates);
+  const offPeakAvg = mean(offPeakRates);
+  const stressRatio = Math.min(5, offPeakAvg > 0.01 ? peakAvg / offPeakAvg : 1.0);
+  const peakStressScore = Math.max(0, Math.round(100 - (stressRatio - 1) * 40));
+
+  return {
+    peak_trips_event_rate: Math.round(peakAvg * 100) / 100,
+    off_peak_trips_event_rate: Math.round(offPeakAvg * 100) / 100,
+    stress_ratio: Math.round(stressRatio * 10) / 10,
+    peak_stress_score: peakStressScore,
+    peak_stress_label: peakStressScore >= 85
+      ? 'consistent'
+      : peakStressScore >= 65
+        ? 'slightly stressed'
+        : peakStressScore >= 40
+          ? 'traffic-affected'
+          : 'significantly stressed',
+    peak_trip_count: peakRates.length,
+    off_peak_trip_count: offPeakRates.length,
+  };
+}
+
+export function identifyCommutePatterns(completedTrips = []) {
+  const groups = new Map();
+  const cell = (point) => `${Math.round(point.lat * 200) / 200},${Math.round(point.lng * 200) / 200}`;
+  const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+
+  completedTrips
+    .filter((trip) => trip.status === 'completed' && Array.isArray(trip.route_points) && trip.route_points.length >= 2)
+    .forEach((trip) => {
+      const points = trip.route_points;
+      const routeKey = `${cell(points[0])}|${cell(points[points.length - 1])}`;
+      const group = groups.get(routeKey) || [];
+      group.push(trip);
+      groups.set(routeKey, group);
+    });
+
+  return [...groups.entries()]
+    .filter(([, trips]) => trips.length >= 3)
+    .map(([routeKey, trips]) => {
+      const sorted = [...trips].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+      const scores = sorted.map((trip) => Number(trip.score_overall) || 0);
+      const avgScore = mean(scores);
+      const recentAvg = mean(scores.slice(-3));
+      const firstDriven = new Date(sorted[0].start_time).getTime();
+      const lastDriven = new Date(sorted[sorted.length - 1].start_time).getTime();
+      const weeksInRange = Math.max(1, (lastDriven - firstDriven) / (7 * DAY_MS));
+      const avgDurationMinutes = mean(sorted.map((trip) => (trip.duration_seconds || 0) / 60));
+
+      return {
+        route_key: routeKey,
+        trip_count: sorted.length,
+        avg_distance_km: Math.round(mean(sorted.map((trip) => trip.distance_km || 0)) * 10) / 10,
+        avg_duration_minutes: Math.round(avgDurationMinutes),
+        avg_score: Math.round(avgScore),
+        best_score: Math.max(...scores),
+        worst_score: Math.min(...scores),
+        score_trend: recentAvg > avgScore + 3 ? 'improving' : recentAvg < avgScore - 3 ? 'declining' : 'stable',
+        last_driven: new Date(lastDriven).toISOString(),
+        weekly_minutes_estimate: Math.round((sorted.length / weeksInRange) * avgDurationMinutes),
+      };
+    })
+    .sort((a, b) => b.trip_count - a.trip_count)
+    .slice(0, 10);
+}
+
+export function calculateTireWearUnits(events = []) {
+  const severityBase = { low: 1, medium: 2.5, high: 5 };
+  const units = events.reduce((sum, event) => {
+    if (event.type === 'harsh_brake') return sum + (severityBase[event.severity] || 0) * Math.pow((event.speed_kmh ?? 50) / 50, 2);
+    if (event.type === 'sharp_turn') return sum + (severityBase[event.severity] || 0) * Math.pow((event.speed_kmh ?? 40) / 40, 2);
+    return sum;
+  }, 0);
+  return { trip_tire_wear_units: Math.round(units * 10) / 10 };
+}
+
+export function calculateCarbonImpact(completedTrips = []) {
+  const totalCo2SavedKg = Math.round(completedTrips.reduce((sum, trip) => sum + (trip.co2_saved_kg || 0), 0) * 10) / 10;
+  const treesEquivalent = Math.round((totalCo2SavedKg / 21.0) * 10) / 10;
+  return {
+    total_co2_saved_kg: totalCo2SavedKg,
+    trees_equivalent: treesEquivalent,
+    carbon_grade: totalCo2SavedKg >= 100
+      ? 'Climate Champion'
+      : totalCo2SavedKg >= 50
+        ? 'Green Driver'
+        : totalCo2SavedKg >= 20
+          ? 'Eco Aware'
+          : totalCo2SavedKg >= 5
+            ? 'Getting There'
+            : 'Starting Out',
+  };
+}
+
 export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
   const completed = vehicleTrips.filter((trip) => trip.status === 'completed');
   let totalStressUnits = 0;
@@ -512,6 +632,28 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
   const aggressiveRatio = totalDistanceKm > 0 ? aggressiveKm / totalDistanceKm : 0;
   const oilBase = Number(vehicle.oil_change_interval_km) || 8000;
   const tireBase = Number(vehicle.tire_rotation_interval_km) || 10000;
+  const totalTireWear = completed.reduce((sum, trip) => sum + (Number(trip.trip_tire_wear_units) || 0), 0);
+  const tireWearGrade = totalTireWear < 50 ? 'minimal' : totalTireWear < 150 ? 'normal' : totalTireWear < 300 ? 'elevated' : 'accelerated';
+  const engineScores = completed
+    .map((trip) => Number(trip.engine_stress_score))
+    .filter((score) => Number.isFinite(score) && score > 0);
+  const avgEngineStressScore = engineScores.length
+    ? engineScores.reduce((sum, score) => sum + score, 0) / engineScores.length
+    : null;
+  const baseHealthGrade = totalStressUnits < 50 ? 'A' : totalStressUnits < 150 ? 'B' : totalStressUnits < 300 ? 'C' : 'D';
+  const downgrade = (grade) => ({ A: 'B', B: 'C', C: 'D', D: 'D' }[grade] || grade);
+  const healthGrade = avgEngineStressScore != null && avgEngineStressScore < 55
+    ? downgrade(baseHealthGrade)
+    : baseHealthGrade;
+  const engineStressGrade = avgEngineStressScore == null
+    ? 'unknown'
+    : avgEngineStressScore >= 90
+      ? 'low stress'
+      : avgEngineStressScore >= 70
+        ? 'moderate'
+        : avgEngineStressScore >= 50
+          ? 'high'
+          : 'critical';
 
   return {
     total_stress_units: Math.round(totalStressUnits * 10) / 10,
@@ -519,7 +661,12 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
     aggressive_ratio: Math.round(aggressiveRatio * 100),
     adjusted_oil_change_km: aggressiveRatio > 0.3 ? Math.round(oilBase * 0.85) : oilBase,
     adjusted_tire_rotation_km: aggressiveRatio > 0.3 ? Math.round(tireBase * 0.80) : tireBase,
-    health_grade: totalStressUnits < 50 ? 'A' : totalStressUnits < 150 ? 'B' : totalStressUnits < 300 ? 'C' : 'D',
+    health_grade: healthGrade,
+    engine_stress_score: avgEngineStressScore == null ? null : Math.round(avgEngineStressScore),
+    engine_stress_grade: engineStressGrade,
+    vehicle_tire_wear_total: Math.round(totalTireWear * 10) / 10,
+    tire_wear_grade: tireWearGrade,
+    tire_life_impact_km: Math.round(totalTireWear * 0.5),
   };
 }
 
@@ -617,6 +764,9 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   const consistency = calculateDrivingConsistency(completed);
   const fatigue = calculateFatigueRisk(completed, settings);
   const baseline = computePersonalBaseline(completed);
+  const peakHourStress = calculatePeakHourStress(completed);
+  const commutePatterns = identifyCommutePatterns(completed);
+  const carbonImpact = calculateCarbonImpact(completed);
   const timeOfDay = analyzeTimeOfDay(completed);
   const bestWindow = timeOfDay
     .filter((bucket) => bucket.trips > 0 && bucket.avgScore !== null)
@@ -630,14 +780,33 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     lane_changes: 'lane discipline',
     tailgate_cycles: 'following distance',
     erratic_speed: 'distraction risk',
+    near_miss: 'hazard response',
+    aggressive_overtake: 'highway patience',
   };
-  const focusArea = riskRate.worst_event_count > 0
-    ? eventLabels[riskRate.worst_event]
-    : speed.level === 'needs_attention'
-      ? 'speed control'
-      : fatigue.level === 'high'
-        ? 'fatigue breaks'
-        : 'consistency';
+  const recentTen = [...completed]
+    .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+    .slice(0, 10);
+  const recentNearMisses = recentTen.reduce((sum, trip) => sum + (trip.near_miss_count || 0), 0);
+  const common = (field) => {
+    const counts = new Map();
+    recentTen.forEach((trip) => counts.set(trip[field], (counts.get(trip[field]) || 0) + 1));
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  };
+  const focusArea = recentNearMisses > 0
+    ? 'near-miss prevention'
+    : common('drowsy_risk_level') === 'high'
+      ? 'fatigue management'
+      : common('aggressive_grade') === 'aggressive'
+        ? 'aggressive driving'
+        : common('phone_proxy_risk') === 'likely'
+          ? 'distraction reduction'
+          : riskRate.worst_event_count > 0
+            ? eventLabels[riskRate.worst_event]
+            : speed.level === 'needs_attention'
+              ? 'speed control'
+              : fatigue.level === 'high'
+                ? 'fatigue breaks'
+                : 'consistency';
 
   const actions = [];
   if (riskRate.worst_event === 'harsh_brakes' && riskRate.worst_event_count > 0) {
@@ -665,6 +834,21 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   if ((riskRate.totals.erratic_speed || 0) > 0) {
     actions.push('On city routes, keep a steadier throttle through low-speed stretches.');
   }
+  const maxSpeedCreep = completed.reduce((max, trip) => Math.max(max, trip.max_speed_creep_kmh || 0), 0);
+  if (maxSpeedCreep > 20) {
+    actions.push('Set cruise control on highways to prevent unconscious speed creep.');
+  }
+  if (peakHourStress.stress_ratio > 1.8) {
+    actions.push('Your driving becomes significantly more aggressive during rush hour. Try leaving 10 minutes earlier to reduce pressure.');
+  }
+  const poorMerges = completed.reduce((sum, trip) => sum + (trip.poor_merge_count || 0), 0);
+  if (poorMerges > 0) {
+    actions.push('Accelerate to highway speed before merging; aim for 100 km/h before joining traffic.');
+  }
+  const erraticSviTrips = completed.filter((trip) => ['erratic', 'very erratic'].includes(trip.svi_label)).length;
+  if (erraticSviTrips > 0) {
+    actions.push('Try to maintain a steadier speed. Anticipate traffic flow rather than reacting to it.');
+  }
   if (baseline.trend === 'improving') {
     actions.push(`This week is ${baseline.delta} points above your 4-week baseline. Protect that pattern.`);
   }
@@ -680,6 +864,10 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     consistency,
     fatigue,
     baseline,
+    peak_hour_stress: peakHourStress,
+    peak_stress: peakHourStress,
+    commute_patterns: commutePatterns,
+    carbon_impact: carbonImpact,
     best_window: bestWindow,
     actions: actions.length ? actions.slice(0, 4) : ['Record more trips to build a personalized driving plan.'],
   };
@@ -717,6 +905,23 @@ export function calculateAchievementBadges(trips = []) {
   const avgScore = completed.length
     ? completed.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / completed.length
     : 0;
+  const smoothBrakeTrips = completed.filter((trip) => trip.smooth_braking_ratio === 100).length;
+  const distractionFreeTrips = completed.filter((trip) => trip.phone_proxy_risk === 'none').length;
+  const sortedRecent = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  const lastTenDefensive = sortedRecent.slice(0, 10);
+  const defensiveStreak = lastTenDefensive.length >= 10 && lastTenDefensive.every((trip) => (
+    ['defensive', 'exemplary'].includes(trip.defensive_grade)
+  ));
+  const highwayDiplomatTrips = completed.filter((trip) => {
+    const points = Array.isArray(trip.route_points) ? trip.route_points : [];
+    const highwayShare = points.length
+      ? points.filter((point) => Number(point.speed_kmh) > 80).length / points.length
+      : 0;
+    return highwayShare >= 0.2 && (trip.overtake_event_count || 0) === 0;
+  }).length;
+  const cruiseMasterTrips = completed.filter((trip) => trip.band_label === 'excellent cruise').length;
+  const nearMissFreeTrips = completed.filter((trip) => (trip.near_miss_count || 0) === 0).length;
+  const carbon = calculateCarbonImpact(completed);
 
   return [
     {
@@ -886,6 +1091,95 @@ export function calculateAchievementBadges(trips = []) {
       current: Math.min(5, nightCount),
       target: 5,
       unit: 'drives',
+    },
+    {
+      id: 'feather_foot',
+      label: 'Feather Foot',
+      description: '100% smooth braking ratio on 3 separate trips.',
+      category: 'Smoothness',
+      earned: smoothBrakeTrips >= 3,
+      current: Math.min(3, smoothBrakeTrips),
+      target: 3,
+      unit: 'trips',
+    },
+    {
+      id: 'defensive_driver',
+      label: 'Defensive Driver',
+      description: 'Score defensive or higher on 10 consecutive trips.',
+      category: 'Safety',
+      earned: defensiveStreak,
+      current: defensiveStreak ? 10 : Math.min(10, lastTenDefensive.filter((trip) => ['defensive', 'exemplary'].includes(trip.defensive_grade)).length),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'distraction_free',
+      label: 'Distraction-Free',
+      description: 'Complete 20 trips with no phone-distraction proxy risk.',
+      category: 'Focus',
+      earned: distractionFreeTrips >= 20,
+      current: Math.min(20, distractionFreeTrips),
+      target: 20,
+      unit: 'trips',
+    },
+    {
+      id: 'highway_diplomat',
+      label: 'Highway Diplomat',
+      description: 'Complete 50 highway trips without aggressive overtakes.',
+      category: 'Highway',
+      earned: highwayDiplomatTrips >= 50,
+      current: Math.min(50, highwayDiplomatTrips),
+      target: 50,
+      unit: 'trips',
+    },
+    {
+      id: 'tree_planter',
+      label: 'Tree Planter',
+      description: 'Save at least one tree-year of CO2 versus the average driver.',
+      category: 'Eco',
+      earned: carbon.total_co2_saved_kg >= 21,
+      current: Math.min(21, Math.round(carbon.total_co2_saved_kg)),
+      target: 21,
+      unit: 'kg CO2',
+    },
+    {
+      id: 'green_fleet',
+      label: 'Green Fleet',
+      description: 'Save five tree-years of CO2 versus the average driver.',
+      category: 'Eco',
+      earned: carbon.total_co2_saved_kg >= 105,
+      current: Math.min(105, Math.round(carbon.total_co2_saved_kg)),
+      target: 105,
+      unit: 'kg CO2',
+    },
+    {
+      id: 'climate_champion',
+      label: 'Climate Champion',
+      description: 'Reach the Climate Champion carbon grade.',
+      category: 'Eco',
+      earned: carbon.carbon_grade === 'Climate Champion',
+      current: carbon.carbon_grade === 'Climate Champion' ? 1 : 0,
+      target: 1,
+    },
+    {
+      id: 'cruise_master',
+      label: 'Cruise Master',
+      description: 'Achieve excellent cruise band on 5 highway trips.',
+      category: 'Eco',
+      earned: cruiseMasterTrips >= 5,
+      current: Math.min(5, cruiseMasterTrips),
+      target: 5,
+      unit: 'trips',
+    },
+    {
+      id: 'near_miss_free',
+      label: 'Clear Path',
+      description: 'Complete 25 trips with zero near-miss events.',
+      category: 'Safety',
+      earned: nearMissFreeTrips >= 25,
+      current: Math.min(25, nearMissFreeTrips),
+      target: 25,
+      unit: 'trips',
     },
   ];
 }

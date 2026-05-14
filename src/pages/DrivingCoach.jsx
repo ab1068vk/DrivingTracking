@@ -35,6 +35,13 @@ export default function DrivingCoach() {
   const coach = buildDrivingCoachInsights(completed, settings);
   const timeOfDay = analyzeTimeOfDay(completed);
   const dayOfWeek = analyzeDayOfWeek(completed);
+  const avgMergeScore = completed.length
+    ? Math.round(completed.reduce((sum, trip) => sum + (trip.merge_score ?? 100), 0) / completed.length)
+    : null;
+  const avgSvi = completed.length
+    ? Math.round(completed.reduce((sum, trip) => sum + (trip.speed_variability_index || 0), 0) / completed.length * 10) / 10
+    : null;
+  const latestSviLabel = completed.find((trip) => trip.svi_label)?.svi_label || 'unknown';
 
   return (
     <div className="space-y-6 pb-4">
@@ -163,6 +170,29 @@ export default function DrivingCoach() {
               <div className="bg-secondary/50 rounded-xl p-3">
                 <div className="font-grotesk font-bold text-xl capitalize">{coach.speed_discipline.level.replace('_', ' ')}</div>
                 <div className="text-xs text-muted-foreground">status</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+            <h2 className="font-semibold mb-1">Highway And Traffic Pressure</h2>
+            <p className="text-xs text-muted-foreground mb-4">Merge quality, speed variability, and peak-hour behavior</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className={`font-grotesk font-bold text-xl ${
+                  (avgMergeScore ?? 100) >= 80 ? 'text-emerald-500' : (avgMergeScore ?? 100) >= 60 ? 'text-yellow-500' : 'text-red-500'
+                }`}>{avgMergeScore ?? '-'}</div>
+                <div className="text-xs text-muted-foreground">merge score</div>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{avgSvi ?? '-'}</div>
+                <div className="text-xs text-muted-foreground">SVI km/h</div>
+                <div className="text-[11px] text-muted-foreground capitalize">{latestSviLabel}</div>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{coach.peak_hour_stress.stress_ratio}x</div>
+                <div className="text-xs text-muted-foreground">peak stress</div>
+                <div className="text-[11px] text-muted-foreground capitalize">{coach.peak_hour_stress.peak_stress_label}</div>
               </div>
             </div>
           </div>
