@@ -843,6 +843,97 @@ Noise detection considers:
 - Reported speed.
 - Whether displacement suggests the device is stationary.
 
+Core point normalization:
+
+```js
+function normalizeLocationPoint(input) {
+  const coords = input.coords || input;
+  const lat = coords.latitude ?? input.lat;
+  const lng = coords.longitude ?? input.lng;
+
+  return {
+    lat,
+    lng,
+    speed_kmh: coords.speed != null ? Math.max(0, coords.speed * 3.6) : input.speed_kmh ?? null,
+    heading: coords.heading ?? coords.bearing ?? coords.course ?? input.heading ?? null,
+    accuracy: coords.accuracy ?? input.accuracy ?? null,
+    altitude: coords.altitude ?? input.altitude ?? null,
+    altitude_accuracy: coords.altitudeAccuracy ?? input.altitudeAccuracy ?? null,
+    timestamp: new Date(input.timestamp ?? input.time ?? Date.now()).toISOString()
+  };
+}
+```
+
+Segment calculation formulas:
+
+```txt
+dt_seconds = (point.timestamp - previousPoint.timestamp) / 1000
+distance_km = haversine(previousPoint.lat, previousPoint.lng, point.lat, point.lng)
+distance_m = distance_km * 1000
+implied_speed_kmh = distance_km / dt_seconds * 3600
+reported_speed_kmh = point.speed_kmh, when available
+```
+
+Noise floor calculation:
+
+```txt
+best_accuracy_m = max(previousPoint.accuracy, point.accuracy)
+noise_floor_m = max(MIN_POINT_DISTANCE_M, min(25, best_accuracy_m * 0.6))
+```
+
+Noise detection logic:
+
+```js
+const tinyMovement = distanceM < noiseFloorM;
+const displacementSaysStill =
+  impliedSpeedKmh < STATIONARY_SPEED_KMH &&
+  distanceM < noiseFloorM * 1.5;
+const reportedDisagreesWithDisplacement =
+  reportedSpeedKmh != null &&
+  reportedSpeedKmh < MIN_TRUSTED_SPEED_KMH &&
+  displacementSaysStill;
+
+const isNoise = tinyMovement || reportedDisagreesWithDisplacement;
+```
+
+Reliable speed selection:
+
+```js
+let reliableSpeedKmh = impliedSpeedKmh;
+
+if (!isNoise && reportedSpeedKmh != null) {
+  const reportedCloseToImplied =
+    impliedSpeedKmh >= STATIONARY_SPEED_KMH ||
+    reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH ||
+    Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12;
+
+  reliableSpeedKmh = reportedCloseToImplied ? reportedSpeedKmh : impliedSpeedKmh;
+}
+
+reliableSpeedKmh = isNoise ? 0 : Math.max(0, reliableSpeedKmh);
+```
+
+Accepted point logic:
+
+```js
+function shouldAcceptLocationPoint(point, previousPoint) {
+  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return false;
+  if (point.accuracy != null && point.accuracy > MAX_GPS_ACCURACY_M) return false;
+  if (!previousPoint) return true;
+
+  const dt = (new Date(point.timestamp) - new Date(previousPoint.timestamp)) / 1000;
+  if (dt <= 0) return false;
+
+  const segment = calculateSegmentMetrics(previousPoint, point);
+  if (segment.isNoise && dt < 45) return false;
+
+  const reportedSpeed = segment.reportedSpeedKmh ?? segment.impliedSpeedKmh;
+  if (segment.impliedSpeedKmh > 220 || reportedSpeed > 220) return false;
+
+  return true;
+}
+```
+
 ### 10.3 Statistics
 
 `calculateTripStats(points, startTime, endTime)` returns:
@@ -855,6 +946,83 @@ Noise detection considers:
 - `night_driving`
 
 Night driving is true when any route point is between 22:00 and 06:00 local time.
+
+Distance calculation uses the Haversine formula:
+
+```txt
+R = 6371 km
+dLat = radians(lat2 - lat1)
+dLng = radians(lng2 - lng1)
+a = sin(dLat / 2)^2 +
+    cos(radians(lat1)) * cos(radians(lat2)) * sin(dLng / 2)^2
+c = 2 * atan2(sqrt(a), sqrt(1 - a))
+distance_km = R * c
+```
+
+Bearing calculation:
+
+```txt
+dLng = radians(lng2 - lng1)
+y = sin(dLng) * cos(radians(lat2))
+x = cos(radians(lat1)) * sin(radians(lat2)) -
+    sin(radians(lat1)) * cos(radians(lat2)) * cos(dLng)
+bearing_degrees = (degrees(atan2(y, x)) + 360) % 360
+```
+
+Heading difference:
+
+```txt
+raw_diff = abs(heading1 - heading2) % 360
+heading_diff = raw_diff > 180 ? 360 - raw_diff : raw_diff
+```
+
+Speed and acceleration:
+
+```txt
+speed_kmh = distance_km / duration_seconds * 3600
+v1_mps = speed1_kmh / 3.6
+v2_mps = speed2_kmh / 3.6
+acceleration_ms2 = (v2_mps - v1_mps) / duration_seconds
+```
+
+Trip stats calculation:
+
+```js
+let totalDistance = 0;
+let maxSpeed = 0;
+let movingSeconds = 0;
+let idleTime = 0;
+
+for (let i = 1; i < routePoints.length; i++) {
+  const segment = calculateSegmentMetrics(routePoints[i - 1], routePoints[i]);
+  if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
+
+  totalDistance += segment.distanceKm;
+  maxSpeed = Math.max(maxSpeed, segment.reliableSpeedKmh);
+
+  if (segment.reliableSpeedKmh >= STATIONARY_SPEED_KMH) {
+    movingSeconds += segment.dt;
+  }
+
+  if (segment.reliableSpeedKmh < IDLE_SPEED_KMH) {
+    idleTime += segment.dt;
+  }
+}
+
+const avgSpeed = durationSeconds > 0 && totalDistance > 0
+  ? totalDistance / durationSeconds * 3600
+  : 0;
+```
+
+Final rounding:
+
+```txt
+distance_km = round(totalDistance, 3)
+avg_speed_kmh = movingSeconds > 0 ? round(avgSpeed, 1) : 0
+max_speed_kmh = round(maxSpeed, 1)
+idle_time_seconds = round(idleTime)
+duration_seconds = round(endTime - startTime in seconds)
+```
 
 ### 10.4 Event Detection
 
@@ -884,6 +1052,97 @@ Idle:
 
 - Speed below `IDLE_SPEED_KMH`.
 - Accumulated idle duration above `IDLE_EVENT_SECONDS`.
+
+Event detection loop:
+
+```js
+for (let i = 1; i < points.length; i++) {
+  const prev = points[i - 1];
+  const curr = points[i];
+  const dt = (new Date(curr.timestamp) - new Date(prev.timestamp)) / 1000;
+
+  if (dt <= 0 || dt > 120) continue;
+
+  const currSegment = calculateSegmentMetrics(prev, curr, thresholds);
+  if (currSegment.isNoise) continue;
+
+  const speed1 = previousReliableSpeedOrPointSpeed;
+  const speed2 = currSegment.reliableSpeedKmh;
+  const accel = calculateAcceleration(speed1, speed2, dt);
+
+  // Individual event checks run here.
+}
+```
+
+Harsh braking calculation:
+
+```js
+if (accel < -HARSH_BRAKE_MS2 && speed1 > 20) {
+  const value = Math.abs(accel);
+  const severity =
+    value > 6 ? "high" :
+    value > 5 ? "medium" :
+    "low";
+}
+```
+
+Rapid acceleration calculation:
+
+```js
+if (accel > RAPID_ACCEL_MS2 && speed1 > 5) {
+  const severity =
+    accel > 5 ? "high" :
+    accel > 4 ? "medium" :
+    "low";
+}
+```
+
+Sharp turn calculation:
+
+```js
+if (speed2 > 30) {
+  const h1 = previousHeading ?? calculatedPreviousBearing;
+  const h2 = currentHeading ?? calculatedCurrentBearing;
+  const turnRateDegPerSecond = headingDiff(h1, h2) / dt;
+
+  if (turnRateDegPerSecond > SHARP_TURN_DEG_PER_S) {
+    const severity =
+      turnRateDegPerSecond > 90 ? "high" :
+      turnRateDegPerSecond > 60 ? "medium" :
+      "low";
+  }
+}
+```
+
+Speeding calculation:
+
+```js
+if (speed2 > SPEEDING_FALLBACK_KMH) {
+  const severity =
+    speed2 > 160 ? "high" :
+    speed2 > 140 ? "medium" :
+    "low";
+}
+```
+
+Idle calculation:
+
+```js
+if (speed2 < IDLE_SPEED_KMH) {
+  if (!idleStart) idleStart = curr.timestamp;
+  idleAccum += dt;
+} else {
+  if (idleAccum >= IDLE_EVENT_SECONDS) {
+    const severity =
+      idleAccum > 300 ? "high" :
+      idleAccum > 120 ? "medium" :
+      "low";
+  }
+
+  idleStart = null;
+  idleAccum = 0;
+}
+```
 
 ### 10.5 Scoring
 
@@ -920,6 +1179,62 @@ Score dimensions:
 - Smoothness: harsh brakes, rapid acceleration, sharp turns.
 - Eco: speeding, rapid acceleration, idle.
 
+Penalty accumulation:
+
+```js
+for (const event of events) {
+  const penalty = penalties[event.type]?.[event.severity] ?? 0;
+
+  if (["harsh_brake", "speeding", "sharp_turn"].includes(event.type)) {
+    safetyPenalty += penalty;
+  }
+
+  if (["harsh_brake", "rapid_acceleration", "sharp_turn"].includes(event.type)) {
+    smoothnessPenalty += penalty;
+  }
+
+  if (["speeding", "rapid_acceleration", "idle"].includes(event.type)) {
+    ecoPenalty += penalty;
+  }
+}
+```
+
+Night-driving and long-drive penalties:
+
+```txt
+if night_driving:
+  safetyPenalty += 5
+
+drive_minutes = duration_seconds / 60
+if drive_minutes > LONG_DRIVE_MINUTES:
+  safetyPenalty += floor((drive_minutes - LONG_DRIVE_MINUTES) / 30) * 3
+```
+
+Distance-normalized score formula:
+
+```txt
+dist_factor = max(1, distance_km)
+normalized_score = max(0, 100 - min(penalty * (5 / dist_factor), 80))
+
+safety = round(normalize(safetyPenalty))
+smoothness = round(normalize(smoothnessPenalty))
+eco = round(normalize(ecoPenalty))
+overall = round(safety * 0.40 + smoothness * 0.35 + eco * 0.25)
+```
+
+Complete scoring skeleton:
+
+```js
+const distFactor = Math.max(1, stats.distance_km || 1);
+const normalize = (penalty) =>
+  Math.max(0, 100 - Math.min(penalty * (5 / distFactor), 80));
+
+const safety = Math.round(normalize(safetyPenalty));
+const smoothness = Math.round(normalize(smoothnessPenalty));
+const eco = Math.round(normalize(ecoPenalty));
+const overall = Math.round(safety * 0.4 + smoothness * 0.35 + eco * 0.25);
+```
+
 ## 11. Insights And Analytics
 
 File: `src/lib/tripInsights.js`
@@ -948,6 +1263,362 @@ Defaults:
 - Fuel price: 1.65 per liter.
 - Fuel efficiency: 8.5 L/100 km.
 - Gasoline CO2: 2.31 kg per liter.
+
+### 11.1 Speed Segment Labels
+
+Speed colors and labels are used in route analysis and playback.
+
+```js
+function getSpeedLabel(speedKmh = 0) {
+  if (speedKmh >= 120) return "Risk";
+  if (speedKmh >= 90) return "Fast";
+  if (speedKmh >= 55) return "Cruise";
+  if (speedKmh >= 15) return "City";
+  return "Slow";
+}
+```
+
+Color thresholds:
+
+```txt
+speed >= 120 km/h -> red
+speed >= 90 km/h  -> orange
+speed >= 55 km/h  -> green
+speed >= 15 km/h  -> blue
+else              -> slate
+```
+
+Speed segments are created between adjacent valid route points:
+
+```js
+for (let i = 1; i < cleanPoints.length; i++) {
+  segments.push({
+    from: cleanPoints[i - 1],
+    to: cleanPoints[i],
+    speed_kmh: currentPoint.speed_kmh ?? previousPoint.speed_kmh ?? 0,
+    color: getSpeedColor(speed),
+    label: getSpeedLabel(speed)
+  });
+}
+```
+
+### 11.2 Stop Detection
+
+Stops are detected from route points when speed stays low for long enough.
+
+Default stop settings:
+
+```txt
+min_stop_seconds = 90
+max_stop_speed_kmh = 5
+```
+
+Stop calculation:
+
+```js
+if (speed <= maxSpeedKmh) {
+  stopStart ??= point;
+  lastStoppedPoint = point;
+}
+
+if (speed > maxSpeedKmh && stopStart && lastStoppedPoint) {
+  const durationSeconds =
+    (lastStoppedPoint.timestamp - stopStart.timestamp) / 1000;
+
+  if (durationSeconds >= minStopSeconds) {
+    stops.push({
+      lat: stopStart.lat,
+      lng: stopStart.lng,
+      start_time: stopStart.timestamp,
+      end_time: lastStoppedPoint.timestamp,
+      duration_seconds: durationSeconds
+    });
+  }
+}
+```
+
+### 11.3 Vehicle Odometer And Maintenance
+
+Vehicle trip distance:
+
+```txt
+vehicle_trip_distance_km =
+  sum(completed trip.distance_km where trip.vehicle_id == vehicle.id)
+```
+
+If a vehicle is the default vehicle, trips without a `vehicle_id` are counted for that vehicle.
+
+Vehicle odometer:
+
+```txt
+vehicle_odometer_km = vehicle.odometer_km + vehicle_trip_distance_km
+```
+
+Maintenance item calculation:
+
+```txt
+next_due_km = last_service_km + interval_km
+remaining_km = next_due_km - current_odometer_km
+status = "due"  when remaining_km <= 0
+status = "soon" when remaining_km <= 1000
+status = "ok"   otherwise
+```
+
+### 11.4 Fuel Cost And CO2
+
+Trip economics are estimated from trip distance and vehicle fuel assumptions.
+
+```txt
+distance_km = trip.distance_km
+l_per_100km = vehicle.fuel_efficiency_l_per_100km or default 8.5
+fuel_price_per_liter = vehicle.fuel_price_per_liter or default 1.65
+liters = distance_km * l_per_100km / 100
+cost = liters * fuel_price_per_liter
+co2_kg = liters * 2.31
+```
+
+Implementation skeleton:
+
+```js
+function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
+  const distanceKm = Number(trip?.distance_km) || 0;
+  const lPer100Km =
+    Number(vehicle?.fuel_efficiency_l_per_100km) ||
+    Number(settings.default_l_per_100km) ||
+    8.5;
+  const fuelPrice =
+    Number(vehicle?.fuel_price_per_liter) ||
+    Number(settings.default_fuel_price_per_liter) ||
+    1.65;
+
+  const liters = distanceKm * lPer100Km / 100;
+  const cost = liters * fuelPrice;
+  const co2Kg = liters * 2.31;
+
+  return {
+    liters: Math.round(liters * 100) / 100,
+    cost: Math.round(cost * 100) / 100,
+    co2_kg: Math.round(co2Kg * 100) / 100
+  };
+}
+```
+
+### 11.5 Weekly Goals
+
+Weekly goals use completed trips since the start of the current week.
+
+```txt
+week_start = local start of Sunday
+week_trips = completed trips where trip.start_time >= week_start
+```
+
+Goal calculations:
+
+```txt
+harsh_brakes = sum(weekTrip.harsh_brakes_count)
+speeding_events = sum(weekTrip.speeding_events_count)
+night_trips = count(weekTrip.night_driving == true)
+avg_score = round(sum(score_overall) / count(scored trips))
+```
+
+Goal pass/fail:
+
+```txt
+harsh_brakes goal met when harsh_brakes <= weekly_goal_harsh_brakes
+speeding goal met when speeding_events <= weekly_goal_speeding_events
+average score goal met when avg_score >= weekly_goal_min_avg_score
+night trips goal met when night_trips <= weekly_goal_max_night_trips
+```
+
+### 11.6 Streaks
+
+The no-harsh-brake streak groups completed trips by calendar day.
+
+```txt
+for each completed trip:
+  day = local start of trip day
+  day.harshBrakes += trip.harsh_brakes_count
+
+start from today if today has trips, otherwise latest trip day
+streak += 1 for each consecutive day where harshBrakes == 0
+stop when a day is missing or harshBrakes > 0
+```
+
+### 11.7 Time And Day Analysis
+
+Time-of-day buckets:
+
+```txt
+morning   = 05:00 through 11:59
+afternoon = 12:00 through 16:59
+evening   = 17:00 through 21:59
+night     = 22:00 through 04:59
+```
+
+Each bucket calculates:
+
+```txt
+trips = count(completed trips in bucket)
+avgScore = round(sum(score_overall) / count(scored trips in bucket))
+events = sum(harsh_brakes + rapid_accel + sharp_turns + speeding)
+```
+
+Day-of-week analysis uses the same calculations grouped by `Date.getDay()`.
+
+### 11.8 Fatigue Risk
+
+Fatigue risk uses the configured long-drive threshold.
+
+```txt
+threshold_minutes = settings.threshold_long_drive_minutes or 120
+long_trips = trips where duration_seconds / 60 >= threshold_minutes
+total_long_minutes = sum(longTrip.duration_seconds / 60)
+longest_trip_minutes = max(trip.duration_seconds / 60)
+```
+
+Risk level:
+
+```txt
+high   when long_trip_count >= 3 or longest_trip_minutes >= threshold_minutes * 1.5
+medium when long_trip_count > 0
+low    otherwise
+```
+
+### 11.9 Risk Event Rate
+
+Risk event rate is used by Driving Coach.
+
+```txt
+distance_km = sum(completed trip.distance_km)
+harsh_brakes = sum(completed trip.harsh_brakes_count)
+rapid_accel = sum(completed trip.rapid_accel_count)
+sharp_turns = sum(completed trip.sharp_turns_count)
+speeding = sum(completed trip.speeding_events_count)
+total_events = harsh_brakes + rapid_accel + sharp_turns + speeding
+events_per_100km = distance_km > 0 ? round((total_events / distance_km) * 100, 1) : 0
+worst_event = event type with the largest count
+```
+
+Implementation detail:
+
+```js
+const per100Km = distanceKm > 0
+  ? Math.round((totalEvents / distanceKm) * 1000) / 10
+  : 0;
+```
+
+The multiplication by `1000` and division by `10` is how the app rounds events per 100 km to one decimal place.
+
+### 11.10 Speed Discipline
+
+Speed discipline analyzes all sampled route point speeds from completed trips.
+
+```txt
+speed_limit = settings.threshold_speeding_kmh or 130
+warn_limit = speed_limit + settings.threshold_speed_over_kmh or speed_limit + 10
+points = all completed trip route points with finite speed_kmh
+max_speed_kmh = round(max(points.speed_kmh))
+avg_speed_kmh = round(sum(points.speed_kmh) / point_count)
+over_limit_points = count(speed_kmh > speed_limit)
+over_warn_points = count(speed_kmh > warn_limit)
+over_limit_percent = round(over_limit_points / point_count * 100)
+```
+
+Level:
+
+```txt
+needs_attention when over_warn_points > 0 or over_limit_percent >= 10
+watch           when over_limit_percent > 0
+steady          otherwise
+unknown         when there are no speed samples
+```
+
+### 11.11 Consistency Score
+
+Driving consistency is based on variation in completed trip scores.
+
+```txt
+scores = completed trip score_overall values greater than 0
+avg = sum(scores) / scores.length
+variance = sum((score - avg)^2) / scores.length
+deviation = sqrt(variance)
+consistency_score = max(0, round(100 - deviation * 2))
+```
+
+Level:
+
+```txt
+steady       when consistency_score >= 85
+mixed        when consistency_score >= 70
+inconsistent otherwise
+unknown      when there are no scored trips
+```
+
+### 11.12 Coaching Focus
+
+The driving coach selects a focus area in priority order.
+
+```js
+const focusArea = riskRate.worst_event_count > 0
+  ? eventLabels[riskRate.worst_event]
+  : speed.level === "needs_attention"
+    ? "speed control"
+    : fatigue.level === "high"
+      ? "fatigue breaks"
+      : "consistency";
+```
+
+The coach then builds action text from:
+
+- Worst event type.
+- Speed discipline status.
+- Fatigue level.
+- Best time-of-day driving window.
+
+### 11.13 Achievement Calculations
+
+Achievement badges are calculated entirely from completed trips.
+
+Representative badge rules:
+
+```txt
+First Drive       -> completed.length >= 1
+Getting Rolling   -> completed.length >= 5
+Road Regular      -> completed.length >= 10
+100 km Club       -> total completed distance >= 100 km
+500 km Club       -> total completed distance >= 500 km
+Night Owl         -> night driving trip count >= 5
+Daily Driver      -> completed trips in last 7 days >= 5
+Route Replay Ready -> any completed trip has >= 20 route points and speed data
+Clean Long Drive  -> any clean completed trip duration >= 60 minutes
+```
+
+Clean trip definition:
+
+```txt
+harsh_brakes_count == 0
+rapid_accel_count == 0
+sharp_turns_count == 0
+speeding_events_count == 0
+```
+
+Perfect Trip:
+
+```txt
+score_overall >= 95 and clean trip
+```
+
+Smooth Driver:
+
+```txt
+completed.length >= 10 and average score >= 85
+```
+
+Steady Five:
+
+```txt
+last_five_completed_trips.length >= 5 and average(last five scores) >= 85
+```
 
 ## 12. Permissions
 
@@ -1391,7 +2062,49 @@ The client sends a bearer token from localStorage keys `token` or `access_token`
 - Settings thresholds are applied when ending trips and importing native trips.
 - Existing route points are stored in full inside trips and backups, so backup files can become large.
 
-## 23. Known Maintenance Notes
+## 23. Advanced Scoring Roadmap Implemented
+
+The May 2026 advanced scoring update is implemented as real trip calculations, not placeholder fields. New completed trips now receive these fields when a trip ends or when native Android trips are imported and rescored.
+
+Core engine additions in `src/lib/tripEngine.js`:
+
+- `classifyRoadType(cleanPoints)` classifies trips as `highway`, `urban`, `mixed`, or `residential` from speed distribution and applies context-aware fallback speeding thresholds.
+- `calculateJerkScore(cleanPoints, distanceKm)` measures rate of acceleration change and blends `jerk_score` into smoothness.
+- `detectLaneChanges(points)` emits `lane_change` events from high-speed heading-rate changes.
+- `detectTailgateCycles(points)` emits `tailgate_cycle` events from highway cruise followed by short-cycle deceleration.
+- `calculateEcoDrivingScore(points, stats)` computes continuous eco quality from speed stability, cruise-band ratio, and idle ratio.
+- `detectErraticSpeedWindows(points)` emits `erratic_speed` events as a distraction-risk proxy.
+- `analyzeIntersectionBehavior(points)` computes `intersection_score`, stop count, rolling stops, and smooth approaches.
+- `analyzeFatigueProgression(points, start, end)` scores trip thirds and stores `fatigue_progression` plus `segment_scores`.
+
+New persisted trip score fields include:
+
+- `road_type`, `avg_highway_speed_kmh`, `avg_urban_speed_kmh`, `highway_fraction`
+- `jerk_score`, `jerk_event_count`, `avg_jerk_ms3`
+- `eco_driving_score`, `speed_stability`, `cruise_score`
+- `lane_changes_count`, `lane_changes_per_10km`
+- `tailgate_cycle_count`, `following_distance_score`
+- `distraction_events_count`, `distraction_score`
+- `intersection_score`, `stop_count`, `rolling_stop_count`, `smooth_approach_count`
+- `fatigue_progression`, `segment_scores`, `degradation`
+
+Insight additions in `src/lib/tripInsights.js`:
+
+- `suggestTripTag(trip)` suggests `work`, `personal`, or `errands`; `src/api/trips.js` stores the suggestion without applying it as the user tag.
+- `computePersonalBaseline(completedTrips)` calculates rolling 4-week baseline, this-week average, trend, percentile, and best scores.
+- `calculateVehicleHealthImpact(vehicleTrips, vehicle)` converts risky events into stress units, extra wear kilometers, service interval adjustments, and a health grade.
+- `estimateTripEconomics` now uses `eco_driving_score` to estimate actual L/100 km and fuel saved.
+
+UI surfaces updated:
+
+- `TripDetail.jsx` shows road type, advanced score cards, fuel saved, fatigue progression chart, lane/tailgate/distraction counts, and tag suggestions.
+- `Dashboard.jsx` shows personal baseline and a real-time long-trip quality dip alert after 90 minutes.
+- `DrivingCoach.jsx` includes lane discipline, following distance, distraction risk, and baseline context.
+- `Report.jsx` includes baseline comparison, road type pie chart, and cumulative fuel saved.
+- `Vehicles.jsx` shows driving impact, extra wear kilometers, adjusted service intervals, and health grade.
+- `Settings.jsx` exposes `threshold_tailgate_decel_ms2`.
+
+## 24. Known Maintenance Notes
 
 - The Android Reference page contains Kotlin/Compose example snippets, while the production Android implementation is Capacitor plus Java native plugin/service code.
 - Some source comments and UI strings appear to contain mojibake characters from encoding issues. Prefer plain ASCII or correctly encoded UTF-8 when editing those files.
@@ -1400,7 +2113,7 @@ The client sends a bearer token from localStorage keys `token` or `access_token`
 - There is no road-speed-limit integration yet.
 - Leaflet is dynamically loaded rather than installed as an npm dependency.
 
-## 24. Main Files By Responsibility
+## 25. Main Files By Responsibility
 
 Bootstrap and routing:
 
@@ -1463,4 +2176,3 @@ Build config:
 - `capacitor.config.ts`
 - `android/build.gradle`
 - `android/app/build.gradle`
-

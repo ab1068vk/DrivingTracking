@@ -1,7 +1,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
-import { calculateTripScores, calculateTripStats, detectDrivingEvents } from '@/lib/tripEngine';
+import { calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 
 const TRIPS_KEY = 'drivesense_trips';
@@ -83,19 +83,26 @@ const importNativeCompletedTrips = async () => {
       const events = detectDrivingEvents(routePoints, {
         HARSH_BRAKE_MS2: settings.threshold_harsh_brake_ms2 || 4.5,
         RAPID_ACCEL_MS2: settings.threshold_rapid_accel_ms2 || 3.5,
-        SHARP_TURN_DEG_PER_S: settings.threshold_sharp_turn_degs || 45,
+        TAILGATE_DECEL_MS2: settings.threshold_tailgate_decel_ms2 || 2.5,
+        SHARP_TURN_G_LOW: settings.threshold_sharp_turn_g_low || 0.30,
+        SHARP_TURN_G_MEDIUM: settings.threshold_sharp_turn_g_medium || 0.45,
+        SHARP_TURN_G_HIGH: settings.threshold_sharp_turn_g_high || 0.60,
         SPEEDING_FALLBACK_KMH: settings.threshold_speeding_kmh || 130,
         IDLE_SPEED_KMH: 5,
-        IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 60,
+        IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 90,
         LONG_DRIVE_MINUTES: settings.threshold_long_drive_minutes || 120,
+        MIN_SPEED_RAPID_ACCEL_KMH: settings.min_speed_rapid_accel_kmh || 15,
+        MIN_SPEED_HARSH_BRAKE_KMH: settings.min_speed_harsh_brake_kmh || 25,
       });
-      const scores = calculateTripScores(events, stats);
+      const scores = calculateTripScores(events, stats, routePoints);
+      const simplifiedRoutePoints = simplifyRoute(routePoints, 10, events);
 
       await putTrip({
         ...trip,
         ...stats,
         ...scores,
-        route_points: routePoints,
+        route_points: simplifiedRoutePoints,
+        route_points_raw_count: routePoints.length,
         driving_events: events,
         imported_from_native: true,
         updated_at: trip.updated_at || new Date().toISOString(),

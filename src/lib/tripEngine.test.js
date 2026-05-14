@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calculateNightPenalty,
+  calculateJerkScore,
+  classifyRoadType,
   calculateRouteSummary,
+  calculateTripScores,
   calculateTripStats,
   cleanRoutePoints,
+  computeSmoothedAccelerations,
+  detectDrivingEvents,
+  detectLaneChanges,
+  EVENT_TYPES,
   haversineDistance,
   shouldAcceptLocationPoint,
+  simplifyRoute,
 } from '@/lib/tripEngine';
 import {
   shouldAutoStartTracking,
@@ -22,8 +31,11 @@ import {
   calculateRiskEventRate,
   calculateSpeedDiscipline,
   calculateWeeklyDrivingGoals,
+  calculateVehicleHealthImpact,
+  computePersonalBaseline,
   detectTripStops,
   estimateTripEconomics,
+  suggestTripTag,
   analyzeDayOfWeek,
   analyzeTimeOfDay,
   getMaintenanceStatus,
@@ -68,7 +80,8 @@ describe('tripEngine', () => {
 
     expect(stats.distance_km).toBeGreaterThan(0.2);
     expect(stats.duration_seconds).toBe(70);
-    expect(stats.avg_speed_kmh).toBe(11.4);
+    expect(stats.avg_speed_kmh).toBe(80.1);
+    expect(stats.avg_running_speed_kmh).toBe(80.1);
     expect(stats.max_speed_kmh).toBe(40);
     expect(stats.idle_time_seconds).toBe(60);
   });
@@ -101,6 +114,95 @@ describe('tripEngine', () => {
     expect(stats.distance_km).toBe(0);
     expect(stats.avg_speed_kmh).toBe(0);
     expect(stats.max_speed_kmh).toBe(0);
+  });
+
+  it('detects sharp turns using lateral G-force at running speed', () => {
+    const points = [
+      { ...point(43.6532, -79.3832, 0, 80), heading: 0 },
+      { ...point(43.6534, -79.3832, 1, 80), heading: 0 },
+      { ...point(43.6536, -79.3832, 2, 80), heading: 0 },
+      { ...point(43.6538, -79.3832, 3, 80), heading: 45 },
+    ];
+
+    const events = detectDrivingEvents(points);
+    const sharpTurn = events.find((event) => event.type === EVENT_TYPES.SHARP_TURN);
+
+    expect(sharpTurn).toBeTruthy();
+    expect(sharpTurn.value).toBeGreaterThan(0.45);
+  });
+
+  it('uses centered acceleration to smooth point-to-point speed changes', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 80),
+      point(43.6534, -79.3832, 1, 60),
+      point(43.6536, -79.3832, 2, 40),
+    ];
+
+    const smooth = computeSmoothedAccelerations(points)[1];
+    const forward = (40 / 3.6 - 60 / 3.6) / 1;
+
+    expect(Math.abs(smooth.accel_ms2)).toBeLessThan(Math.abs(forward));
+  });
+
+  it('normalizes score by event rate instead of raw trip length', () => {
+    const shortEvents = [{ type: EVENT_TYPES.HARSH_BRAKE, severity: 'low', speed_kmh: 30 }];
+    const longEvents = Array.from({ length: 10 }, () => ({
+      type: EVENT_TYPES.HARSH_BRAKE,
+      severity: 'low',
+      speed_kmh: 30,
+    }));
+
+    const shortScore = calculateTripScores(shortEvents, { distance_km: 5, fatigue_risk_score: 0 }, []);
+    const longScore = calculateTripScores(longEvents, { distance_km: 50, fatigue_risk_score: 0 }, []);
+
+    expect(longScore.score_overall).toBe(shortScore.score_overall);
+  });
+
+  it('classifies road type and calculates advanced smoothness fields', () => {
+    const highwayPoints = Array.from({ length: 8 }, (_, index) => ({
+      ...point(43.6532 + index * 0.001, -79.3832, index * 5, 90),
+      heading: index < 4 ? 0 : 15,
+    }));
+
+    expect(classifyRoadType(highwayPoints).road_type).toBe('highway');
+    expect(calculateJerkScore([
+      point(43.6532, -79.3832, 0, 40),
+      point(43.6534, -79.3832, 1, 50),
+      point(43.6536, -79.3832, 2, 40),
+    ], 1).jerk_score).toBeLessThan(100);
+    expect(detectLaneChanges(highwayPoints).length).toBeGreaterThan(0);
+  });
+
+  it('scales night penalty by night and deep-night route share', () => {
+    const day = point(43.6532, -79.3832, 0, 40);
+    const night = { ...day, timestamp: new Date(2026, 0, 1, 23, 0, 0).toISOString() };
+    const deepNight = { ...day, timestamp: new Date(2026, 0, 1, 3, 0, 0).toISOString() };
+
+    expect(calculateNightPenalty([day, night])).toBeGreaterThan(0);
+    expect(calculateNightPenalty([deepNight, deepNight])).toBeGreaterThan(calculateNightPenalty([day, night]));
+  });
+
+  it('does not emit idle events below the 90 second traffic-stop grace period', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 30),
+      point(43.6534, -79.3832, 10, 30),
+      point(43.6536, -79.3832, 20, 0),
+      point(43.6538, -79.3832, 80, 0),
+    ];
+
+    expect(detectDrivingEvents(points).some((event) => event.type === EVENT_TYPES.IDLE)).toBe(false);
+  });
+
+  it('simplifies straight route points while preserving corners', () => {
+    const straight = Array.from({ length: 10 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index, 40));
+    const corner = point(43.6542, -79.3822, 10, 40);
+    const afterCorner = Array.from({ length: 10 }, (_, index) => point(43.6542, -79.3822 + index * 0.0001, 11 + index, 40));
+    const route = [...straight, corner, ...afterCorner];
+
+    const simplified = simplifyRoute(route, 10, [{ lat: corner.lat, lng: corner.lng }]);
+
+    expect(simplified.length).toBeLessThan(route.length);
+    expect(simplified.some((item) => item.lat === corner.lat && item.lng === corner.lng)).toBe(true);
   });
 });
 
@@ -258,9 +360,33 @@ describe('trip insights', () => {
     }).find((goal) => goal.id === 'speeding').met).toBe(false);
     expect(calculateRiskEventRate([todayTrip]).events_per_100km).toBe(4);
     expect(calculateSpeedDiscipline([todayTrip], { threshold_speeding_kmh: 130 }).level).toBe('needs_attention');
-    expect(calculateDrivingConsistency([todayTrip]).consistency_score).toBe(100);
+    expect(calculateDrivingConsistency([todayTrip]).consistency_score).toBeNull();
     expect(buildDrivingCoachInsights([todayTrip], { threshold_speeding_kmh: 130 }).focus_area).toBe('acceleration');
     expect(analyzeTimeOfDay([todayTrip]).reduce((sum, bucket) => sum + bucket.trips, 0)).toBe(1);
     expect(analyzeDayOfWeek([todayTrip]).reduce((sum, day) => sum + day.trips, 0)).toBe(1);
+  });
+
+  it('computes auto tags, baselines, fuel savings, and vehicle stress impact', () => {
+    const commute = {
+      id: 'commute',
+      status: 'completed',
+      start_time: new Date(2026, 0, 5, 8, 0, 0).toISOString(),
+      duration_seconds: 30 * 60,
+      distance_km: 20,
+      score_overall: 88,
+      eco_driving_score: 90,
+      driving_events: [{ type: 'harsh_brake', severity: 'medium' }],
+    };
+    const trips = Array.from({ length: 4 }, (_, index) => ({
+      ...commute,
+      id: `baseline-${index}`,
+      start_time: new Date(Date.now() - index * 86400000).toISOString(),
+      score_overall: 80 + index,
+    }));
+
+    expect(suggestTripTag(commute).auto_tag).toBe('work');
+    expect(estimateTripEconomics(commute, { fuel_efficiency_l_per_100km: 10 }).fuel_saved_liters).toBeGreaterThan(0);
+    expect(computePersonalBaseline(trips).baseline_avg).not.toBeNull();
+    expect(calculateVehicleHealthImpact([commute], {}).extra_wear_km).toBe(32);
   });
 });

@@ -17,6 +17,9 @@ const focusLabels = {
   cornering: 'Cleaner Turns',
   'speed control': 'Speed Discipline',
   'fatigue breaks': 'Break Timing',
+  'lane discipline': 'Lane Discipline',
+  'following distance': 'Following Distance',
+  'distraction risk': 'Distraction Risk',
   consistency: 'Consistency',
 };
 
@@ -84,20 +87,53 @@ export default function DrivingCoach() {
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <ShieldCheck className="w-5 h-5 text-emerald-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.consistency.consistency_score}</div>
+              <div className="font-grotesk font-bold text-2xl">{coach.consistency.consistency_score ?? '-'}</div>
               <div className="text-xs text-muted-foreground">consistency score</div>
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <Gauge className="w-5 h-5 text-blue-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{formatSpeed(coach.speed_discipline.max_speed_kmh, units)}</div>
-              <div className="text-xs text-muted-foreground">max recorded speed</div>
+              <div className="font-grotesk font-bold text-2xl">{formatSpeed(coach.speed_discipline.p85_speed_kmh || 0, units)}</div>
+              <div className="text-xs text-muted-foreground">85th percentile speed</div>
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <MapPinned className="w-5 h-5 text-violet-500 mb-2" />
               <div className="font-grotesk font-bold text-2xl">{formatDistance(coach.risk_rate.distance_km, units)}</div>
               <div className="text-xs text-muted-foreground">distance analyzed</div>
             </div>
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <ShieldCheck className="w-5 h-5 text-blue-500 mb-2" />
+              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.tailgate_cycles || 0}</div>
+              <div className="text-xs text-muted-foreground">following gaps</div>
+            </div>
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <Gauge className="w-5 h-5 text-slate-500 mb-2" />
+              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.lane_changes || 0}</div>
+              <div className="text-xs text-muted-foreground">lane changes</div>
+            </div>
           </div>
+
+          {coach.baseline?.trend !== 'unknown' && (
+            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+              <h2 className="font-semibold mb-1">Adaptive Baseline</h2>
+              <p className="text-xs text-muted-foreground mb-4">This week compared with your rolling 4-week average</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-secondary/50 rounded-xl p-3">
+                  <div className="font-grotesk font-bold text-xl">{coach.baseline.this_week_avg ?? '-'}</div>
+                  <div className="text-xs text-muted-foreground">this week</div>
+                </div>
+                <div className="bg-secondary/50 rounded-xl p-3">
+                  <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg ?? '-'}</div>
+                  <div className="text-xs text-muted-foreground">baseline</div>
+                </div>
+                <div className="bg-secondary/50 rounded-xl p-3">
+                  <div className={`font-grotesk font-bold text-xl capitalize ${
+                    coach.baseline.trend === 'improving' ? 'text-emerald-500' : coach.baseline.trend === 'declining' ? 'text-red-500' : ''
+                  }`}>{coach.baseline.trend}</div>
+                  <div className="text-xs text-muted-foreground">trend</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
             <h2 className="font-semibold mb-3">Next Driving Actions</h2>

@@ -11,7 +11,7 @@ import {
   DEFAULT_THRESHOLDS,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
-  formatDistance, formatDuration, formatSpeed, getScoreColor
+  formatDistance, formatDuration, formatSpeed, getScoreColor, simplifyRoute
 } from '@/lib/tripEngine';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
@@ -40,6 +40,7 @@ import {
   calculateAchievementBadges,
   calculateFatigueRisk,
   calculateNoHarshBrakeStreak,
+  computePersonalBaseline,
   calculateWeeklyDrivingGoals,
 } from '@/lib/tripInsights';
 
@@ -234,21 +235,28 @@ export default function Dashboard() {
     const events = detectDrivingEvents(pts, {
       HARSH_BRAKE_MS2: settings.threshold_harsh_brake_ms2 || 4.5,
       RAPID_ACCEL_MS2: settings.threshold_rapid_accel_ms2 || 3.5,
-      SHARP_TURN_DEG_PER_S: settings.threshold_sharp_turn_degs || 45,
+      TAILGATE_DECEL_MS2: settings.threshold_tailgate_decel_ms2 || 2.5,
+      SHARP_TURN_G_LOW: settings.threshold_sharp_turn_g_low || 0.30,
+      SHARP_TURN_G_MEDIUM: settings.threshold_sharp_turn_g_medium || 0.45,
+      SHARP_TURN_G_HIGH: settings.threshold_sharp_turn_g_high || 0.60,
       SPEEDING_FALLBACK_KMH: settings.threshold_speeding_kmh || 130,
       IDLE_SPEED_KMH: 5,
-      IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 60,
+      IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 90,
       LONG_DRIVE_MINUTES: settings.threshold_long_drive_minutes || 120,
+      MIN_SPEED_RAPID_ACCEL_KMH: settings.min_speed_rapid_accel_kmh || 15,
+      MIN_SPEED_HARSH_BRAKE_KMH: settings.min_speed_harsh_brake_kmh || 25,
     });
 
-    const scores = calculateTripScores(events, stats);
+    const scores = calculateTripScores(events, stats, pts);
+    const simplifiedPoints = simplifyRoute(pts, 10, events);
 
     const completedTrip = {
       ...stats,
       start_time: tripToEnd.start_time,
       end_time: endTime,
       vehicle_id: vehicles.find((vehicle) => vehicle.is_default)?.id || vehicles[0]?.id || null,
-      route_points: pts,
+      route_points: simplifiedPoints,
+      route_points_raw_count: pts.length,
       driving_events: events,
       ...scores,
       status: 'completed',
@@ -390,6 +398,22 @@ export default function Dashboard() {
   const weeklyGoals = calculateWeeklyDrivingGoals(completedTrips, settings);
   const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
   const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
+  const baseline = computePersonalBaseline(completedTrips);
+  const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
+    const points = activeTrip?.route_points || [];
+    if (points.length < 12) return false;
+    const firstWindowEnd = new Date(activeTrip.start_time).getTime() + 10 * 60 * 1000;
+    const lastWindowStart = Date.now() - 10 * 60 * 1000;
+    const firstPoints = points.filter((point) => new Date(point.timestamp).getTime() <= firstWindowEnd);
+    const lastPoints = points.filter((point) => new Date(point.timestamp).getTime() >= lastWindowStart);
+    if (firstPoints.length < 3 || lastPoints.length < 3) return false;
+    const firstEvents = detectDrivingEvents(firstPoints);
+    const lastEvents = detectDrivingEvents(lastPoints);
+    const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
+    const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
+    return calculateTripScores(lastEvents, lastStats, lastPoints).score_overall <
+      calculateTripScores(firstEvents, firstStats, firstPoints).score_overall - 15;
+  })();
 
   const { color: scoreColor } = getScoreColor(avgScore);
   const units = settings.units || 'metric';
@@ -474,6 +498,12 @@ export default function Dashboard() {
               );
             })()}
 
+            {activeFatigueAlert && (
+              <div className="mb-4 rounded-xl bg-white/15 px-3 py-2 text-sm font-medium text-red-100">
+                Driving quality has dipped during this long trip. Take a break soon.
+              </div>
+            )}
+
             <button
               onClick={handleEndTrip}
               className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
@@ -524,6 +554,40 @@ export default function Dashboard() {
           index={1}
         />
       </div>
+
+      {completedTrips.length > 0 && (
+        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="font-semibold text-base">Personal Baseline</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                {baseline.baseline_avg == null
+                  ? 'Record at least 3 trips in 4 weeks to unlock your baseline.'
+                  : `This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} vs your 4-week average.`}
+              </p>
+            </div>
+            <div className={`text-sm font-bold capitalize ${
+              baseline.trend === 'improving' ? 'text-emerald-500' : baseline.trend === 'declining' ? 'text-red-500' : 'text-muted-foreground'
+            }`}>
+              {baseline.trend}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3 mt-4">
+            <div className="bg-secondary/50 rounded-xl p-3">
+              <div className="font-grotesk font-bold text-xl">{baseline.this_week_avg ?? '-'}</div>
+              <div className="text-xs text-muted-foreground">this week</div>
+            </div>
+            <div className="bg-secondary/50 rounded-xl p-3">
+              <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg ?? '-'}</div>
+              <div className="text-xs text-muted-foreground">baseline</div>
+            </div>
+            <div className="bg-secondary/50 rounded-xl p-3">
+              <div className="font-grotesk font-bold text-xl">{baseline.percentile ?? 0}%</div>
+              <div className="text-xs text-muted-foreground">percentile</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Driver goals */}
       {completedTrips.length > 0 && (

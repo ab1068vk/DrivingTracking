@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -5,13 +6,29 @@ import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
 import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
-  CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf
+  CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
+  Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag
 } from 'lucide-react';
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
 import { formatDistance, formatDuration, formatDateTime, formatSpeed, getScoreColor } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { calculateFatigueRisk, detectTripStops, estimateTripEconomics } from '@/lib/tripInsights';
+import { calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
+
+const roadTypeConfig = {
+  highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
+  urban: { label: 'Urban', icon: Building, className: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50' },
+  mixed: { label: 'Mixed', icon: Shuffle, className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700' },
+  residential: { label: 'Residential', icon: Home, className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800/50' },
+};
+
+const fatigueText = {
+  significant: 'Quality dropped toward end of trip',
+  moderate: 'Quality dipped; consider breaks',
+  improving: 'You warmed up well',
+  slight: 'Fairly consistent',
+};
 
 export default function TripDetail() {
   const { id } = useParams();
@@ -37,6 +54,17 @@ export default function TripDetail() {
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
       navigate('/trips');
     },
+  });
+  const tagMutation = useMutation({
+    mutationFn: (tag) => tripService.update(id, { tag, tag_reviewed: true }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trip', id] }),
+  });
+  const [dismissedTags, setDismissedTags] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('drivesense_dismissed_tag_suggestions') || '[]');
+    } catch {
+      return [];
+    }
   });
 
   if (isLoading) {
@@ -66,6 +94,29 @@ export default function TripDetail() {
   const economics = estimateTripEconomics(trip, tripVehicle, settings);
   const stops = detectTripStops(trip.route_points || []);
   const fatigueRisk = calculateFatigueRisk([trip], settings);
+  const tagSuggestion = suggestTripTag(trip);
+  const showTagSuggestion = !trip.tag &&
+    ['high', 'medium'].includes(tagSuggestion.auto_tag_confidence) &&
+    !dismissedTags.includes(String(trip.id));
+  const dismissTagSuggestion = () => {
+    const next = [...new Set([...dismissedTags, String(trip.id)])];
+    setDismissedTags(next);
+    localStorage.setItem('drivesense_dismissed_tag_suggestions', JSON.stringify(next));
+  };
+  const roadCfg = roadTypeConfig[trip.road_type];
+  const RoadIcon = roadCfg?.icon;
+  const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
+    ? [
+      { label: 'First', score: trip.segment_scores[0] },
+      { label: 'Middle', score: trip.segment_scores[1] },
+      { label: 'Last', score: trip.segment_scores[2] },
+    ]
+    : [];
+  const fatigueColor = trip.fatigue_progression === 'significant'
+    ? '#ef4444'
+    : trip.fatigue_progression === 'moderate'
+      ? '#f59e0b'
+      : '#22c55e';
 
   return (
     <div className="space-y-5 pb-4">
@@ -89,6 +140,38 @@ export default function TripDetail() {
           </button>
         </div>
       </motion.div>
+
+      {showTagSuggestion && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-primary/5 border border-primary/20 rounded-2xl p-3 flex items-center gap-3"
+        >
+          <Tag className="w-4 h-4 text-primary" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium capitalize">Suggested tag: {tagSuggestion.auto_tag}</div>
+            <div className="text-xs text-muted-foreground capitalize">{tagSuggestion.auto_tag_confidence} confidence</div>
+          </div>
+          <button
+            onClick={() => tagMutation.mutate(tagSuggestion.auto_tag)}
+            className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+          >
+            Accept
+          </button>
+          <button
+            onClick={() => {
+              const next = prompt('Tag this trip as work, errands, or personal', tagSuggestion.auto_tag);
+              if (next && ['work', 'errands', 'personal'].includes(next.toLowerCase())) tagMutation.mutate(next.toLowerCase());
+            }}
+            className="px-2.5 py-1.5 rounded-lg bg-secondary text-xs font-semibold"
+          >
+            Change
+          </button>
+          <button onClick={dismissTagSuggestion} className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground">
+            Dismiss
+          </button>
+        </motion.div>
+      )}
 
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
@@ -144,6 +227,7 @@ export default function TripDetail() {
             { icon: Gauge, label: 'Avg Speed', value: formatSpeed(trip.avg_speed_kmh || 0, units) },
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
             { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}` },
+            { icon: Leaf, label: 'Fuel Saved', value: `${economics.fuel_saved_liters.toFixed(2)} L` },
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
           ].map(({ icon: Icon, label, value }) => (
             <div key={label} className="flex items-start gap-3 p-3 bg-secondary/50 rounded-xl">
@@ -175,6 +259,12 @@ export default function TripDetail() {
               <span>Night driving detected</span>
             </div>
           )}
+          {roadCfg && (
+            <div className={`inline-flex w-fit items-center gap-2 text-sm border rounded-full px-3 py-1 ${roadCfg.className}`}>
+              <RoadIcon className="w-4 h-4" />
+              <span>{roadCfg.label} route</span>
+            </div>
+          )}
           {tripVehicle && (
             <div className="flex items-center gap-2 text-sm">
               <Car className="w-4 h-4 text-muted-foreground" />
@@ -194,17 +284,39 @@ export default function TripDetail() {
       >
         <h2 className="font-semibold mb-4">Driving Pattern</h2>
         <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="bg-secondary/50 rounded-xl p-3">
-            <MapPin className="w-4 h-4 text-primary mb-2" />
-            <div className="font-grotesk font-bold text-xl">{stops.length}</div>
-            <div className="text-xs text-muted-foreground">detected stops</div>
-          </div>
-          <div className="bg-secondary/50 rounded-xl p-3">
-            <AlertTriangle className={`w-4 h-4 mb-2 ${fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500'}`} />
-            <div className="font-grotesk font-bold text-xl capitalize">{fatigueRisk.level}</div>
-            <div className="text-xs text-muted-foreground">fatigue risk</div>
-          </div>
+          {[
+            { icon: MapPin, label: 'detected stops', value: trip.stop_count ?? stops.length, color: 'text-primary' },
+            { icon: AlertTriangle, label: 'fatigue risk', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
+            { icon: Waves, label: 'jerk score', value: trip.jerk_score ?? '-', color: 'text-sky-500' },
+            { icon: Leaf, label: 'eco driving', value: trip.eco_driving_score ?? '-', color: 'text-emerald-500' },
+            { icon: ShieldCheck, label: 'following score', value: trip.following_distance_score ?? '-', color: 'text-blue-500' },
+            { icon: Focus, label: 'focus score', value: trip.distraction_score ?? '-', color: 'text-violet-500' },
+            { icon: TimerReset, label: 'intersection score', value: trip.intersection_score ?? '-', color: 'text-amber-500' },
+          ].map(({ icon: Icon, label, value, color, capitalize }) => (
+            <div key={label} className="bg-secondary/50 rounded-xl p-3">
+              <Icon className={`w-4 h-4 mb-2 ${color}`} />
+              <div className={`font-grotesk font-bold text-xl ${capitalize ? 'capitalize' : ''}`}>{value}</div>
+              <div className="text-xs text-muted-foreground">{label}</div>
+            </div>
+          ))}
         </div>
+
+        {fatigueChartData.length === 3 && (
+          <div className="mb-4 bg-secondary/50 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-medium">Driving quality over trip</div>
+              <span className="text-xs text-muted-foreground">{fatigueText[trip.fatigue_progression] || trip.fatigue_progression}</span>
+            </div>
+            <ResponsiveContainer width="100%" height={120}>
+              <AreaChart data={fatigueChartData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                <Area type="monotone" dataKey="score" stroke={fatigueColor} fill={fatigueColor} fillOpacity={0.18} strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
         {stops.length > 0 ? (
           <div className="space-y-2 max-h-44 overflow-y-auto thin-scrollbar">
@@ -247,6 +359,9 @@ export default function TripDetail() {
               { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
               { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
               { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+              { label: 'Lane Changes', value: trip.lane_changes_count, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
+              { label: 'Tailgate', value: trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
+              { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
             ].map(({ label, value, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />
@@ -301,7 +416,7 @@ export default function TripDetail() {
         className="bg-secondary/50 rounded-2xl px-5 py-3 flex items-center justify-between"
       >
         <span className="text-sm text-muted-foreground">Route Points</span>
-        <span className="text-sm font-semibold">{trip.route_points?.length || 0} GPS readings</span>
+        <span className="text-sm font-semibold">{trip.route_points_raw_count || trip.route_points?.length || 0} GPS readings</span>
       </motion.div>
     </div>
   );

@@ -565,8 +565,10 @@ export default function Settings() {
           {[
             { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', min: 2, max: 8, step: 0.5 },
             { key: 'threshold_rapid_accel_ms2', label: 'Rapid Acceleration', unit: 'm/s²', min: 1.5, max: 6, step: 0.5 },
-            { key: 'threshold_sharp_turn_degs', label: 'Sharp Turn', unit: '°/s', min: 20, max: 90, step: 5 },
+            { key: 'threshold_tailgate_decel_ms2', label: 'Tailgate Decel', unit: 'm/s²', min: 1.5, max: 5, step: 0.25 },
+            { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn', unit: 'g', min: 0.2, max: 0.6, step: 0.05 },
             { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 180, step: 10 },
+            { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
           ].map(({ key, label, unit, min, max, step }) => (
             <div key={key} className="px-1">
               <div className="flex justify-between text-xs mb-1.5">

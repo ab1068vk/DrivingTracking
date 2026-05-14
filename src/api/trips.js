@@ -1,6 +1,7 @@
 import { apiClient } from "@/api/client";
 import { localTripRepository } from "@/lib/localTripRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
+import { suggestTripTag } from "@/lib/tripInsights";
 
 const shouldUseLocalStore = () => isNativePlatform() || !import.meta.env.VITE_API_URL;
 
@@ -19,7 +20,15 @@ export const tripService = {
 
   create: (trip) => {
     const local = repository();
-    return local ? local.create(trip) : apiClient.post("/trips", trip);
+    const suggestion = suggestTripTag(trip);
+    const withSuggestion = {
+      ...suggestion,
+      tag: trip.tag ?? null,
+      ...trip,
+      auto_tag: trip.auto_tag ?? suggestion.auto_tag,
+      auto_tag_confidence: trip.auto_tag_confidence ?? suggestion.auto_tag_confidence,
+    };
+    return local ? local.create(withSuggestion) : apiClient.post("/trips", withSuggestion);
   },
 
   update: (id, patch) => {

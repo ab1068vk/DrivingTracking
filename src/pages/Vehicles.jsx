@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel } from 'lucide-react';
+import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
-import { estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
+import { calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 
@@ -222,6 +222,7 @@ export default function Vehicles() {
           const maintenance = getMaintenanceStatus(v, trips);
           const dueMaintenance = maintenance.filter((item) => item.status !== 'ok');
           const fuelTotals = fuelTotalsFor(v);
+          const healthImpact = calculateVehicleHealthImpact(tripListFor(v), v);
 
           return (
             <motion.div key={v.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
@@ -297,6 +298,26 @@ export default function Vehicles() {
                         {dueMaintenance.length ? `${dueMaintenance.length} due soon` : 'All good'}
                       </div>
                       <div className="text-xs text-muted-foreground">{v.fuel_efficiency_l_per_100km || 8.5} L/100km</div>
+                    </div>
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Activity className="w-3.5 h-3.5" />
+                        Driving impact
+                      </div>
+                      <div className={`font-semibold text-sm mt-1 ${
+                        healthImpact.health_grade === 'A' ? 'text-emerald-500' : healthImpact.health_grade === 'B' ? 'text-blue-500' : 'text-orange-500'
+                      }`}>
+                        Grade {healthImpact.health_grade}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{healthImpact.extra_wear_km.toLocaleString()} extra wear km</div>
+                    </div>
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Wrench className="w-3.5 h-3.5" />
+                        Adjusted service
+                      </div>
+                      <div className="font-semibold text-sm mt-1">{healthImpact.adjusted_oil_change_km.toLocaleString()} km oil</div>
+                      <div className="text-xs text-muted-foreground">{healthImpact.aggressive_ratio}% aggressive km</div>
                     </div>
                   </div>
 

@@ -5,11 +5,11 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
   BarChart3, TrendingUp, AlertTriangle,
-  Download, Car, Clock, Navigation, Fuel, Leaf
+  Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, LineChart, Line
+  ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell
 } from 'recharts';
 import { generateReportSummary, formatDistance, formatDuration, formatDate, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -18,6 +18,8 @@ import {
   analyzeTimeOfDay,
   buildScoreTips,
   calculateFatigueRisk,
+  calculateSpeedDiscipline,
+  computePersonalBaseline,
   estimateTripEconomics,
 } from '@/lib/tripInsights';
 
@@ -58,12 +60,22 @@ export default function Reports() {
       cost: totals.cost + estimate.cost,
       liters: totals.liters + estimate.liters,
       co2: totals.co2 + estimate.co2_kg,
+      saved: totals.saved + estimate.fuel_saved_liters,
     };
-  }, { cost: 0, liters: 0, co2: 0 });
+  }, { cost: 0, liters: 0, co2: 0, saved: 0 });
   const tips = buildScoreTips(trips);
   const timeOfDayData = analyzeTimeOfDay(trips);
   const dayOfWeekData = analyzeDayOfWeek(trips);
   const fatigueRisk = calculateFatigueRisk(trips, settings);
+  const speedDiscipline = calculateSpeedDiscipline(trips, settings);
+  const baseline = computePersonalBaseline(completed);
+  const roadTypeData = ['highway', 'urban', 'mixed', 'residential']
+    .map((type) => ({
+      name: type[0].toUpperCase() + type.slice(1),
+      value: trips.filter((trip) => trip.road_type === type).length,
+    }))
+    .filter((item) => item.value > 0);
+  const roadColors = ['#3b82f6', '#f59e0b', '#64748b', '#22c55e'];
 
   // Build 6-month monthly event trend data (always uses all completed trips)
   const eventTrendData = (() => {
@@ -120,6 +132,9 @@ export default function Reports() {
     rapid_acceleration: 'Rapid Acceleration',
     sharp_turn: 'Sharp Turns',
     speeding: 'Speeding',
+    lane_change: 'Lane Changes',
+    tailgate_cycle: 'Following Gap',
+    erratic_speed: 'Erratic Speed',
   };
 
   const handleExport = async () => {
@@ -182,7 +197,9 @@ export default function Reports() {
               { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), gradient: 'gradient-success' },
               { icon: Clock, label: 'Drive Time', value: formatDuration(summary.total_duration_seconds), gradient: 'bg-gradient-to-br from-purple-500 to-purple-700' },
               { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score, gradient: getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
+              { icon: Gauge, label: 'P85 Speed', value: formatSpeed(speedDiscipline.p85_speed_kmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
               { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}`, gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
+              { icon: Leaf, label: 'Fuel Saved', value: `${economics.saved.toFixed(2)} L`, gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
               { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },
             ].map(({ icon: Icon, label, value, gradient }, i) => (
               <motion.div
@@ -204,6 +221,64 @@ export default function Reports() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.18 }}
+            className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          >
+            <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              {baseline.baseline_avg == null
+                ? 'More recent trips are needed for a rolling 4-week baseline.'
+                : `This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from baseline.`}
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{baseline.this_week_avg ?? '-'}</div>
+                <div className="text-xs text-muted-foreground">this week</div>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg ?? '-'}</div>
+                <div className="text-xs text-muted-foreground">baseline</div>
+              </div>
+              <div className="bg-secondary/50 rounded-xl p-3">
+                <div className="font-grotesk font-bold text-xl">{baseline.personal_best_week_avg ?? '-'}</div>
+                <div className="text-xs text-muted-foreground">best week</div>
+              </div>
+            </div>
+          </motion.div>
+
+          {roadTypeData.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.185 }}
+              className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+            >
+              <h2 className="font-semibold mb-1">Road Type Breakdown</h2>
+              <p className="text-xs text-muted-foreground mb-4">Trip classification from speed distribution</p>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie data={roadTypeData} dataKey="value" nameKey="name" innerRadius={42} outerRadius={72} paddingAngle={2}>
+                    {roadTypeData.map((entry, index) => (
+                      <Cell key={entry.name} fill={roadColors[index % roadColors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="grid grid-cols-2 gap-2">
+                {roadTypeData.map((item, index) => (
+                  <div key={item.name} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="w-2.5 h-2.5 rounded-sm" style={{ background: roadColors[index % roadColors.length] }} />
+                    {item.name}: {item.value}
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.19 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
             <h2 className="font-semibold mb-3">Improvement Tips</h2>
