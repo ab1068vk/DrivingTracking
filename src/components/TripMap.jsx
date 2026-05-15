@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { buildSpeedSegments } from '@/lib/tripInsights';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -124,14 +125,35 @@ export default function TripMap({
       validRoutes.forEach((route) => {
         const latLngs = route.route_points.map(p => [p.lat, p.lng]);
         latLngs.forEach((latLng) => bounds.extend(latLng));
-        window.L.polyline(latLngs, {
-          color: route.color,
-          weight: route.selected ? 5 : 3,
-          opacity: route.opacity,
-          smoothFactor: 1.5,
-        })
-          .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
-          .addTo(layers);
+
+        const speedSegments = route.selected || !Array.isArray(routes)
+          ? buildSpeedSegments(route.route_points)
+          : [];
+
+        if (speedSegments.length > 0) {
+          speedSegments.forEach((segment) => {
+            window.L.polyline(
+              [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+              {
+                color: segment.color,
+                weight: route.selected ? 5 : 3,
+                opacity: route.opacity,
+                smoothFactor: 1.5,
+              }
+            )
+              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${segment.label}: ${Math.round(segment.speed_kmh)} km/h`)
+              .addTo(layers);
+          });
+        } else {
+          window.L.polyline(latLngs, {
+            color: route.color,
+            weight: route.selected ? 5 : 3,
+            opacity: route.opacity,
+            smoothFactor: 1.5,
+          })
+            .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
+            .addTo(layers);
+        }
       });
 
       map.fitBounds(bounds, { padding: [20, 20] });

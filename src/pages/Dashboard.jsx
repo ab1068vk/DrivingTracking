@@ -328,7 +328,7 @@ export default function Dashboard() {
       if (cancelled || trackingRef.current) return;
 
       const speed = point.speed_kmh || 0;
-      if (speed >= 12) {
+      if (speed >= 5) {
         recentMovingSinceRef.current ??= Date.now();
       } else {
         recentMovingSinceRef.current = null;
@@ -348,7 +348,7 @@ export default function Dashboard() {
         : 0;
       const activity = latestActivityRef.current;
       const activitySaysDrive = shouldAutoStartTracking({ activity, currentSpeedKmh: speed, recentMovingSeconds });
-      const speedOnlyDrive = !isAndroid() && speed >= 18 && recentMovingSeconds >= 20;
+      const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= 10;
 
       if (activitySaysDrive || speedOnlyDrive) {
         await stopAutoWatchers();

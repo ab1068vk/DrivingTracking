@@ -6,6 +6,13 @@ import { vehicleService } from '@/api/vehicles';
 import {
   Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
@@ -77,11 +84,55 @@ function PermissionBadge({ value }) {
   );
 }
 
+const DRIVING_PATTERN_DEFINITIONS = [
+  {
+    term: 'Aggression score',
+    definition: 'Rates hard acceleration, harsh braking, aggressive overtakes, speed creep, and jerk. Higher means calmer, more controlled driving.',
+  },
+  {
+    term: 'Defensive score',
+    definition: 'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.',
+  },
+  {
+    term: 'Jerk score',
+    definition: 'Measures how abruptly acceleration changes. Low jerk means smoother throttle and braking; high jerk often feels jumpy or uncomfortable.',
+  },
+  {
+    term: 'Speed variability index',
+    definition: 'Shows how much your speed swings during the trip. Lower variability usually means smoother traffic flow and better anticipation.',
+  },
+  {
+    term: 'Fuel band score',
+    definition: 'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.',
+  },
+  {
+    term: 'Following score',
+    definition: 'Looks for repeated deceleration patterns that suggest following traffic too closely or reacting late to vehicles ahead.',
+  },
+  {
+    term: 'Focus score',
+    definition: 'Uses erratic speed and heading oscillations as a proxy for possible distraction. It does not read phone usage directly.',
+  },
+  {
+    term: 'Intersection score',
+    definition: 'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.',
+  },
+  {
+    term: 'Drowsy risk',
+    definition: 'Flags longer highway sections with growing heading drift or weaker control patterns that can suggest fatigue.',
+  },
+  {
+    term: 'Parking approach',
+    definition: 'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.',
+  },
+];
+
 export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
+  const [patternGuideOpen, setPatternGuideOpen] = useState(false);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -636,6 +687,14 @@ export default function Settings() {
 
         {/* Detection Thresholds */}
         <SectionTitle>Detection Thresholds</SectionTitle>
+        <SettingRow
+          icon={Info}
+          label="Driving Pattern Definitions"
+          sublabel="Explain aggression, defensive, jerk, focus, fuel band, and related trip metrics"
+          onClick={() => setPatternGuideOpen(true)}
+        >
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+        </SettingRow>
         <div className="flex items-start justify-between gap-3 px-1 mb-3">
           <p className="text-xs text-muted-foreground">
             Adjust sensitivity of driving event detection. Lower values = more sensitive.
@@ -836,6 +895,25 @@ export default function Settings() {
         className="hidden"
         onChange={handleImportBackup}
       />
+
+      <Dialog open={patternGuideOpen} onOpenChange={setPatternGuideOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Driving Pattern Definitions</DialogTitle>
+            <DialogDescription>
+              These metrics summarize patterns from GPS speed, route shape, timing, and detected driving events.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => (
+              <div key={term} className="rounded-xl border border-border bg-secondary/40 p-3">
+                <div className="text-sm font-semibold">{term}</div>
+                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{definition}</div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">

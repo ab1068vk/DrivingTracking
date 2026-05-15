@@ -1669,32 +1669,32 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
 
     // ── Sharp Turn
     // Heading change > 45°/s while above 30 km/h. At lower speeds turns are normal.
-    if (speed2 > 25) {
-      const h1 = prev.heading ?? calculateBearing(
-        i > 1 ? points[i - 2].lat : prev.lat,
-        i > 1 ? points[i - 2].lng : prev.lng,
-        prev.lat, prev.lng
-      );
-      const h2 = curr.heading ?? calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
-      const rawHeadingChange = headingDiff(h1, h2);
-      const effectiveDt = Math.min(dt, 2.0);
-      const omegaRadPerSec = (rawHeadingChange * Math.PI / 180) / effectiveDt;
-      const vMps = speed2 / 3.6;
-      const lateralG = (vMps * vMps * omegaRadPerSec) / 9.81;
-      const lowG = thresholds.SHARP_TURN_G_LOW ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW;
-      const mediumG = thresholds.SHARP_TURN_G_MEDIUM ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM;
-      const highG = thresholds.SHARP_TURN_G_HIGH ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH;
+    if (speed2 > 30 && dt <= 8 && currSegment.distanceM >= 10 && i > 1) {
+      const prevPrev = points[i - 2];
+      const prevSegment = calculateSegmentMetrics(prevPrev, prev, thresholds);
+      if (prevSegment.dt > 0 && prevSegment.dt <= 8 && !prevSegment.isNoise && prevSegment.distanceM >= 10) {
+        const h1 = calculateBearing(prevPrev.lat, prevPrev.lng, prev.lat, prev.lng);
+        const h2 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
+        const rawHeadingChange = headingDiff(h1, h2);
+        const effectiveDt = Math.max(1.5, (prevSegment.dt + dt) / 2);
+        const omegaRadPerSec = (rawHeadingChange * Math.PI / 180) / effectiveDt;
+        const vMps = speed2 / 3.6;
+        const lateralG = (vMps * omegaRadPerSec) / 9.81;
+        const lowG = thresholds.SHARP_TURN_G_LOW ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW;
+        const mediumG = thresholds.SHARP_TURN_G_MEDIUM ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM;
+        const highG = thresholds.SHARP_TURN_G_HIGH ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH;
 
-      if (lateralG >= lowG) {
-        pushEvent({
-          type: EVENT_TYPES.SHARP_TURN,
-          severity: lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low',
-          lat: curr.lat,
-          lng: curr.lng,
-          timestamp: curr.timestamp,
-          value: Math.round(lateralG * 100) / 100,
-          speed_kmh: Math.round(speed2),
-        });
+        if (rawHeadingChange >= 25 && lateralG >= lowG) {
+          pushEvent({
+            type: EVENT_TYPES.SHARP_TURN,
+            severity: lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low',
+            lat: curr.lat,
+            lng: curr.lng,
+            timestamp: curr.timestamp,
+            value: Math.round(lateralG * 100) / 100,
+            speed_kmh: Math.round(speed2),
+          });
+        }
       }
     }
 

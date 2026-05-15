@@ -228,15 +228,17 @@ export default function TripDetail() {
             })}
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 mt-5">
+        <div className="grid grid-cols-1 gap-3 mt-5 sm:grid-cols-2">
           {[
             { label: 'Aggression', score: trip.aggressive_driving_score, grade: trip.aggressive_grade },
             { label: 'Defensive', score: trip.defensive_driving_score, grade: trip.defensive_grade },
           ].map(({ label, score, grade }) => (
-            <div key={label} className="flex items-center gap-3 rounded-2xl bg-secondary/50 p-3">
-              <ScoreRing score={score ?? 0} size={64} strokeWidth={5} sublabel={label.toLowerCase()} />
-              <div className="min-w-0">
-                <div className="text-sm font-semibold">{label}</div>
+            <div key={label} className="flex min-w-0 items-center gap-3 rounded-2xl bg-secondary/50 p-3">
+              <div className="shrink-0">
+                <ScoreRing score={score ?? 0} size={56} strokeWidth={5} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold leading-tight">{label}</div>
                 <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
                   ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
                     grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :

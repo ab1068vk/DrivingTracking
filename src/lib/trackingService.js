@@ -46,7 +46,7 @@ export function createDrivingTrackingService({ background = false } = {}) {
     const segment = calculateSegmentMetrics(previousPoint, point);
     const normalizedPoint = previousPoint
       ? { ...point, speed_kmh: segment.reliableSpeedKmh }
-      : { ...point, speed_kmh: point.speed_kmh != null && point.speed_kmh >= 18 ? point.speed_kmh : 0 };
+      : { ...point, speed_kmh: point.speed_kmh != null && point.speed_kmh >= 5 ? point.speed_kmh : 0 };
     previousPoint = normalizedPoint;
     onPoint(normalizedPoint);
   };
