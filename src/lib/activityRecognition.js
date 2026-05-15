@@ -121,7 +121,7 @@ export function shouldAutoStopTracking({
     ACTIVITY_TYPES.RUNNING,
     ACTIVITY_TYPES.ON_BICYCLE,
   ].includes(type) && confidence >= 75;
-  if (onFoot && speed < 3 && secondsStopped >= 15) return true;
+  if (onFoot && speed < 5 && secondsStopped >= 15) return true;
 
   const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
   if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 45) return true;

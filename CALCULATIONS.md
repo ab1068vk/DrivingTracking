@@ -1125,7 +1125,7 @@ export function shouldAutoStopTracking({
   gpsPositionDriftM = Number.POSITIVE_INFINITY,
   lastMovingSpeedKmh = 0,
 }) {
-  // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed < 3 stops after 15s.
+  // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed < 5 stops after 15s.
   // STILL + stable GPS (< 8m drift) stops after 45s.
   // STILL + drift (>= 8m) waits 150s.
   // IN_VEHICLE + stopped waits 240s and requires very stable GPS (< 5m drift).
@@ -1145,12 +1145,12 @@ Constants:
 private static final int MIN_VEHICLE_CONFIDENCE = 70;
 private static final int MIN_STILL_CONFIDENCE = 70;
 private static final long AUTO_STOP_FOOT_MS = 15_000L;
-private static final long AUTO_STOP_STILL_STABLE_MS = 45_000L;
+private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
 private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
 private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
 private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
-private static final double GPS_PARKED_DRIFT_M = 8.0d;
-private static final double GPS_TRAFFIC_DRIFT_M = 5.0d;
+private static final double GPS_STILL_DRIFT_M = 8.0d;
+private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
 private static final double STATIONARY_SPEED_KMH = 5d;
 private static final double MIN_TRUSTED_SPEED_KMH = 18d;
 private static final double MAX_SPEED_KMH = 220d;
@@ -1171,16 +1171,16 @@ Native stop:
 
 ```java
 boolean speedStopped = lastKnownSpeedKmh < STATIONARY_SPEED_KMH;
-boolean gpsStable = maxDriftSinceStopM < GPS_PARKED_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
-boolean gpsVeryStable = maxDriftSinceStopM < GPS_TRAFFIC_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+boolean gpsStable = maxDriftSinceStopM < GPS_STILL_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 
 // WALKING/RUNNING/ON_BICYCLE + stopped: finish after 15s.
-// STILL + stopped: finish after 45s when GPS is stable, otherwise wait 150s.
+// STILL + stopped: finish after 90s when GPS is stable, otherwise wait 150s.
 // IN_VEHICLE + stopped: finish after 240s only when GPS drift is under 5m.
 // UNKNOWN + stopped: finish after 180s only when GPS drift is under 8m.
 ```
 
-Native `recordLocation()` maintains `stoppedAnchorLat`, `stoppedAnchorLng`, and `maxDriftSinceStopM`. Moving at or above `5 km/h` resets the anchor and stop timers; dropping below `5 km/h` anchors the stop position and tracks maximum drift from that point.
+Native `recordLocation()` maintains `stoppedAnchorLat`, `stoppedAnchorLng`, and `maxDriftSinceStopM`. Moving at or above `5 km/h` resets the anchor, max GPS drift, and stop timers; dropping below `5 km/h` anchors the stop position and tracks maximum drift from that point.
 
 Native stats:
 

@@ -52,12 +52,12 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long MIN_TRIP_MS = 30_000L;
     private static final double MIN_TRIP_KM = 0.1d;
     private static final long AUTO_STOP_FOOT_MS = 15_000L;
-    private static final long AUTO_STOP_STILL_STABLE_MS = 45_000L;
+    private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
     private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
     private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
     private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
-    private static final double GPS_PARKED_DRIFT_M = 8.0d;
-    private static final double GPS_TRAFFIC_DRIFT_M = 5.0d;
+    private static final double GPS_STILL_DRIFT_M = 8.0d;
+    private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
     private static final float MAX_ACCURACY_M = 75f;
     private static final double MIN_POINT_DISTANCE_M = 8d;
     private static final double STATIONARY_SPEED_KMH = 5d;
@@ -174,8 +174,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private void handleActivity(int type, int confidence) {
         double speedKmh = lastKnownSpeedKmh;
         boolean speedStopped = speedKmh < STATIONARY_SPEED_KMH;
-        boolean gpsStable = maxDriftSinceStopM < GPS_PARKED_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
-        boolean gpsVeryStable = maxDriftSinceStopM < GPS_TRAFFIC_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+        boolean gpsStable = maxDriftSinceStopM < GPS_STILL_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+        boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 
         boolean onFoot = (type == DetectedActivity.WALKING ||
             type == DetectedActivity.RUNNING ||
