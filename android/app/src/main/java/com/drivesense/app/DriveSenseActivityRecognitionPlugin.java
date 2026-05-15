@@ -2,13 +2,17 @@ package com.drivesense.app;
 
 import android.Manifest;
 import android.app.PendingIntent;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.PowerManager;
+import android.provider.MediaStore;
 import android.provider.Settings;
 
 import com.getcapacitor.JSObject;
@@ -25,7 +29,11 @@ import com.google.android.gms.location.DetectedActivity;
 
 import androidx.core.content.ContextCompat;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.nio.charset.StandardCharsets;
 
 @CapacitorPlugin(
     name = "DriveSenseActivityRecognition",
@@ -208,6 +216,28 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void saveExportToDownloads(PluginCall call) {
+        String filename = call.getString("filename");
+        String data = call.getString("data");
+        String mimeType = call.getString("mimeType", "application/octet-stream");
+        if (filename == null || filename.trim().isEmpty()) {
+            call.reject("filename is required.");
+            return;
+        }
+        if (data == null) {
+            call.reject("data is required.");
+            return;
+        }
+
+        try {
+            JSObject payload = saveDownload(filename, data, mimeType);
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject(error.getMessage(), error);
+        }
+    }
+
     static void publishActivity(DetectedActivity activity) {
         DriveSenseActivityRecognitionPlugin plugin = instance != null ? instance.get() : null;
         if (plugin == null || activity == null) return;
@@ -257,6 +287,59 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
         PowerManager powerManager = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         return powerManager != null && powerManager.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
+    private JSObject saveDownload(String filename, String data, String mimeType) throws Exception {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return saveDownloadWithMediaStore(filename, data, mimeType);
+        }
+        return saveDownloadWithPublicFile(filename, data);
+    }
+
+    private JSObject saveDownloadWithMediaStore(String filename, String data, String mimeType) throws Exception {
+        ContentResolver resolver = getContext().getContentResolver();
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+
+        Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new Exception("Unable to create Downloads file.");
+
+        try (OutputStream output = resolver.openOutputStream(uri)) {
+            if (output == null) throw new Exception("Unable to open Downloads file.");
+            output.write(data.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception error) {
+            resolver.delete(uri, null, null);
+            throw error;
+        }
+
+        values.clear();
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        resolver.update(uri, values, null, null);
+
+        JSObject payload = new JSObject();
+        payload.put("uri", uri.toString());
+        payload.put("filename", filename);
+        return payload;
+    }
+
+    private JSObject saveDownloadWithPublicFile(String filename, String data) throws Exception {
+        File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (!downloadsDir.exists() && !downloadsDir.mkdirs()) {
+            throw new Exception("Unable to open Downloads folder.");
+        }
+
+        File file = new File(downloadsDir, filename);
+        try (FileOutputStream output = new FileOutputStream(file, false)) {
+            output.write(data.getBytes(StandardCharsets.UTF_8));
+        }
+
+        JSObject payload = new JSObject();
+        payload.put("uri", Uri.fromFile(file).toString());
+        payload.put("filename", filename);
+        return payload;
     }
 
     private static String mapType(int type) {

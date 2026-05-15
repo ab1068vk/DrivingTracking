@@ -1,3 +1,5 @@
+import { saveExportToDownloads } from './nativeDownloads';
+
 /**
  * DriveSense Trip Engine
  * Core logic for trip tracking, event detection, and scoring.
@@ -2557,13 +2559,10 @@ export async function downloadCSV(content, filename) {
   try {
     const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.isNativePlatform()) {
-      const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
-      const result = await Filesystem.writeFile({
-        path: safeFilename,
+      const result = await saveExportToDownloads({
+        filename: safeFilename,
         data: content,
-        directory: Directory.Documents,
-        encoding: Encoding.UTF8,
-        recursive: true,
+        mimeType: 'text/csv',
       });
       return {
         native: true,

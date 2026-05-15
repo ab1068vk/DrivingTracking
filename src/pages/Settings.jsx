@@ -351,7 +351,7 @@ export default function Settings() {
     const completed = allTrips.filter(t => t.status === 'completed');
     const csv = tripsToCSV(completed);
     const result = await downloadCSV(csv, `drivesense-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
-    if (result?.native) alert(`Export saved to Documents as ${result.filename}.`);
+    if (result?.native) alert(`Export saved to Downloads as ${result.filename}.`);
   };
 
   const handleExportBackup = async () => {
@@ -360,7 +360,7 @@ export default function Settings() {
       vehicles: allVehicles,
       settings: cfg,
     });
-    if (result?.native) alert(`Full backup saved to Documents as ${result.filename}.`);
+    if (result?.native) alert(`Full backup saved to Downloads as ${result.filename}.`);
   };
 
   const handleImportBackup = async (event) => {

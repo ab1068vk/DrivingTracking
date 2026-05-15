@@ -1,5 +1,6 @@
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
+import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings } from '@/lib/trackingStore';
 
 const BACKUP_VERSION = 2;
@@ -29,13 +30,10 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   try {
     const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.isNativePlatform()) {
-      const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
-      const result = await Filesystem.writeFile({
-        path: outputName,
+      const result = await saveExportToDownloads({
+        filename: outputName,
         data: content,
-        directory: Directory.Documents,
-        encoding: Encoding.UTF8,
-        recursive: true,
+        mimeType: 'application/json',
       });
       return { native: true, filename: outputName, uri: result.uri, backup };
     }
