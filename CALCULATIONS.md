@@ -40,6 +40,7 @@ threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
 threshold_speeding_kmh: 130,
+threshold_speed_over_kmh: 10,
 threshold_idle_seconds: 90,
 threshold_long_drive_minutes: 120,
 threshold_near_miss_brake_ms2: 3.5,
@@ -223,7 +224,11 @@ for (let i = 1; i < routePoints.length; i++) {
   if (spd < thresholds.IDLE_SPEED_KMH) idleTime += segment.dt;
 }
 
-const avgSpeed = movingSeconds > 0 && totalDistance > 0
+const avgSpeed = durationSeconds > 0 && totalDistance > 0
+  ? calculateSpeedKmh(totalDistance, durationSeconds)
+  : 0;
+
+const avgRunningSpeed = movingSeconds > 0 && totalDistance > 0
   ? calculateSpeedKmh(totalDistance, movingSeconds)
   : 0;
 ```
@@ -814,7 +819,7 @@ GASOLINE_CO2_KG_PER_LITER = 2.31
 Formula:
 
 ```js
-const efficiencyMultiplier = Math.max(0.6, 1 + (ecoDrivingScore - 50) / 500);
+const efficiencyMultiplier = Math.max(0.7, 1 + (ecoDrivingScore - 50) / 200);
 const actualLPer100Km = lPer100Km / efficiencyMultiplier;
 const liters = distanceKm * lPer100Km / 100;
 const actualLiters = distanceKm * actualLPer100Km / 100;
@@ -1182,6 +1187,7 @@ Native stats:
 ```java
 double distance = haversineKm(prevLat, prevLng, currLat, currLng);
 long dt = Math.max(0L, (currMs - prevMs) / 1000L);
+if (dt == 0L) continue;
 double impliedSpeed = distance / (dt / 3600d);
 double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
 double speed = reliableSpeed(impliedSpeed, reportedSpeed);

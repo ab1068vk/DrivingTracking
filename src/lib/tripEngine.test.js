@@ -85,7 +85,7 @@ describe('tripEngine', () => {
 
     expect(stats.distance_km).toBeGreaterThan(0.2);
     expect(stats.duration_seconds).toBe(70);
-    expect(stats.avg_speed_kmh).toBe(80.1);
+    expect(stats.avg_speed_kmh).toBe(11.4);
     expect(stats.avg_running_speed_kmh).toBe(80.1);
     expect(stats.max_speed_kmh).toBe(40);
     expect(stats.idle_time_seconds).toBe(60);

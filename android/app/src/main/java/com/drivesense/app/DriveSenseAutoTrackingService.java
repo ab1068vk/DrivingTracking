@@ -427,6 +427,7 @@ public class DriveSenseAutoTrackingService extends Service {
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
             long dt = Math.max(0L, (currMs - prevMs) / 1000L);
+            if (dt == 0L) continue;
             if (dt <= 0L || dt >= 120L) continue;
 
             double impliedSpeed = distance / (dt / 3600d);

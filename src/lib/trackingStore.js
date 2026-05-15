@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   threshold_sharp_turn_g_medium: 0.45,
   threshold_sharp_turn_g_high: 0.60,
   threshold_speeding_kmh: 130,
+  threshold_speed_over_kmh: 10,
   threshold_idle_seconds: 90,
   threshold_long_drive_minutes: 120,
   night_detection_mode: 'sunset',

@@ -170,7 +170,7 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const lPer100Km = Number(vehicle?.fuel_efficiency_l_per_100km) || Number(settings.default_l_per_100km) || DEFAULT_L_PER_100KM;
   const fuelPrice = Number(vehicle?.fuel_price_per_liter) || Number(settings.default_fuel_price_per_liter) || DEFAULT_FUEL_PRICE_PER_LITER;
   const ecoDrivingScore = Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50;
-  const efficiencyMultiplier = Math.max(0.6, 1 + (ecoDrivingScore - 50) / 500);
+  const efficiencyMultiplier = Math.max(0.7, 1 + (ecoDrivingScore - 50) / 200);
   const actualLPer100Km = lPer100Km / efficiencyMultiplier;
   const liters = distanceKm * lPer100Km / 100;
   const actualLiters = distanceKm * actualLPer100Km / 100;

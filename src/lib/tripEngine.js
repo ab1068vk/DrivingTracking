@@ -2002,7 +2002,10 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   }
 
   const nightDriving = routePoints.some(p => isNightDrivingTime(p, thresholds));
-  const avgSpeed = movingSeconds > 0 && totalDistance > 0
+  const avgSpeed = durationSeconds > 0 && totalDistance > 0
+    ? calculateSpeedKmh(totalDistance, durationSeconds)
+    : 0;
+  const avgRunningSpeed = movingSeconds > 0 && totalDistance > 0
     ? calculateSpeedKmh(totalDistance, movingSeconds)
     : 0;
   const roadStats = classifyRoadType(routePoints);
@@ -2019,7 +2022,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   return {
     distance_km: Math.round(totalDistance * 1000) / 1000,
     avg_speed_kmh: Math.round(avgSpeed * 10) / 10,
-    avg_running_speed_kmh: Math.round(avgSpeed * 10) / 10,
+    avg_running_speed_kmh: Math.round(avgRunningSpeed * 10) / 10,
     max_speed_kmh: Math.round(maxSpeed * 10) / 10,
     idle_time_seconds: Math.round(idleTime),
     duration_seconds: Math.round(durationSeconds),
