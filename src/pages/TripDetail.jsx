@@ -118,6 +118,10 @@ export default function TripDetail() {
     : trip.fatigue_progression === 'moderate'
       ? '#f59e0b'
       : '#22c55e';
+  const primaryAvgSpeedKmh = trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0;
+  // FIX: Use moving average speed as the primary Avg Speed metric.
+  const showOverallAvgSpeed = (trip.idle_time_seconds || 0) > 60;
+  // FIX: Show overall average only when there was meaningful stopped time.
 
   return (
     <div className="space-y-5 pb-4">
@@ -264,19 +268,26 @@ export default function TripDetail() {
           {[
             { icon: Navigation, label: 'Distance', value: formatDistance(trip.distance_km || 0, units) },
             { icon: Clock, label: 'Duration', value: formatDuration(trip.duration_seconds) },
-            { icon: Gauge, label: 'Avg Speed', value: formatSpeed(trip.avg_speed_kmh || 0, units) },
+            {
+              icon: Gauge,
+              label: 'Avg Speed',
+              value: formatSpeed(primaryAvgSpeedKmh, units),
+              subValue: showOverallAvgSpeed ? `Overall avg (incl. stops): ${formatSpeed(trip.avg_speed_kmh || 0, units)}` : null,
+            },
+            // FIX: Add overall average as a secondary line while keeping moving speed primary.
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
             { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}` },
             { icon: Leaf, label: 'Fuel Saved', value: `${economics.fuel_saved_liters.toFixed(2)} L` },
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
             { icon: Leaf, label: 'CO2 Saved vs Average', value: `${trip.co2_saved_kg ?? economics.co2_saved_kg ?? 0} kg` },
             { icon: ParkingSquare, label: 'Parking', value: `${trip.parking_approach_score ?? 100}` },
-          ].map(({ icon: Icon, label, value }) => (
+          ].map(({ icon: Icon, label, value, subValue }) => (
             <div key={label} className="flex items-start gap-3 p-3 bg-secondary/50 rounded-xl">
               <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />
               <div>
                 <div className="text-xs text-muted-foreground">{label}</div>
                 <div className="font-semibold text-sm">{value}</div>
+                {subValue && <div className="text-[11px] text-muted-foreground mt-0.5">{subValue}</div>}
               </div>
             </div>
           ))}

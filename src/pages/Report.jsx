@@ -20,7 +20,6 @@ import {
   buildScoreTips,
   calculateFatigueRisk,
   calculateCarbonImpact,
-  calculateSpeedDiscipline,
   computePersonalBaseline,
   estimateTripEconomics,
   identifyCommutePatterns,
@@ -71,7 +70,10 @@ export default function Reports() {
   const timeOfDayData = analyzeTimeOfDay(trips);
   const dayOfWeekData = analyzeDayOfWeek(trips);
   const fatigueRisk = calculateFatigueRisk(trips, settings);
-  const speedDiscipline = calculateSpeedDiscipline(trips, settings);
+  const avgMovingSpeedKmh = trips.length
+    ? trips.reduce((sum, trip) => sum + (trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0), 0) / trips.length
+    : 0;
+  // FIX: Compute report average speed from avg_running_speed_kmh, falling back only for legacy trips.
   const baseline = computePersonalBaseline(completed);
   const carbonImpact = calculateCarbonImpact(trips);
   const commutePatterns = identifyCommutePatterns(trips);
@@ -222,7 +224,8 @@ export default function Reports() {
               { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), gradient: 'gradient-success' },
               { icon: Clock, label: 'Drive Time', value: formatDuration(summary.total_duration_seconds), gradient: 'bg-gradient-to-br from-purple-500 to-purple-700' },
               { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score, gradient: getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
-              { icon: Gauge, label: 'P85 Speed', value: formatSpeed(speedDiscipline.p85_speed_kmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
+              { icon: Gauge, label: 'Avg Moving Speed', value: formatSpeed(avgMovingSpeedKmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
+              // FIX: Display Avg Moving Speed in the report instead of an overall average including stops.
               { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}`, gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
               { icon: Leaf, label: 'Fuel Saved', value: `${economics.saved.toFixed(2)} L`, gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
               { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },

@@ -55,9 +55,15 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
     private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
     private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
+    private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
+    // FIX: Add a relaxed six-minute in-vehicle auto-stop timer for urban GPS drift.
+    private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 480_000L;
+    // FIX: Add an eight-minute speed-only safety net for prolonged parked trips.
     private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
     private static final double GPS_STILL_DRIFT_M = 8.0d;
     private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
+    private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
+    // FIX: Allow the extended in-vehicle path to tolerate common 8-20 m city GPS drift.
     private static final float MAX_ACCURACY_M = 75f;
     private static final double MIN_POINT_DISTANCE_M = 8d;
     private static final double STATIONARY_SPEED_KMH = 5d;
@@ -224,6 +230,19 @@ public class DriveSenseAutoTrackingService extends Service {
             long elapsed = System.currentTimeMillis() - stillSinceMs;
             if (elapsed >= AUTO_STOP_IN_VEHICLE_MS && gpsVeryStable) {
                 finishTrip();
+                // FIX: Keep the original four-minute fast path for very stable parked GPS.
+                return;
+            }
+            if (elapsed >= AUTO_STOP_IN_VEHICLE_EXTENDED_MS &&
+                maxDriftSinceStopM < GPS_VEHICLE_DRIFT_RELAXED_M &&
+                !Double.isNaN(stoppedAnchorLat)) {
+                finishTrip();
+                // FIX: Finish after six minutes when GPS drift is relaxed but still parked-like.
+                return;
+            }
+            if (elapsed >= AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS && lastKnownSpeedKmh < 2.0d) {
+                finishTrip();
+                // FIX: Finish after eight minutes at near-zero speed even if GPS drift is noisy.
                 return;
             }
             return;

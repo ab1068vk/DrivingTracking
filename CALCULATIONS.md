@@ -197,6 +197,9 @@ Outputs:
 - `avg_running_speed_kmh`
 - `max_speed_kmh`
 - `idle_time_seconds`
+- `traffic_idle_seconds`
+- `sustained_idle_seconds`
+- `gap_seconds`
 - `duration_seconds`
 - `night_driving`
 - `fatigue_risk_score`
@@ -214,16 +217,28 @@ const durationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
 
 for (let i = 1; i < routePoints.length; i++) {
   const segment = calculateSegmentMetrics(p, c, thresholds);
-  if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
+  if (segment.dt <= 0 || segment.dt > 120) {
+    flushIdleRun();
+    continue;
+  }
+  if (segment.isNoise) {
+    gapSeconds += segment.dt;
+    flushIdleRun();
+    continue;
+  }
 
   totalDistance += segment.distanceKm;
 
   const spd = segment.reliableSpeedKmh;
   if (spd > maxSpeed) maxSpeed = spd;
-  if (spd >= thresholds.STATIONARY_SPEED_KMH) movingSeconds += segment.dt;
-  if (spd < thresholds.IDLE_SPEED_KMH) idleTime += segment.dt;
+  if (spd >= thresholds.STATIONARY_SPEED_KMH) {
+    movingSeconds += segment.dt;
+    flushIdleRun();
+  }
+  if (spd < thresholds.IDLE_SPEED_KMH) idleRunDuration += segment.dt;
 }
 
+const idleTime = trafficIdleSeconds + sustainedIdleSeconds;
 const avgSpeed = durationSeconds > 0 && totalDistance > 0
   ? calculateSpeedKmh(totalDistance, durationSeconds)
   : 0;
@@ -232,6 +247,14 @@ const avgRunningSpeed = movingSeconds > 0 && totalDistance > 0
   ? calculateSpeedKmh(totalDistance, movingSeconds)
   : 0;
 ```
+
+Idle runs below `5 km/h` are classified when the run ends:
+
+- less than `90 seconds`: `traffic_idle_seconds`
+- `90 seconds` or more: `sustained_idle_seconds`
+- `idle_time_seconds`: sum of both buckets for backward compatibility
+
+`gap_seconds` is short noise-filtered time (`dt <= 120`) excluded from both moving and idle buckets. It is retained for debugging and does not affect scores.
 
 ## Road Type
 
@@ -463,8 +486,9 @@ const speedStability = Math.max(0, 100 - cv * 150);
 const cruiseRatio = movingSpeeds.filter((speed) => speed >= 55 && speed <= 90).length / movingSpeeds.length;
 const cruiseScore = Math.min(100, cruiseRatio * 130);
 
-const idleRatio = (stats.idle_time_seconds || 0) / Math.max(1, stats.duration_seconds || 0);
-const idlePenalty = Math.min(30, idleRatio * 200);
+const avoidableIdleSeconds = stats.sustained_idle_seconds ?? stats.idle_time_seconds ?? 0;
+const idleRatio = avoidableIdleSeconds / Math.max(1, stats.duration_seconds || 0);
+const idlePenalty = Math.min(25, idleRatio * 150);
 
 const ecoDrivingScore = Math.round(
   speedStability * 0.40 +
@@ -576,7 +600,7 @@ let timeScore = 0;
 if (startHour >= 2 && startHour < 5) timeScore = 5;
 else if (startHour >= 5 && startHour < 7) timeScore = 3;
 else if (startHour >= 13 && startHour < 15) timeScore = 2;
-else if (startHour >= 22 || startHour < 2) timeScore = 1;
+else if (startHour >= 22 || startHour < 2) timeScore = 3;
 
 return Math.min(10, Math.round((durationScore + timeScore) * 10) / 10);
 ```
@@ -591,8 +615,12 @@ Functions:
 Night can be based on sunset/sunrise or fixed clock times.
 
 ```js
-return (nightPoints / routePoints.length) * 8 + (deepNightPoints / routePoints.length) * 4;
+const normalNightPoints = nightPoints - deepNightPoints;
+return (normalNightPoints / routePoints.length) * 8 +
+  (deepNightPoints / routePoints.length) * 12;
 ```
+
+Deep-night points are counted as a subset of night points, so the formula separates them first. Normal night has weight `8`; deep night has exclusive weight `12`.
 
 ## Drowsy Driving Signature
 
@@ -1126,9 +1154,12 @@ export function shouldAutoStopTracking({
   lastMovingSpeedKmh = 0,
 }) {
   // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed < 5 stops after 15s.
-  // STILL + stable GPS (< 8m drift) stops after 45s.
+  // STILL + stable GPS (< 8m drift) stops after 90s.
   // STILL + drift (>= 8m) waits 150s.
-  // IN_VEHICLE + stopped waits 240s and requires very stable GPS (< 5m drift).
+  // IN_VEHICLE + stopped has three paths:
+  // 240s with very stable GPS (< 5m drift).
+  // 360s with relaxed urban GPS drift (< 20m).
+  // 480s at current speed < 2 km/h and last moving speed < 2 km/h, regardless of GPS drift.
   // Missing activity waits 180s and requires stable GPS (< 6m drift).
 }
 ```
@@ -1148,9 +1179,12 @@ private static final long AUTO_STOP_FOOT_MS = 15_000L;
 private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
 private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
 private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
+private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
+private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 480_000L;
 private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
 private static final double GPS_STILL_DRIFT_M = 8.0d;
 private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
+private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
 private static final double STATIONARY_SPEED_KMH = 5d;
 private static final double MIN_TRUSTED_SPEED_KMH = 18d;
 private static final double MAX_SPEED_KMH = 220d;
@@ -1176,7 +1210,9 @@ boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNa
 
 // WALKING/RUNNING/ON_BICYCLE + stopped: finish after 15s.
 // STILL + stopped: finish after 90s when GPS is stable, otherwise wait 150s.
-// IN_VEHICLE + stopped: finish after 240s only when GPS drift is under 5m.
+// IN_VEHICLE + stopped: finish after 240s when GPS drift is under 5m.
+// IN_VEHICLE + stopped: finish after 360s when GPS drift is under 20m.
+// IN_VEHICLE + stopped: finish after 480s when speed is under 2 km/h, regardless of GPS drift.
 // UNKNOWN + stopped: finish after 180s only when GPS drift is under 8m.
 ```
 
@@ -1245,6 +1281,10 @@ Functions in `src/lib/tripEngine.js`:
 - `tripsToCSV`
 
 These do not change score values. They only format values for UI, reports, and CSV export.
+
+Trip Detail and Reports use `avg_running_speed_kmh` as the primary displayed average speed. Trip Detail shows `avg_speed_kmh` as "Overall avg (incl. stops)" only when stopped time is above `60 seconds`.
+
+`tripsToCSV` exports both speed averages: `Avg Speed (km/h)` for total-duration average and `Avg Moving Speed (km/h)` for `avg_running_speed_kmh`.
 
 ## Full Function Index
 

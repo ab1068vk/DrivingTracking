@@ -318,9 +318,10 @@ describe('auto tracking decision logic', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.STILL, confidence: 90 },
       currentSpeedKmh: 0,
-      stillSeconds: 50,
+      stillSeconds: 90,
       gpsPositionDriftM: 3,
     })).toBe(true);
+    // FIX: Stable STILL auto-stop tests now use the native-aligned 90-second threshold.
 
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 70 },

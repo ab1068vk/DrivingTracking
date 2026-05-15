@@ -108,9 +108,10 @@ export function shouldAutoStopTracking({
   currentSpeedKmh = 0,
   stillSeconds = 0,
   gpsPositionDriftM = Number.POSITIVE_INFINITY,
-  lastMovingSpeedKmh: _lastMovingSpeedKmh = 0,
+  lastMovingSpeedKmh = 0,
 }) {
   const speed = Number(currentSpeedKmh) || 0;
+  const lastMovingSpeed = Number(lastMovingSpeedKmh) || 0;
   const secondsStopped = Number(stillSeconds) || 0;
   const driftM = Number.isFinite(Number(gpsPositionDriftM)) ? Number(gpsPositionDriftM) : Number.POSITIVE_INFINITY;
   const confidence = activity?.confidence || 0;
@@ -124,12 +125,18 @@ export function shouldAutoStopTracking({
   if (onFoot && speed < 5 && secondsStopped >= 15) return true;
 
   const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
-  if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 45) return true;
+  if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;
+  // FIX: Match the JS STILL+stable auto-stop timer to the native 90-second threshold.
   if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;
 
   const inVehicle = type === ACTIVITY_TYPES.IN_VEHICLE;
   if (inVehicle && speed < 5 && secondsStopped >= 240) {
-    return driftM < 5;
+    if (driftM < 5) return true;
+    // FIX: Preserve the fast in-vehicle parked path for very stable GPS drift.
+    if (secondsStopped >= 360 && driftM < 20) return true;
+    // FIX: Add the in_vehicle_extended_stop fallback for realistic urban parked GPS drift.
+    if (secondsStopped >= 480 && speed < 2 && lastMovingSpeed < 2) return true;
+    // FIX: Add the prolonged_zero_speed safety net so trips cannot run forever on GPS drift alone.
   }
 
   if (!activity && speed < 5 && secondsStopped >= 180) {

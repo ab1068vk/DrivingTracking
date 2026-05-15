@@ -16,10 +16,11 @@ describe('activityRecognition auto-stop logic', () => {
   });
 
   it('stops quickly when parked with still activity and stable GPS', () => {
+    // FIX: Stable STILL auto-stop now matches the native 90-second threshold instead of 45 seconds.
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.STILL, confidence: 90 },
       currentSpeedKmh: 0,
-      stillSeconds: 50,
+      stillSeconds: 90,
       gpsPositionDriftM: 3,
     })).toBe(true);
   });

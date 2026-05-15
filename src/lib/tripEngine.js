@@ -630,8 +630,11 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}) {
   const speedStability = Math.max(0, 100 - cv * 150);
   const cruiseRatio = movingSpeeds.filter((speed) => speed >= 55 && speed <= 90).length / movingSpeeds.length;
   const cruiseScore = Math.min(100, cruiseRatio * 130);
-  const idleRatio = (stats.idle_time_seconds || 0) / Math.max(1, stats.duration_seconds || 0);
-  const idlePenalty = Math.min(30, idleRatio * 200);
+  const avoidableIdleSeconds = stats.sustained_idle_seconds ?? stats.idle_time_seconds ?? 0;
+  // FIX: Penalize sustained parked idle instead of unavoidable traffic-stop idle.
+  const idleRatio = avoidableIdleSeconds / Math.max(1, stats.duration_seconds || 0);
+  const idlePenalty = Math.min(25, idleRatio * 150);
+  // FIX: Use a gentler eco idle curve capped at 25 points for avoidable idling.
   const ecoDrivingScore = Math.round(
     speedStability * 0.40 +
     cruiseScore * 0.35 +
@@ -1748,6 +1751,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
       }
       idleStart = null;
       idleAccum = 0;
+      // FIX: Reset after an idle event window closes so a continuous stop emits only one IDLE event.
     }
 
     previousReliableSpeed = speed2;
@@ -1766,6 +1770,8 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
       timestamp: lastPoint.timestamp,
       value: Math.round(idleAccum),
     });
+    idleAccum = 0;
+    // FIX: Clear the flushed trip-end idle window to prevent duplicate IDLE handling.
   }
 
   const alwaysOnEvents = [
@@ -1824,7 +1830,8 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
     if (startHour >= 2 && startHour < 5) timeScore = 5;
     else if (startHour >= 5 && startHour < 7) timeScore = 3;
     else if (startHour >= 13 && startHour < 15) timeScore = 2;
-    else if (startHour >= 22 || startHour < 2) timeScore = 1;
+    else if (startHour >= 22 || startHour < 2) timeScore = 3;
+    // FIX: Raise the 10pm-2am fatigue bucket to the elevated late-night risk tier.
   }
 
   return Math.min(10, Math.round((durationScore + timeScore) * 10) / 10);
@@ -1927,7 +1934,11 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
     if (hour >= 2 && hour < 5) deepNightPoints++;
   }
 
-  return (nightPoints / routePoints.length) * 8 + (deepNightPoints / routePoints.length) * 4;
+  const normalNightPoints = nightPoints - deepNightPoints;
+  // FIX: Deep-night points are a subset of night points, so separate them before weighting.
+  return (normalNightPoints / routePoints.length) * 8 +
+    (deepNightPoints / routePoints.length) * 12;
+  // FIX: Give deep-night points an exclusive higher weight instead of double-counting them.
 }
 
 // ─── Trip Statistics ───────────────────────────────────────────────────────────
@@ -1953,6 +1964,12 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       avg_running_speed_kmh: 0,
       max_speed_kmh: 0,
       idle_time_seconds: 0,
+      traffic_idle_seconds: 0,
+      // FIX: Return explicit traffic idle even for short/empty trips so stats stay shape-compatible.
+      sustained_idle_seconds: 0,
+      // FIX: Return explicit sustained idle for eco scoring fallback compatibility.
+      gap_seconds: 0,
+      // FIX: Expose noise-filtered gap time without mixing it into moving or idle totals.
       duration_seconds: Math.round(durationSeconds),
       night_driving: false,
       fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints || []),
@@ -1979,36 +1996,74 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   let totalDistance = 0;
   let maxSpeed = 0;
   let movingSeconds = 0;
-  let idleTime = 0;
+  let trafficIdleSeconds = 0;
+  // FIX: Track short sub-5 km/h traffic stops separately from avoidable parked idle.
+  let sustainedIdleSeconds = 0;
+  // FIX: Track sustained sub-5 km/h idle for eco scoring instead of penalizing all idle.
+  let gapSeconds = 0;
+  // FIX: Track noise-filtered time excluded from moving and idle buckets.
+  let idleRunStart = null;
+  let idleRunDuration = 0;
+
+  const flushIdleRun = () => {
+    if (idleRunDuration <= 0) return;
+    if (idleRunDuration >= 90) {
+      sustainedIdleSeconds += idleRunDuration;
+    } else {
+      trafficIdleSeconds += idleRunDuration;
+    }
+    idleRunStart = null;
+    idleRunDuration = 0;
+  };
+  // FIX: Classify each contiguous sub-5 km/h run once it ends or the trip ends.
 
   for (let i = 1; i < routePoints.length; i++) {
     const p = routePoints[i - 1];
     const c = routePoints[i];
     const segment = calculateSegmentMetrics(p, c, thresholds);
-    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
+    if (segment.dt <= 0 || segment.dt > 120) {
+      flushIdleRun();
+      continue;
+    }
+    if (segment.isNoise) {
+      gapSeconds += segment.dt;
+      // FIX: Count short noise-filtered gaps separately instead of losing them entirely.
+      flushIdleRun();
+      continue;
+    }
 
     totalDistance += segment.distanceKm;
 
     const spd = segment.reliableSpeedKmh;
     if (spd > maxSpeed) maxSpeed = spd;
-    if (spd >= thresholds.STATIONARY_SPEED_KMH) movingSeconds += segment.dt;
+    if (spd >= thresholds.STATIONARY_SPEED_KMH) {
+      movingSeconds += segment.dt;
+      flushIdleRun();
+    }
 
     if (spd < thresholds.IDLE_SPEED_KMH) {
-      idleTime += segment.dt;
+      if (!idleRunStart) idleRunStart = p.timestamp;
+      idleRunDuration += segment.dt;
     }
   }
+
+  flushIdleRun();
 
   if (totalDistance * 1000 < thresholds.MIN_POINT_DISTANCE_M) {
     totalDistance = 0;
     maxSpeed = 0;
   }
 
+  const idleTime = trafficIdleSeconds + sustainedIdleSeconds;
+  // FIX: Keep legacy idle_time_seconds as the sum of traffic and sustained idle buckets.
+  const effectiveMovingSeconds = movingSeconds;
+  // FIX: gap_seconds is noise-filtered time excluded from moving and idle buckets; it is debug-only and does not affect scores.
   const nightDriving = routePoints.some(p => isNightDrivingTime(p, thresholds));
   const avgSpeed = durationSeconds > 0 && totalDistance > 0
     ? calculateSpeedKmh(totalDistance, durationSeconds)
     : 0;
-  const avgRunningSpeed = movingSeconds > 0 && totalDistance > 0
-    ? calculateSpeedKmh(totalDistance, movingSeconds)
+  const avgRunningSpeed = effectiveMovingSeconds > 0 && totalDistance > 0
+    ? calculateSpeedKmh(totalDistance, effectiveMovingSeconds)
     : 0;
   const roadStats = classifyRoadType(routePoints);
   const intersectionStats = analyzeIntersectionBehavior(routePoints, thresholds);
@@ -2027,6 +2082,12 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     avg_running_speed_kmh: Math.round(avgRunningSpeed * 10) / 10,
     max_speed_kmh: Math.round(maxSpeed * 10) / 10,
     idle_time_seconds: Math.round(idleTime),
+    traffic_idle_seconds: Math.round(trafficIdleSeconds),
+    // FIX: Return sub-90-second traffic idle separately for reporting/debugging.
+    sustained_idle_seconds: Math.round(sustainedIdleSeconds),
+    // FIX: Return 90-second-plus parked idle separately for eco scoring.
+    gap_seconds: Math.round(gapSeconds),
+    // FIX: Return short noise-filtered gap time without affecting moving speed or scores.
     duration_seconds: Math.round(durationSeconds),
     night_driving: nightDriving,
     fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints),
@@ -2495,7 +2556,8 @@ export function createLocationService() {
 export function tripsToCSV(trips) {
   const headers = [
     'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
-    'Avg Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
+    'Avg Speed (km/h)', 'Avg Moving Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
+    // FIX: Add exported moving-speed column immediately after the legacy overall average speed.
     'Eco', 'Jerk Score', 'Eco Driving Score', 'Following Score', 'Focus Score', 'Intersection Score',
     'Aggressive Score', 'Aggressive Grade', 'Defensive Score', 'Defensive Grade', 'SVI', 'Fuel Band',
     'Smooth Braking', 'Engine Stress', 'Tire Wear Units', 'Drowsy Risk', 'Phone Proxy', 'Parking Score',
@@ -2511,6 +2573,8 @@ export function tripsToCSV(trips) {
     t.duration_seconds ? (t.duration_seconds / 60).toFixed(1) : '',
     t.distance_km ?? '',
     t.avg_speed_kmh ?? '',
+    t.avg_running_speed_kmh ?? '',
+    // FIX: Export avg_running_speed_kmh so CSV consumers can use driving speed excluding stops.
     t.max_speed_kmh ?? '',
     t.score_overall ?? '',
     t.score_safety ?? '',
