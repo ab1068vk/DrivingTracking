@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal
 } from 'lucide-react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
@@ -87,6 +87,7 @@ export default function Settings() {
 
   // Load settings from local storage
   const [cfg, setCfg] = useState(() => localSettings.get());
+  const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
 
   const { data: allTrips = [] } = useQuery({
     queryKey: ['settings-trips'],
@@ -104,6 +105,19 @@ export default function Settings() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     return updated;
+  };
+
+  const updateNightMode = (mode) => {
+    updateCfg({ night_detection_mode: mode });
+  };
+
+  const sliderWarning = (value, min, max) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    const span = max - min;
+    if (parsed <= min + span * 0.12) return 'Very sensitive';
+    if (parsed >= max - span * 0.12) return 'Very lenient';
+    return null;
   };
 
   const updateTheme = (mode) => {
@@ -556,11 +570,99 @@ export default function Settings() {
           ))}
         </div>
 
+        {/* Night Driving Window */}
+        <SectionTitle>Night Driving Window</SectionTitle>
+        <p className="text-xs text-muted-foreground px-1 mb-3">
+          Used for night-trip labels, goals, and safety scoring.
+        </p>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { id: 'sunset', label: 'Sunset', sub: 'GPS-based' },
+              { id: 'custom', label: 'Custom', sub: `${cfg.night_start_time || '22:00'} to ${cfg.night_end_time || '06:00'}` },
+            ].map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => updateNightMode(opt.id)}
+                className={`flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
+                  cfg.night_detection_mode === opt.id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                <div>
+                  <div className="text-sm font-medium">{opt.label}</div>
+                  <div className="text-xs">{opt.sub}</div>
+                </div>
+                {cfg.night_detection_mode === opt.id && <Check className="w-4 h-4" />}
+              </button>
+            ))}
+          </div>
+
+          <div className={`rounded-xl border p-3 ${cfg.night_detection_mode === 'custom' ? 'border-primary/30 bg-primary/5' : 'border-border bg-secondary/30'}`}>
+            <div className="flex items-center gap-2 text-sm font-medium mb-3">
+              <Clock className="w-4 h-4 text-primary" />
+              Custom night hours
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-medium">
+                Start
+                <input
+                  type="time"
+                  value={cfg.night_start_time || '22:00'}
+                  disabled={cfg.night_detection_mode !== 'custom'}
+                  onChange={e => updateCfg({ night_start_time: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                />
+              </label>
+              <label className="text-xs font-medium">
+                End
+                <input
+                  type="time"
+                  value={cfg.night_end_time || '06:00'}
+                  disabled={cfg.night_detection_mode !== 'custom'}
+                  onChange={e => updateCfg({ night_end_time: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                />
+              </label>
+            </div>
+          </div>
+
+          {cfg.night_detection_mode === 'sunset' && (
+            <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, DriveSense falls back to the custom window.
+            </div>
+          )}
+        </div>
+
         {/* Detection Thresholds */}
         <SectionTitle>Detection Thresholds</SectionTitle>
-        <p className="text-xs text-muted-foreground px-1 mb-3">
-          Adjust sensitivity of driving event detection. Lower values = more sensitive.
-        </p>
+        <div className="flex items-start justify-between gap-3 px-1 mb-3">
+          <p className="text-xs text-muted-foreground">
+            Adjust sensitivity of driving event detection. Lower values = more sensitive.
+          </p>
+          <button
+            type="button"
+            onClick={() => setThresholdEditingEnabled(value => !value)}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+              thresholdEditingEnabled ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : 'bg-secondary text-muted-foreground'
+            }`}
+          >
+            {thresholdEditingEnabled ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+            {thresholdEditingEnabled ? 'Editing' : 'Locked'}
+          </button>
+        </div>
+        {!thresholdEditingEnabled && (
+          <div className="mb-3 flex items-start gap-2 rounded-xl bg-secondary/70 px-3 py-2 text-xs text-muted-foreground">
+            <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            Sliders are locked to prevent accidental scoring changes.
+          </div>
+        )}
+        {thresholdEditingEnabled && (
+          <div className="mb-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            These settings directly change trip event detection, scoring, imports, and rescoring.
+          </div>
+        )}
         <div className="space-y-4">
           {[
             { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', min: 2, max: 8, step: 0.5 },
@@ -573,17 +675,34 @@ export default function Settings() {
             <div key={key} className="px-1">
               <div className="flex justify-between text-xs mb-1.5">
                 <span className="font-medium">{label}</span>
-                <span className="text-primary font-semibold">{cfg[key]} {unit}</span>
+                <span className="flex items-center gap-2 text-primary font-semibold">
+                  {sliderWarning(cfg[key], min, max) && thresholdEditingEnabled && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                      {sliderWarning(cfg[key], min, max)}
+                    </span>
+                  )}
+                  {cfg[key]} {unit}
+                </span>
               </div>
               <input
                 type="range" min={min} max={max} step={step} value={cfg[key]}
+                disabled={!thresholdEditingEnabled}
                 onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
-                className="w-full accent-primary"
+                className="w-full accent-primary disabled:opacity-45"
               />
             </div>
           ))}
           <div className="pt-3 border-t border-border/70">
-            <h3 className="text-sm font-semibold px-1 mb-3">Advanced Safety Detection</h3>
+            <SettingRow
+              icon={SlidersHorizontal}
+              label="Advanced Safety Detection"
+              sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included in detection and scoring'}
+            >
+              <Toggle
+                value={cfg.advanced_safety_detection_enabled !== false}
+                onChange={v => updateCfg({ advanced_safety_detection_enabled: v })}
+              />
+            </SettingRow>
             <div className="space-y-4">
               {[
                 { key: 'threshold_near_miss_brake_ms2', label: 'Near-Miss Brake Threshold', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'How much braking force is needed before DriveSense considers a combined brake-and-turn a near miss.' },
@@ -593,15 +712,23 @@ export default function Settings() {
                 { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before DriveSense logs speed creep.' },
                 { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity', unit: 'm/s²', min: 2.0, max: 5.0, step: 0.5, help: 'How hard acceleration must be to start the aggressive-overtake signature.' },
               ].map(({ key, label, unit, min, max, step, help }) => (
-                <div key={key} className="px-1">
+                <div key={key} className={`px-1 ${cfg.advanced_safety_detection_enabled === false ? 'opacity-60' : ''}`}>
                   <div className="flex justify-between text-xs mb-1.5">
                     <span className="font-medium">{label}</span>
-                    <span className="text-primary font-semibold">{cfg[key]} {unit}</span>
+                    <span className="flex items-center gap-2 text-primary font-semibold">
+                      {sliderWarning(cfg[key], min, max) && thresholdEditingEnabled && cfg.advanced_safety_detection_enabled !== false && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                          {sliderWarning(cfg[key], min, max)}
+                        </span>
+                      )}
+                      {cfg[key]} {unit}
+                    </span>
                   </div>
                   <input
                     type="range" min={min} max={max} step={step} value={cfg[key]}
+                    disabled={!thresholdEditingEnabled || cfg.advanced_safety_detection_enabled === false}
                     onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
-                    className="w-full accent-primary"
+                    className="w-full accent-primary disabled:opacity-45"
                   />
                   <p className="text-xs text-muted-foreground mt-1">{help}</p>
                 </div>
@@ -612,9 +739,16 @@ export default function Settings() {
 
         {/* Speed Warning */}
         <SectionTitle>Speed Warning</SectionTitle>
-        <p className="text-xs text-muted-foreground px-1 mb-3">
-          Get warned during a trip if you exceed the speed limit by this margin.
-        </p>
+        <SettingRow
+          icon={Bell}
+          label="Live Speed Warning"
+          sublabel={cfg.speed_warning_enabled === false ? 'Dashboard speed warnings are disabled' : 'Warn during a trip when speed exceeds the fallback limit plus margin'}
+        >
+          <Toggle
+            value={cfg.speed_warning_enabled !== false}
+            onChange={v => updateCfg({ speed_warning_enabled: v })}
+          />
+        </SettingRow>
         <div className="px-1">
           <div className="flex justify-between text-xs mb-1.5">
             <span className="font-medium">Warn when over limit by</span>
@@ -623,8 +757,9 @@ export default function Settings() {
           <input
             type="range" min={5} max={30} step={5}
             value={cfg.threshold_speed_over_kmh ?? 10}
+            disabled={cfg.speed_warning_enabled === false}
             onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}
-            className="w-full accent-primary"
+            className="w-full accent-primary disabled:opacity-45"
           />
           <div className="flex justify-between text-xs text-muted-foreground mt-1">
             <span>+5 km/h (strict)</span>

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
+  buildDrivingThresholds,
   calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
@@ -83,6 +84,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!tracking || Date.now() - lastStayAlertAtRef.current < 10 * 60 * 1000) return;
+    const cfg = localSettings.get();
+    if (cfg.advanced_safety_detection_enabled === false) return;
     const points = activeTrip?.route_points || [];
     const lastFiveMinutes = points.filter((point) => new Date(point.timestamp).getTime() >= Date.now() - 5 * 60 * 1000);
     const headings = lastFiveMinutes
@@ -91,7 +94,8 @@ export default function Dashboard() {
     const highwayShare = lastFiveMinutes.length
       ? lastFiveMinutes.filter((point) => (point.speed_kmh || 0) > 80).length / lastFiveMinutes.length
       : 0;
-    if (lastFiveMinutes.length >= 8 && headings.length >= 5 && highwayShare >= 0.8 && calculateAngularStdDev(headings) > 8) {
+    const drowsyHeadingThreshold = cfg.threshold_drowsy_heading_std ?? 8;
+    if (lastFiveMinutes.length >= 8 && headings.length >= 5 && highwayShare >= 0.8 && calculateAngularStdDev(headings) > drowsyHeadingThreshold) {
       stayAlertSentRef.current = true;
       lastStayAlertAtRef.current = Date.now();
       notifyStayAlert().catch(() => {});
@@ -234,8 +238,10 @@ export default function Dashboard() {
     await cancelLongTripReminder();
 
     const endTime = new Date().toISOString();
-    const pts = cleanRoutePoints(tripToEnd.route_points || []);
-    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime);
+    const cfg = localSettings.get();
+    const thresholds = buildDrivingThresholds(cfg);
+    const pts = cleanRoutePoints(tripToEnd.route_points || [], thresholds);
+    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds);
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
     const shouldDiscard = isManualTrip
@@ -259,28 +265,6 @@ export default function Dashboard() {
       return;
     }
 
-    const thresholds = {
-      ...DEFAULT_THRESHOLDS,
-      HARSH_BRAKE_MS2: settings.threshold_harsh_brake_ms2 || 4.5,
-      RAPID_ACCEL_MS2: settings.threshold_rapid_accel_ms2 || 3.5,
-      TAILGATE_DECEL_MS2: settings.threshold_tailgate_decel_ms2 || 2.5,
-      SHARP_TURN_G_LOW: settings.threshold_sharp_turn_g_low || 0.30,
-      SHARP_TURN_G_MEDIUM: settings.threshold_sharp_turn_g_medium || 0.45,
-      SHARP_TURN_G_HIGH: settings.threshold_sharp_turn_g_high || 0.60,
-      SPEEDING_FALLBACK_KMH: settings.threshold_speeding_kmh || 130,
-      IDLE_SPEED_KMH: 5,
-      IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 90,
-      LONG_DRIVE_MINUTES: settings.threshold_long_drive_minutes || 120,
-      MIN_SPEED_RAPID_ACCEL_KMH: settings.min_speed_rapid_accel_kmh || 15,
-      MIN_SPEED_HARSH_BRAKE_KMH: settings.min_speed_harsh_brake_kmh || 25,
-      threshold_harsh_brake_ms2: settings.threshold_harsh_brake_ms2 || 4.5,
-      threshold_near_miss_brake_ms2: settings.threshold_near_miss_brake_ms2 || 3.5,
-      threshold_near_miss_turn_degs: settings.threshold_near_miss_turn_degs || 30,
-      threshold_drowsy_heading_std: settings.threshold_drowsy_heading_std || 8,
-      threshold_phone_proxy_oscillations: settings.threshold_phone_proxy_oscillations || 3,
-      threshold_speed_creep_kmh: settings.threshold_speed_creep_kmh || 10,
-      threshold_overtake_accel_ms2: settings.threshold_overtake_accel_ms2 || 3.0,
-    };
     const events = detectDrivingEvents(pts, thresholds);
 
     const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds);
@@ -510,7 +494,8 @@ export default function Dashboard() {
                       const stats = calculateTripStats(
                         activeTrip.route_points,
                         activeTrip.start_time,
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        buildDrivingThresholds(localSettings.get())
                       );
                       return `${formatDistance(stats.distance_km, units)} · ${formatSpeed(stats.avg_speed_kmh, units)} avg`;
                     })()
@@ -526,7 +511,8 @@ export default function Dashboard() {
               const spd = currentLocation.speed_kmh || 0;
               const overLimit = settings.threshold_speeding_kmh || 130;
               const warnOffset = settings.threshold_speed_over_kmh ?? 10;
-              const isOverWarn = spd > overLimit + warnOffset;
+              const speedWarningsEnabled = settings.speed_warning_enabled !== false;
+              const isOverWarn = speedWarningsEnabled && spd > overLimit + warnOffset;
               return (
                 <div className="flex items-center gap-2 text-sm mb-4">
                   <MapPin className="w-3.5 h-3.5 text-white/70" />

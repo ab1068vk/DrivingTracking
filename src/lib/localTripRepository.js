@@ -1,7 +1,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
-import { DEFAULT_THRESHOLDS, calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
+import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localSettings } from '@/lib/trackingStore';
 
@@ -70,35 +70,12 @@ const putTrips = async (incomingTrips) => {
 
 let importingNativeTrips = false;
 
-const buildThresholds = (settings = localSettings.get()) => ({
-  ...DEFAULT_THRESHOLDS,
-  HARSH_BRAKE_MS2: settings.threshold_harsh_brake_ms2 || 4.5,
-  RAPID_ACCEL_MS2: settings.threshold_rapid_accel_ms2 || 3.5,
-  TAILGATE_DECEL_MS2: settings.threshold_tailgate_decel_ms2 || 2.5,
-  SHARP_TURN_G_LOW: settings.threshold_sharp_turn_g_low || 0.30,
-  SHARP_TURN_G_MEDIUM: settings.threshold_sharp_turn_g_medium || 0.45,
-  SHARP_TURN_G_HIGH: settings.threshold_sharp_turn_g_high || 0.60,
-  SPEEDING_FALLBACK_KMH: settings.threshold_speeding_kmh || 130,
-  IDLE_SPEED_KMH: 5,
-  IDLE_EVENT_SECONDS: settings.threshold_idle_seconds || 90,
-  LONG_DRIVE_MINUTES: settings.threshold_long_drive_minutes || 120,
-  MIN_SPEED_RAPID_ACCEL_KMH: settings.min_speed_rapid_accel_kmh || 15,
-  MIN_SPEED_HARSH_BRAKE_KMH: settings.min_speed_harsh_brake_kmh || 25,
-  threshold_harsh_brake_ms2: settings.threshold_harsh_brake_ms2 || 4.5,
-  threshold_near_miss_brake_ms2: settings.threshold_near_miss_brake_ms2 || 3.5,
-  threshold_near_miss_turn_degs: settings.threshold_near_miss_turn_degs || 30,
-  threshold_drowsy_heading_std: settings.threshold_drowsy_heading_std || 8,
-  threshold_phone_proxy_oscillations: settings.threshold_phone_proxy_oscillations || 3,
-  threshold_speed_creep_kmh: settings.threshold_speed_creep_kmh || 10,
-  threshold_overtake_accel_ms2: settings.threshold_overtake_accel_ms2 || 3.0,
-});
-
 const rescoreTrip = (trip) => {
   if (!trip || trip.status !== 'completed') return trip;
   const routePoints = trip.route_points || [];
   const settings = localSettings.get();
-  const thresholds = buildThresholds(settings);
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time);
+  const thresholds = buildDrivingThresholds(settings);
+  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
   const events = detectDrivingEvents(routePoints, thresholds);
   const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds);
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
@@ -144,8 +121,8 @@ const importNativeCompletedTrips = async () => {
     for (const trip of nativeTrips) {
       const routePoints = trip.route_points || [];
       const settings = localSettings.get();
-      const thresholds = buildThresholds(settings);
-      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time);
+      const thresholds = buildDrivingThresholds(settings);
+      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
       const events = detectDrivingEvents(routePoints, thresholds);
       const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds);
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);

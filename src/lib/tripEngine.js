@@ -22,9 +22,14 @@ export const DEFAULT_THRESHOLDS = {
   IDLE_EVENT_SECONDS: 90,
   // Long drive: > 120 continuous minutes
   LONG_DRIVE_MINUTES: 120,
-  // Night driving: 22:00 - 06:00
+  // Night driving defaults: sunset/sunrise when coordinates exist, otherwise 22:00 - 06:00.
+  NIGHT_DETECTION_MODE: 'sunset',
+  NIGHT_START_TIME: '22:00',
+  NIGHT_END_TIME: '06:00',
   NIGHT_START_HOUR: 22,
   NIGHT_END_HOUR: 6,
+  NIGHT_SUNSET_OFFSET_MINUTES: 0,
+  NIGHT_SUNRISE_OFFSET_MINUTES: 0,
   // Minimum trip distance to save (< 0.1 km = likely noise)
   MIN_TRIP_DISTANCE_KM: 0.1,
   // Minimum trip duration
@@ -46,6 +51,7 @@ export const DEFAULT_THRESHOLDS = {
   threshold_phone_proxy_oscillations: 3,
   threshold_speed_creep_kmh: 10,
   threshold_overtake_accel_ms2: 3.0,
+  ADVANCED_SAFETY_DETECTION_ENABLED: true,
 };
 
 export const EVENT_TYPES = {
@@ -60,6 +66,41 @@ export const EVENT_TYPES = {
   NEAR_MISS: 'near_miss',
   AGGRESSIVE_OVERTAKE: 'aggressive_overtake',
 };
+
+function settingNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export function buildDrivingThresholds(settings = {}) {
+  return {
+    ...DEFAULT_THRESHOLDS,
+    HARSH_BRAKE_MS2: settingNumber(settings.threshold_harsh_brake_ms2, DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2),
+    RAPID_ACCEL_MS2: settingNumber(settings.threshold_rapid_accel_ms2, DEFAULT_THRESHOLDS.RAPID_ACCEL_MS2),
+    TAILGATE_DECEL_MS2: settingNumber(settings.threshold_tailgate_decel_ms2, DEFAULT_THRESHOLDS.TAILGATE_DECEL_MS2),
+    SHARP_TURN_G_LOW: settingNumber(settings.threshold_sharp_turn_g_low, DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW),
+    SHARP_TURN_G_MEDIUM: settingNumber(settings.threshold_sharp_turn_g_medium, DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM),
+    SHARP_TURN_G_HIGH: settingNumber(settings.threshold_sharp_turn_g_high, DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH),
+    SPEEDING_FALLBACK_KMH: settingNumber(settings.threshold_speeding_kmh, DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH),
+    IDLE_EVENT_SECONDS: settingNumber(settings.threshold_idle_seconds, DEFAULT_THRESHOLDS.IDLE_EVENT_SECONDS),
+    LONG_DRIVE_MINUTES: settingNumber(settings.threshold_long_drive_minutes, DEFAULT_THRESHOLDS.LONG_DRIVE_MINUTES),
+    MIN_SPEED_RAPID_ACCEL_KMH: settingNumber(settings.min_speed_rapid_accel_kmh, DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH),
+    MIN_SPEED_HARSH_BRAKE_KMH: settingNumber(settings.min_speed_harsh_brake_kmh, DEFAULT_THRESHOLDS.MIN_SPEED_HARSH_BRAKE_KMH),
+    threshold_harsh_brake_ms2: settingNumber(settings.threshold_harsh_brake_ms2, DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2),
+    threshold_near_miss_brake_ms2: settingNumber(settings.threshold_near_miss_brake_ms2, DEFAULT_THRESHOLDS.threshold_near_miss_brake_ms2),
+    threshold_near_miss_turn_degs: settingNumber(settings.threshold_near_miss_turn_degs, DEFAULT_THRESHOLDS.threshold_near_miss_turn_degs),
+    threshold_drowsy_heading_std: settingNumber(settings.threshold_drowsy_heading_std, DEFAULT_THRESHOLDS.threshold_drowsy_heading_std),
+    threshold_phone_proxy_oscillations: settingNumber(settings.threshold_phone_proxy_oscillations, DEFAULT_THRESHOLDS.threshold_phone_proxy_oscillations),
+    threshold_speed_creep_kmh: settingNumber(settings.threshold_speed_creep_kmh, DEFAULT_THRESHOLDS.threshold_speed_creep_kmh),
+    threshold_overtake_accel_ms2: settingNumber(settings.threshold_overtake_accel_ms2, DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2),
+    NIGHT_DETECTION_MODE: settings.night_detection_mode || DEFAULT_THRESHOLDS.NIGHT_DETECTION_MODE,
+    NIGHT_START_TIME: settings.night_start_time || DEFAULT_THRESHOLDS.NIGHT_START_TIME,
+    NIGHT_END_TIME: settings.night_end_time || DEFAULT_THRESHOLDS.NIGHT_END_TIME,
+    NIGHT_SUNSET_OFFSET_MINUTES: settingNumber(settings.night_sunset_offset_minutes, DEFAULT_THRESHOLDS.NIGHT_SUNSET_OFFSET_MINUTES),
+    NIGHT_SUNRISE_OFFSET_MINUTES: settingNumber(settings.night_sunrise_offset_minutes, DEFAULT_THRESHOLDS.NIGHT_SUNRISE_OFFSET_MINUTES),
+    ADVANCED_SAFETY_DETECTION_ENABLED: settings.advanced_safety_detection_enabled !== false,
+  };
+}
 
 // ─── Haversine Distance ────────────────────────────────────────────────────────
 /**
@@ -386,7 +427,7 @@ export function simplifyRoute(points = [], toleranceMeters = 10, events = []) {
 
 export function calculateRouteSummary(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
   const cleaned = cleanRoutePoints(points, thresholds);
-  const stats = calculateTripStats(cleaned, startTime, endTime);
+  const stats = calculateTripStats(cleaned, startTime, endTime, thresholds);
   const events = detectDrivingEvents(cleaned, thresholds);
   const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds);
   return { points: cleaned, stats, events, scores };
@@ -1012,7 +1053,7 @@ export function detectSpeedCreep(cleanPoints = [], thresholds = DEFAULT_THRESHOL
 
 export function detectSpeedCreepWithThresholds(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const creepThreshold = thresholds.threshold_speed_creep_kmh ?? DEFAULT_THRESHOLDS.threshold_speed_creep_kmh;
-  const result = detectSpeedCreep(cleanPoints);
+  const result = detectSpeedCreep(cleanPoints, thresholds);
   if (creepThreshold === 10) return result;
 
   const samples = cleanPoints
@@ -1507,6 +1548,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
   };
   const MIN_POINTS_BEFORE_EVENTS = 2;
   const MIN_SPEEDING_SECONDS = 3;
+  const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
   const smoothedAccels = computeSmoothedAccelerations(points, thresholds);
   const { road_type: roadType } = classifyRoadType(points);
   const configuredSpeedThreshold = thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH;
@@ -1660,7 +1702,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     // Flag when speed exceeds the fallback threshold (default 130 km/h)
     const nearMissBrakeThreshold = thresholds.threshold_near_miss_brake_ms2 ?? DEFAULT_THRESHOLDS.threshold_near_miss_brake_ms2;
     const nearMissTurnThreshold = thresholds.threshold_near_miss_turn_degs ?? DEFAULT_THRESHOLDS.threshold_near_miss_turn_degs;
-    if (accel != null && dt <= 2.0 && speed2 > 40 && accel < -nearMissBrakeThreshold) {
+    if (advancedSafetyEnabled && accel != null && dt <= 2.0 && speed2 > 40 && accel < -nearMissBrakeThreshold) {
       const { h1, h2 } = headingBetweenPair(prev, curr, points[i - 2] || null);
       const headingRate = headingDiff(h1, h2) / dt;
       if (headingRate > nearMissTurnThreshold) {
@@ -1724,12 +1766,14 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     });
   }
 
-  return events.concat(
+  const alwaysOnEvents = [
     detectLaneChanges(points, thresholds),
     detectTailgateCycles(points, thresholds),
     detectErraticSpeedWindows(points),
-    detectAggressiveOvertakes(points, thresholds)
-  );
+  ];
+  if (advancedSafetyEnabled) alwaysOnEvents.push(detectAggressiveOvertakes(points, thresholds));
+
+  return events.concat(...alwaysOnEvents);
 }
 
 export function detectNearMisses(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
@@ -1784,14 +1828,100 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
   return Math.min(10, Math.round((durationScore + timeScore) * 10) / 10);
 }
 
-export function calculateNightPenalty(routePoints = []) {
+function parseClockMinutes(value, fallbackHour) {
+  if (typeof value === 'string') {
+    const [hour, minute = '0'] = value.split(':');
+    const h = Number(hour);
+    const m = Number(minute);
+    if (Number.isFinite(h) && Number.isFinite(m)) return h * 60 + m;
+  }
+  return fallbackHour * 60;
+}
+
+function isWithinClockWindow(minutes, startMinutes, endMinutes) {
+  const dayMinutes = 24 * 60;
+  const normalized = ((minutes % dayMinutes) + dayMinutes) % dayMinutes;
+  const start = ((startMinutes % dayMinutes) + dayMinutes) % dayMinutes;
+  const end = ((endMinutes % dayMinutes) + dayMinutes) % dayMinutes;
+  if (start === end) return false;
+  return start < end
+    ? normalized >= start && normalized < end
+    : normalized >= start || normalized < end;
+}
+
+function dayOfYear(date) {
+  const start = Date.UTC(date.getFullYear(), 0, 0);
+  const current = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.floor((current - start) / 86400000);
+}
+
+function sunEventMinutes(date, lat, lng, isSunrise) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 89.8) return null;
+
+  const zenith = 90.833;
+  const n = dayOfYear(date);
+  const lngHour = lng / 15;
+  const t = n + (((isSunrise ? 6 : 18) - lngHour) / 24);
+  const meanAnomaly = (0.9856 * t) - 3.289;
+  let trueLongitude = meanAnomaly
+    + (1.916 * Math.sin(toRad(meanAnomaly)))
+    + (0.020 * Math.sin(toRad(2 * meanAnomaly)))
+    + 282.634;
+  trueLongitude = ((trueLongitude % 360) + 360) % 360;
+
+  let rightAscension = Math.atan(0.91764 * Math.tan(toRad(trueLongitude))) * 180 / Math.PI;
+  rightAscension = ((rightAscension % 360) + 360) % 360;
+  const longitudeQuadrant = Math.floor(trueLongitude / 90) * 90;
+  const ascensionQuadrant = Math.floor(rightAscension / 90) * 90;
+  rightAscension = (rightAscension + longitudeQuadrant - ascensionQuadrant) / 15;
+
+  const sinDec = 0.39782 * Math.sin(toRad(trueLongitude));
+  const cosDec = Math.cos(Math.asin(sinDec));
+  const cosHour = (Math.cos(toRad(zenith)) - (sinDec * Math.sin(toRad(lat)))) / (cosDec * Math.cos(toRad(lat)));
+  if (cosHour > 1 || cosHour < -1) return null;
+
+  const hourAngle = isSunrise
+    ? 360 - (Math.acos(cosHour) * 180 / Math.PI)
+    : Math.acos(cosHour) * 180 / Math.PI;
+  const localMeanTime = (hourAngle / 15) + rightAscension - (0.06571 * t) - 6.622;
+  const utcMinutes = ((localMeanTime - lngHour) * 60) % (24 * 60);
+  return ((utcMinutes - date.getTimezoneOffset()) % (24 * 60) + (24 * 60)) % (24 * 60);
+}
+
+export function isNightDrivingTime(point, thresholds = DEFAULT_THRESHOLDS) {
+  if (!point?.timestamp) return false;
+
+  const date = new Date(point.timestamp);
+  if (Number.isNaN(date.getTime())) return false;
+
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  if (thresholds.NIGHT_DETECTION_MODE === 'sunset') {
+    const sunset = sunEventMinutes(date, Number(point.lat), Number(point.lng), false);
+    const sunrise = sunEventMinutes(date, Number(point.lat), Number(point.lng), true);
+    if (sunset != null && sunrise != null) {
+      return isWithinClockWindow(
+        minutes,
+        sunset + (thresholds.NIGHT_SUNSET_OFFSET_MINUTES ?? 0),
+        sunrise + (thresholds.NIGHT_SUNRISE_OFFSET_MINUTES ?? 0)
+      );
+    }
+  }
+
+  return isWithinClockWindow(
+    minutes,
+    parseClockMinutes(thresholds.NIGHT_START_TIME, thresholds.NIGHT_START_HOUR ?? DEFAULT_THRESHOLDS.NIGHT_START_HOUR),
+    parseClockMinutes(thresholds.NIGHT_END_TIME, thresholds.NIGHT_END_HOUR ?? DEFAULT_THRESHOLDS.NIGHT_END_HOUR)
+  );
+}
+
+export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!routePoints.length) return 0;
 
   let nightPoints = 0;
   let deepNightPoints = 0;
   for (const point of routePoints) {
     const hour = new Date(point.timestamp).getHours();
-    if (hour >= 22 || hour < 6) nightPoints++;
+    if (isNightDrivingTime(point, thresholds)) nightPoints++;
     if (hour >= 2 && hour < 5) deepNightPoints++;
   }
 
@@ -1807,8 +1937,8 @@ export function calculateNightPenalty(routePoints = []) {
  * @param {string} endTime - ISO timestamp
  * @returns {Object} Trip statistics
  */
-export function calculateTripStats(points, startTime, endTime) {
-  const routePoints = cleanRoutePoints(points);
+export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
+  const routePoints = cleanRoutePoints(points, thresholds);
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
   const durationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
@@ -1852,41 +1982,39 @@ export function calculateTripStats(points, startTime, endTime) {
   for (let i = 1; i < routePoints.length; i++) {
     const p = routePoints[i - 1];
     const c = routePoints[i];
-    const segment = calculateSegmentMetrics(p, c);
+    const segment = calculateSegmentMetrics(p, c, thresholds);
     if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
 
     totalDistance += segment.distanceKm;
 
     const spd = segment.reliableSpeedKmh;
     if (spd > maxSpeed) maxSpeed = spd;
-    if (spd >= DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH) movingSeconds += segment.dt;
+    if (spd >= thresholds.STATIONARY_SPEED_KMH) movingSeconds += segment.dt;
 
-    if (spd < DEFAULT_THRESHOLDS.IDLE_SPEED_KMH) {
+    if (spd < thresholds.IDLE_SPEED_KMH) {
       idleTime += segment.dt;
     }
   }
 
-  if (totalDistance * 1000 < DEFAULT_THRESHOLDS.MIN_POINT_DISTANCE_M) {
+  if (totalDistance * 1000 < thresholds.MIN_POINT_DISTANCE_M) {
     totalDistance = 0;
     maxSpeed = 0;
   }
 
-  // Night driving: any point between 22:00 and 06:00 local time
-  const nightDriving = routePoints.some(p => {
-    const h = new Date(p.timestamp).getHours();
-    return h >= DEFAULT_THRESHOLDS.NIGHT_START_HOUR || h < DEFAULT_THRESHOLDS.NIGHT_END_HOUR;
-  });
+  const nightDriving = routePoints.some(p => isNightDrivingTime(p, thresholds));
   const avgSpeed = movingSeconds > 0 && totalDistance > 0
     ? calculateSpeedKmh(totalDistance, movingSeconds)
     : 0;
   const roadStats = classifyRoadType(routePoints);
-  const intersectionStats = analyzeIntersectionBehavior(routePoints);
+  const intersectionStats = analyzeIntersectionBehavior(routePoints, thresholds);
   const fatigueProgression = durationSeconds > 1800
-    ? analyzeFatigueProgression(routePoints, start.getTime(), end.getTime())
+    ? analyzeFatigueProgression(routePoints, start.getTime(), end.getTime(), thresholds)
     : { fatigue_progression: 'unknown', segment_scores: [] };
-  const hillStats = calculateHillDrivingScore(routePoints);
-  const drowsyStats = detectDrowsyDrivingSignature(routePoints, durationSeconds);
-  const parkingStats = analyzeParkingApproach(routePoints);
+  const hillStats = calculateHillDrivingScore(routePoints, thresholds);
+  const drowsyStats = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED === false
+    ? { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' }
+    : detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds);
+  const parkingStats = analyzeParkingApproach(routePoints, thresholds);
 
   return {
     distance_km: Math.round(totalDistance * 1000) / 1000,
@@ -2007,6 +2135,7 @@ export function calculateTripScores(
   thresholds = DEFAULT_THRESHOLDS,
   durationSeconds = stats?.duration_seconds || 0
 ) {
+  const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
   const penalties = {
     [EVENT_TYPES.HARSH_BRAKE]: { low: 3, medium: 6, high: 12 },
     [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
@@ -2069,14 +2198,23 @@ export function calculateTripScores(
     if (evt.type === EVENT_TYPES.ERRATIC_SPEED) distractionPenalty += p;
   }
 
-  const speedCreep = detectSpeedCreep(routePoints, thresholds);
-  const phoneProxy = detectPhoneUsageProxy(routePoints, thresholds);
+  const speedCreep = advancedSafetyEnabled
+    ? detectSpeedCreep(routePoints, thresholds)
+    : {
+      speed_creep_event_count: 0,
+      max_speed_creep_kmh: 0,
+      speed_creep_score: 100,
+      speed_creep_severity_counts: { low: 0, medium: 0, high: 0 },
+    };
+  const phoneProxy = advancedSafetyEnabled
+    ? detectPhoneUsageProxy(routePoints, thresholds)
+    : { phone_proxy_count: 0, phone_proxy_risk: 'none' };
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.low || 0) * 2;
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.medium || 0) * 5;
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.high || 0) * 10;
   safetyPenalty += (phoneProxy.phone_proxy_count || 0) * 8;
 
-  safetyPenalty += calculateNightPenalty(routePoints);
+  safetyPenalty += calculateNightPenalty(routePoints, thresholds);
 
   safetyPenalty += (stats.fatigue_risk_score || 0) * 1.2;
 
@@ -2101,7 +2239,9 @@ export function calculateTripScores(
   const smoothBraking = calculateSmoothBrakingRatio(routePoints, thresholds);
   const engineStress = calculateEngineStressScore(events, stats);
   const tireWear = calculateTireWearUnits(events);
-  const drowsy = detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds);
+  const drowsy = advancedSafetyEnabled
+    ? detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds)
+    : { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' };
   const hill = calculateHillDrivingScore(routePoints, thresholds);
   const parking = analyzeParkingApproach(routePoints, thresholds);
   const nearMissScore = Math.max(0, 100 - counts[EVENT_TYPES.NEAR_MISS] * 15);

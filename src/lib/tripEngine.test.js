@@ -13,8 +13,10 @@ import {
   computeSmoothedAccelerations,
   detectDrivingEvents,
   detectLaneChanges,
+  DEFAULT_THRESHOLDS,
   EVENT_TYPES,
   haversineDistance,
+  isNightDrivingTime,
   shouldAcceptLocationPoint,
   simplifyRoute,
 } from '@/lib/tripEngine';
@@ -200,6 +202,64 @@ describe('tripEngine', () => {
 
     expect(calculateNightPenalty([day, night])).toBeGreaterThan(0);
     expect(calculateNightPenalty([deepNight, deepNight])).toBeGreaterThan(calculateNightPenalty([day, night]));
+  });
+
+  it('applies custom night windows to trip stats and scoring', () => {
+    const eveningPoints = [
+      { ...point(43.6532, -79.3832, 0, 40), timestamp: new Date(2026, 0, 1, 20, 0, 0).toISOString() },
+      { ...point(43.6542, -79.3832, 10, 40), timestamp: new Date(2026, 0, 1, 20, 0, 10).toISOString() },
+      { ...point(43.6552, -79.3832, 20, 40), timestamp: new Date(2026, 0, 1, 20, 0, 20).toISOString() },
+    ];
+    const customNight = {
+      ...DEFAULT_THRESHOLDS,
+      NIGHT_DETECTION_MODE: 'custom',
+      NIGHT_START_TIME: '19:00',
+      NIGHT_END_TIME: '05:00',
+    };
+    const customDay = {
+      ...DEFAULT_THRESHOLDS,
+      NIGHT_DETECTION_MODE: 'custom',
+      NIGHT_START_TIME: '22:00',
+      NIGHT_END_TIME: '06:00',
+    };
+
+    const nightStats = calculateTripStats(eveningPoints, eveningPoints[0].timestamp, eveningPoints[2].timestamp, customNight);
+    const dayStats = calculateTripStats(eveningPoints, eveningPoints[0].timestamp, eveningPoints[2].timestamp, customDay);
+    const nightScore = calculateTripScores([], { ...nightStats, fatigue_risk_score: 0 }, eveningPoints, customNight);
+    const dayScore = calculateTripScores([], { ...dayStats, fatigue_risk_score: 0 }, eveningPoints, customDay);
+
+    expect(nightStats.night_driving).toBe(true);
+    expect(dayStats.night_driving).toBe(false);
+    expect(nightScore.score_safety).toBeLessThan(dayScore.score_safety);
+  });
+
+  it('uses GPS sunset mode for night detection when coordinates exist', () => {
+    const torontoWinterEvening = {
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 22, 30, 0)).toISOString(),
+    };
+    const torontoWinterNoon = {
+      ...torontoWinterEvening,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 17, 0, 0)).toISOString(),
+    };
+    const sunsetThresholds = { ...DEFAULT_THRESHOLDS, NIGHT_DETECTION_MODE: 'sunset', NIGHT_START_TIME: '22:00', NIGHT_END_TIME: '06:00' };
+
+    expect(isNightDrivingTime(torontoWinterEvening, sunsetThresholds)).toBe(true);
+    expect(isNightDrivingTime(torontoWinterNoon, sunsetThresholds)).toBe(false);
+  });
+
+  it('applies configured detection thresholds to event calculations', () => {
+    const highwayPoints = Array.from({ length: 6 }, (_, index) => ({
+      ...point(43.6532 + index * 0.001, -79.3832, index * 2, 100),
+      heading: 0,
+    }));
+
+    const strict = detectDrivingEvents(highwayPoints, { ...DEFAULT_THRESHOLDS, SPEEDING_FALLBACK_KMH: 90 });
+    const lenient = detectDrivingEvents(highwayPoints, { ...DEFAULT_THRESHOLDS, SPEEDING_FALLBACK_KMH: 130 });
+
+    expect(strict.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(true);
+    expect(lenient.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
   it('does not emit idle events below the 90 second traffic-stop grace period', () => {
