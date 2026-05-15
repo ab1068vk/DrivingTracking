@@ -51,7 +51,13 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final int MIN_POINTS_TO_SAVE = 2;
     private static final long MIN_TRIP_MS = 30_000L;
     private static final double MIN_TRIP_KM = 0.1d;
-    private static final long AUTO_STOP_STILL_MS = 180_000L;
+    private static final long AUTO_STOP_FOOT_MS = 15_000L;
+    private static final long AUTO_STOP_STILL_STABLE_MS = 45_000L;
+    private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
+    private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
+    private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
+    private static final double GPS_PARKED_DRIFT_M = 8.0d;
+    private static final double GPS_TRAFFIC_DRIFT_M = 5.0d;
     private static final float MAX_ACCURACY_M = 75f;
     private static final double MIN_POINT_DISTANCE_M = 8d;
     private static final double STATIONARY_SPEED_KMH = 5d;
@@ -65,7 +71,12 @@ public class DriveSenseAutoTrackingService extends Service {
     private JSONArray activePoints;
     private long activeStartMs = 0L;
     private long stillSinceMs = 0L;
+    private long nonVehicleSinceMs = 0L;
     private Location previousLocation;
+    private double lastKnownSpeedKmh = 0.0d;
+    private double stoppedAnchorLat = Double.NaN;
+    private double stoppedAnchorLng = Double.NaN;
+    private double maxDriftSinceStopM = 0.0d;
 
     @Override
     public void onCreate() {
@@ -161,21 +172,76 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void handleActivity(int type, int confidence) {
-        if (type == DetectedActivity.IN_VEHICLE && confidence >= MIN_VEHICLE_CONFIDENCE) {
-            stillSinceMs = 0L;
-            startTripIfNeeded();
+        double speedKmh = lastKnownSpeedKmh;
+        boolean speedStopped = speedKmh < STATIONARY_SPEED_KMH;
+        boolean gpsStable = maxDriftSinceStopM < GPS_PARKED_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+        boolean gpsVeryStable = maxDriftSinceStopM < GPS_TRAFFIC_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+
+        boolean onFoot = (type == DetectedActivity.WALKING ||
+            type == DetectedActivity.RUNNING ||
+            type == DetectedActivity.ON_BICYCLE) &&
+            confidence >= 75;
+
+        boolean isStill = type == DetectedActivity.STILL && confidence >= MIN_STILL_CONFIDENCE;
+        boolean inVehicle = type == DetectedActivity.IN_VEHICLE && confidence >= MIN_VEHICLE_CONFIDENCE;
+
+        if (!isTripActive()) {
+            if (inVehicle) startTripIfNeeded();
             return;
         }
 
-        boolean still = type == DetectedActivity.STILL && confidence >= MIN_STILL_CONFIDENCE;
-        boolean clearlyNotVehicle = type != DetectedActivity.IN_VEHICLE && confidence >= 80;
-        if (isTripActive() && (still || clearlyNotVehicle)) {
-            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
-            if (System.currentTimeMillis() - stillSinceMs >= AUTO_STOP_STILL_MS) {
-                finishTrip();
-            }
-        } else if (!still) {
+        if (inVehicle && !speedStopped) {
             stillSinceMs = 0L;
+            nonVehicleSinceMs = 0L;
+            stoppedAnchorLat = Double.NaN;
+            stoppedAnchorLng = Double.NaN;
+            maxDriftSinceStopM = 0.0d;
+            return;
+        }
+
+        if (onFoot && speedStopped) {
+            if (nonVehicleSinceMs == 0L) nonVehicleSinceMs = System.currentTimeMillis();
+            if (System.currentTimeMillis() - nonVehicleSinceMs >= AUTO_STOP_FOOT_MS) {
+                finishTrip();
+                return;
+            }
+            return;
+        }
+
+        if (isStill && speedStopped) {
+            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
+            long elapsed = System.currentTimeMillis() - stillSinceMs;
+            long threshold = gpsStable ? AUTO_STOP_STILL_STABLE_MS : AUTO_STOP_STILL_DRIFT_MS;
+            if (elapsed >= threshold) {
+                finishTrip();
+                return;
+            }
+            return;
+        }
+
+        if (inVehicle && speedStopped) {
+            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
+            long elapsed = System.currentTimeMillis() - stillSinceMs;
+            if (elapsed >= AUTO_STOP_IN_VEHICLE_MS && gpsVeryStable) {
+                finishTrip();
+                return;
+            }
+            return;
+        }
+
+        if (type == DetectedActivity.UNKNOWN && speedStopped) {
+            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
+            long elapsed = System.currentTimeMillis() - stillSinceMs;
+            if (elapsed >= AUTO_STOP_NO_ACTIVITY_MS && gpsStable) {
+                finishTrip();
+                return;
+            }
+            return;
+        }
+
+        if (!speedStopped) {
+            stillSinceMs = 0L;
+            nonVehicleSinceMs = 0L;
         }
     }
 
@@ -198,6 +264,11 @@ public class DriveSenseAutoTrackingService extends Service {
         activePoints = new JSONArray();
         previousLocation = null;
         stillSinceMs = 0L;
+        nonVehicleSinceMs = 0L;
+        lastKnownSpeedKmh = 0.0d;
+        stoppedAnchorLat = Double.NaN;
+        stoppedAnchorLng = Double.NaN;
+        maxDriftSinceStopM = 0.0d;
         updateNotification("Trip recording active");
         startLocationUpdates();
     }
@@ -230,27 +301,37 @@ public class DriveSenseAutoTrackingService extends Service {
         if (!isTripActive() || location == null) return;
         if (location.hasAccuracy() && location.getAccuracy() > MAX_ACCURACY_M) return;
 
+        double speedKmh = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : 0d;
         if (previousLocation != null) {
             long dtMs = Math.max(1L, location.getTime() - previousLocation.getTime());
             double distanceKm = previousLocation.distanceTo(location) / 1000d;
             double distanceM = distanceKm * 1000d;
             double impliedSpeed = distanceKm / (dtMs / 3_600_000d);
-            double reportedSpeed = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : impliedSpeed;
+            double reportedSpeed = location.hasSpeed() ? speedKmh : impliedSpeed;
             if (isNoise(distanceM, impliedSpeed, reportedSpeed, accuracyOf(previousLocation), accuracyOf(location)) && dtMs < 45_000L) return;
             if (impliedSpeed > MAX_SPEED_KMH || reportedSpeed > MAX_SPEED_KMH) return;
+            if (!location.hasSpeed()) speedKmh = reliableSpeed(impliedSpeed, reportedSpeed);
         }
+        lastKnownSpeedKmh = speedKmh;
 
         activePoints.put(locationToJson(location));
         previousLocation = location;
 
-        double speedKmh = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : 0d;
-        if (speedKmh < 5d) {
-            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
-            if (System.currentTimeMillis() - stillSinceMs >= AUTO_STOP_STILL_MS) {
-                finishTrip();
-            }
-        } else {
+        if (speedKmh >= STATIONARY_SPEED_KMH) {
+            stoppedAnchorLat = Double.NaN;
+            stoppedAnchorLng = Double.NaN;
+            maxDriftSinceStopM = 0.0d;
             stillSinceMs = 0L;
+            nonVehicleSinceMs = 0L;
+        } else {
+            if (Double.isNaN(stoppedAnchorLat)) {
+                stoppedAnchorLat = location.getLatitude();
+                stoppedAnchorLng = location.getLongitude();
+                maxDriftSinceStopM = 0.0d;
+            } else {
+                double driftM = haversineKm(stoppedAnchorLat, stoppedAnchorLng, location.getLatitude(), location.getLongitude()) * 1000d;
+                maxDriftSinceStopM = Math.max(maxDriftSinceStopM, driftM);
+            }
         }
     }
 
@@ -282,6 +363,11 @@ public class DriveSenseAutoTrackingService extends Service {
         activeStartMs = 0L;
         previousLocation = null;
         stillSinceMs = 0L;
+        nonVehicleSinceMs = 0L;
+        lastKnownSpeedKmh = 0.0d;
+        stoppedAnchorLat = Double.NaN;
+        stoppedAnchorLng = Double.NaN;
+        maxDriftSinceStopM = 0.0d;
         stopLocationUpdates();
         updateNotification("Ready to detect driving");
 
@@ -298,6 +384,7 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("duration_seconds", stats.durationSeconds);
             trip.put("distance_km", round(stats.distanceKm, 3));
             trip.put("avg_speed_kmh", round(stats.avgSpeedKmh, 1));
+            trip.put("avg_running_speed_kmh", round(stats.avgRunningSpeedKmh, 1));
             trip.put("max_speed_kmh", round(stats.maxSpeedKmh, 1));
             trip.put("idle_time_seconds", stats.idleSeconds);
             trip.put("night_driving", stats.nightDriving);
@@ -354,6 +441,7 @@ public class DriveSenseAutoTrackingService extends Service {
             stats.speedSamples += 1;
             stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
 
+            if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
             if (speed < STATIONARY_SPEED_KMH) stats.idleSeconds += dt;
 
             int hour = Integer.parseInt(new SimpleDateFormat("H", Locale.US).format(new Date(currMs)));
@@ -362,6 +450,9 @@ public class DriveSenseAutoTrackingService extends Service {
 
         stats.avgSpeedKmh = stats.durationSeconds > 0L && stats.distanceKm > 0d
             ? stats.distanceKm / (stats.durationSeconds / 3600d)
+            : 0d;
+        stats.avgRunningSpeedKmh = stats.movingSeconds > 0L && stats.distanceKm > 0d
+            ? stats.distanceKm / (stats.movingSeconds / 3600d)
             : 0d;
         if (stats.speedSamples == 0) stats.maxSpeedKmh = 0d;
         return stats;
@@ -372,7 +463,9 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private double noiseFloor(double previousAccuracy, double currentAccuracy) {
-        double bestAccuracy = Math.max(Math.max(0d, previousAccuracy), Math.max(0d, currentAccuracy));
+        double bestAccuracy = (previousAccuracy > 0d && currentAccuracy > 0d)
+            ? Math.min(previousAccuracy, currentAccuracy)
+            : Math.max(previousAccuracy, currentAccuracy);
         return Math.max(MIN_POINT_DISTANCE_M, Math.min(25d, bestAccuracy * 0.6d));
     }
 
@@ -473,8 +566,10 @@ public class DriveSenseAutoTrackingService extends Service {
     private static class TripStats {
         double distanceKm = 0d;
         double avgSpeedKmh = 0d;
+        double avgRunningSpeedKmh = 0d;
         double maxSpeedKmh = 0d;
         long idleSeconds = 0L;
+        long movingSeconds = 0L;
         long durationSeconds = 0L;
         int speedSamples = 0;
         boolean nightDriving = false;

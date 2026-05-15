@@ -123,10 +123,10 @@ describe('tripEngine', () => {
 
   it('detects sharp turns using lateral G-force at running speed', () => {
     const points = [
-      { ...point(43.6532, -79.3832, 0, 80), heading: 0 },
-      { ...point(43.6534, -79.3832, 1, 80), heading: 0 },
-      { ...point(43.6536, -79.3832, 2, 80), heading: 0 },
-      { ...point(43.6538, -79.3832, 3, 80), heading: 45 },
+      point(43.6532, -79.3832, 0, 80),
+      point(43.6534, -79.3832, 1, 80),
+      point(43.6536, -79.3832, 2, 80),
+      point(43.6536, -79.3828, 3, 80),
     ];
 
     const events = detectDrivingEvents(points);
@@ -134,6 +134,19 @@ describe('tripEngine', () => {
 
     expect(sharpTurn).toBeTruthy();
     expect(sharpTurn.value).toBeGreaterThan(0.45);
+  });
+
+  it('does not log sharp turns from a single noisy heading jump on a straight route', () => {
+    const points = [
+      { ...point(43.6532, -79.3832, 0, 60), heading: 0 },
+      { ...point(43.6534, -79.3832, 1, 60), heading: 0 },
+      { ...point(43.6536, -79.3832, 2, 60), heading: 80 },
+      { ...point(43.6538, -79.3832, 3, 60), heading: 85 },
+    ];
+
+    const events = detectDrivingEvents(points);
+
+    expect(events.some((event) => event.type === EVENT_TYPES.SHARP_TURN)).toBe(false);
   });
 
   it('uses centered acceleration to smooth point-to-point speed changes', () => {
@@ -290,8 +303,8 @@ describe('auto tracking decision logic', () => {
   it('starts only when activity and speed strongly suggest driving', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 82 },
-      currentSpeedKmh: 28,
-      recentMovingSeconds: 30,
+      currentSpeedKmh: 5,
+      recentMovingSeconds: 10,
     })).toBe(true);
 
     expect(shouldAutoStartTracking({
@@ -305,14 +318,23 @@ describe('auto tracking decision logic', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.STILL, confidence: 90 },
       currentSpeedKmh: 0,
-      stillSeconds: 240,
+      stillSeconds: 50,
+      gpsPositionDriftM: 3,
     })).toBe(true);
 
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 70 },
-      currentSpeedKmh: 8,
-      stillSeconds: 30,
+      currentSpeedKmh: 0,
+      stillSeconds: 240,
+      gpsPositionDriftM: 6,
     })).toBe(false);
+
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 90 },
+      currentSpeedKmh: 0,
+      stillSeconds: 20,
+      gpsPositionDriftM: 3,
+    })).toBe(true);
   });
 });
 

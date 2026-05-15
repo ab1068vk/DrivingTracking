@@ -1,6 +1,7 @@
 import { registerPlugin } from '@capacitor/core';
 import { isAndroid } from '@/lib/nativePlatform';
 import { requestActivityRecognitionPermission } from '@/lib/permissions';
+import { haversineDistance } from '@/lib/tripEngine';
 
 const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
 
@@ -10,6 +11,7 @@ export const ACTIVITY_TYPES = {
   WALKING: 'walking',
   RUNNING: 'running',
   STILL: 'still',
+  ON_BICYCLE: 'cycling',
   CYCLING: 'cycling',
   UNKNOWN: 'unknown',
 };
@@ -83,11 +85,56 @@ export async function clearNativeCompletedTrips() {
 
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
-  return vehicleConfidence >= 70 && currentSpeedKmh >= 12 && recentMovingSeconds >= 20;
+  return vehicleConfidence >= 70 && currentSpeedKmh >= 5 && recentMovingSeconds >= 10;
 }
 
-export function shouldAutoStopTracking({ activity, currentSpeedKmh = 0, stillSeconds = 0 }) {
-  const isStill = activity?.type === ACTIVITY_TYPES.STILL && (activity.confidence || 0) >= 70;
-  const notVehicle = activity && activity.type !== ACTIVITY_TYPES.IN_VEHICLE && (activity.confidence || 0) >= 80;
-  return currentSpeedKmh < 5 && stillSeconds >= 180 && (isStill || notVehicle);
+export function computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = []) {
+  const anchorLat = Number(stoppedLat);
+  const anchorLng = Number(stoppedLng);
+  if (!Number.isFinite(anchorLat) || !Number.isFinite(anchorLng) || !Array.isArray(recentPoints)) {
+    return 0;
+  }
+
+  return recentPoints.reduce((maxDrift, point) => {
+    const lat = Number(point?.lat);
+    const lng = Number(point?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return maxDrift;
+    return Math.max(maxDrift, haversineDistance(anchorLat, anchorLng, lat, lng) * 1000);
+  }, 0);
+}
+
+export function shouldAutoStopTracking({
+  activity,
+  currentSpeedKmh = 0,
+  stillSeconds = 0,
+  gpsPositionDriftM = Number.POSITIVE_INFINITY,
+  lastMovingSpeedKmh: _lastMovingSpeedKmh = 0,
+}) {
+  const speed = Number(currentSpeedKmh) || 0;
+  const secondsStopped = Number(stillSeconds) || 0;
+  const driftM = Number.isFinite(Number(gpsPositionDriftM)) ? Number(gpsPositionDriftM) : Number.POSITIVE_INFINITY;
+  const confidence = activity?.confidence || 0;
+  const type = activity?.type;
+
+  const onFoot = [
+    ACTIVITY_TYPES.WALKING,
+    ACTIVITY_TYPES.RUNNING,
+    ACTIVITY_TYPES.ON_BICYCLE,
+  ].includes(type) && confidence >= 75;
+  if (onFoot && speed < 3 && secondsStopped >= 15) return true;
+
+  const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
+  if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 45) return true;
+  if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;
+
+  const inVehicle = type === ACTIVITY_TYPES.IN_VEHICLE;
+  if (inVehicle && speed < 5 && secondsStopped >= 240) {
+    return driftM < 5;
+  }
+
+  if (!activity && speed < 5 && secondsStopped >= 180) {
+    return driftM < 6;
+  }
+
+  return false;
 }

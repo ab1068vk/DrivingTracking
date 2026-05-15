@@ -174,7 +174,8 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const actualLPer100Km = lPer100Km / efficiencyMultiplier;
   const liters = distanceKm * lPer100Km / 100;
   const actualLiters = distanceKm * actualLPer100Km / 100;
-  const cost = liters * fuelPrice;
+  const cost = actualLiters * fuelPrice;
+  const baselineCost = liters * fuelPrice;
   const co2Kg = actualLiters * GASOLINE_CO2_KG_PER_LITER;
   const fuelSavedLiters = Math.max(0, liters - actualLiters);
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
@@ -184,8 +185,8 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   return {
     liters: Math.round(actualLiters * 100) / 100,
     baseline_liters: Math.round(liters * 100) / 100,
-    cost: Math.round(actualLiters * fuelPrice * 100) / 100,
-    baseline_cost: Math.round(cost * 100) / 100,
+    cost: Math.round(cost * 100) / 100,
+    baseline_cost: Math.round(baselineCost * 100) / 100,
     co2_kg: roundedCo2Kg,
     co2_saved_kg: co2SavedKg,
     l_per_100km: lPer100Km,
