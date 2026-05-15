@@ -115,7 +115,10 @@ public class DriveSenseAutoTrackingService extends Service {
 
     @Override
     public void onDestroy() {
+        finishTrip();
+        removeActivityUpdates();
         stopLocationUpdates();
+        DriveSenseNativeTripStore.setServiceEnabled(this, false);
         super.onDestroy();
     }
 
@@ -136,8 +139,9 @@ public class DriveSenseAutoTrackingService extends Service {
     static void stop(Context context) {
         Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
         intent.setAction(ACTION_STOP);
+        DriveSenseNativeTripStore.setServiceEnabled(context, false);
         try {
-            ContextCompat.startForegroundService(context, intent);
+            context.stopService(intent);
         } catch (Exception ignored) {
             DriveSenseNativeTripStore.setServiceEnabled(context, false);
         }
