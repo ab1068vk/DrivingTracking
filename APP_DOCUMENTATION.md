@@ -3612,3 +3612,698 @@ reliableSpeed
 haversineKm
 round
 ```
+
+## 28. Complete Implementation Reference
+
+This section fills in the rest of the application details around the calculation reference. It is intentionally file-oriented so maintainers can trace every user-facing behavior back to the source file that owns it.
+
+### 28.1 Complete Runtime Flow
+
+DriveSense starts in `src/main.jsx`, renders `App`, wraps the app in `AuthProvider`, `QueryClientProvider`, and `BrowserRouter`, then decides whether to show onboarding or the authenticated layout.
+
+Startup sequence in `src/App.jsx`:
+
+1. `configureNotificationChannels()` creates Android local-notification channels when running natively.
+2. `localSettings.get()` loads or initializes `drivesense_settings`.
+3. `syncReminderNotifications(settings, { requestPermission: false })` refreshes weekly report and safe-driving reminder schedules without forcing a prompt at launch.
+4. `applyThemeMode(settings.dark_mode)` applies `light`, `dark`, or `system`.
+5. If platform is Android and `tracking_mode === 'background_auto'` and `tracking_paused !== true`, `startNativeAutoTracking()` is attempted.
+6. `onboarding_completed` decides whether wildcard routes show `Onboarding` or the real app.
+7. The authenticated app renders `Layout`, which owns desktop sidebar navigation, mobile drawer navigation, and the active-trip status indicator.
+
+The route tree is:
+
+| Route | Component | Notes |
+| --- | --- | --- |
+| `/` | `Dashboard` | Main trip recording and summary screen. |
+| `/trips` | `TripHistory` | Completed trip browser with filters, tags, and sorting. |
+| `/trips/:id` | `TripDetail` | Single-trip map, playback, scores, events, economics, vehicle, and delete/tag actions. |
+| `/map` | `MapScreen` | Multi-trip route map with date/score filters and current-location button. |
+| `/coach` | `DrivingCoach` | Coach insights derived from completed trips and settings. |
+| `/achievements` | `Achievements` | Achievement badge grid plus native notification sync. |
+| `/reports` | `Report` | Period analytics, charts, summary cards, and CSV export. |
+| `/settings` | `Settings` | Permissions, tracking mode, notifications, thresholds, data retention, export/import, theme, and units. |
+| `/android` | `AndroidReference` | Static reference snippets for Android scoring concepts; not production runtime code. |
+| `/vehicles` | `Vehicles` | Vehicle CRUD, default vehicle, odometer, maintenance, and comparison analytics. |
+| `*` | `PageNotFound` or `Onboarding` | Depends on onboarding completion. |
+
+Navigation entries in `Layout.jsx` are Dashboard, Trips, Map, Coach, Awards, Reports, Vehicles, and Settings. The Android reference page exists as a route but is not in the main nav.
+
+### 28.2 Complete Source Inventory
+
+Root configuration and documentation:
+
+| File | Responsibility |
+| --- | --- |
+| `package.json` | npm scripts, app metadata, runtime dependencies, dev dependencies, Capacitor sync commands. |
+| `package-lock.json` | Locked npm dependency graph. |
+| `vite.config.js` | Vite React config and `@` alias to `src`. |
+| `jsconfig.json` | JS/TS tooling config for project path resolution and type checking. |
+| `capacitor.config.ts` | Capacitor app id/name, `dist` web directory, Android platform settings, splash and plugin config. |
+| `tailwind.config.js` | Tailwind theme, content globs, dark mode, animations, and design tokens. |
+| `postcss.config.js` | PostCSS/Tailwind integration. |
+| `eslint.config.js` | ESLint rules and plugin setup. |
+| `components.json` | shadcn-style UI component configuration. |
+| `README.md` | Short setup, build, and Android tracking overview. |
+| `CALCULATIONS.md` | Standalone calculations reference; fully incorporated into section 27 of this document. |
+| `APP_DOCUMENTATION.md` | Full app documentation and implementation reference. |
+| `scripts/patch-android-gradle.mjs` | Postinstall helper that keeps Android Gradle files compatible with the project. |
+
+Frontend entry files:
+
+| File | Responsibility |
+| --- | --- |
+| `src/main.jsx` | React DOM mount. |
+| `src/App.jsx` | Providers, startup side effects, onboarding gate, route tree. |
+| `src/index.css` | Global CSS, Tailwind layers, theme variables, and app-wide styling. |
+| `src/utils/index.ts` | `createPageUrl(pageName)` helper for route-style page names. |
+
+API layer:
+
+| File | Responsibility |
+| --- | --- |
+| `src/api/client.js` | `API_BASE_URL`, `ApiError`, authenticated JSON fetch wrapper, query serialization, error parsing. |
+| `src/api/trips.js` | Trip service facade; uses local repository on native/no API URL, remote HTTP otherwise. |
+| `src/api/vehicles.js` | Vehicle service facade; uses local repository on native/no API URL, remote HTTP otherwise. |
+| `src/api/auth.js` | Local logout token cleanup placeholder for future auth. |
+
+Core libraries:
+
+| File | Responsibility |
+| --- | --- |
+| `src/lib/AuthContext.jsx` | Auth context, token/user bootstrap, login/register/logout helpers, loading state. |
+| `src/lib/activityRecognition.js` | Capacitor bridge wrapper for activity recognition, native auto tracking, native completed trips, JS auto-start/stop formulas. |
+| `src/lib/dataBackup.js` | Backup build/export/parse/import, backup versioning, settings/vehicle/trip merge behavior. |
+| `src/lib/localTripRepository.js` | IndexedDB/local fallback trip store, native trip import, rescore migration, retention pruning, CRUD. |
+| `src/lib/localVehicleRepository.js` | Vehicle normalization, local storage, default vehicle enforcement, CRUD, import merge. |
+| `src/lib/mobileStorage.js` | JSON storage abstraction: Capacitor Preferences on native, localStorage on web, memory fallback otherwise. |
+| `src/lib/nativeDownloads.js` | JS wrapper for `DriveSenseActivityRecognition.saveExportToDownloads`. |
+| `src/lib/nativePlatform.js` | Capacitor platform helpers and native settings opener. |
+| `src/lib/notificationService.js` | Notification channel setup, trip notifications, weekly reports, safe-driving reminders, achievements. |
+| `src/lib/PageNotFound.jsx` | Not-found view. |
+| `src/lib/permissions.js` | Geolocation, notification, activity recognition, background location permission helpers and explanatory text. |
+| `src/lib/query-client.js` | TanStack Query client singleton. |
+| `src/lib/trackingService.js` | Foreground and background location service factory. |
+| `src/lib/trackingStore.js` | Default settings, settings store, active trip store, theme application, web geolocation permission helpers. |
+| `src/lib/tripEngine.js` | Trip math, cleaning, event detection, scoring, formatting, CSV export. Section 27 lists every calculation. |
+| `src/lib/tripInsights.js` | Analytics, maintenance, economics, coaching, achievements, stops, map speed labels. Section 27 lists every calculation. |
+| `src/lib/utils.js` | `cn()` class merge helper and iframe detection. |
+
+Tests:
+
+| File | Responsibility |
+| --- | --- |
+| `src/lib/tripEngine.test.js` | Trip engine and scoring coverage. |
+| `src/lib/__tests__/activityRecognition.test.js` | Activity-recognition and auto-start/auto-stop coverage. |
+
+Pages:
+
+| File | Responsibility |
+| --- | --- |
+| `src/pages/Onboarding.jsx` | First-run setup, tracking mode selection, permission requests, onboarding completion. |
+| `src/pages/Dashboard.jsx` | Manual trip start/end, active route capture, foreground auto mode, native import display, weekly summary cards. |
+| `src/pages/TripHistory.jsx` | Trip listing, search, filters, sorting, tag assignment. |
+| `src/pages/TripDetail.jsx` | Full trip inspection, map/playback, event detail, tag suggestion, delete, vehicle context. |
+| `src/pages/MapScreen.jsx` | Aggregate route map, trip filter chips, current location, focused route playback entry. |
+| `src/pages/DrivingCoach.jsx` | Insight synthesis and coaching cards. |
+| `src/pages/Achievements.jsx` | Badge calculation, earned/locked states, achievement notification sync. |
+| `src/pages/Report.jsx` | Period report summary, chart data, event trends, cost/CO2 reporting, CSV export. |
+| `src/pages/Settings.jsx` | Settings editor, thresholds, permissions, notifications, retention, exports, imports, delete all. |
+| `src/pages/Vehicles.jsx` | Vehicle CRUD, maintenance actions, per-vehicle analytics, comparison. |
+| `src/pages/AndroidReference.jsx` | Static Android reference snippets for scoring architecture. |
+
+App-specific components:
+
+| File | Responsibility |
+| --- | --- |
+| `src/components/Layout.jsx` | Responsive app shell, sidebar, mobile menu, active trip pill. |
+| `src/components/ProtectedRoute.jsx` | Route guard placeholder using auth context. |
+| `src/components/EventBadge.jsx` | Event/severity badge rendering with icons and color classes. |
+| `src/components/ScoreRing.jsx` | Circular score visualization. |
+| `src/components/StatCard.jsx` | Animated metric card used across dashboards. |
+| `src/components/TripCard.jsx` | Trip summary card used in lists. |
+| `src/components/TripMap.jsx` | Leaflet map for trip route, speed coloring, event markers, optional current location. |
+| `src/components/TripPlayback.jsx` | Leaflet playback view with speed controls and moving cursor. |
+| `src/components/UserNotRegisteredError.jsx` | Friendly registration/account error view. |
+| `src/components/VehicleCompare.jsx` | Vehicle comparison charting and aggregate stats. |
+
+UI primitive components:
+
+`src/components/ui` contains the app's shadcn/Radix-style primitives: accordion, alert, alert-dialog, aspect-ratio, avatar, badge, breadcrumb, button, calendar, card, carousel, chart, checkbox, collapsible, command, context-menu, dialog, drawer, dropdown-menu, form, hover-card, input, input-otp, label, menubar, navigation-menu, pagination, popover, progress, radio-group, resizable, scroll-area, select, separator, sheet, sidebar, skeleton, slider, sonner, switch, table, tabs, textarea, toast, toaster, toggle, toggle-group, tooltip, and use-toast. These files provide reusable styling and behavior only; app business logic lives in pages/components/lib.
+
+Android native source:
+
+| File | Responsibility |
+| --- | --- |
+| `android/app/src/main/java/com/drivesense/app/MainActivity.java` | Registers the native plugin before `BridgeActivity` startup. |
+| `android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java` | Capacitor plugin for permissions, activity recognition, native auto tracking controls, native trip import, battery settings, Downloads export. |
+| `android/app/src/main/java/com/drivesense/app/DriveSenseActivityReceiver.java` | Receives Google Activity Recognition broadcasts and forwards them to the plugin/service. |
+| `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java` | Foreground Android service for background trip detection, location capture, native auto-stop, native stats, and native trip persistence. |
+| `android/app/src/main/java/com/drivesense/app/DriveSenseNativeTripStore.java` | SharedPreferences store for native service enabled state and completed native trips. |
+
+Android resources:
+
+| Path | Responsibility |
+| --- | --- |
+| `android/app/src/main/AndroidManifest.xml` | App components, permissions, foreground service declarations, FileProvider. |
+| `android/app/src/main/res/values/strings.xml` | App display strings. |
+| `android/app/src/main/res/values/styles.xml` | Android themes/styles. |
+| `android/app/src/main/res/xml/file_paths.xml` | FileProvider paths. |
+| `android/app/src/main/res/drawable*` | Launcher background, status icon, splash assets. |
+| `android/app/src/main/res/mipmap*` | Launcher icons and adaptive icons. |
+| `android/app/src/main/res/layout/activity_main.xml` | Capacitor activity layout. |
+
+### 28.3 Page Details And Workflows
+
+#### Onboarding
+
+`Onboarding.jsx` has three steps:
+
+1. Welcome and value framing.
+2. Location permission request.
+3. Tracking mode selection.
+
+Tracking options are manual, foreground auto, and background auto. Location permission updates `location_permission_granted`. Choosing foreground auto can request activity recognition. Choosing background auto requests activity recognition, background location, and notification permission where applicable. Finishing onboarding stores `onboarding_completed: true`, selected tracking mode, and tracking capability flags in `drivesense_settings`.
+
+#### Dashboard
+
+`Dashboard.jsx` owns the active trip lifecycle.
+
+Manual start:
+
+1. Reads latest settings.
+2. Optionally requests foreground location permission.
+3. Gets the first current location.
+4. Creates an active trip object with id, status `active`, start time, route points, and auto/manual flag.
+5. Persists it in `activeTripStore`.
+6. Starts a location service watch.
+7. Schedules native notifications when enabled.
+
+Manual end:
+
+1. Reads the active route points.
+2. Builds thresholds from settings.
+3. Calculates stats with `calculateTripStats`.
+4. Detects events with `detectDrivingEvents`.
+5. Calculates scores with `calculateTripScores`.
+6. Estimates economics with `estimateTripEconomics`.
+7. Simplifies route points while preserving event points.
+8. Rejects trips that do not meet minimum duration/distance rules.
+9. Saves the completed trip through `tripService.create`.
+10. Clears `activeTripStore`, stops watchers, cancels reminders, and refreshes queries.
+
+Foreground auto mode watches location and activity recognition while the React app is alive. It uses `shouldAutoStartTracking`, `computeGpsPositionDrift`, and `shouldAutoStopTracking`. Background auto mode delegates trip capture to `DriveSenseAutoTrackingService`.
+
+Dashboard analytics shown from recent trips include weekly distance, score, risky event totals, goals, score trend, coach tips, last trips, and active-trip state.
+
+#### Trip History
+
+`TripHistory.jsx` fetches up to 1000 trips sorted by `-start_time`. It supports:
+
+- Search by route/title/tag/date-like text.
+- Sorting by newest, oldest, score, distance, or duration.
+- Date filters such as all, today, week, month.
+- Event/quality filters including harsh brake, speeding, near miss, distraction risk, drowsy risk, perfect eco, and more.
+- Tag assignment through `tripService.update(id, { tag })`.
+
+It invalidates the `all-trips` query after tag updates.
+
+#### Trip Detail
+
+`TripDetail.jsx` fetches one trip and vehicles. It renders:
+
+- Route map and playback.
+- Score rings and score breakdowns.
+- Stats, economics, maintenance/vehicle context.
+- Event list and advanced safety metrics.
+- Road type, fatigue, drowsy, phone proxy, parking, hill, merge, overtake, and defensive/aggressive details.
+- Tag suggestion flow based on `suggestTripTag`.
+
+It stores dismissed tag suggestions in `drivesense_dismissed_tag_suggestions`. Deleting a trip calls `tripService.delete(id)` and invalidates `all-trips` and `recent-trips`.
+
+#### Map Screen
+
+`MapScreen.jsx` loads up to 500 trips, filters them by route availability, period, and score/event criteria, and passes selected trips to `TripMap`. It can request and show current browser/native geolocation. Route colors rotate through the configured map palette.
+
+#### Driving Coach
+
+`DrivingCoach.jsx` loads up to 1000 trips, filters completed trips, reads settings, and calls `buildDrivingCoachInsights`. It shows:
+
+- Main focus area.
+- Suggested actions.
+- Risk event rate.
+- Speed discipline.
+- Driving consistency.
+- Fatigue risk.
+- Personal baseline.
+- Peak-hour stress.
+- Commute pattern context.
+- Carbon impact.
+
+#### Achievements
+
+`Achievements.jsx` loads completed trips, calls `calculateAchievementBadges`, and calls `syncAchievementNotifications` for newly earned badges. It shows earned and locked states, progress values, and badge metadata.
+
+#### Report
+
+`Report.jsx` loads trips and vehicles, filters completed trips by period, and uses:
+
+- `generateReportSummary` for totals and best/worst trips.
+- `analyzeTimeOfDay` and `analyzeDayOfWeek`.
+- `calculateRiskEventRate`.
+- `calculateCarbonImpact`.
+- `calculatePeakHourStress`.
+- `identifyCommutePatterns`.
+- `tripsToCSV` and `downloadCSV` for export.
+
+Native CSV export now writes to Android Downloads. Browser export uses Blob download.
+
+#### Settings
+
+`Settings.jsx` is the main control surface. It manages:
+
+- `tracking_mode`: manual, foreground auto, background auto.
+- `tracking_paused`.
+- Location/activity/background-location/notification permission state.
+- Battery optimization status and settings opening.
+- Notification toggles.
+- Theme and units.
+- Detection thresholds and advanced safety toggles.
+- Data retention and pruning.
+- Delete all trips.
+- Export all trips as CSV.
+- Export full backup JSON.
+- Import backup JSON.
+- Android native auto tracking restart when prerequisites become ready.
+
+Settings changes call `localSettings.update`, refresh local state, apply theme when relevant, sync reminder notifications when notification settings change, and invalidate queries when retention/import/delete affects data.
+
+#### Vehicles
+
+`Vehicles.jsx` loads vehicles and trips. It supports:
+
+- Create/update/delete vehicle.
+- Set default vehicle.
+- Color, make, model, year, plate, odometer, fuel efficiency, fuel price.
+- Maintenance completion updates by item id.
+- Per-vehicle trip totals through `getVehicleTripDistanceKm`, `getVehicleOdometerKm`, `getMaintenanceStatus`, and `calculateVehicleHealthImpact`.
+- `VehicleCompare` chart and aggregate comparison.
+
+### 28.4 Storage Keys And Persistence
+
+| Key or store | Owner | Platform | Contents |
+| --- | --- | --- | --- |
+| `drivesense_settings` | `trackingStore.js` | localStorage | User settings and onboarding state. |
+| `drivesense_active_trip` | `trackingStore.js`, `Layout.jsx`, `Dashboard.jsx` | localStorage | Active trip snapshot for crash/session recovery and active-trip UI. |
+| `drivesense_trips` | `localTripRepository.js` fallback | Preferences/native or localStorage/web | Trip array when IndexedDB is unavailable. |
+| IndexedDB `drivesense_mobile`, store `trips` | `localTripRepository.js` | Web-capable environments | Primary trip store with `id`, `start_time`, and `status` indexes. |
+| `drivesense_vehicles` | `localVehicleRepository.js` | Preferences/native or localStorage/web | Vehicle array. |
+| `drivesense_dismissed_tag_suggestions` | `TripDetail.jsx` | localStorage | Trip ids whose suggested tags were dismissed. |
+| `drivesense_notified_achievements` | `notificationService.js` | localStorage | Achievement ids already notified. |
+| Android SharedPreferences `drivesense_native_tracking` | `DriveSenseNativeTripStore.java` | Android native | `completed_trips` JSON and `service_enabled` boolean. |
+| `token`, `access_token` | `api/client.js`, `AuthContext.jsx`, `auth.js` | localStorage | Optional auth token used only when cloud API is configured. |
+
+`mobileStorage.js` chooses Capacitor Preferences on native, localStorage on web, and a memory `Map` fallback if neither is available.
+
+### 28.5 Complete Default Settings
+
+`DEFAULT_SETTINGS` in `trackingStore.js`:
+
+```js
+tracking_mode: 'manual',
+units: 'metric',
+dark_mode: 'system',
+notifications_enabled: true,
+notification_permission_granted: false,
+trip_start_notification: true,
+trip_end_notification: true,
+weekly_report_notification: true,
+achievement_notifications: true,
+safe_driving_reminder: false,
+background_tracking_enabled: false,
+auto_tracking_enabled: false,
+activity_permission_granted: false,
+data_retention_days: 365,
+threshold_harsh_brake_ms2: 4.5,
+threshold_rapid_accel_ms2: 3.5,
+threshold_tailgate_decel_ms2: 2.5,
+threshold_sharp_turn_g_low: 0.30,
+threshold_sharp_turn_g_medium: 0.45,
+threshold_sharp_turn_g_high: 0.60,
+threshold_speeding_kmh: 130,
+threshold_speed_over_kmh: 10,
+threshold_idle_seconds: 90,
+threshold_long_drive_minutes: 120,
+night_detection_mode: 'sunset',
+night_start_time: '22:00',
+night_end_time: '06:00',
+night_sunset_offset_minutes: 0,
+night_sunrise_offset_minutes: 0,
+threshold_near_miss_brake_ms2: 3.5,
+threshold_near_miss_turn_degs: 30,
+threshold_drowsy_heading_std: 8,
+threshold_phone_proxy_oscillations: 3,
+threshold_speed_creep_kmh: 10,
+threshold_overtake_accel_ms2: 3.0,
+advanced_safety_detection_enabled: true,
+speed_warning_enabled: true,
+min_speed_rapid_accel_kmh: 15,
+min_speed_harsh_brake_kmh: 25,
+weekly_goal_harsh_brakes: 5,
+weekly_goal_speeding_events: 3,
+weekly_goal_min_avg_score: 80,
+weekly_goal_max_night_trips: 3,
+onboarding_completed: true,
+location_permission_granted: false,
+background_location_granted: false,
+tracking_paused: false,
+```
+
+`onboarding_completed` defaults to `true` for web convenience. Native Android can still show onboarding if settings are changed or reset.
+
+### 28.6 Service And Repository Contracts
+
+Trip service contract:
+
+| Method | Local implementation | Remote shape |
+| --- | --- | --- |
+| `list(options)` | `localTripRepository.list(options)` | `GET /trips` with query. |
+| `getById(id)` | `localTripRepository.getById(id)` | `GET /trips/:id`. |
+| `create(trip)` | `localTripRepository.create(trip)` | `POST /trips`. |
+| `update(id, patch)` | `localTripRepository.update(id, patch)` | `PATCH /trips/:id`. |
+| `delete(id)` | `localTripRepository.delete(id)` | `DELETE /trips/:id`. |
+| `upsertMany(trips)` | `localTripRepository.upsertMany(trips)` | local-only backup import path. |
+
+Vehicle service contract:
+
+| Method | Local implementation | Remote shape |
+| --- | --- | --- |
+| `list(options)` | `localVehicleRepository.list(options)` | `GET /vehicles` with query. |
+| `create(vehicle)` | `localVehicleRepository.create(vehicle)` | `POST /vehicles`. |
+| `update(id, patch)` | `localVehicleRepository.update(id, patch)` | `PATCH /vehicles/:id`. |
+| `delete(id)` | `localVehicleRepository.delete(id)` | `DELETE /vehicles/:id`. |
+| `upsertMany(vehicles)` | `localVehicleRepository.upsertMany(vehicles)` | local-only backup import path. |
+
+Local trip repository rules:
+
+- Primary web store is IndexedDB database `drivesense_mobile`, version `1`, object store `trips`, key path `id`.
+- Fallback store is JSON under `drivesense_trips`.
+- `TRIP_SCHEMA_VERSION` is `2`.
+- Completed trips with missing advanced fields, `needs_rescore`, or old schema version are rescored before being returned.
+- Android native completed trips are imported before list/get operations on Android.
+- Imported native trips are recalculated by JS, simplified to 10-meter route tolerance, marked `imported_from_native: true`, and then native completed trips are cleared.
+- Data retention deletes trips older than `data_retention_days` based on `end_time`, `start_time`, or `created_at`.
+
+Local vehicle repository rules:
+
+- Vehicles are normalized on create/update/import.
+- Plate is uppercased.
+- Odometer defaults to `0`.
+- Fuel efficiency defaults to `8.5 L/100km`.
+- Fuel price defaults to `1.65`.
+- Missing maintenance items use `DEFAULT_MAINTENANCE_ITEMS`.
+- At least one vehicle is default if any vehicles exist.
+- Setting one vehicle default clears default from the others.
+
+### 28.7 Data Models In Practice
+
+Trip fields include identity, status, timing, route, stats, events, scores, economics, advanced metrics, vehicle link, tag, source, schema, and timestamps.
+
+Core trip fields:
+
+- `id`
+- `status`
+- `start_time`
+- `end_time`
+- `duration_seconds`
+- `distance_km`
+- `avg_speed_kmh`
+- `avg_running_speed_kmh`
+- `max_speed_kmh`
+- `idle_time_seconds`
+- `route_points`
+- `route_points_raw_count`
+- `driving_events`
+- `score_overall`
+- `score_safety`
+- `score_smoothness`
+- `score_efficiency`
+- `score_focus`
+- `vehicle_id`
+- `tag`
+- `tag_reviewed`
+- `imported_from_native`
+- `schema_version`
+- `needs_rescore`
+- `created_at`
+- `updated_at`
+
+Advanced trip fields include:
+
+- road type: `road_type`, `road_type_confidence`, `highway_ratio`, `urban_ratio`, `residential_ratio`
+- fatigue: `fatigue_risk_score`, `fatigue_progression`, `segment_scores`
+- drowsy: `drowsy_window_count`, `drowsy_risk_score`, `drowsy_risk_level`
+- phone/distraction: `phone_proxy_count`, `phone_proxy_risk`, `distraction_events_count`, `distraction_score`
+- speed: `speed_variability_index`, `speed_variability_score`, `speed_creep_count`, `speed_creep_score`
+- eco: `eco_driving_score`, `fuel_band_score`, `optimal_fuel_band_ratio`
+- braking/defensive: `smooth_braking_ratio`, `defensive_driving_score`, `following_distance_score`
+- aggressive: `aggressive_driving_score`, `aggressive_grade`, `aggressive_event_count`, `aggressive_overtake_count`
+- safety: `near_miss_count`, `lane_change_count`, `tailgate_cycle_count`, `highway_merge_score`
+- vehicle health: `engine_stress_score`, `engine_stress_units`, `tire_wear_units`, `hill_driving_score`
+- parking/intersections: `parking_approach_score`, `parking_approach_grade`, `intersection_score`, `stop_count`, `rolling_stop_count`, `smooth_approach_count`
+- economics: `fuel_cost`, `fuel_used_liters`, `co2_kg`, `co2_saved_kg`, `fuel_saved_liters`
+
+Route point fields:
+
+- `lat`
+- `lng`
+- `timestamp`
+- `speed_kmh`
+- `heading`
+- `accuracy`
+- `altitude`
+
+Driving event fields:
+
+- `id`
+- `type`
+- `severity`
+- `timestamp`
+- `lat`
+- `lng`
+- `speed_kmh`
+- `description`
+- event-specific fields such as acceleration, lateral g, turn rate, duration, drift, score impact, or proxy metadata
+
+Vehicle fields:
+
+- `id`
+- `name`
+- `make`
+- `model`
+- `year`
+- `color`
+- `plate`
+- `odometer_km`
+- `fuel_efficiency_l_per_100km`
+- `fuel_price_per_liter`
+- `maintenance_items`
+- `is_default`
+- `created_date`
+- `updated_at`
+
+Maintenance item fields:
+
+- `id`
+- `label`
+- `interval_km`
+- `last_service_km`
+- `last_service_date`
+
+### 28.8 Native Android Bridge Details
+
+Capacitor plugin name: `DriveSenseActivityRecognition`.
+
+JS wrappers:
+
+- `src/lib/activityRecognition.js`
+- `src/lib/permissions.js`
+- `src/lib/nativeDownloads.js`
+
+Plugin methods:
+
+| Method | JS caller | Purpose |
+| --- | --- | --- |
+| `checkPermissions` | `permissions.js` | Returns activity/background-location permission payload. |
+| `requestPermissions` | `permissions.js`, `activityRecognition.js` | Requests activity recognition on Android Q+. |
+| `requestBackgroundLocation` | `permissions.js` | Requests background location on Android Q+. |
+| `start` | `startActivityRecognition` | Starts Google Activity Recognition updates. |
+| `stop` | `stopActivityRecognition` | Stops Google Activity Recognition updates. |
+| `startNativeAutoTracking` | `startNativeAutoTracking` | Starts native foreground service if required permissions exist. |
+| `stopNativeAutoTracking` | `stopNativeAutoTracking` | Stops native service and marks native enabled false. |
+| `openAppLocationSettings` | `openAndroidLocationSettings` | Opens app details settings. |
+| `openBatteryOptimizationSettings` | `openAndroidBatteryOptimizationSettings` | Opens ignore battery optimization or fallback settings. |
+| `batteryOptimizationStatus` | `getAndroidBatteryOptimizationStatus` | Returns whether optimization is ignored. |
+| `nativeAutoTrackingStatus` | `getNativeAutoTrackingStatus` | Returns service enabled state and native completed-trip count. |
+| `getNativeCompletedTrips` | `localTripRepository` | Reads native completed trips. |
+| `clearNativeCompletedTrips` | `localTripRepository` | Clears native completed trips after import. |
+| `saveExportToDownloads` | `nativeDownloads.js` | Saves CSV/JSON export to public Android Downloads. |
+
+Native export behavior:
+
+- Android 10+ uses `MediaStore.Downloads.EXTERNAL_CONTENT_URI`.
+- It writes `DISPLAY_NAME`, `MIME_TYPE`, `RELATIVE_PATH = Environment.DIRECTORY_DOWNLOADS`, and `IS_PENDING`.
+- It writes UTF-8 bytes to the output stream.
+- It marks `IS_PENDING = 0` after success.
+- Older Android falls back to `Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)`.
+- JS export functions fall back to browser Blob download if native export throws.
+
+Native auto tracking service:
+
+- Runs as a foreground service with channel `drivesense_native_auto_tracking`.
+- Starts activity updates through Google Activity Recognition.
+- Starts fused location updates when trip capture is active.
+- Starts a trip when confident `IN_VEHICLE` activity is detected.
+- Records GPS points below `MAX_ACCURACY_M = 75`.
+- Filters noise using accuracy-aware distance floors and speed plausibility.
+- Tracks stopped anchor and max drift while speed is below `5 km/h`.
+- Finishes trips only if minimum trip duration `30 seconds`, minimum distance `0.1 km`, and minimum point count `2` are met.
+- Writes completed native trips to `DriveSenseNativeTripStore`.
+- React imports native trips later and recalculates all JS stats/scores.
+
+Native auto-stop timing:
+
+- Foot activity with stopped speed: 15 seconds.
+- STILL with stable GPS: 90 seconds.
+- STILL with drift: 150 seconds.
+- IN_VEHICLE while stopped and GPS very stable: 240 seconds.
+- UNKNOWN while stopped and GPS stable: 180 seconds.
+
+### 28.9 Tracking Modes And Permission Matrix
+
+| Mode | Setting | Runtime owner | Needs |
+| --- | --- | --- | --- |
+| Manual | `tracking_mode: 'manual'` | Dashboard start/end buttons | Foreground location to capture route. |
+| Foreground auto | `tracking_mode: 'foreground_auto'` | React app watchers in `Dashboard.jsx` | Foreground location and activity recognition while app is alive. |
+| Background auto | `tracking_mode: 'background_auto'` | Android native foreground service | Foreground location, background location, activity recognition, notification permission, battery optimization allowance recommended. |
+
+Permission helpers:
+
+- `getPermissionStatus()`
+- `requestForegroundLocationPermission()`
+- `requestNotificationPermission()`
+- `requestActivityRecognitionPermission()`
+- `requestBackgroundLocationPermission()`
+- `getPermissionExplanation(kind)`
+- `openNativeSettings()`
+
+Permission state is reflected back into settings fields such as `location_permission_granted`, `background_location_granted`, `activity_permission_granted`, and `notification_permission_granted`.
+
+### 28.10 Notifications
+
+Channels:
+
+- `drivesense_tracking`: low-importance trip tracking channel.
+- `drivesense_summary`: trip completion, reports, safe-driving reminders.
+- `drivesense_achievements`: achievement unlocks.
+
+Notification ids:
+
+- `2001`: long trip reminder.
+- `2003`: trip started.
+- `2101`: weekly report.
+- `2102`: safe driving tip.
+- `2005`: stay alert.
+- `3000 + hash`: achievement notifications.
+
+Notification functions:
+
+- `configureNotificationChannels()`
+- `scheduleLongTripReminder(startTime)`
+- `cancelLongTripReminder()`
+- `notifyTripStarted()`
+- `notifyTripCompleted(trip)`
+- `notifyStayAlert()`
+- `syncReminderNotifications(settings, options)`
+- `syncAchievementNotifications(achievements, options)`
+- `getNotifiedAchievementIds()`
+
+Weekly report notifications are scheduled for Tuesday at 9:00. Safe-driving reminders are scheduled daily at 8:00 when enabled. Achievement notifications are deduplicated using `drivesense_notified_achievements`.
+
+### 28.11 Export, Import, And Backup Details
+
+CSV export:
+
+- `tripsToCSV(trips)` emits one row per trip.
+- It includes identity, timing, duration, distance, speeds, scores, event counts, advanced metrics, route point count, route JSON, and event JSON.
+- `downloadCSV(content, filename)` sanitizes forbidden filename characters.
+- Native Android export writes to Downloads through `saveExportToDownloads`.
+- Browser export creates a Blob URL and triggers an anchor download.
+
+Full JSON backup:
+
+- Version is `2`.
+- `buildDriveSenseBackup` includes app id, version, exported timestamp, settings, vehicles, and trips.
+- Trips always include array-safe `route_points` and `driving_events`.
+- `exportDriveSenseBackup` writes JSON to Android Downloads or browser Blob download.
+- `parseDriveSenseBackup` validates `app === 'DriveSense'` and `trips` array.
+- `importDriveSenseBackup` optionally merges settings, upserts vehicles, and upserts trips.
+- Version 1 backup imports set `needs_rescore` so trips receive the current schema and advanced metrics.
+
+### 28.12 UI And Styling Details
+
+The UI uses Tailwind utility classes, shadcn/Radix primitives, Lucide icons, Framer Motion animation, Recharts charts, and Leaflet maps. Theme mode is controlled by a `dark` class on `document.documentElement`.
+
+Common visual components:
+
+- `StatCard` uses an icon, label, value, optional subtext, gradient classes, and Framer Motion entrance animation.
+- `ScoreRing` renders an SVG circular progress ring with configurable score, size, stroke, label, and animation.
+- `EventBadge` maps event type/severity to icon, label, and color.
+- `TripCard` shows trip date, distance, duration, scores, and route summary for list views.
+- `TripMap` dynamically loads Leaflet CSS/JS, uses OpenStreetMap tiles, draws polylines, markers, event pins, fit bounds, and optional current location.
+- `TripPlayback` builds speed-colored segments and animates a cursor over route points with speed multipliers 1x, 2x, 4x, and 8x.
+- `VehicleCompare` aggregates per-vehicle trip stats and renders comparison charts.
+
+### 28.13 Build, Verification, And Release Details
+
+Primary scripts:
+
+```bash
+npm.cmd run dev
+npm.cmd run test
+npm.cmd run build
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd run android:sync
+```
+
+Android build command used in this workspace:
+
+```powershell
+$env:GRADLE_USER_HOME='C:\Users\bemat\OneDrive\Desktop\DrivingTracking\.gradle-home'; .\gradlew.bat assembleDebug
+```
+
+Expected verification for logic/native changes:
+
+1. `npm.cmd run test`
+2. `npm.cmd run build`
+3. `npm.cmd run android:sync`
+4. Android `assembleDebug`
+5. `git status --short --branch`
+
+Known non-failing warnings:
+
+- Vite reports large chunks because the app bundles a large React/analytics/map surface.
+- Vite reports Capacitor core is both statically and dynamically imported.
+- Gradle reports deprecation warnings from Android Gradle/plugin options and flatDir usage.
+
+### 28.14 Calculation Coverage Statement
+
+All calculation details known from the current source are included in section 27. That section covers every exported calculation function in:
+
+- `src/lib/tripEngine.js`
+- `src/lib/tripInsights.js`
+- `src/lib/activityRecognition.js`
+- `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java`
+
+It includes GPS formulas, cleaning, route simplification, stats, all event detectors, all score formulas, all insight formulas, all vehicle/economics formulas, export formatting, JavaScript auto-start/auto-stop, native Android auto-stop, native stats, and native GPS noise filtering.
