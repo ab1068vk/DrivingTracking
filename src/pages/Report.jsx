@@ -9,12 +9,14 @@ import {
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell
+  ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis
 } from 'recharts';
 import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import ScoreRing from '@/components/ScoreRing';
 import { localSettings } from '@/lib/trackingStore';
-import { exportMonthlyReportPDF } from '@/lib/pdfExport';
+import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
+import { computeUBIReport } from '@/lib/ubiReport';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -35,6 +37,7 @@ const PERIODS = [
 
 export default function Reports() {
   const [period, setPeriod] = useState('week');
+  const [ubiLoading, setUbiLoading] = useState(false);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
 
@@ -108,6 +111,11 @@ export default function Reports() {
     { label: 'Peak', rate: peakHourStress.peak_trips_event_rate },
     { label: 'Off-peak', rate: peakHourStress.off_peak_trips_event_rate },
   ];
+  const ubiReport = computeUBIReport(trips, settings, vehicles);
+  const ubiRadarData = Object.values(ubiReport.categories).map((item) => ({
+    category: item.label.replace('Rapid acceleration', 'Acceleration').replace('Speed compliance', 'Speed'),
+    score: item.score,
+  }));
 
   // Build 6-month monthly event trend data (always uses all completed trips)
   const eventTrendData = (() => {
@@ -187,6 +195,13 @@ export default function Reports() {
     if (result?.native) alert(`PDF report saved to Downloads as ${result.filename}.`);
   };
 
+  const handleUbiExport = async () => {
+    setUbiLoading(true);
+    const result = await exportUBIReportPDF(ubiReport, settings);
+    setUbiLoading(false);
+    if (result?.native) alert(`Score card saved to Downloads as ${result.filename}.`);
+  };
+
   const { color: bestColor } = getScoreColor(summary.best_trip?.score_overall || 0);
   const { color: worstColor } = getScoreColor(summary.worst_trip?.score_overall || 0);
 
@@ -212,6 +227,14 @@ export default function Reports() {
           >
             <FileText className="w-4 h-4" />
             Export Monthly Report (PDF)
+          </button>
+          <button
+            onClick={handleUbiExport}
+            disabled={ubiLoading}
+            className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors disabled:opacity-60"
+          >
+            <Award className="w-4 h-4" />
+            {ubiLoading ? 'Generating...' : 'Export Score Card (PDF)'}
           </button>
         </div>
       </motion.div>
@@ -277,6 +300,26 @@ export default function Reports() {
             transition={{ delay: 0.18 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
+            <div className="mb-5 rounded-2xl border border-border p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">Driver Score Card</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">UBI-style telematics report for insurance or personal records</p>
+                </div>
+                <div className="text-right">
+                  <div className="font-grotesk text-3xl font-bold">{ubiReport.ubiScore}</div>
+                  <div className="text-xs font-semibold text-primary">{ubiReport.ubiGrade} · {ubiReport.ubiTier}</div>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <RadarChart data={ubiRadarData} outerRadius={78}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="category" tick={{ fontSize: 10 }} />
+                  <Radar dataKey="score" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.28} />
+                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
             <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
             <p className="text-xs text-muted-foreground mb-4">
               {baseline.baseline_avg == null

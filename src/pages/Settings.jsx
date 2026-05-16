@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import { buildDrivingThresholds } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
@@ -34,6 +35,13 @@ import {
 } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
 import { exportDriveSenseBackup, importDriveSenseBackup } from '@/lib/dataBackup';
+import {
+  applyCalibrationProfile,
+  clearCalibrationProfile,
+  computeCalibrationProfile,
+  loadCalibrationProfile,
+  saveCalibrationProfile,
+} from '@/lib/thresholdCalibration';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -133,6 +141,8 @@ export default function Settings() {
   const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
   const [patternGuideOpen, setPatternGuideOpen] = useState(false);
+  const [calibProfile, setCalibProfile] = useState(null);
+  const [calibLoading, setCalibLoading] = useState(false);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -174,6 +184,31 @@ export default function Settings() {
   const updateTheme = (mode) => {
     const updated = updateCfg({ dark_mode: mode });
     applyThemeMode(updated.dark_mode);
+  };
+
+  const runCalibration = async () => {
+    setCalibLoading(true);
+    const trips = await tripService.list({ sort: '-start_time', limit: 200 });
+    const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
+    await saveCalibrationProfile(profile);
+    setCalibProfile(profile);
+    setCalibLoading(false);
+  };
+
+  const applyCalibration = async () => {
+    const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
+      localSettings.set(next);
+      setCfg(next);
+    });
+    setCfg(updated);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+    setCalibProfile(await loadCalibrationProfile());
+  };
+
+  const dismissCalibration = async () => {
+    await clearCalibrationProfile();
+    setCalibProfile(null);
   };
 
   const updateNotificationSetting = async (patch) => {
@@ -301,6 +336,7 @@ export default function Settings() {
 
   useEffect(() => {
     refreshPermissions();
+    loadCalibrationProfile().then(setCalibProfile);
   }, []);
 
   useEffect(() => {
@@ -616,6 +652,7 @@ export default function Settings() {
                 { key: 'notif_phone_use_alert_enabled', label: 'Phone use warning', sub: 'Immediate warning when phone-use patterns appear' },
                 { key: 'notif_drowsy_alert_enabled', label: 'Drowsy / fatigue warning', sub: 'Fatigue and long-drive break alerts' },
                 { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
+                { key: 'danger_zone_alerts_enabled', label: 'Danger zone proximity alerts', sub: 'Warn when approaching your historical risk hotspots' },
                 { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
               ].map(({ key, label, sub }) => (
                 <SettingRow key={key} label={label} sublabel={sub}>
@@ -826,6 +863,59 @@ export default function Settings() {
             These settings directly change trip event detection, scoring, imports, and rescoring.
           </div>
         )}
+        <div className="mb-4 rounded-2xl border border-border bg-secondary/30 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Threshold calibration</div>
+              <div className="mt-1 text-xs text-muted-foreground">Analyse your driving to suggest personalized detection thresholds.</div>
+            </div>
+            <button
+              type="button"
+              onClick={runCalibration}
+              disabled={calibLoading}
+              className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
+            >
+              {calibLoading ? 'Analysing...' : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
+            </button>
+          </div>
+          {calibProfile?.insufficient && (
+            <div className="mt-3 rounded-xl bg-card p-3 text-xs text-muted-foreground">
+              Needs {calibProfile.tripsNeeded} more trips or {calibProfile.kmNeeded} more km before calibration is reliable.
+              <div className="mt-2 h-2 rounded-full bg-secondary">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${Math.min(100, ((15 - calibProfile.tripsNeeded) / 15) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {calibProfile && !calibProfile.insufficient && !calibProfile.appliedAt && (
+            <div className="mt-3 space-y-3">
+              <span className="inline-flex rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold capitalize text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                {calibProfile.confidence} confidence · {calibProfile.tripsAnalyzed} trips · {calibProfile.kmAnalyzed} km
+              </span>
+              <div className="overflow-hidden rounded-xl border border-border text-xs">
+                {Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => (
+                  <div key={key} className="grid grid-cols-4 gap-2 border-b border-border/50 p-2 last:border-0">
+                    <div className="col-span-1 truncate">{key.replace('threshold_', '').replace(/_/g, ' ')}</div>
+                    <div>{calibProfile.current[key]}</div>
+                    <div className="font-semibold text-primary">{value}</div>
+                    <div className={calibProfile.delta[key] >= 0 ? 'text-orange-500' : 'text-emerald-500'}>{calibProfile.delta[key] >= 0 ? '+' : ''}{calibProfile.delta[key]}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={applyCalibration} className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">Apply suggested thresholds</button>
+                <button type="button" onClick={dismissCalibration} className="rounded-xl border border-border px-3 py-2 text-xs font-semibold">Dismiss</button>
+              </div>
+            </div>
+          )}
+          {calibProfile?.appliedAt && (
+            <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+              Calibrated to your driving · applied {new Date(calibProfile.appliedAt).toLocaleDateString()}
+            </div>
+          )}
+        </div>
         <div className="space-y-4">
           {[
             { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', min: 2, max: 8, step: 0.5 },

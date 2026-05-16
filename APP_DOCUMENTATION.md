@@ -4469,9 +4469,15 @@ All calculation details known from the current source are included in section 27
 - `src/lib/tripEngine.js`
 - `src/lib/tripInsights.js`
 - `src/lib/activityRecognition.js`
+- `src/lib/dangerZoneEngine.js`
+- `src/lib/dailyFatigueEngine.js`
+- `src/lib/preTripRisk.js`
+- `src/lib/routeRiskIndex.js`
+- `src/lib/thresholdCalibration.js`
+- `src/lib/ubiReport.js`
 - `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java`
 
-It includes GPS formulas, cleaning, route simplification, stats, all event detectors, all score formulas, all insight formulas, all vehicle/economics formulas, export formatting, JavaScript auto-start/auto-stop, native Android auto-stop, native stats, and native GPS noise filtering.
+It includes GPS formulas, cleaning, route simplification, stats, all event detectors, all score formulas, all insight formulas, all vehicle/economics formulas, danger-zone clustering, route-risk indexing, calibration, daily fatigue, pre-trip risk, UBI reporting, export formatting, JavaScript auto-start/auto-stop, native Android auto-stop, native stats, and native GPS noise filtering.
 ## Advanced Analysis Update
 
 Trip schema version 3 adds these completed-trip fields:
@@ -4493,3 +4499,28 @@ UI placements:
 - Driving Coach shows a driver-style radar profile, style-shift alerts, and new anticipation/progressive-braking focus areas.
 - Reports show road-type compliance over the selected period.
 - Vehicles show predictive maintenance adjusted intervals and vehicle stress badges.
+
+## May 2026 Advanced Feature Expansion
+
+This update adds six local-only safety, readiness, and reporting systems:
+
+- Geospatial danger zones: `src/lib/dangerZoneEngine.js` clusters historical harsh events into GPS hotspots. `MapScreen` can show the overlay, `Dashboard` warns during active trips when a cached zone is nearby, and Settings exposes `danger_zone_alerts_enabled`.
+- Adaptive threshold calibration: `src/lib/thresholdCalibration.js` analyses completed trips and suggests personalized harsh-brake, rapid-accel, and sharp-turn thresholds. Settings includes an analyse/apply/dismiss workflow in Detection Thresholds.
+- Daily fatigue accumulation: `src/lib/dailyFatigueEngine.js` calculates today's cumulative fatigue across trips. Dashboard shows a fatigue card, warns before manual trip start when risk is high, and sends native daily-fatigue warnings after trip completion.
+- UBI driver score card: `src/lib/ubiReport.js` computes mileage, time-of-day, braking, acceleration, cornering, and speed-compliance categories. Reports adds an on-screen radar preview and `exportUBIReportPDF`.
+- Pre-trip readiness: `src/lib/preTripRisk.js` combines personal time/day trends, baseline trend, daily fatigue, and last-trip outcome into a dismissible Dashboard readiness card.
+- Historical route risk: `src/lib/routeRiskIndex.js` builds local risk scores for route segments. `TripMap` can draw route-risk polylines, `MapScreen` has a Route risk toggle, and Trip Detail shows a Route history section.
+
+Cache invalidation:
+
+- Completed trip creation/import invalidates `drivesense_danger_zones`, `drivesense_route_risk_index`, and the driver signature cache.
+- Native trip imports rebuild the same derived caches on the next map/detail/dashboard read.
+
+New tests cover:
+
+- Danger zone clustering and proximity.
+- Daily fatigue accumulation.
+- Threshold calibration and application.
+- UBI score-card math.
+- Pre-trip readiness signals.
+- Route-risk segment indexing, storage round trip, and storage trimming.

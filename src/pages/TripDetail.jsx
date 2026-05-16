@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -25,6 +25,7 @@ import {
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
+import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,6 +59,7 @@ export default function TripDetail() {
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
+  const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
 
   const { data: trip, isLoading } = useQuery({
     queryKey: ['trip', id],
@@ -139,6 +141,13 @@ export default function TripDetail() {
   const fatigueHeatmapData = useMemo(() => (
     trip ? buildFatigueHeatmapData(trip) : []
   ), [trip]);
+  const routeRiskSegments = useMemo(() => (
+    trip ? getSegmentsForTrip(trip, routeRiskIndex).filter((segment) => segment.riskLevel === 'high' || segment.riskLevel === 'moderate') : []
+  ), [routeRiskIndex, trip]);
+
+  useEffect(() => {
+    loadRouteRiskIndex().then(setRouteRiskIndex);
+  }, []);
 
   if (isLoading) {
     return (
@@ -461,10 +470,34 @@ export default function TripDetail() {
             routePoints={trip.route_points || []}
             events={mapEvents}
             showCorneringHeatmap={showCorneringHeatmap}
+            showRouteRisk={routeRiskSegments.length > 0}
+            routeRiskSegments={routeRiskSegments}
             height="300px"
           />
         </div>
       </motion.div>
+
+      {routeRiskSegments.length > 0 && (
+        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+          <h2 className="font-semibold mb-3">Route history</h2>
+          <div className="space-y-2">
+            {routeRiskSegments.slice(0, 3).map((segment, index) => {
+              const perPass = segment.tripCount ? segment.totalEvents / segment.tripCount : 0;
+              return (
+                <div key={`${segment.from.lat}-${segment.to.lat}-${index}`} className="flex gap-3 rounded-2xl bg-secondary/50 p-3">
+                  <span className={`mt-1 h-3 w-3 rounded-full ${segment.riskLevel === 'high' ? 'bg-red-500' : 'bg-orange-500'}`} />
+                  <div className="text-sm">
+                    <div className="font-semibold capitalize">{segment.riskLevel}-risk stretch</div>
+                    <div className="text-xs text-muted-foreground">
+                      You've driven through this area {segment.tripCount} times. Average {perPass.toFixed(1)} events per pass · mostly {(segment.dominantEventType || 'risk events').replace(/_/g, ' ')}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Score overview */}
       <motion.div

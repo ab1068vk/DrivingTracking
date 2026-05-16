@@ -89,6 +89,8 @@ export const DEFAULT_SETTINGS = {
   notif_quiet_start: '22:00',
   notif_quiet_end: '07:00',
   notif_min_score_for_post_trip: 0,
+  danger_zone_alerts_enabled: true,
+  calibration_profile_key: null,
 };
 
 export async function getLastParkedLocation() {

@@ -30,6 +30,17 @@ const EVENT_LABELS = {
   phone_use: 'P',
 };
 
+const RISK_COLORS = {
+  critical: '#ef4444',
+  high: '#f97316',
+  medium: '#eab308',
+  low: '#3b82f6',
+};
+
+const titleCase = (value) => String(value || '')
+  .replace(/_/g, ' ')
+  .replace(/\b\w/g, (char) => char.toUpperCase());
+
 const phoneUseColor = (event) => {
   const level = event.confidence_level || event.severity || 'medium';
   if (level === 'high') return '#dc2626';
@@ -92,6 +103,10 @@ export default function TripMap({
   currentLocation = null,
   parkedLocation = null,
   showCorneringHeatmap = false,
+  showDangerZones = false,
+  dangerZones = [],
+  showRouteRisk = false,
+  routeRiskSegments = [],
   height = '350px',
   className = '',
 }) {
@@ -265,6 +280,39 @@ export default function TripMap({
       });
     }
 
+    if (showRouteRisk && Array.isArray(routeRiskSegments)) {
+      routeRiskSegments
+        .filter((segment) => segment.riskLevel !== 'low')
+        .forEach((segment) => {
+          const color = segment.riskLevel === 'high' ? '#ef4444' : '#f97316';
+          const perPass = segment.tripCount ? segment.totalEvents / segment.tripCount : 0;
+          window.L.polyline(
+            [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+            { color, weight: 5, opacity: 0.55, smoothFactor: 1.5 }
+          )
+            .bindPopup(`<b>${titleCase(segment.riskLevel)} risk segment</b><br>Seen across ${segment.tripCount} trips<br>Avg ${perPass.toFixed(1)} events per pass<br>Most common: ${titleCase(segment.dominantEventType || 'none')}`)
+            .addTo(layers);
+        });
+    }
+
+    if (showDangerZones && Array.isArray(dangerZones)) {
+      dangerZones.forEach((zone) => {
+        if (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng))) return;
+        const color = RISK_COLORS[zone.riskLevel] || RISK_COLORS.low;
+        const lastSeen = zone.lastSeen ? new Date(zone.lastSeen).toLocaleDateString() : 'Unknown';
+        window.L.circle([zone.lat, zone.lng], {
+          radius: zone.radiusM || 100,
+          color,
+          fillColor: color,
+          fillOpacity: 0.18,
+          weight: 1.5,
+          opacity: 0.6,
+        })
+          .bindPopup(`<b>${titleCase(zone.riskLevel)} danger zone</b><br>${zone.eventCount || 0} events<br>${titleCase(zone.dominantType || 'risk event')}<br>Last seen: ${lastSeen}`)
+          .addTo(layers);
+      });
+    }
+
     if (showCurrentLocation && currentLocation) {
       const locIcon = window.L.divIcon({
         html: '<div style="width:16px;height:16px;background:#3b82f6;border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px rgba(59,130,246,0.2),0 2px 6px rgba(0,0,0,0.2)"></div>',
@@ -287,7 +335,7 @@ export default function TripMap({
         .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;

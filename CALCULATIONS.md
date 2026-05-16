@@ -1598,3 +1598,45 @@ score_smoothness = round(
 6. `extractBrakingSequences(routePoints, thresholds, options)` is the shared helper for full-stop braking analysis and slippery-condition proxy detection.
 7. `detectPhoneUseWindows(routePoints, thresholds)` is the primary phone-use path used by `detectDrivingEvents`; legacy phone proxy helpers remain for backward compatibility.
 8. `tripInsights.js` adds display/history-level helpers: `buildFatigueHeatmapData`, `buildDriverSignature`, and `calculatePredictiveMaintenance`.
+
+## May 2026 Advanced Safety And Reporting Engines
+
+DriveSense now includes six local-only analysis engines that derive additional driver context from completed trips:
+
+- `src/lib/dangerZoneEngine.js`
+  - `buildDangerZones(trips, options)` clusters historical `harsh_brake`, `near_miss`, `sharp_turn`, and `aggressive_overtake` events into quantized GPS cells.
+  - Each zone stores center coordinates, radius, event count, severity score, risk level, dominant event type, type breakdown, and last-seen timestamp.
+  - Risk levels use severity score bands: `critical >= 15`, `high >= 8`, `medium >= 4`, otherwise `low`.
+  - `checkDangerZoneProximity(lat, lng, zones, radiusM)` returns nearby zones sorted by Haversine distance.
+  - Cached in `drivesense_danger_zones` and invalidated when completed trips are created/imported.
+
+- `src/lib/thresholdCalibration.js`
+  - `computeCalibrationProfile(trips, thresholds)` requires at least `15` completed trips and `200 km`.
+  - It computes braking, acceleration, and turn distributions from route points/events and suggests personalized thresholds.
+  - Harsh braking suggestions are clamped to `[3.0, 7.0]`; rapid acceleration suggestions are clamped to `[2.0, 6.0]`.
+  - Confidence is `high` at `40 trips / 500 km`, `medium` at `20 trips / 250 km`, and `low` otherwise.
+  - Cached in `drivesense_calibration_profile`.
+
+- `src/lib/dailyFatigueEngine.js`
+  - `getTodayTrips(trips)` filters completed trips by the local current day.
+  - `computeDailyFatigue(todayTrips, settings)` sums moving drive minutes, trip count, rest time, and break duration into a `0-10` cumulative fatigue score.
+  - Fatigue levels are `critical >= 7`, `high >= 5`, `moderate >= 3`, otherwise `low`.
+  - Recommended breaks are `30`, `20`, `10`, or `0` minutes for critical/high/moderate/low.
+
+- `src/lib/ubiReport.js`
+  - `computeUBIReport(trips, settings, vehicles)` produces a usage-based-insurance style score card.
+  - Categories are mileage, time of day, hard braking, rapid acceleration, cornering, and speed compliance.
+  - Composite weights are `0.15`, `0.20`, `0.25`, `0.20`, `0.10`, and `0.10`.
+  - Tiers are `Preferred >= 85`, `Standard >= 70`, otherwise `Non-preferred`.
+  - `exportUBIReportPDF(report, settings)` writes a one-page driver score card.
+
+- `src/lib/preTripRisk.js`
+  - `computePreTripRisk(trips, settings, dailyFatigueState)` combines time-of-day risk, day-of-week risk, recent trend, daily fatigue, and last-trip outcome.
+  - Signal weights are `0.20`, `0.15`, `0.25`, `0.25`, and `0.15`.
+  - Readiness score is `100 - compositeRisk`; risk is `high >= 65`, `moderate >= 40`, otherwise `low`.
+
+- `src/lib/routeRiskIndex.js`
+  - `buildRouteRiskIndex(trips)` builds a local `Map<segmentKey, SegmentRisk>` from cleaned route-point pairs and nearest event locations.
+  - Segment risk score is `eventRate * 20 + harshRate * 40 + 10` when average speed is at least `100 km/h`, capped at `100`.
+  - Segment risk is `high >= 60`, `moderate >= 30`, otherwise `low`.
+  - Cached in `drivesense_route_risk_index`; storage is trimmed to the top `5000` most-driven segments if serialized size exceeds `2 MB`.

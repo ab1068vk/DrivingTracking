@@ -158,3 +158,72 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   doc.save(filename);
   return { filename, native: false };
 }
+
+export async function exportUBIReportPDF(ubiReport, settings = {}) {
+  const doc = new jsPDF();
+  const now = new Date(ubiReport.generatedAt || Date.now());
+  const filename = `drivesense-driver-score-card-${now.toISOString().slice(0, 10)}.pdf`;
+  const period = ubiReport.periodStart && ubiReport.periodEnd
+    ? `${formatDate(ubiReport.periodStart)} to ${formatDate(ubiReport.periodEnd)}`
+    : 'No completed trips';
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text('DriveSense · Driver Score Card', 14, 22);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Generated: ${now.toLocaleDateString()}`, 14, 32);
+  doc.text(`Period: ${period}`, 14, 39);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(42);
+  doc.text(`${ubiReport.ubiScore || 0}`, 92, 70, { align: 'center' });
+  doc.setFontSize(12);
+  doc.text('/ 100', 111, 70);
+  doc.setFontSize(14);
+  doc.text(`${ubiReport.ubiGrade} · ${ubiReport.ubiTier}`, 92, 82, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  const hours = Math.floor((ubiReport.totalDrivingMinutes || 0) / 60);
+  const minutes = Math.round((ubiReport.totalDrivingMinutes || 0) % 60);
+  doc.text(
+    `Trips: ${ubiReport.tripCount || 0}  |  Distance: ${(ubiReport.totalKm || 0).toFixed(1)} km  |  Drive time: ${hours}h ${minutes}m`,
+    92,
+    92,
+    { align: 'center' }
+  );
+
+  const rows = Object.values(ubiReport.categories || {});
+  let y = 114;
+  doc.setFont('helvetica', 'bold');
+  writeRow(doc, ['Category', 'Score', 'Grade', 'Detail'], y, [58, 28, 24, 60]);
+  y += 8;
+  doc.setFont('helvetica', 'normal');
+  rows.forEach((row) => {
+    const score = Number(row.score) || 0;
+    const color = score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68];
+    writeRow(doc, [row.label, score, row.grade, row.value], y, [58, 28, 24, 60]);
+    doc.setFillColor(...color);
+    doc.rect(72, y + 2, Math.max(1, score / 5), 2, 'F');
+    y += 11;
+  });
+
+  doc.setTextColor(120);
+  doc.setFontSize(8);
+  doc.text(ubiReport.disclaimer || '', 14, 270, { maxWidth: 180 });
+  doc.text('Powered by DriveSense - private, local-only data', 14, 280);
+  doc.setTextColor(0);
+
+  if (isNativePlatform()) {
+    const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
+    return saveExportToDownloads({
+      filename,
+      data: base64,
+      mimeType: 'application/pdf',
+      base64: true,
+    });
+  }
+
+  doc.save(filename);
+  return { filename, native: false };
+}

@@ -21,6 +21,8 @@ export const NOTIFICATION_IDS = {
   SPEEDING_WARNING: 4004,
   SPEEDING_ESCALATION: 4005,
   FATIGUE_BREAK_REMINDER: 4006,
+  DAILY_FATIGUE_WARNING: 2200,
+  DANGER_ZONE_PROXIMITY: 4007,
   TRIP_SCORE_PERSONAL_BEST: 4010,
   TRIP_SCORE_IMPROVEMENT: 4011,
   TRIP_SCORE_DECLINE: 4012,
@@ -271,7 +273,7 @@ export async function notifyTripCompleted(trip) {
   });
 }
 
-export async function notifyStayAlert() {
+export async function notifyStayAlert(opts = {}) {
   if (!isNativePlatform()) return;
   if (!notificationsEnabled('safe_driving_reminder')) return;
   const granted = await requestNotificationPermission();
@@ -279,12 +281,28 @@ export async function notifyStayAlert() {
 
   await LocalNotifications.schedule({
     notifications: [{
-      id: STAY_ALERT_ID,
-      title: 'Stay Alert',
-      body: 'Heading drift detected - take a break if you can.',
-      channelId: SUMMARY_CHANNEL_ID,
+      id: opts.id || STAY_ALERT_ID,
+      title: opts.title || 'Stay Alert',
+      body: opts.body || 'Heading drift detected - take a break if you can.',
+      channelId: opts.channelId || SUMMARY_CHANNEL_ID,
+      schedule: opts.schedule,
+      extra: opts.extra,
     }],
   });
+}
+
+export async function notifyDailyFatigueWarning(fatigueState) {
+  if (!isNativePlatform()) return null;
+  if (!notificationsEnabled('notif_drowsy_alert_enabled')) return null;
+  const notification = {
+    id: NOTIFICATION_IDS.DAILY_FATIGUE_WARNING,
+    title: 'Take a break - high fatigue',
+    body: `${Math.round(fatigueState.totalDrivingMinutes || 0)} min driven today. Rest ${fatigueState.recommendedBreakMinutes || 0} min before your next trip.`,
+    channelId: SUMMARY_CHANNEL_ID,
+    schedule: { at: new Date() },
+    extra: { type: 'daily_fatigue_warning' },
+  };
+  return scheduleNotification(notification);
 }
 
 export async function notifyPhoneUseDetected(opts = {}, settings = localSettings.get()) {

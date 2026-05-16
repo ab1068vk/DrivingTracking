@@ -4,6 +4,8 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
+import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
@@ -83,6 +85,14 @@ const putTrips = async (incomingTrips) => {
   for (const trip of incomingTrips) {
     await putTrip(trip);
   }
+};
+
+const invalidateTripDerivedCaches = async () => {
+  await Promise.all([
+    removeJson(DRIVER_SIGNATURE_KEY),
+    invalidateDangerZoneCache(),
+    invalidateRouteRiskIndex(),
+  ]);
 };
 
 let importingNativeTrips = false;
@@ -187,6 +197,7 @@ const importNativeCompletedTrips = async () => {
     }
 
     await clearNativeCompletedTrips();
+    await invalidateTripDerivedCaches();
   } catch {
     // The existing JS store remains usable if the native bridge is unavailable.
   } finally {
@@ -259,7 +270,7 @@ export const localTripRepository = {
   async create(trip) {
     const saved = withId({ ...trip, created_at: new Date().toISOString() });
     await putTrip(saved);
-    if (saved.status === 'completed') await removeJson(DRIVER_SIGNATURE_KEY);
+    if (saved.status === 'completed') await invalidateTripDerivedCaches();
     await pruneExpiredTrips();
     return saved;
   },
@@ -268,7 +279,7 @@ export const localTripRepository = {
     const current = await this.getById(id);
     const updated = withId({ ...current, ...patch, id: current.id });
     await putTrip(updated);
-    if (updated.status === 'completed') await removeJson(DRIVER_SIGNATURE_KEY);
+    if (updated.status === 'completed') await invalidateTripDerivedCaches();
     return updated;
   },
 
@@ -286,7 +297,7 @@ export const localTripRepository = {
       return needsRescore(next) ? rescoreTrip(next) : next;
     });
     await putTrips(normalized);
-    if (normalized.some((trip) => trip.status === 'completed')) await removeJson(DRIVER_SIGNATURE_KEY);
+    if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
     await pruneExpiredTrips();
     return normalized;
   },

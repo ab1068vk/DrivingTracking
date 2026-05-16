@@ -9,6 +9,8 @@ import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
+import { buildDangerZones, loadDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
+import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -45,6 +47,10 @@ export default function MapScreen() {
   const [parkedLocation, setParkedLocation] = useState(null);
   const [parkingError, setParkingError] = useState(null);
   const [secondaryTripId, setSecondaryTripId] = useState('');
+  const [dangerZones, setDangerZones] = useState([]);
+  const [showDangerZones, setShowDangerZones] = useState(false);
+  const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
+  const [showRouteRisk, setShowRouteRisk] = useState(false);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
 
@@ -64,6 +70,9 @@ export default function MapScreen() {
   const selectedEvents = settings.phone_use_show_on_map === false
     ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
     : (selectedTrip?.driving_events || []);
+  const selectedRiskSegments = useMemo(() => (
+    selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
+  ), [routeRiskIndex, selectedTrip]);
   const commutePatterns = useMemo(() => identifyCommutePatterns(allCompleted), [allCompleted]);
   const compareOptions = useMemo(() => {
     if (!selectedTrip) return [];
@@ -104,6 +113,37 @@ export default function MapScreen() {
   useEffect(() => {
     setSecondaryTripId('');
   }, [selectedTripId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const rebuildOverlays = async () => {
+      if (!allCompleted.length) {
+        setDangerZones([]);
+        setRouteRiskIndex(new Map());
+        return;
+      }
+
+      let zones = await loadDangerZones();
+      if (!zones.length) {
+        zones = buildDangerZones(allCompleted);
+        await saveDangerZones(zones);
+      }
+      let index = await loadRouteRiskIndex();
+      if (!index || index.size === 0) {
+        index = buildRouteRiskIndex(allCompleted);
+        await saveRouteRiskIndex(index);
+      }
+      if (!cancelled) {
+        setDangerZones(zones);
+        setRouteRiskIndex(index);
+      }
+    };
+
+    rebuildOverlays();
+    return () => {
+      cancelled = true;
+    };
+  }, [allCompleted.length, trips]);
 
   const handleWhereParked = async () => {
     const stored = await getLastParkedLocation();
@@ -183,6 +223,10 @@ export default function MapScreen() {
               showCurrentLocation={showCurrentLoc}
               currentLocation={currentLocation}
               parkedLocation={parkedLocation}
+              showDangerZones={showDangerZones}
+              dangerZones={dangerZones}
+              showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
+              routeRiskSegments={selectedRiskSegments}
               height="400px"
             />
             <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
@@ -252,6 +296,12 @@ export default function MapScreen() {
           <div className="w-3 h-3 bg-orange-400 rounded-full" />
           Event marker
         </div>
+        {dangerZones.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 bg-red-500 rounded-full opacity-70" />
+            Danger zone
+          </div>
+        )}
       </div>
 
       <div>
@@ -268,6 +318,23 @@ export default function MapScreen() {
                   {f.label}
                 </button>
               ))}
+              <button
+                onClick={() => setShowDangerZones(value => !value)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap ${
+                  showDangerZones ? 'bg-red-500 text-white border-red-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                Danger Zones
+              </button>
+              <button
+                onClick={() => setShowRouteRisk(value => !value)}
+                disabled={!selectedTrip}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
+                  showRouteRisk ? 'bg-orange-500 text-white border-orange-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                Route risk
+              </button>
             </div>
           </div>
         </div>

@@ -5,7 +5,7 @@ import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
-  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone
+  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
@@ -27,6 +27,7 @@ import {
   dispatchPostTripNotification,
   checkAndNotifyPhoneUsePattern,
   notifyStyleShift,
+  notifyDailyFatigueWarning,
 } from '@/lib/notificationService';
 import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
 import {
@@ -53,6 +54,10 @@ import {
   calculateWeeklyDrivingGoals,
   buildDriverSignature,
 } from '@/lib/tripInsights';
+import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } from '@/lib/dangerZoneEngine';
+import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
+import { computePreTripRisk } from '@/lib/preTripRisk';
+import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -73,7 +78,12 @@ export default function Dashboard() {
   const timerRef = useRef(null);
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
+  const lastProximityAlertRef = useRef(0);
   const settings = localSettings.get();
+  const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
+  const [pendingStartOptions, setPendingStartOptions] = useState(null);
+  const [hazardMessage, setHazardMessage] = useState(null);
+  const [readinessDismissed, setReadinessDismissed] = useState(false);
 
   useEffect(() => {
     activeTripRef.current = activeTrip;
@@ -84,6 +94,7 @@ export default function Dashboard() {
     if (!tracking) {
       stayAlertSentRef.current = false;
       lastStayAlertAtRef.current = 0;
+      lastProximityAlertRef.current = 0;
     }
   }, [tracking]);
 
@@ -119,6 +130,13 @@ export default function Dashboard() {
   });
 
   const completedTrips = recentTrips.filter(t => t.status === 'completed');
+  const todayTrips = getTodayTrips(completedTrips);
+  const dailyFatigue = computeDailyFatigue(todayTrips, settings);
+  const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue);
+
+  useEffect(() => {
+    setReadinessDismissed(false);
+  }, [completedTrips[0]?.id]);
 
   // Resume active trip from session (crash recovery)
   useEffect(() => {
@@ -159,9 +177,27 @@ export default function Dashboard() {
       locationService.current = createDrivingTrackingService({ background: useBackground });
     }
     locationService.current.start(
-      (point) => {
+      async (point) => {
         setCurrentLocation(point);
         setLocationError(null);
+        const latestSettings = localSettings.get();
+        if (latestSettings.danger_zone_alerts_enabled !== false) {
+          const zones = await loadDangerZones();
+          const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
+          if (nearby.length > 0 && Date.now() - lastProximityAlertRef.current > 60 * 1000) {
+            const zone = nearby[0];
+            lastProximityAlertRef.current = Date.now();
+            const typeLabel = String(zone.dominantType || 'risk event').replace(/_/g, ' ');
+            const body = `${typeLabel} reported ${Math.round(zone.distanceM || 0)} m ahead`;
+            setHazardMessage({ body, at: Date.now() });
+            notifyStayAlert({
+              id: 4007,
+              title: 'Danger zone ahead',
+              body,
+              extra: { type: 'danger_zone', zoneId: zone.id },
+            }).catch(() => {});
+          }
+        }
         activeTripStore.addPoint(point);
         setActiveTrip(prev => {
           if (!prev) return prev;
@@ -175,10 +211,15 @@ export default function Dashboard() {
     );
   }, []);
 
-  const handleStartTrip = useCallback(async ({ autoStarted = false } = {}) => {
+  const handleStartTrip = useCallback(async ({ autoStarted = false, bypassFatigueWarning = false } = {}) => {
     if (trackingRef.current) return;
 
     const cfg = localSettings.get();
+    if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
+      setPendingStartOptions({ autoStarted });
+      setFatigueDialogOpen(true);
+      return;
+    }
     if (cfg.tracking_paused) {
       setLocationError('Tracking is paused in Settings.');
       return;
@@ -231,7 +272,7 @@ export default function Dashboard() {
     startGPS();
     notifyTripStarted();
     scheduleLongTripReminder(tripData.start_time);
-  }, [startGPS]);
+  }, [dailyFatigue.shouldWarnBeforeTrip, startGPS]);
 
   const handleEndTrip = async () => {
     const tripToEnd = activeTripRef.current || activeTrip;
@@ -295,6 +336,8 @@ export default function Dashboard() {
     };
 
     const savedTrip = await tripService.create(completedTrip);
+    await invalidateDangerZoneCache();
+    await invalidateRouteRiskIndex();
     const parkedPoint = pts[pts.length - 1];
     if (parkedPoint) {
       await saveLastParkedLocation({
@@ -312,6 +355,10 @@ export default function Dashboard() {
       notifyStyleShift(driverSignature.style_shifts, settings).catch(() => {});
     }
     await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch(() => {});
+    const newDailyFatigue = computeDailyFatigue(getTodayTrips([completedTrip, ...completedTrips]), settings);
+    if (newDailyFatigue.fatigueLevel === 'high' || newDailyFatigue.fatigueLevel === 'critical') {
+      notifyDailyFatigueWarning(newDailyFatigue).catch(() => {});
+    }
     activeTripStore.clear();
     activeTripRef.current = null;
     trackingRef.current = false;
@@ -494,6 +541,56 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {fatigueDialogOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 12 }}
+              className="w-full max-w-sm rounded-3xl border border-border bg-card p-5 shadow-2xl"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-1 h-5 w-5 text-orange-500" />
+                <div>
+                  <h2 className="font-semibold">High fatigue detected</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    You've driven {dailyFatigue.totalDrivingMinutes} min today. Consider a {dailyFatigue.recommendedBreakMinutes}-min break first.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    setFatigueDialogOpen(false);
+                    setPendingStartOptions(null);
+                  }}
+                  className="rounded-xl border border-border px-3 py-2 text-sm font-semibold hover:bg-secondary"
+                >
+                  Take a break
+                </button>
+                <button
+                  onClick={() => {
+                    const nextOptions = pendingStartOptions || {};
+                    setFatigueDialogOpen(false);
+                    setPendingStartOptions(null);
+                    handleStartTrip({ ...nextOptions, bypassFatigueWarning: true });
+                  }}
+                  className="rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+                >
+                  Continue anyway
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Active Trip Card */}
       <AnimatePresence mode="wait">
         {tracking ? (
@@ -554,6 +651,12 @@ export default function Dashboard() {
               </div>
             )}
 
+            {hazardMessage && Date.now() - hazardMessage.at < 2 * 60 * 1000 && (
+              <div className="mb-4 rounded-xl bg-red-500/25 px-3 py-2 text-sm font-medium text-red-50">
+                {hazardMessage.body}
+              </div>
+            )}
+
             <button
               onClick={handleEndTrip}
               className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
@@ -586,6 +689,46 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {!tracking && completedTrips.length >= 5 && !readinessDismissed && (
+        <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div
+              className="grid h-14 w-14 place-items-center rounded-full text-sm font-bold text-white"
+              style={{
+                background: preTripRisk.readinessScore >= 70
+                  ? '#22c55e'
+                  : preTripRisk.readinessScore >= 45
+                    ? '#eab308'
+                    : '#ef4444',
+              }}
+            >
+              {preTripRisk.readinessScore}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-semibold">Trip readiness</h2>
+                <button
+                  onClick={() => setReadinessDismissed(true)}
+                  className="rounded-lg p-1 text-muted-foreground hover:bg-secondary"
+                  aria-label="Dismiss readiness card"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="text-sm font-medium capitalize">
+                {preTripRisk.readinessScore}/100 · {preTripRisk.riskLevel} risk
+              </div>
+              {preTripRisk.riskLevel !== 'low' && (
+                <>
+                  <div className="mt-1 text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
+                  <div className="mt-1 text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3">
@@ -696,6 +839,43 @@ export default function Dashboard() {
             <div className="font-grotesk font-bold text-2xl capitalize">{fatigueRisk.level}</div>
             <div className="text-xs text-muted-foreground">{fatigueRisk.long_trip_count} long drives this week</div>
           </div>
+        </div>
+      )}
+
+      {dailyFatigue.tripCount >= 1 && (
+        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-base capitalize">Daily fatigue · {dailyFatigue.fatigueLevel}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {dailyFatigue.totalDrivingMinutes} min driven today across {dailyFatigue.tripCount} trips
+              </p>
+              {dailyFatigue.minutesSinceLastTrip != null && (
+                <p className="mt-1 text-xs text-muted-foreground">Resting {dailyFatigue.minutesSinceLastTrip} min</p>
+              )}
+            </div>
+            <div className="font-grotesk text-2xl font-bold">{dailyFatigue.cumulativeFatigueScore}/10</div>
+          </div>
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary">
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.min(100, dailyFatigue.cumulativeFatigueScore * 10)}%`,
+                background: dailyFatigue.fatigueLevel === 'critical'
+                  ? '#ef4444'
+                  : dailyFatigue.fatigueLevel === 'high'
+                    ? '#f97316'
+                    : dailyFatigue.fatigueLevel === 'moderate'
+                      ? '#eab308'
+                      : '#22c55e',
+              }}
+            />
+          </div>
+          {dailyFatigue.recommendedBreakMinutes > 0 && (
+            <div className="mt-3 text-xs font-semibold text-orange-500">
+              Take a {dailyFatigue.recommendedBreakMinutes}-min break before your next trip
+            </div>
+          )}
         </div>
       )}
 
