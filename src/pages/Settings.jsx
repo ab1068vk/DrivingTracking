@@ -584,6 +584,7 @@ export default function Settings() {
             { key: 'achievement_notifications', label: 'Achievements', sub: 'Notify when a driving achievement unlocks' },
             { key: 'weekly_report_notification', label: 'Weekly Report', sub: 'Weekly driving summary' },
             { key: 'safe_driving_reminder', label: 'Safe Driving Tips', sub: 'Occasional driving reminders' },
+            { key: 'live_coaching_enabled', label: 'Live coaching notifications', sub: 'Show real-time coaching feedback during active trips' },
           ].map(({ key, label, sub }) => (
             <SettingRow key={key} label={label} sublabel={sub}>
               <Toggle value={cfg.notifications_enabled !== false && cfg[key]} onChange={v => updateNotificationSetting({ [key]: v })} />

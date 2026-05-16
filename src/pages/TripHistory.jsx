@@ -5,6 +5,8 @@ import { tripService } from '@/api/trips';
 import { Search, Filter, Car, Tag } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import { localSettings } from '@/lib/trackingStore';
+import { getScoreColor } from '@/lib/tripEngine';
+import { Line, LineChart, ResponsiveContainer } from 'recharts';
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -46,6 +48,13 @@ const TAG_OPTIONS = [
   { id: 'errands', label: 'Errands', color: 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800/50' },
 ];
 
+const SCORE_SPARKLINES = [
+  { key: 'score_overall', label: 'Overall' },
+  { key: 'score_safety', label: 'Safety' },
+  { key: 'score_smoothness', label: 'Smooth' },
+  { key: 'score_eco', label: 'Eco' },
+];
+
 const isSameMonth = (value, now = new Date()) => {
   const date = new Date(value);
   return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
@@ -84,6 +93,28 @@ export default function TripHistory() {
 
   const completed = trips.filter(t => t.status === 'completed');
   const dateScoped = completed.filter(t => matchesDateFilter(t, dateFilter));
+  const recentChronological = [...completed]
+    .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
+    .slice(-5);
+  const sparklineData = recentChronological.map((trip, index) => ({
+    index,
+    score_overall: trip.score_overall ?? 0,
+    score_safety: trip.score_safety ?? 0,
+    score_smoothness: trip.score_smoothness ?? 0,
+    score_eco: trip.score_eco ?? 0,
+  }));
+  const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
+  const scoreDeltaForTrip = (trip) => {
+    const index = tripsByRecentOrder.findIndex((item) => String(item.id) === String(trip.id));
+    const previousFive = tripsByRecentOrder.slice(index + 1, index + 6).map((item) => Number(item.score_overall)).filter(Number.isFinite);
+    if (index < 0 || previousFive.length === 0 || !Number.isFinite(Number(trip.score_overall))) return null;
+    const avg = previousFive.reduce((sum, score) => sum + score, 0) / previousFive.length;
+    const delta = Number(trip.score_overall) - avg;
+    return {
+      delta,
+      direction: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
+    };
+  };
 
   const filtered = dateScoped.filter(t => {
     if (filterBy === 'excellent' && (t.score_overall ?? 0) < 85) return false;
@@ -138,6 +169,44 @@ export default function TripHistory() {
           className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary transition-colors"
         />
       </div>
+
+      {sparklineData.length > 1 && (
+        <div className="grid grid-cols-2 gap-2">
+          {SCORE_SPARKLINES.map((score, index) => {
+            const latest = sparklineData[sparklineData.length - 1]?.[score.key] || 0;
+            const color = getScoreColor(latest).color.includes('green')
+              ? '#22c55e'
+              : getScoreColor(latest).color.includes('blue')
+                ? '#3b82f6'
+                : getScoreColor(latest).color.includes('yellow')
+                  ? '#eab308'
+                  : getScoreColor(latest).color.includes('orange')
+                    ? '#f97316'
+                    : '#ef4444';
+            return (
+              <motion.div
+                key={score.key}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.1 * index }}
+                className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2"
+              >
+                <div>
+                  <div className="text-xs font-semibold">{score.label}</div>
+                  <div className="text-[10px] text-muted-foreground">last 5 trips</div>
+                </div>
+                <div className="h-8 w-20">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={sparklineData}>
+                      <Line type="monotone" dataKey={score.key} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
         <button
@@ -207,7 +276,7 @@ export default function TripHistory() {
         <div className="space-y-3">
           {sorted.map((trip, i) => (
             <div key={trip.id}>
-              <TripCard trip={trip} units={units} index={i} />
+              <TripCard trip={trip} units={units} index={i} scoreDelta={scoreDeltaForTrip(trip)} />
               <div className="flex items-center gap-2 mt-1.5 px-1">
                 {trip.tag ? (
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${

@@ -58,6 +58,7 @@ export default function TripMap({
   events = [],
   showCurrentLocation = false,
   currentLocation = null,
+  parkedLocation = null,
   height = '350px',
   className = '',
 }) {
@@ -213,12 +214,28 @@ export default function TripMap({
         .bindPopup('<b>You are here</b>')
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation]);
+    if (parkedLocation?.lat && parkedLocation?.lng) {
+      const parkedIcon = window.L.divIcon({
+        html: '<div style="width:22px;height:22px;background:#f97316;border:3px solid white;border-radius:50%;box-shadow:0 0 0 8px rgba(249,115,22,0.24),0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:700">P</div>',
+        className: '',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+      window.L.marker([parkedLocation.lat, parkedLocation.lng], { icon: parkedIcon })
+        .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
+        .addTo(layers);
+    }
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
     leafletMapRef.current.panTo([currentLocation.lat, currentLocation.lng]);
   }, [currentLocation, showCurrentLocation]);
+
+  useEffect(() => {
+    if (!leafletMapRef.current || !parkedLocation?.lat || !parkedLocation?.lng) return;
+    leafletMapRef.current.setView([parkedLocation.lat, parkedLocation.lng], 17);
+  }, [parkedLocation]);
 
   return (
     <div

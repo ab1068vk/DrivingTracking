@@ -15,7 +15,7 @@ import {
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   formatDistance, formatDuration, formatSpeed, getScoreColor, simplifyRoute
 } from '@/lib/tripEngine';
-import { activeTripStore, localSettings } from '@/lib/trackingStore';
+import { activeTripStore, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import {
   scheduleLongTripReminder,
@@ -37,6 +37,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
+import LiveCoachOverlay from '@/components/LiveCoachOverlay';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import {
   buildScoreTips,
@@ -288,7 +289,16 @@ export default function Dashboard() {
       start_source: tripToEnd.start_source || 'manual',
     };
 
-    await tripService.create(completedTrip);
+    const savedTrip = await tripService.create(completedTrip);
+    const parkedPoint = pts[pts.length - 1];
+    if (parkedPoint) {
+      await saveLastParkedLocation({
+        lat: parkedPoint.lat,
+        lng: parkedPoint.lng,
+        timestamp: parkedPoint.timestamp || endTime,
+        tripId: savedTrip?.id || completedTrip.id,
+      });
+    }
     if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
     await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch(() => {});
     activeTripStore.clear();
@@ -777,6 +787,13 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      {tracking && settings.live_coaching_enabled !== false && (
+        <LiveCoachOverlay
+          currentRoutePoints={activeTrip?.route_points || []}
+          currentEvents={activeTrip?.driving_events || []}
+          tripStartTime={activeTrip?.start_time}
+        />
+      )}
     </div>
   );
 }

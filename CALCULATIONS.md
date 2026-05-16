@@ -6,11 +6,12 @@ This document explains where every in-app calculation is done and shows the main
 
 The calculation code is concentrated in these files:
 
-- `src/lib/tripEngine.js`: GPS math, route cleaning, driving events, trip stats, trip scores, aggression, defensive driving, jerk, eco, fatigue, drowsy, parking, report export.
+- `src/lib/tripEngine.js`: GPS math, route cleaning, trip splitting, speed-zone inference, driving events, trip stats, trip scores, aggression, defensive driving, jerk, eco, fatigue, drowsy, parking, report export.
 - `src/lib/tripInsights.js`: map speed colors, stops, fuel/cost/CO2, maintenance, weekly goals, coach insights, badges, consistency, baseline, commute patterns.
 - `src/lib/activityRecognition.js`: JavaScript auto-start and auto-stop decisions.
-- `src/lib/trackingStore.js`: default thresholds and settings.
-- `src/lib/localTripRepository.js`: rescoring imported/background trips.
+- `src/lib/trackingStore.js`: default thresholds, settings, and last-parked storage helpers.
+- `src/lib/localTripRepository.js`: rescoring imported/background trips and storing the last parked location for native trips.
+- `src/lib/pdfExport.js`: monthly PDF report totals and table export formatting.
 - `src/pages/Dashboard.jsx`: trip completion pipeline.
 - `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java`: native Android background trip capture, GPS filtering, native stats, and native auto-stop.
 
@@ -27,6 +28,8 @@ const economics = estimateTripEconomics({ ...stats, ...scores }, vehicle, settin
 ```
 
 This flow is used in `src/pages/Dashboard.jsx` and in `src/lib/localTripRepository.js` when native Android trips are imported or old trips need rescoring.
+
+When a user splits a trip, `splitTripAtStops(trip, minParkMinutes)` runs the same pipeline for each generated sub-trip. Each sub-trip gets fresh statistics, events, scores, and economics rather than copying the parent values.
 
 ## Default Settings And Thresholds
 
@@ -270,6 +273,38 @@ else if (fHighway >= 0.30 && fUrban >= 0.30) roadType = 'mixed';
 else if (fResidential >= 0.50 && avgSpeed < 30) roadType = 'residential';
 ```
 
+## Speed Zone Inference
+
+Function: `inferSpeedZones`
+
+DriveSense does not call an external road-speed database. Instead, it estimates contextual speed zones from the observed traffic flow in sliding 60-second windows.
+
+For each window:
+
+```js
+const medianSpeed = percentileValue(speeds, 0.5);
+const p85Speed = percentileValue(speeds, 0.85);
+const spread = speedStdDev(speeds);
+```
+
+Zone assignment:
+
+```js
+if (p85 < 30) inferredZoneKmh = 30;
+else if (p85 < 55) inferredZoneKmh = 50;
+else if (p85 < 80) inferredZoneKmh = 70;
+else if (p85 < 110) inferredZoneKmh = 100;
+else inferredZoneKmh = 120;
+```
+
+Confidence:
+
+- `high`: speed standard deviation below `8 km/h`.
+- `medium`: speed standard deviation below `18 km/h`.
+- `low`: wider spread.
+
+Each zone includes `startIndex`, `endIndex`, `inferredZoneKmh`, `confidence`, road type, and window summary fields. `detectDrivingEvents()` uses the inferred zone plus `threshold_speed_over_kmh` as the contextual speeding threshold and stores `inferred_zone_kmh` and `zone_confidence` on speeding events.
+
 ## Event Detection
 
 Function: `detectDrivingEvents`
@@ -339,21 +374,21 @@ Defaults:
 
 ### Speeding
 
-Speeding uses the fallback threshold because the app has no road speed limit database.
+Speeding uses the lower of the configured fallback threshold and the inferred zone threshold:
 
 ```js
-const contextSpeedingThreshold = roadType === 'residential'
-  ? Math.min(configuredSpeedThreshold, 60)
-  : roadType === 'urban'
-    ? Math.min(configuredSpeedThreshold, 90)
-    : configuredSpeedThreshold;
+const contextualSpeedingThreshold = Math.min(
+  thresholds.SPEEDING_FALLBACK_KMH,
+  inferredZoneKmh + thresholds.SPEED_OVER_KMH
+);
 
-if (speed2 > contextSpeedingThreshold) {
+if (speed2 > contextualSpeedingThreshold) {
   speedingAccumSeconds += dt;
 }
 ```
 
 Default fallback threshold: `130 km/h`.
+Default inferred-zone buffer: `10 km/h`.
 
 ### Idle
 
@@ -832,6 +867,23 @@ maxSpeedKmh = 5
 
 Any continuous section at or below `5 km/h` for at least `90 seconds` becomes a stop.
 
+## Trip Splitting
+
+Function: `splitTripAtStops`
+
+Trip splitting uses `detectTripStops()` and treats stops of `minParkMinutes` or longer as separators. The default UI path uses `5 minutes`.
+
+For each generated driving segment:
+
+```js
+const stats = calculateTripStats(segmentPoints, segmentStart, segmentEnd, thresholds);
+const events = detectDrivingEvents(segmentPoints, thresholds);
+const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds);
+const economics = estimateTripEconomics({ ...stats, ...scores });
+```
+
+Each sub-trip receives a new id, recalculated start/end time, route points, driving events, scores, statistics, economics, `split_parent_id`, and `split_segment_index`. Vehicle id, tag, background-tracking flag, and start source are inherited from the parent. The original trip is not deleted by the engine; the Trip Detail confirmation flow deletes it after saving all sub-trips.
+
 ## Fuel, Cost, And CO2
 
 Function: `estimateTripEconomics`
@@ -1115,6 +1167,27 @@ Combines:
 
 It then picks a `focus_area` and up to 4 suggested actions.
 
+## Live Coach Overlay
+
+Component: `LiveCoachOverlay`
+
+During an active trip, the overlay recalculates partial-trip stats and events every `60 seconds`:
+
+```js
+const stats = calculateTripStats(currentRoutePoints, tripStartTime, new Date(), thresholds);
+const events = detectDrivingEvents(currentRoutePoints, thresholds);
+```
+
+Only one message is shown at a time. Priority is:
+
+1. Near miss in the last 120 seconds.
+2. New harsh brake count since the last check.
+3. Current speed above the contextual speed threshold.
+4. New rapid acceleration count since the last check.
+5. More than 5 minutes of idle time.
+
+The setting `live_coaching_enabled` disables this feature completely.
+
 ## Achievement Badges
 
 Function: `calculateAchievementBadges`
@@ -1286,6 +1359,20 @@ Trip Detail and Reports use `avg_running_speed_kmh` as the primary displayed ave
 
 `tripsToCSV` exports both speed averages: `Avg Speed (km/h)` for total-duration average and `Avg Moving Speed (km/h)` for `avg_running_speed_kmh`.
 
+Function in `src/lib/pdfExport.js`:
+
+- `exportMonthlyReportPDF`
+
+The monthly PDF export computes period totals from the supplied trip list:
+
+```js
+totalDistance = trips.reduce((sum, trip) => sum + trip.distance_km, 0);
+totalDuration = trips.reduce((sum, trip) => sum + trip.duration_seconds, 0);
+averageScore = average(trips.map((trip) => trip.overall_score));
+```
+
+It reuses `generateReportSummary`, `calculateNoHarshBrakeStreak`, and `estimateTripEconomics` for best/worst/longest trip, streak, cost, and CO2 summaries. PDF charts are intentionally omitted in v1; charts remain in the Reports page.
+
 ## Full Function Index
 
 ### `src/lib/tripEngine.js`
@@ -1307,6 +1394,8 @@ cleanRoutePoints
 simplifyRoute
 calculateRouteSummary
 classifyRoadType
+inferSpeedZones
+splitTripAtStops
 calculateJerkScore
 calculateHillDrivingScore
 calculateEcoDrivingScore
@@ -1351,6 +1440,12 @@ formatTime
 formatDateTime
 generateReportSummary
 tripsToCSV
+```
+
+### `src/lib/pdfExport.js`
+
+```text
+exportMonthlyReportPDF
 ```
 
 ### `src/lib/tripInsights.js`

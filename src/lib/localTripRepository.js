@@ -3,7 +3,7 @@ import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activi
 import { isAndroid } from '@/lib/nativePlatform';
 import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
-import { localSettings } from '@/lib/trackingStore';
+import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DB_NAME = 'drivesense_mobile';
@@ -128,7 +128,7 @@ const importNativeCompletedTrips = async () => {
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
       const simplifiedRoutePoints = simplifyRoute(routePoints, 10, events);
 
-      await putTrip({
+      const importedTrip = {
         ...trip,
         ...stats,
         ...scores,
@@ -139,7 +139,20 @@ const importNativeCompletedTrips = async () => {
         imported_from_native: true,
         schema_version: TRIP_SCHEMA_VERSION,
         updated_at: trip.updated_at || new Date().toISOString(),
-      });
+      };
+
+      await putTrip(importedTrip);
+
+      const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
+      if (finalPoint) {
+        await saveLastParkedLocation({
+          lat: finalPoint.lat,
+          lng: finalPoint.lng,
+          timestamp: importedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
+          tripId: importedTrip.id,
+        });
+        // FIX: Native background trips now update the shared last-parked location when imported.
+      }
     }
 
     await clearNativeCompletedTrips();

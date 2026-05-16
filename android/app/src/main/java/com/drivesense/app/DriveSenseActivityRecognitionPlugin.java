@@ -14,6 +14,7 @@ import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.util.Base64;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -221,6 +222,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         String filename = call.getString("filename");
         String data = call.getString("data");
         String mimeType = call.getString("mimeType", "application/octet-stream");
+        boolean isBase64 = Boolean.TRUE.equals(call.getBoolean("base64", false));
         if (filename == null || filename.trim().isEmpty()) {
             call.reject("filename is required.");
             return;
@@ -231,7 +233,8 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         }
 
         try {
-            JSObject payload = saveDownload(filename, data, mimeType);
+            byte[] bytes = isBase64 ? Base64.decode(data, Base64.DEFAULT) : data.getBytes(StandardCharsets.UTF_8);
+            JSObject payload = saveDownload(filename, bytes, mimeType);
             call.resolve(payload);
         } catch (Exception error) {
             call.reject(error.getMessage(), error);
@@ -289,14 +292,14 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         return powerManager != null && powerManager.isIgnoringBatteryOptimizations(getContext().getPackageName());
     }
 
-    private JSObject saveDownload(String filename, String data, String mimeType) throws Exception {
+    private JSObject saveDownload(String filename, byte[] data, String mimeType) throws Exception {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return saveDownloadWithMediaStore(filename, data, mimeType);
         }
         return saveDownloadWithPublicFile(filename, data);
     }
 
-    private JSObject saveDownloadWithMediaStore(String filename, String data, String mimeType) throws Exception {
+    private JSObject saveDownloadWithMediaStore(String filename, byte[] data, String mimeType) throws Exception {
         ContentResolver resolver = getContext().getContentResolver();
         ContentValues values = new ContentValues();
         values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
@@ -309,7 +312,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
         try (OutputStream output = resolver.openOutputStream(uri)) {
             if (output == null) throw new Exception("Unable to open Downloads file.");
-            output.write(data.getBytes(StandardCharsets.UTF_8));
+            output.write(data);
         } catch (Exception error) {
             resolver.delete(uri, null, null);
             throw error;
@@ -325,7 +328,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         return payload;
     }
 
-    private JSObject saveDownloadWithPublicFile(String filename, String data) throws Exception {
+    private JSObject saveDownloadWithPublicFile(String filename, byte[] data) throws Exception {
         File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!downloadsDir.exists() && !downloadsDir.mkdirs()) {
             throw new Exception("Unable to open Downloads folder.");
@@ -333,7 +336,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
         File file = new File(downloadsDir, filename);
         try (FileOutputStream output = new FileOutputStream(file, false)) {
-            output.write(data.getBytes(StandardCharsets.UTF_8));
+            output.write(data);
         }
 
         JSObject payload = new JSObject();

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -13,9 +13,29 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
-import { formatDistance, formatDuration, formatDateTime, formatSpeed, getScoreColor } from '@/lib/tripEngine';
+import {
+  calculateSegmentMetrics,
+  formatDistance,
+  formatDuration,
+  formatDateTime,
+  formatSpeed,
+  getScoreColor,
+  inferSpeedZones,
+  splitTripAtStops,
+} from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -56,6 +76,19 @@ export default function TripDetail() {
       navigate('/trips');
     },
   });
+  const splitMutation = useMutation({
+    mutationFn: async ({ sourceTrip }) => {
+      const subTrips = splitTripAtStops(sourceTrip, 5);
+      await Promise.all(subTrips.map((subTrip) => tripService.create(subTrip)));
+      await tripService.delete(sourceTrip.id);
+      return subTrips;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['all-trips'] });
+      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      navigate('/trips');
+    },
+  });
   const tagMutation = useMutation({
     mutationFn: (tag) => tripService.update(id, { tag, tag_reviewed: true }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['trip', id] }),
@@ -67,6 +100,40 @@ export default function TripDetail() {
       return [];
     }
   });
+  const stops = useMemo(() => (
+    trip ? detectTripStops(trip.route_points || []) : []
+  ), [trip]);
+  const parkStops = useMemo(() => (
+    stops.filter((stop) => (stop.duration_seconds || 0) >= 5 * 60)
+  ), [stops]);
+  const splitPreviewTrips = useMemo(() => (
+    trip && parkStops.length ? splitTripAtStops(trip, 5) : []
+  ), [parkStops.length, trip]);
+  const speedZoneSummary = useMemo(() => {
+    if (!trip) return [];
+
+    const points = trip.route_points || [];
+    const zones = inferSpeedZones(points);
+    const byZone = new Map();
+    for (let i = 1; i < points.length; i++) {
+      const zone = zones.find((item) => i >= item.startIndex && i <= item.endIndex);
+      if (!zone) continue;
+      const segment = calculateSegmentMetrics(points[i - 1], points[i]);
+      if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
+      const key = zone.inferredZone;
+      const current = byZone.get(key) || {
+        inferredZone: zone.inferredZone,
+        inferredZoneKmh: zone.inferredZoneKmh,
+        confidence: zone.confidence,
+        distanceKm: 0,
+      };
+      current.distanceKm += segment.distanceKm;
+      if (zone.confidence === 'high') current.confidence = 'high';
+      else if (zone.confidence === 'medium' && current.confidence !== 'high') current.confidence = 'medium';
+      byZone.set(key, current);
+    }
+    return [...byZone.values()].sort((a, b) => a.inferredZoneKmh - b.inferredZoneKmh);
+  }, [trip]);
 
   if (isLoading) {
     return (
@@ -93,7 +160,6 @@ export default function TripDetail() {
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
   const tripVehicle = vehicles.find((vehicle) => String(vehicle.id) === String(trip.vehicle_id));
   const economics = estimateTripEconomics(trip, tripVehicle, settings);
-  const stops = detectTripStops(trip.route_points || []);
   const fatigueRisk = calculateFatigueRisk([trip], settings);
   const tagSuggestion = suggestTripTag(trip);
   const showTagSuggestion = !trip.tag &&
@@ -135,6 +201,45 @@ export default function TripDetail() {
           <span className="text-sm">Back</span>
         </button>
         <div className="flex gap-2">
+          {parkStops.length > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-opacity">
+                  Split Trip
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Split into separate trips?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    DriveSense found {parkStops.length} parked stop{parkStops.length === 1 ? '' : 's'} of 5 minutes or longer. The original trip will be replaced by these segments.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="space-y-2">
+                  {splitPreviewTrips.map((subTrip, index) => (
+                    <div key={`${subTrip.start_time}-${index}`} className="rounded-xl border border-border bg-secondary/50 p-3 text-sm">
+                      <div className="font-semibold">Trip {index + 1}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {formatDateTime(subTrip.start_time)} to {formatDateTime(subTrip.end_time)}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {formatDistance(subTrip.distance_km || 0, units)} · {formatDuration(subTrip.duration_seconds || 0)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={splitMutation.isPending}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={splitMutation.isPending || splitPreviewTrips.length < 2}
+                    onClick={() => splitMutation.mutate({ sourceTrip: trip })}
+                  >
+                    {splitMutation.isPending ? 'Splitting...' : 'Split Trip'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           <button
             onClick={() => {
               if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
@@ -327,6 +432,28 @@ export default function TripDetail() {
           )}
         </div>
       </motion.div>
+
+      {speedZoneSummary.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.21 }}
+          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+        >
+          <h2 className="font-semibold mb-3">Speed Zones</h2>
+          <div className="space-y-2">
+            {speedZoneSummary.map((zone) => (
+              <div key={zone.inferredZone} className="flex items-center justify-between rounded-xl bg-secondary/50 p-3">
+                <div>
+                  <div className="text-sm font-semibold">{zone.inferredZoneKmh} km/h inferred</div>
+                  <div className="text-xs text-muted-foreground capitalize">{zone.confidence} confidence</div>
+                </div>
+                <div className="text-sm font-semibold">{formatDistance(zone.distanceKm, units)}</div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* Driving behavior detail */}
       <motion.div

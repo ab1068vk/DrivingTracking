@@ -12,6 +12,7 @@ import {
   cleanRoutePoints,
   computeSmoothedAccelerations,
   detectDrivingEvents,
+  inferSpeedZones,
   detectLaneChanges,
   DEFAULT_THRESHOLDS,
   EVENT_TYPES,
@@ -19,7 +20,9 @@ import {
   isNightDrivingTime,
   shouldAcceptLocationPoint,
   simplifyRoute,
+  splitTripAtStops,
 } from '@/lib/tripEngine';
+import { getLastParkedLocation, saveLastParkedLocation } from '@/lib/trackingStore';
 import {
   shouldAutoStartTracking,
   shouldAutoStopTracking,
@@ -296,6 +299,66 @@ describe('tripEngine', () => {
 
     expect(simplified.length).toBeLessThan(route.length);
     expect(simplified.some((item) => item.lat === corner.lat && item.lng === corner.lng)).toBe(true);
+  });
+
+  it('splits trips at sustained parked stops and recalculates segment scores', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 40),
+      point(43.6542, -79.3832, 30, 40),
+      point(43.6552, -79.3832, 60, 40),
+      point(43.6552, -79.3832, 90, 0),
+      point(43.6552, -79.3832, 450, 0),
+      point(43.6562, -79.3832, 480, 45),
+      point(43.6572, -79.3832, 510, 45),
+    ];
+    const trip = {
+      id: 'original-trip',
+      status: 'completed',
+      start_time: points[0].timestamp,
+      end_time: points[points.length - 1].timestamp,
+      route_points: points,
+      vehicle_id: 'vehicle-1',
+      tag: 'work',
+      background_tracking: true,
+    };
+
+    const splits = splitTripAtStops(trip, 5);
+
+    expect(splits).toHaveLength(2);
+    expect(splits[0].start_time).toBe(points[0].timestamp);
+    expect(splits[0].end_time).toBe(points[2].timestamp);
+    expect(splits[1].start_time).toBe(points[5].timestamp);
+    expect(splits[1].vehicle_id).toBe('vehicle-1');
+    expect(splits[1].tag).toBe('work');
+    expect(splits[0].score_overall).toBeGreaterThan(0);
+    expect(splits[0].split_parent_id).toBe('original-trip');
+  });
+
+  it('infers speed zones from 60-second route windows', () => {
+    const points = Array.from({ length: 7 }, (_, index) => point(43.6532 + index * 0.0002, -79.3832, index * 10, 45));
+
+    const zones = inferSpeedZones(points);
+
+    expect(zones.length).toBeGreaterThan(0);
+    expect(zones[0].inferredZone).toBe('zone_50');
+    expect(zones[0].inferredZoneKmh).toBe(50);
+    expect(zones[0].confidence).toBe('high');
+  });
+
+  it('round-trips the last parked location through storage', async () => {
+    const saved = await saveLastParkedLocation({
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-01-01T12:00:00.000Z',
+      tripId: 'park-test',
+      address: 'Toronto City Hall',
+    });
+    const loaded = await getLastParkedLocation();
+
+    expect(saved.tripId).toBe('park-test');
+    expect(loaded.lat).toBe(43.6532);
+    expect(loaded.lng).toBe(-79.3832);
+    expect(loaded.address).toBe('Toronto City Hall');
   });
 });
 

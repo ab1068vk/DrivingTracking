@@ -18,8 +18,9 @@ Primary capabilities:
 - Store trips, route points, driving events, vehicles, and settings locally.
 - Calculate distance, duration, average speed, max speed, idle time, night driving, risky events, and driving scores.
 - Show trip history, filters, tags, detail pages, route maps, and route playback.
-- Provide reports, driving coach insights, achievements, weekly goals, fatigue risk, fuel cost, and CO2 estimates.
-- Export trip CSV files and full JSON backups.
+- Provide reports, driving coach insights, live coaching, achievements, weekly goals, fatigue risk, fuel cost, and CO2 estimates.
+- Split trips at long mid-trip parking stops, infer speed-limit-like zones without external road APIs, remember the last parked location, and compare two runs of the same commute.
+- Export trip CSV files, monthly report PDFs, and full JSON backups.
 - Import full JSON backups.
 - Manage permissions, notification preferences, tracking mode, units, theme, detection thresholds, goals, retention, and privacy controls.
 
@@ -158,6 +159,8 @@ Dashboard responsibilities:
 - Notify trip start and trip completion.
 - Schedule and cancel long-trip reminders.
 - Sync achievement notifications after a trip completes.
+- Save the final clean GPS point as the last parked location after every completed foreground trip.
+- Show the opt-out live coaching overlay during active tracking when the current route indicates near misses, harsh braking, speeding, rapid acceleration, or extended idling.
 - Show dashboard summaries and recent trips.
 
 Manual trip save rules:
@@ -186,6 +189,8 @@ File: `src/pages/TripHistory.jsx`
 
 Trip History provides:
 
+- Four 5-trip rolling score sparklines for overall, safety, smoothness, and eco score.
+- Per-trip delta badges comparing the trip score with the last-5-trip average.
 - Search by address/date text.
 - Date filters: this month, last 30 days, last 90 days, all time.
 - Sort options: newest, oldest, best score, worst score, longest, shortest.
@@ -209,6 +214,8 @@ Trip Detail provides:
 - Night driving indicator.
 - Vehicle association.
 - Stop detection summary.
+- A one-tap Split Trip action when `detectTripStops()` finds a stop of at least 5 minutes. Confirming creates recalculated sub-trips and deletes the original trip.
+- Speed Zones summary from `inferSpeedZones()`, showing distance by inferred zone and confidence.
 - Fatigue risk.
 - Driving event count and event list.
 - Route point count.
@@ -225,8 +232,10 @@ Map features:
 - Filter routes by all, night, or harsh braking.
 - Show current device location after permission.
 - Show start/end markers.
+- Show a "Where did I park?" shortcut that pans to the saved final trip location, adds a distinct parked marker, and displays a cached reverse-geocoded address or coordinates.
 - Show event markers when a trip is selected.
 - Switch between static map and route playback.
+- Compare a selected trip against one of the 5 most recent matching commute-pattern trips with two synced playback cursors and a side-by-side score/event panel.
 
 Map implementation:
 
@@ -259,6 +268,7 @@ Reports provide period-based analysis:
 - Risk event breakdown.
 - Best and worst trip highlights.
 - CSV export for the selected period.
+- Monthly PDF report export with cover totals, score table, summary stats, cost, CO2, and a note that full charts remain in the app.
 
 ### 5.7 Driving Coach
 
@@ -445,8 +455,27 @@ Default settings include:
 - Event detection thresholds.
 - Weekly goals.
 - Onboarding state.
+- Live coaching notification toggle.
 
-### 7.2 Active Trip
+### 7.2 Last Parked Location
+
+File: `src/lib/trackingStore.js`
+
+Last parked key:
+
+- `drivesense_last_parked`
+
+Storage:
+
+- `getJson`/`setJson`, which maps to Capacitor Preferences on native and localStorage on web.
+
+Purpose:
+
+- Store the final clean GPS point, timestamp, trip id, and optional cached reverse-geocoded address for the most recently completed trip.
+- Foreground trips save this from `Dashboard.jsx` after trip creation.
+- Android native background trips save this when imported by `localTripRepository.js`.
+
+### 7.3 Active Trip
 
 File: `src/lib/trackingStore.js`
 
@@ -463,7 +492,7 @@ Purpose:
 - Crash/reload recovery while a trip is active.
 - The dashboard can recover and reattach GPS tracking.
 
-### 7.3 Trip Repository
+### 7.4 Trip Repository
 
 File: `src/lib/localTripRepository.js`
 
@@ -483,6 +512,7 @@ Native completed trip import:
 - On Android, `list()` and `getById()` call `importNativeCompletedTrips()`.
 - Native completed trips are fetched through the Capacitor plugin.
 - Imported trips are rescored by the JavaScript trip engine.
+- Imported trips update `drivesense_last_parked` from the final native route point.
 - Native completed trips are then cleared from the native store.
 
 Retention:
@@ -490,7 +520,7 @@ Retention:
 - `pruneExpiredTrips()` deletes trips older than `data_retention_days`.
 - `0` means keep forever.
 
-### 7.4 Vehicle Repository
+### 7.5 Vehicle Repository
 
 File: `src/lib/localVehicleRepository.js`
 
@@ -511,7 +541,7 @@ Vehicle repository guarantees:
 - At least one vehicle is default when vehicles exist.
 - Setting one default clears default status from others.
 
-### 7.5 Capacitor Preferences Abstraction
+### 7.6 Capacitor Preferences Abstraction
 
 File: `src/lib/mobileStorage.js`
 
@@ -527,7 +557,7 @@ Behavior:
 - Browser: localStorage.
 - Last fallback: in-memory map.
 
-### 7.6 Native Android Store
+### 7.7 Native Android Store
 
 File: `android/app/src/main/java/com/drivesense/app/DriveSenseNativeTripStore.java`
 
@@ -1688,6 +1718,7 @@ Files:
 - `src/lib/tripEngine.js`
 - `src/lib/dataBackup.js`
 - `src/lib/nativeDownloads.js`
+- `src/lib/pdfExport.js`
 - `src/pages/Settings.jsx`
 - `src/pages/Report.jsx`
 - `android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java`
@@ -1714,6 +1745,18 @@ Files:
 - Browser: Blob download.
 
 ### 14.2 Full JSON Backup
+
+### 14.2 Monthly PDF Report
+
+`exportMonthlyReportPDF(trips, period, settings)` builds a three-page jsPDF report:
+
+- Cover page with DriveSense title, selected period, export timestamp, trip count, distance, drive time, and average score.
+- Trip score table with date, distance, duration, scores, harsh brakes, and speeding events.
+- Summary page with best/worst/longest trip, most improved week, estimated fuel cost, estimated CO2, and no-harsh-brake streak.
+
+On Android the PDF bytes are base64-encoded and saved to Downloads through `saveExportToDownloads`. In the browser jsPDF starts a normal Blob-style download.
+
+### 14.3 Full JSON Backup
 
 Backup shape:
 
@@ -2585,21 +2628,22 @@ Defaults:
 
 #### Speeding
 
-Speeding uses the fallback threshold because the app has no road speed limit database.
+Speeding uses heuristic speed-zone inference because the app has no external road speed limit database. `inferSpeedZones()` analyzes sliding 60-second route windows, assigns zones from p85 observed speed, and records confidence from speed spread.
 
 ```js
-const contextSpeedingThreshold = roadType === 'residential'
-  ? Math.min(configuredSpeedThreshold, 60)
-  : roadType === 'urban'
-    ? Math.min(configuredSpeedThreshold, 90)
-    : configuredSpeedThreshold;
+const contextualSpeedingThreshold = Math.min(
+  thresholds.SPEEDING_FALLBACK_KMH,
+  inferredZoneKmh + thresholds.SPEED_OVER_KMH
+);
 
-if (speed2 > contextSpeedingThreshold) {
+if (speed2 > contextualSpeedingThreshold) {
   speedingAccumSeconds += dt;
 }
 ```
 
 Default fallback threshold: `130 km/h`.
+Default inferred-zone buffer: `10 km/h`.
+Speeding events include `inferred_zone_kmh` and `zone_confidence`.
 
 #### Idle
 
@@ -3078,6 +3122,12 @@ maxSpeedKmh = 5
 
 Any continuous section at or below `5 km/h` for at least `90 seconds` becomes a stop.
 
+#### Trip Splitting
+
+Function: `splitTripAtStops`
+
+Trips can be split at stops of `5 minutes` or longer. Each generated sub-trip recalculates `calculateTripStats`, `detectDrivingEvents`, `calculateTripScores`, and `estimateTripEconomics`, inherits parent vehicle/tag/background fields, and stores `split_parent_id` plus `split_segment_index`.
+
 #### Fuel, Cost, And CO2
 
 Function: `estimateTripEconomics`
@@ -3532,6 +3582,8 @@ Trip Detail and Reports use `avg_running_speed_kmh` as the primary displayed ave
 
 `tripsToCSV` exports both speed averages: `Avg Speed (km/h)` for total-duration average and `Avg Moving Speed (km/h)` for `avg_running_speed_kmh`.
 
+`exportMonthlyReportPDF` in `src/lib/pdfExport.js` builds the monthly PDF cover totals, trip score table, summary stats, fuel cost, CO2, and no-harsh-brake streak. Charts remain in the Reports page for v1.
+
 #### Full Function Index
 
 #### `src/lib/tripEngine.js`
@@ -3553,6 +3605,8 @@ cleanRoutePoints
 simplifyRoute
 calculateRouteSummary
 classifyRoadType
+inferSpeedZones
+splitTripAtStops
 calculateJerkScore
 calculateHillDrivingScore
 calculateEcoDrivingScore
@@ -3597,6 +3651,12 @@ formatTime
 formatDateTime
 generateReportSummary
 tripsToCSV
+```
+
+#### `src/lib/pdfExport.js`
+
+```text
+exportMonthlyReportPDF
 ```
 
 #### `src/lib/tripInsights.js`
@@ -3742,11 +3802,12 @@ Core libraries:
 | `src/lib/nativePlatform.js` | Capacitor platform helpers and native settings opener. |
 | `src/lib/notificationService.js` | Notification channel setup, trip notifications, weekly reports, safe-driving reminders, achievements. |
 | `src/lib/PageNotFound.jsx` | Not-found view. |
+| `src/lib/pdfExport.js` | Monthly jsPDF report generation and Android/browser PDF download handling. |
 | `src/lib/permissions.js` | Geolocation, notification, activity recognition, background location permission helpers and explanatory text. |
 | `src/lib/query-client.js` | TanStack Query client singleton. |
 | `src/lib/trackingService.js` | Foreground and background location service factory. |
 | `src/lib/trackingStore.js` | Default settings, settings store, active trip store, theme application, web geolocation permission helpers. |
-| `src/lib/tripEngine.js` | Trip math, cleaning, event detection, scoring, formatting, CSV export. Section 27 lists every calculation. |
+| `src/lib/tripEngine.js` | Trip math, cleaning, trip splitting, speed-zone inference, event detection, scoring, formatting, CSV export. Section 27 lists every calculation. |
 | `src/lib/tripInsights.js` | Analytics, maintenance, economics, coaching, achievements, stops, map speed labels. Section 27 lists every calculation. |
 | `src/lib/utils.js` | `cn()` class merge helper and iframe detection. |
 
@@ -3780,11 +3841,12 @@ App-specific components:
 | `src/components/Layout.jsx` | Responsive app shell, sidebar, mobile menu, active trip pill. |
 | `src/components/ProtectedRoute.jsx` | Route guard placeholder using auth context. |
 | `src/components/EventBadge.jsx` | Event/severity badge rendering with icons and color classes. |
+| `src/components/LiveCoachOverlay.jsx` | Dismissible active-trip coaching toast that evaluates current route stats/events every 60 seconds. |
 | `src/components/ScoreRing.jsx` | Circular score visualization. |
 | `src/components/StatCard.jsx` | Animated metric card used across dashboards. |
 | `src/components/TripCard.jsx` | Trip summary card used in lists. |
-| `src/components/TripMap.jsx` | Leaflet map for trip route, speed coloring, event markers, optional current location. |
-| `src/components/TripPlayback.jsx` | Leaflet playback view with speed controls and moving cursor. |
+| `src/components/TripMap.jsx` | Leaflet map for trip route, speed coloring, event markers, optional current location, and optional parked-location marker. |
+| `src/components/TripPlayback.jsx` | Leaflet playback view with speed controls, moving cursor, optional secondary-trip cursor, and score comparison panel. |
 | `src/components/UserNotRegisteredError.jsx` | Friendly registration/account error view. |
 | `src/components/VehicleCompare.jsx` | Vehicle comparison charting and aggregate stats. |
 
@@ -3851,11 +3913,14 @@ Manual end:
 7. Simplifies route points while preserving event points.
 8. Rejects trips that do not meet minimum duration/distance rules.
 9. Saves the completed trip through `tripService.create`.
-10. Clears `activeTripStore`, stops watchers, cancels reminders, and refreshes queries.
+10. Saves the final clean route point to `drivesense_last_parked`.
+11. Clears `activeTripStore`, stops watchers, cancels reminders, and refreshes queries.
 
 Foreground auto mode watches location and activity recognition while the React app is alive. It uses `shouldAutoStartTracking`, `computeGpsPositionDrift`, and `shouldAutoStopTracking`. Background auto mode delegates trip capture to `DriveSenseAutoTrackingService`.
 
 Dashboard analytics shown from recent trips include weekly distance, score, risky event totals, goals, score trend, coach tips, last trips, and active-trip state.
+
+When `live_coaching_enabled` is true, `LiveCoachOverlay` evaluates the active trip every 60 seconds. It queues one bottom toast at a time and prioritizes recent near misses, new harsh brakes, current speeding, new rapid accelerations, and extended idling.
 
 #### Trip History
 
@@ -3866,6 +3931,8 @@ Dashboard analytics shown from recent trips include weekly distance, score, risk
 - Date filters such as all, today, week, month.
 - Event/quality filters including harsh brake, speeding, near miss, distraction risk, drowsy risk, perfect eco, and more.
 - Tag assignment through `tripService.update(id, { tag })`.
+- Four compact Recharts sparklines for rolling last-5 overall, safety, smoothness, and eco score.
+- A per-card delta badge comparing each trip score with the previous five trips.
 
 It invalidates the `all-trips` query after tag updates.
 
@@ -3879,12 +3946,18 @@ It invalidates the `all-trips` query after tag updates.
 - Event list and advanced safety metrics.
 - Road type, fatigue, drowsy, phone proxy, parking, hill, merge, overtake, and defensive/aggressive details.
 - Tag suggestion flow based on `suggestTripTag`.
+- Trip splitting for detected parking stops of 5 minutes or longer. Confirmed splits call `splitTripAtStops()`, create recalculated sub-trips, delete the source trip, and return to Trip History.
+- Speed Zone summary based on 60-second inferred speed windows, grouped by inferred zone and distance.
 
 It stores dismissed tag suggestions in `drivesense_dismissed_tag_suggestions`. Deleting a trip calls `tripService.delete(id)` and invalidates `all-trips` and `recent-trips`.
 
 #### Map Screen
 
 `MapScreen.jsx` loads up to 500 trips, filters them by route availability, period, and score/event criteria, and passes selected trips to `TripMap`. It can request and show current browser/native geolocation. Route colors rotate through the configured map palette.
+
+The map also provides the last-parked shortcut. Pressing "Where did I park?" reads `drivesense_last_parked`, pans/zooms the map to the saved point, renders the distinct parked marker, and shows a small card with relative time plus a cached Nominatim reverse-geocoded address when available.
+
+When a selected trip has matching commute-pattern history, the replay panel shows a "Compare with previous run" dropdown. Selecting a prior run passes it to `TripPlayback` as `secondaryTrip` so both cursors advance by normalized progress on the same wall-clock playback rate.
 
 #### Driving Coach
 
@@ -3916,8 +3989,9 @@ It stores dismissed tag suggestions in `drivesense_dismissed_tag_suggestions`. D
 - `calculatePeakHourStress`.
 - `identifyCommutePatterns`.
 - `tripsToCSV` and `downloadCSV` for export.
+- `exportMonthlyReportPDF` for monthly PDF export.
 
-Native CSV export now writes to Android Downloads. Browser export uses Blob download.
+Native CSV and PDF export now write to Android Downloads. Browser export uses Blob/download handling from the active export helper.
 
 #### Settings
 
@@ -3928,6 +4002,7 @@ Native CSV export now writes to Android Downloads. Browser export uses Blob down
 - Location/activity/background-location/notification permission state.
 - Battery optimization status and settings opening.
 - Notification toggles.
+- Live coaching notification toggle.
 - Theme and units.
 - Detection thresholds and advanced safety toggles.
 - Data retention and pruning.
@@ -3956,6 +4031,7 @@ Settings changes call `localSettings.update`, refresh local state, apply theme w
 | --- | --- | --- | --- |
 | `drivesense_settings` | `trackingStore.js` | localStorage | User settings and onboarding state. |
 | `drivesense_active_trip` | `trackingStore.js`, `Layout.jsx`, `Dashboard.jsx` | localStorage | Active trip snapshot for crash/session recovery and active-trip UI. |
+| `drivesense_last_parked` | `trackingStore.js`, `Dashboard.jsx`, `localTripRepository.js`, `MapScreen.jsx` | Preferences/native or localStorage/web | Last completed trip parking point, timestamp, trip id, and cached reverse-geocoded address. |
 | `drivesense_trips` | `localTripRepository.js` fallback | Preferences/native or localStorage/web | Trip array when IndexedDB is unavailable. |
 | IndexedDB `drivesense_mobile`, store `trips` | `localTripRepository.js` | Web-capable environments | Primary trip store with `id`, `start_time`, and `status` indexes. |
 | `drivesense_vehicles` | `localVehicleRepository.js` | Preferences/native or localStorage/web | Vehicle array. |
@@ -3980,6 +4056,7 @@ trip_start_notification: true,
 trip_end_notification: true,
 weekly_report_notification: true,
 achievement_notifications: true,
+live_coaching_enabled: true,
 safe_driving_reminder: false,
 background_tracking_enabled: false,
 auto_tracking_enabled: false,

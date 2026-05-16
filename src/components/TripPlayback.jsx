@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, Gauge } from 'lucide-react';
 import { buildSpeedSegments } from '@/lib/tripInsights';
+import { formatSpeed } from '@/lib/tripEngine';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -33,10 +34,11 @@ function loadLeaflet() {
 
 const SPEEDS = [1, 2, 4, 8];
 
-export default function TripPlayback({ trip, height = '380px' }) {
+export default function TripPlayback({ trip, secondaryTrip = null, height = '380px' }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
   const markerRef = useRef(null);
+  const secondaryMarkerRef = useRef(null);
   const progressLayersRef = useRef(null);
   const animRef = useRef(null);
 
@@ -46,15 +48,17 @@ export default function TripPlayback({ trip, height = '380px' }) {
   const [currentEvent, setCurrentEvent] = useState(null);
 
   const points = trip?.route_points || [];
+  const secondaryPoints = secondaryTrip?.route_points || [];
   const events = trip?.driving_events || [];
   const totalPoints = points.length;
   const speedSegments = useMemo(() => buildSpeedSegments(points), [points]);
+  const secondarySegments = useMemo(() => buildSpeedSegments(secondaryPoints), [secondaryPoints]);
 
   useEffect(() => {
     setCurrentIdx(0);
     setPlaying(false);
     setCurrentEvent(null);
-  }, [trip?.id]);
+  }, [trip?.id, secondaryTrip?.id]);
 
   useEffect(() => {
     loadLeaflet().then(() => {
@@ -74,6 +78,20 @@ export default function TripPlayback({ trip, height = '380px' }) {
             .bindPopup(`${segment.label}: ${Math.round(segment.speed_kmh)} km/h`)
             .addTo(map);
         });
+
+        if (secondaryPoints.length > 1) {
+          secondarySegments.forEach((segment) => {
+            window.L.polyline(
+              [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+              { color: '#f97316', weight: 4, opacity: 0.35, dashArray: '6 6' }
+            )
+              .bindPopup(`Comparison: ${Math.round(segment.speed_kmh)} km/h`)
+              .addTo(map);
+          });
+          secondaryPoints.forEach((point) => {
+            if (Number.isFinite(point.lat) && Number.isFinite(point.lng)) latLngs.push([point.lat, point.lng]);
+          });
+        }
 
         progressLayersRef.current = window.L.layerGroup().addTo(map);
 
@@ -95,6 +113,14 @@ export default function TripPlayback({ trip, height = '380px' }) {
         });
         markerRef.current = window.L.marker(latLngs[0], { icon: carIcon }).addTo(map);
 
+        if (secondaryPoints.length > 0) {
+          const secondaryIcon = window.L.divIcon({
+            html: '<div style="width:18px;height:18px;background:#f97316;border:3px solid white;border-radius:50%;box-shadow:0 0 0 4px rgba(249,115,22,0.3),0 2px 8px rgba(0,0,0,0.3)"></div>',
+            className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+          });
+          secondaryMarkerRef.current = window.L.marker([secondaryPoints[0].lat, secondaryPoints[0].lng], { icon: secondaryIcon }).addTo(map);
+        }
+
         map.fitBounds(window.L.latLngBounds(latLngs), { padding: [24, 24] });
       } else {
         map.setView([51.505, -0.09], 13);
@@ -104,22 +130,34 @@ export default function TripPlayback({ trip, height = '380px' }) {
       cancelAnimationFrame(animRef.current);
       if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; }
       markerRef.current = null;
+      secondaryMarkerRef.current = null;
       progressLayersRef.current = null;
     };
-  }, [trip?.id]);
+  }, [trip?.id, secondaryTrip?.id]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !points[currentIdx]) return;
     const pt = points[currentIdx];
     const latlng = [pt.lat, pt.lng];
+    const secondaryIdx = secondaryPoints.length > 1
+      ? Math.min(secondaryPoints.length - 1, Math.round((currentIdx / Math.max(1, totalPoints - 1)) * (secondaryPoints.length - 1)))
+      : 0;
+    const secondaryPt = secondaryPoints[secondaryIdx];
 
     if (markerRef.current) markerRef.current.setLatLng(latlng);
+    if (secondaryMarkerRef.current && secondaryPt) secondaryMarkerRef.current.setLatLng([secondaryPt.lat, secondaryPt.lng]);
     if (progressLayersRef.current && window.L) {
       progressLayersRef.current.clearLayers();
       speedSegments.slice(0, currentIdx).forEach((segment) => {
         window.L.polyline(
           [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
           { color: segment.color, weight: 6, opacity: 0.95 }
+        ).addTo(progressLayersRef.current);
+      });
+      secondarySegments.slice(0, secondaryIdx).forEach((segment) => {
+        window.L.polyline(
+          [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+          { color: '#f97316', weight: 6, opacity: 0.85, dashArray: '6 6' }
         ).addTo(progressLayersRef.current);
       });
     }
@@ -131,7 +169,7 @@ export default function TripPlayback({ trip, height = '380px' }) {
       return dlat < 0.0002 && dlng < 0.0002;
     });
     setCurrentEvent(nearEvt || null);
-  }, [currentIdx, events, points, speedSegments]);
+  }, [currentIdx, events, points, secondaryPoints, secondarySegments, speedSegments, totalPoints]);
 
   useEffect(() => {
     if (!playing) { cancelAnimationFrame(animRef.current); return; }
@@ -166,6 +204,11 @@ export default function TripPlayback({ trip, height = '380px' }) {
 
   const progress = totalPoints > 1 ? (currentIdx / (totalPoints - 1)) * 100 : 0;
   const currentPt = points[currentIdx];
+  const comparisonRows = secondaryTrip ? [
+    { label: 'Overall Score', current: trip.score_overall ?? 0, other: secondaryTrip.score_overall ?? 0, higherWins: true },
+    { label: 'Harsh Brakes', current: trip.harsh_brakes_count ?? 0, other: secondaryTrip.harsh_brakes_count ?? 0, higherWins: false },
+    { label: 'Avg Speed', current: trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0, other: secondaryTrip.avg_running_speed_kmh ?? secondaryTrip.avg_speed_kmh ?? 0, higherWins: null, speed: true },
+  ] : [];
 
   if (!points.length) {
     return (
@@ -233,6 +276,36 @@ export default function TripPlayback({ trip, height = '380px' }) {
           )}
         </div>
       </div>
+
+      {secondaryTrip && (
+        <div className="rounded-2xl border border-border bg-card p-3">
+          <div className="mb-2 flex items-center gap-3 text-xs font-semibold">
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-500" />This Trip</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-500" />vs Trip</span>
+          </div>
+          <div className="space-y-2">
+            {comparisonRows.map((row) => {
+              const currentWins = row.higherWins == null
+                ? null
+                : row.higherWins
+                  ? row.current >= row.other
+                  : row.current <= row.other;
+              const otherText = row.speed ? formatSpeed(row.other) : row.other;
+              return (
+                <div key={row.label} className="grid grid-cols-3 items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">{row.label}</span>
+                  <span className={`font-semibold ${currentWins === true ? 'text-emerald-600' : currentWins === false ? 'text-red-600' : ''}`}>
+                    {row.speed ? formatSpeed(row.current) : row.current}
+                  </span>
+                  <span className={currentWins === false ? 'text-emerald-600 font-semibold' : currentWins === true ? 'text-red-600 font-semibold' : 'font-semibold'}>
+                    {otherText} {currentWins === true ? '▼' : currentWins === false ? '▲' : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

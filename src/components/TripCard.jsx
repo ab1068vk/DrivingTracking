@@ -3,7 +3,7 @@ import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone 
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
 import { useNavigate } from 'react-router-dom';
 
-export default function TripCard({ trip, units = 'metric', index = 0 }) {
+export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta = null }) {
   const navigate = useNavigate();
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
 
@@ -122,6 +122,17 @@ export default function TripCard({ trip, units = 'metric', index = 0 }) {
               {trip.score_overall ?? '—'}
             </span>
           </div>
+          {scoreDelta && (
+            <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${
+              scoreDelta.direction === 'up'
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                : scoreDelta.direction === 'down'
+                  ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
+                  : 'bg-secondary text-muted-foreground'
+            }`}>
+              {scoreDelta.direction === 'up' ? '▲' : scoreDelta.direction === 'down' ? '▼' : '—'} vs last 5
+            </span>
+          )}
           <span className={`text-xs font-medium ${color}`}>{scoreLabel}</span>
         </div>
       </div>

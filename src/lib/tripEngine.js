@@ -1,4 +1,5 @@
 import { saveExportToDownloads } from './nativeDownloads';
+import { detectTripStops, estimateTripEconomics } from './tripInsights';
 
 /**
  * DriveSense Trip Engine
@@ -18,6 +19,7 @@ export const DEFAULT_THRESHOLDS = {
   SHARP_TURN_G_HIGH: 0.60,
   // Speeding fallback: above 130 km/h (when no speed limit data)
   SPEEDING_FALLBACK_KMH: 130,
+  SPEED_OVER_KMH: 10,
   // Idle threshold: speed < 5 km/h
   IDLE_SPEED_KMH: 5,
   // Idle event: idling for > 60 consecutive seconds
@@ -84,6 +86,7 @@ export function buildDrivingThresholds(settings = {}) {
     SHARP_TURN_G_MEDIUM: settingNumber(settings.threshold_sharp_turn_g_medium, DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM),
     SHARP_TURN_G_HIGH: settingNumber(settings.threshold_sharp_turn_g_high, DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH),
     SPEEDING_FALLBACK_KMH: settingNumber(settings.threshold_speeding_kmh, DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH),
+    SPEED_OVER_KMH: settingNumber(settings.threshold_speed_over_kmh, DEFAULT_THRESHOLDS.SPEED_OVER_KMH),
     IDLE_EVENT_SECONDS: settingNumber(settings.threshold_idle_seconds, DEFAULT_THRESHOLDS.IDLE_EVENT_SECONDS),
     LONG_DRIVE_MINUTES: settingNumber(settings.threshold_long_drive_minutes, DEFAULT_THRESHOLDS.LONG_DRIVE_MINUTES),
     MIN_SPEED_RAPID_ACCEL_KMH: settingNumber(settings.min_speed_rapid_accel_kmh, DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH),
@@ -435,6 +438,86 @@ export function calculateRouteSummary(points, startTime, endTime, thresholds = D
   return { points: cleaned, stats, events, scores };
 }
 
+function generatedTripId(prefix = 'trip') {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}_${crypto.randomUUID()}`;
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_THRESHOLDS) {
+  const routePoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
+  if (routePoints.length < 2) return [];
+
+  const minStopSeconds = Math.max(0, Number(minParkMinutes) || 0) * 60;
+  const stops = detectTripStops(routePoints, {
+    minStopSeconds,
+    maxSpeedKmh: thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH,
+  });
+  const sortedPoints = [...routePoints].sort((a, b) => timestampMs(a) - timestampMs(b));
+
+  if (!stops.length) {
+    return [{
+      ...trip,
+      id: generatedTripId('split'),
+      split_parent_id: trip?.id ?? null,
+      split_segment_index: 1,
+      route_points: sortedPoints,
+    }];
+  }
+
+  const splitRanges = [];
+  let segmentStartIndex = 0;
+
+  for (const stop of stops) {
+    const stopStartMs = new Date(stop.start_time).getTime();
+    const stopEndMs = new Date(stop.end_time).getTime();
+    const beforeStopEnd = sortedPoints.findIndex((point, index) => index >= segmentStartIndex && timestampMs(point) >= stopStartMs);
+    const afterStopStart = sortedPoints.findIndex((point) => timestampMs(point) > stopEndMs);
+    const endIndex = beforeStopEnd > segmentStartIndex ? beforeStopEnd - 1 : segmentStartIndex - 1;
+    if (endIndex - segmentStartIndex + 1 >= 2) splitRanges.push([segmentStartIndex, endIndex]);
+    segmentStartIndex = afterStopStart >= 0 ? afterStopStart : sortedPoints.length;
+  }
+
+  if (sortedPoints.length - segmentStartIndex >= 2) {
+    splitRanges.push([segmentStartIndex, sortedPoints.length - 1]);
+  }
+
+  return splitRanges.map(([startIndex, endIndex], index) => {
+    const segmentPoints = sortedPoints.slice(startIndex, endIndex + 1);
+    const startTime = segmentPoints[0].timestamp;
+    const endTime = segmentPoints[segmentPoints.length - 1].timestamp;
+    const stats = calculateTripStats(segmentPoints, startTime, endTime, thresholds);
+    const events = detectDrivingEvents(segmentPoints, thresholds);
+    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds);
+    const drivingEvents = scores.driving_events || events;
+    const economics = estimateTripEconomics({ ...stats, ...scores });
+
+    return {
+      ...stats,
+      ...scores,
+      co2_saved_kg: economics.co2_saved_kg,
+      fuel_cost: economics.cost,
+      fuel_used_liters: economics.liters,
+      co2_kg: economics.co2_kg,
+      fuel_saved_liters: economics.fuel_saved_liters,
+      id: generatedTripId('split'),
+      split_parent_id: trip?.id ?? null,
+      split_segment_index: index + 1,
+      status: 'completed',
+      start_time: startTime,
+      end_time: endTime,
+      vehicle_id: trip?.vehicle_id ?? null,
+      tag: trip?.tag ?? null,
+      background_tracking: trip?.background_tracking ?? false,
+      start_source: trip?.start_source || 'split',
+      route_points: segmentPoints,
+      route_points_raw_count: segmentPoints.length,
+      driving_events: drivingEvents,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  });
+}
+
 // ─── Event Detection ───────────────────────────────────────────────────────────
 function finiteSpeed(point) {
   return Number.isFinite(point?.speed_kmh) ? Math.max(0, point.speed_kmh) : 0;
@@ -446,6 +529,18 @@ function round1(value) {
 
 function average(values) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function percentileValue(values, p) {
+  const sorted = values
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const index = (p / 100) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 }
 
 function calculateRouteDistanceKm(points = [], thresholds = DEFAULT_THRESHOLDS) {
@@ -503,6 +598,56 @@ export function classifyRoadType(cleanPoints = []) {
     avg_urban_speed_kmh: round1(average(urbanSpeeds)),
     highway_fraction: round1(fHighway * 100) / 100,
   };
+}
+
+function zoneFromP85(p85Speed) {
+  if (p85Speed < 30) return { inferredZone: 'zone_30', inferredZoneKmh: 30 };
+  if (p85Speed < 55) return { inferredZone: 'zone_50', inferredZoneKmh: 50 };
+  if (p85Speed < 80) return { inferredZone: 'zone_60_70', inferredZoneKmh: 70 };
+  if (p85Speed < 110) return { inferredZone: 'zone_80_100', inferredZoneKmh: 100 };
+  return { inferredZone: 'zone_highway', inferredZoneKmh: 120 };
+}
+
+export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+  const points = (routePoints || [])
+    .map((point, index) => ({ point, index, ts: timestampMs(point), speed: finiteSpeed(point) }))
+    .filter((entry) => Number.isFinite(entry.ts));
+  if (points.length < 2) return [];
+
+  const zones = [];
+  for (let start = 0; start < points.length - 1; start++) {
+    const startTs = points[start].ts;
+    let end = start;
+    while (end + 1 < points.length && points[end + 1].ts - startTs <= 60000) end++;
+    if (end <= start) continue;
+
+    const windowEntries = points.slice(start, end + 1);
+    const speeds = windowEntries.map((entry) => entry.speed).filter((speed) => Number.isFinite(speed));
+    if (speeds.length < 2) continue;
+
+    const medianSpeed = percentileValue(speeds, 50);
+    const p85Speed = percentileValue(speeds, 85);
+    const deviation = speedStdDev(speeds);
+    const { road_type: roadType, highway_fraction: highwayFraction } = classifyRoadType(windowEntries.map((entry) => entry.point));
+    const zone = zoneFromP85(p85Speed);
+    zones.push({
+      startIndex: windowEntries[0].index,
+      endIndex: windowEntries[windowEntries.length - 1].index,
+      inferredZone: zone.inferredZone,
+      inferredZoneKmh: zone.inferredZoneKmh,
+      confidence: deviation < 8 ? 'high' : deviation < 18 ? 'medium' : 'low',
+      median_speed_kmh: round1(medianSpeed),
+      p85_speed_kmh: round1(p85Speed),
+      road_type: roadType,
+      road_type_fraction: highwayFraction,
+      speed_std_dev: round1(deviation),
+      threshold_kmh: zone.inferredZone === 'zone_highway'
+        ? thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH
+        : zone.inferredZoneKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH),
+    });
+  }
+
+  return zones;
 }
 
 export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = 1) {
@@ -1555,13 +1700,9 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
   const MIN_SPEEDING_SECONDS = 3;
   const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
   const smoothedAccels = computeSmoothedAccelerations(points, thresholds);
-  const { road_type: roadType } = classifyRoadType(points);
   const configuredSpeedThreshold = thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH;
-  const contextSpeedingThreshold = roadType === 'residential'
-    ? Math.min(configuredSpeedThreshold, 60)
-    : roadType === 'urban'
-      ? Math.min(configuredSpeedThreshold, 90)
-      : configuredSpeedThreshold;
+  const inferredZones = inferSpeedZones(points, thresholds);
+  const zoneForIndex = (index) => inferredZones.find((zone) => index >= zone.startIndex && index <= zone.endIndex) || null;
 
   let idleStart = null;
   let idleAccum = 0;
@@ -1571,6 +1712,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
   let speedingStart = null;
   let speedingPeakPoint = null;
   let speedingPeakSpeed = 0;
+  let speedingZone = null;
 
   const canEmitEvent = (eventType, timestamp) => {
     const cooldownSeconds = EVENT_COOLDOWN_SECONDS[eventType];
@@ -1607,6 +1749,8 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
         timestamp: speedingStart.timestamp,
         value: Math.round(speedingPeakSpeed),
         speed_kmh: Math.round(speedingPeakSpeed),
+        inferred_zone_kmh: speedingZone?.inferredZoneKmh ?? null,
+        zone_confidence: speedingZone?.confidence ?? null,
       });
     }
 
@@ -1614,6 +1758,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     speedingStart = null;
     speedingPeakPoint = null;
     speedingPeakSpeed = 0;
+    speedingZone = null;
   };
 
   for (let i = 1; i < points.length; i++) {
@@ -1723,12 +1868,20 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
       }
     }
 
-    if (speed2 > contextSpeedingThreshold) {
+    const segmentZone = zoneForIndex(i);
+    const contextualSpeedingThreshold = Math.min(
+      configuredSpeedThreshold,
+      segmentZone?.threshold_kmh ?? configuredSpeedThreshold
+    );
+
+    if (speed2 > contextualSpeedingThreshold) {
       if (!speedingStart) speedingStart = curr;
       speedingAccumSeconds += dt;
+      speedingZone = segmentZone || speedingZone;
       if (speed2 > speedingPeakSpeed) {
         speedingPeakSpeed = speed2;
         speedingPeakPoint = curr;
+        speedingZone = segmentZone || speedingZone;
       }
     } else {
       flushSpeedingWindow();

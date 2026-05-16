@@ -3,9 +3,11 @@
  * Manages active trip state in memory and persists to sessionStorage for crash recovery.
  * This is a singleton store used by the tracking service.
  */
+import { getJson, setJson } from '@/lib/mobileStorage';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
+const LAST_PARKED_KEY = 'drivesense_last_parked';
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
@@ -56,7 +58,28 @@ export const DEFAULT_SETTINGS = {
   location_permission_granted: false,
   background_location_granted: false,
   tracking_paused: false,
+  live_coaching_enabled: true,
 };
+
+export async function getLastParkedLocation() {
+  return getJson(LAST_PARKED_KEY, null);
+}
+
+export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null }) {
+  const parsedLat = Number(lat);
+  const parsedLng = Number(lng);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
+
+  const parkedLocation = {
+    lat: parsedLat,
+    lng: parsedLng,
+    timestamp: timestamp || new Date().toISOString(),
+    tripId: tripId ?? null,
+    address,
+  };
+  await setJson(LAST_PARKED_KEY, parkedLocation);
+  return parkedLocation;
+}
 
 // ─── Local Settings Store ──────────────────────────────────────────────────────
 export const localSettings = {

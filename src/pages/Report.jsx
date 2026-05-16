@@ -5,7 +5,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
   BarChart3, TrendingUp, AlertTriangle,
-  Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award
+  Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award, FileText
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -14,6 +14,7 @@ import {
 import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import ScoreRing from '@/components/ScoreRing';
 import { localSettings } from '@/lib/trackingStore';
+import { exportMonthlyReportPDF } from '@/lib/pdfExport';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -170,6 +171,11 @@ export default function Reports() {
     if (result?.native) alert(`Export saved to Downloads as ${result.filename}.`);
   };
 
+  const handlePdfExport = async () => {
+    const result = await exportMonthlyReportPDF(trips, period, settings);
+    if (result?.native) alert(`PDF report saved to Downloads as ${result.filename}.`);
+  };
+
   const { color: bestColor } = getScoreColor(summary.best_trip?.score_overall || 0);
   const { color: worstColor } = getScoreColor(summary.worst_trip?.score_overall || 0);
 
@@ -181,13 +187,22 @@ export default function Reports() {
           <h1 className="text-2xl font-grotesk font-bold">Reports</h1>
           <p className="text-muted-foreground text-sm mt-1">Driving performance analysis</p>
         </div>
-        <button
-          onClick={handleExport}
-          className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors"
-        >
-          <Download className="w-4 h-4" />
-          Export {trips.length} Trips
-        </button>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export {trips.length} Trips
+          </button>
+          <button
+            onClick={handlePdfExport}
+            className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-xl text-sm hover:opacity-90 transition-opacity"
+          >
+            <FileText className="w-4 h-4" />
+            Export Monthly Report (PDF)
+          </button>
+        </div>
       </motion.div>
 
       {/* Period selector */}
