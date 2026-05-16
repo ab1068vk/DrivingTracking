@@ -989,7 +989,7 @@ dLat = radians(lat2 - lat1)
 dLng = radians(lng2 - lng1)
 a = sin(dLat / 2)^2 +
     cos(radians(lat1)) * cos(radians(lat2)) * sin(dLng / 2)^2
-c = 2 * atan2(sqrt(a), sqrt(1 - a))
+c = 2 * atan2(sqrt(a), sqrt(max(0, 1 - a)))
 distance_km = R * c
 ```
 
@@ -1195,7 +1195,7 @@ Score methodology:
 - Normalize penalties by distance so longer trips are not over-penalized.
 - Add safety penalty for night driving.
 - Add long-drive fatigue safety penalty above 120 minutes.
-- Overall score weighting: 40 percent safety, 35 percent smoothness, 25 percent eco.
+- Overall score weighting: 35 percent safety, 30 percent smoothness, 20 percent eco, and 15 percent intersection behavior.
 
 Penalty table:
 
@@ -1253,7 +1253,7 @@ normalized_score = max(0, 100 - min(penalty * (5 / dist_factor), 80))
 safety = round(normalize(safetyPenalty))
 smoothness = round(normalize(smoothnessPenalty))
 eco = round(normalize(ecoPenalty))
-overall = round(safety * 0.40 + smoothness * 0.35 + eco * 0.25)
+overall = min(100, round(safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15))
 ```
 
 Complete scoring skeleton:
@@ -1263,10 +1263,12 @@ const distFactor = Math.max(1, stats.distance_km || 1);
 const normalize = (penalty) =>
   Math.max(0, 100 - Math.min(penalty * (5 / distFactor), 80));
 
-const safety = Math.round(normalize(safetyPenalty));
+const safety = Math.min(100, Math.round(normalize(safetyPenalty)) + safety_condition_bonus);
 const smoothness = Math.round(normalize(smoothnessPenalty));
 const eco = Math.round(normalize(ecoPenalty));
-const overall = Math.round(safety * 0.4 + smoothness * 0.35 + eco * 0.25);
+const overall = Math.min(100, Math.round(
+  safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15
+));
 ```
 
 ## 11. Insights And Analytics
@@ -1406,9 +1408,10 @@ Trip economics are estimated from trip distance and vehicle fuel assumptions.
 distance_km = trip.distance_km
 l_per_100km = vehicle.fuel_efficiency_l_per_100km or default 8.5
 fuel_price_per_liter = vehicle.fuel_price_per_liter or default 1.65
-liters = distance_km * l_per_100km / 100
-cost = liters * fuel_price_per_liter
-co2_kg = liters * 2.31
+baseline_liters = distance_km * l_per_100km / 100
+adjusted_liters = distance_km * actual_l_per_100km / 100
+cost = adjusted_liters * fuel_price_per_liter
+co2_kg = adjusted_liters * 2.31
 ```
 
 Implementation skeleton:
@@ -1425,12 +1428,17 @@ function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
     Number(settings.default_fuel_price_per_liter) ||
     1.65;
 
-  const liters = distanceKm * lPer100Km / 100;
-  const cost = liters * fuelPrice;
-  const co2Kg = liters * 2.31;
+  const ecoDrivingScore = Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50;
+  const efficiencyMultiplier = Math.max(0.7, 1 + (ecoDrivingScore - 50) / 200);
+  const actualLPer100Km = lPer100Km / efficiencyMultiplier;
+  const baselineLiters = distanceKm * lPer100Km / 100;
+  const adjustedLiters = distanceKm * actualLPer100Km / 100;
+  const cost = adjustedLiters * fuelPrice;
+  const co2Kg = adjustedLiters * 2.31;
 
   return {
-    liters: Math.round(liters * 100) / 100,
+    liters: Math.round(adjustedLiters * 100) / 100,
+    baseline_liters: Math.round(baselineLiters * 100) / 100,
     cost: Math.round(cost * 100) / 100,
     co2_kg: Math.round(co2Kg * 100) / 100
   };
@@ -2401,7 +2409,7 @@ export function haversineDistance(lat1, lng1, lat2, lng2) {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
   return R * c;
 }
 ```
@@ -2845,7 +2853,7 @@ const optimalBandRatio = totalMovingSeconds > 0
   ? Math.round((optimalBandSeconds / totalMovingSeconds) * 100)
   : 0;
 
-const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * 2.0));
+const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * 1.4));
 ```
 
 #### Hill Driving Score
@@ -2926,9 +2934,10 @@ Functions:
 Night can be based on sunset/sunrise or fixed clock times.
 
 ```js
+if (!routePoints || routePoints.length === 0) return 0;
+const n = routePoints.length;
 const normalNightPoints = nightPoints - deepNightPoints;
-return (normalNightPoints / routePoints.length) * 8 +
-  (deepNightPoints / routePoints.length) * 12;
+return (normalNightPoints / n) * 8 + (deepNightPoints / n) * 12;
 ```
 
 Deep-night points are counted as a subset of night points, so the formula separates them first. Normal night has weight `8`; deep night has exclusive weight `12`.
@@ -2964,6 +2973,7 @@ const speedMultiplier = (speedKmh) => (
 
 engineStressRaw += basePenalty[event.severity] * speedMultiplier(speed);
 
+const distFactor = Math.max(1, stats.distance_km || 1);
 const score = Math.max(0, Math.round(100 - Math.min(engineStressRaw * (5 / distFactor), 100)));
 ```
 
@@ -3004,6 +3014,7 @@ Formula:
 const rawPenalty = events.reduce((sum, event) => sum + (weights[event.type]?.[event.severity] || 0), 0);
 const jerkPenalty = Math.min(Math.max((avgJerkMs3 - 0.3) * 20, 0), 25);
 const combinedPenalty = rawPenalty + jerkPenalty;
+const distFactor = Math.max(1, stats.distance_km || 1);
 const normalizedPenalty = Math.min(combinedPenalty * (5 / distFactor), 100);
 const score = Math.max(0, Math.round(100 - normalizedPenalty));
 ```
@@ -3084,10 +3095,22 @@ const normalize = (totalPenalty) => {
 Final component scores:
 
 ```js
-const safety = Math.round(baseSafety * 0.85 + followingDistanceScore * 0.15);
-const smoothness = Math.round(baseSmoothness * 0.55 + jerk.jerk_score * 0.30 + svi.svi_score * 0.15);
+const safety = Math.min(100, Math.round(
+  overtake_count > 0
+    ? safetyBase * 0.95 + overtake_quality_score * 0.05
+    : safetyBase
+) + safety_condition_bonus);
+const smoothness = Math.round(
+  baseSmoothness * 0.45 +
+  jerk.jerk_score * 0.25 +
+  svi.svi_score * 0.10 +
+  reaction_score * 0.10 +
+  (cornering_consistency_score ?? 100) * 0.10
+);
 const eco = Math.round(baseEco * 0.40 + ecoDriving.eco_driving_score * 0.40 + fuelBand.fuel_band_score * 0.20);
-const overall = Math.round(safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15);
+const overall = Math.min(100, Math.round(
+  safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15
+));
 ```
 
 #### Score Colors
@@ -3166,12 +3189,12 @@ Formula:
 ```js
 const efficiencyMultiplier = Math.max(0.7, 1 + (ecoDrivingScore - 50) / 200);
 const actualLPer100Km = lPer100Km / efficiencyMultiplier;
-const liters = distanceKm * lPer100Km / 100;
-const actualLiters = distanceKm * actualLPer100Km / 100;
-const cost = actualLiters * fuelPrice;
-const baselineCost = liters * fuelPrice;
-const co2Kg = actualLiters * GASOLINE_CO2_KG_PER_LITER;
-const fuelSavedLiters = Math.max(0, liters - actualLiters);
+const baselineLiters = distanceKm * lPer100Km / 100;
+const adjustedLiters = distanceKm * actualLPer100Km / 100;
+const cost = adjustedLiters * fuelPrice;
+const baselineCost = baselineLiters * fuelPrice;
+const co2Kg = adjustedLiters * GASOLINE_CO2_KG_PER_LITER;
+const fuelSavedLiters = Math.max(0, baselineLiters - adjustedLiters);
 ```
 
 #### Vehicle Odometer And Maintenance
@@ -3379,7 +3402,7 @@ Routes need at least 3 trips to count as a commute pattern.
 Function: `calculateSpeedDiscipline`
 
 ```js
-const speedLimit = Number(settings.threshold_speeding_kmh || 130);
+const speedLimit = Number(settings.threshold_speeding_kmh ?? 130);
 const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 10);
 const overLimitPercent = Math.round((overLimit / speeds.length) * 100);
 const p85Speed = percentile(speeds, 85);
@@ -3477,7 +3500,7 @@ export function shouldAutoStopTracking({
   // 240s with very stable GPS (< 5m drift).
   // 360s with relaxed urban GPS drift (< 20m).
   // 480s at current speed < 2 km/h and last moving speed < 2 km/h, regardless of GPS drift.
-  // Missing activity waits 180s and requires stable GPS (< 6m drift).
+  // Missing or UNKNOWN activity waits 180s and requires stable GPS (< 8m drift).
 }
 ```
 

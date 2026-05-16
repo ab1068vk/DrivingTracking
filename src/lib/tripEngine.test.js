@@ -179,6 +179,33 @@ describe('tripEngine', () => {
     expect(longScore.score_overall).toBe(shortScore.score_overall);
   });
 
+  it('caps safety and overall scores after road-condition bonuses', () => {
+    const scores = calculateTripScores([], {
+      distance_km: 5,
+      fatigue_risk_score: 0,
+      intersection_score: 100,
+    }, [
+      point(43.6532, -79.3832, 0, 60),
+      point(43.6542, -79.3832, 10, 60),
+    ]);
+
+    expect(scores.score_safety).toBeLessThanOrEqual(100);
+    expect(scores.score_overall).toBeLessThanOrEqual(100);
+  });
+
+  it('uses exponential near-miss scoring without a flat floor', () => {
+    const oneNearMiss = calculateTripScores([
+      { type: EVENT_TYPES.NEAR_MISS, severity: 'low' },
+    ], { distance_km: 20, fatigue_risk_score: 0 }, []);
+    const fourNearMisses = calculateTripScores(Array.from({ length: 4 }, () => ({
+      type: EVENT_TYPES.NEAR_MISS,
+      severity: 'low',
+    })), { distance_km: 20, fatigue_risk_score: 0 }, []);
+
+    expect(oneNearMiss.near_miss_score).toBe(60);
+    expect(fourNearMisses.near_miss_score).toBe(13);
+  });
+
   it('classifies road type and calculates advanced smoothness fields', () => {
     const highwayPoints = Array.from({ length: 8 }, (_, index) => ({
       ...point(43.6532 + index * 0.001, -79.3832, index * 5, 90),
@@ -211,6 +238,19 @@ describe('tripEngine', () => {
     expect(scores.aggressive_driving_score).toBeGreaterThan(0);
   });
 
+  it('scores 50 percent optimal fuel-band time as 70', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 70),
+      point(43.6542, -79.3832, 10, 70),
+      point(43.6552, -79.3832, 20, 30),
+    ];
+
+    const fuelBand = calculateFuelBandScore(points);
+
+    expect(fuelBand.optimal_band_ratio).toBe(50);
+    expect(fuelBand.fuel_band_score).toBe(70);
+  });
+
   it('scales night penalty by night and deep-night route share', () => {
     const day = point(43.6532, -79.3832, 0, 40);
     const night = { ...day, timestamp: new Date(2026, 0, 1, 23, 0, 0).toISOString() };
@@ -218,6 +258,7 @@ describe('tripEngine', () => {
 
     expect(calculateNightPenalty([day, night])).toBeGreaterThan(0);
     expect(calculateNightPenalty([deepNight, deepNight])).toBeGreaterThan(calculateNightPenalty([day, night]));
+    expect(calculateNightPenalty(null)).toBe(0);
   });
 
   it('applies custom night windows to trip stats and scoring', () => {

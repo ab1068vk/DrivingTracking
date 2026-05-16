@@ -353,19 +353,19 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const ecoDrivingScore = Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50;
   const efficiencyMultiplier = Math.max(0.7, 1 + (ecoDrivingScore - 50) / 200);
   const actualLPer100Km = lPer100Km / efficiencyMultiplier;
-  const liters = distanceKm * lPer100Km / 100;
-  const actualLiters = distanceKm * actualLPer100Km / 100;
-  const cost = actualLiters * fuelPrice;
-  const baselineCost = liters * fuelPrice;
-  const co2Kg = actualLiters * GASOLINE_CO2_KG_PER_LITER;
-  const fuelSavedLiters = Math.max(0, liters - actualLiters);
+  const baselineLiters = distanceKm * lPer100Km / 100;
+  const adjustedLiters = distanceKm * actualLPer100Km / 100;
+  const cost = adjustedLiters * fuelPrice;
+  const baselineCost = baselineLiters * fuelPrice;
+  const co2Kg = adjustedLiters * GASOLINE_CO2_KG_PER_LITER;
+  const fuelSavedLiters = Math.max(0, baselineLiters - adjustedLiters);
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
   const avgCo2Kg = distanceKm * 12.0 / 100;
   const co2SavedKg = Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
 
   return {
-    liters: Math.round(actualLiters * 100) / 100,
-    baseline_liters: Math.round(liters * 100) / 100,
+    liters: Math.round(adjustedLiters * 100) / 100,
+    baseline_liters: Math.round(baselineLiters * 100) / 100,
     cost: Math.round(cost * 100) / 100,
     baseline_cost: Math.round(baselineCost * 100) / 100,
     co2_kg: roundedCo2Kg,
@@ -853,7 +853,7 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
 }
 
 export function calculateSpeedDiscipline(trips = [], settings = {}) {
-  const speedLimit = Number(settings.threshold_speeding_kmh || 130);
+  const speedLimit = Number(settings.threshold_speeding_kmh ?? 130);
   const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 10);
   const speeds = trips
     .filter((trip) => trip.status === 'completed')

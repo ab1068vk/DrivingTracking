@@ -51,8 +51,9 @@ function mostImprovedWeek(trips = []) {
 }
 
 export async function exportMonthlyReportPDF(trips = [], period = 'month', settings = {}) {
+  const tripList = Array.isArray(trips) ? trips : [];
   const doc = new jsPDF();
-  const summary = generateReportSummary(trips);
+  const summary = generateReportSummary(tripList);
   const now = new Date();
   const filename = `drivesense-monthly-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
 
@@ -90,15 +91,15 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   writeRow(doc, ['Date', 'Distance', 'Duration', 'Overall', 'Safety', 'Smooth', 'Eco', 'Brakes', 'Speeding'], 32, widths);
   doc.setFont('helvetica', 'normal');
   y = 40;
-  trips.slice(0, 24).forEach((trip) => {
+  tripList.slice(0, 24).forEach((trip) => {
     if (y > 280) {
       doc.addPage();
       y = 20;
     }
     writeRow(doc, [
       formatDate(trip.start_time),
-      formatDistance(trip.distance_km || 0, settings.units),
-      formatDuration(trip.duration_seconds || 0),
+      formatDistance(trip.distance_km ?? 0, settings.units),
+      formatDuration(trip.duration_seconds ?? 0),
       trip.score_overall ?? '',
       trip.score_safety ?? '',
       trip.score_smoothness ?? '',
@@ -116,20 +117,20 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
 
-  const sortedByDistance = [...trips].sort((a, b) => (b.distance_km || 0) - (a.distance_km || 0));
-  const economics = trips.reduce((totals, trip) => {
+  const sortedByDistance = [...tripList].sort((a, b) => (b.distance_km ?? 0) - (a.distance_km ?? 0));
+  const economics = tripList.reduce((totals, trip) => {
     const estimate = estimateTripEconomics(trip, {}, settings);
     return {
       cost: totals.cost + estimate.cost,
       co2: totals.co2 + estimate.co2_kg,
     };
   }, { cost: 0, co2: 0 });
-  const streak = calculateNoHarshBrakeStreak(trips);
+  const streak = calculateNoHarshBrakeStreak(tripList);
   const summaryRows = [
     ['Best trip', summary.best_trip ? `${formatDate(summary.best_trip.start_time)} (${summary.best_trip.score_overall})` : 'None'],
     ['Worst trip', summary.worst_trip ? `${formatDate(summary.worst_trip.start_time)} (${summary.worst_trip.score_overall})` : 'None'],
-    ['Longest trip', sortedByDistance[0] ? `${formatDate(sortedByDistance[0].start_time)} · ${formatDistance(sortedByDistance[0].distance_km || 0, settings.units)}` : 'None'],
-    ['Most improved week', mostImprovedWeek(trips)],
+    ['Longest trip', sortedByDistance[0] ? `${formatDate(sortedByDistance[0].start_time)} · ${formatDistance(sortedByDistance[0].distance_km ?? 0, settings.units)}` : 'None'],
+    ['Most improved week', mostImprovedWeek(tripList)],
     ['Total estimated fuel cost', `$${economics.cost.toFixed(2)}`],
     ['Total CO2', `${economics.co2.toFixed(1)} kg`],
     ['No-harsh-brake streak', `${streak} day${streak === 1 ? '' : 's'}`],

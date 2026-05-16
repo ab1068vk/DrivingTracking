@@ -59,6 +59,20 @@ describe('activityRecognition auto-stop logic', () => {
       stillSeconds: 190,
       gpsPositionDriftM: 4,
     })).toBe(true);
+
+    expect(shouldAutoStopTracking({
+      activity: null,
+      currentSpeedKmh: 0,
+      stillSeconds: 190,
+      gpsPositionDriftM: 7.5,
+    })).toBe(true);
+
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.UNKNOWN, confidence: 0 },
+      currentSpeedKmh: 0,
+      stillSeconds: 190,
+      gpsPositionDriftM: 7.5,
+    })).toBe(true);
   });
 
   it('does not GPS-only stop when activity is missing but GPS is drifting', () => {

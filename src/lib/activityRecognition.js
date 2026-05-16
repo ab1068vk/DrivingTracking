@@ -4,6 +4,7 @@ import { requestActivityRecognitionPermission } from '@/lib/permissions';
 import { haversineDistance } from '@/lib/tripEngine';
 
 const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
+const UNKNOWN_GPS_STABLE_M = 8;
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -139,8 +140,9 @@ export function shouldAutoStopTracking({
     // FIX: Add the prolonged_zero_speed safety net so trips cannot run forever on GPS drift alone.
   }
 
-  if (!activity && speed < 5 && secondsStopped >= 180) {
-    return driftM < 6;
+  const activityUnknown = !activity || type === ACTIVITY_TYPES.UNKNOWN;
+  if (activityUnknown && speed < 5 && secondsStopped >= 180) {
+    return driftM < UNKNOWN_GPS_STABLE_M;
   }
 
   return false;

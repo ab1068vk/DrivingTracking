@@ -146,7 +146,7 @@ export function haversineDistance(lat1, lng1, lat2, lng2) {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
   return R * c;
 }
 
@@ -913,7 +913,7 @@ export function calculateFuelBandScore(cleanPoints = [], thresholds = DEFAULT_TH
   }
 
   const optimalBandRatio = totalMovingSeconds > 0 ? Math.round((optimalBandSeconds / totalMovingSeconds) * 100) : 0;
-  const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * 2.0));
+  const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * 1.4));
   const bandLabel = fuelBandScore >= 80
     ? 'excellent cruise'
     : fuelBandScore >= 55
@@ -2963,7 +2963,7 @@ export function isNightDrivingTime(point, thresholds = DEFAULT_THRESHOLDS) {
 }
 
 export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
-  if (!routePoints.length) return 0;
+  if (!routePoints || routePoints.length === 0) return 0;
 
   let nightPoints = 0;
   let deepNightPoints = 0;
@@ -2973,10 +2973,10 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
     if (hour >= 2 && hour < 5) deepNightPoints++;
   }
 
+  const n = routePoints.length;
   const normalNightPoints = nightPoints - deepNightPoints;
   // FIX: Deep-night points are a subset of night points, so separate them before weighting.
-  return (normalNightPoints / routePoints.length) * 8 +
-    (deepNightPoints / routePoints.length) * 12;
+  return (normalNightPoints / n) * 8 + (deepNightPoints / n) * 12;
   // FIX: Give deep-night points an exclusive higher weight instead of double-counting them.
 }
 
@@ -3369,7 +3369,7 @@ export function calculateTripScores(
   const parking = analyzeParkingApproach(routePoints, thresholds);
   const nearMissScore = counts[EVENT_TYPES.NEAR_MISS] === 0
     ? 100
-    : Math.max(20, Math.round(100 - counts[EVENT_TYPES.NEAR_MISS] * 25));
+    : Math.max(0, Math.round(100 * Math.pow(0.60, counts[EVENT_TYPES.NEAR_MISS])));
   const aggressive = calculateAggressiveDrivingScore(eventsList, { ...stats, ...jerk });
   const highwayKm = Math.max(1, calculateHighwayDistanceKm(routePoints));
   const followingDistanceScore = Math.max(0, 100 - Math.min(tailgatePenalty * (4 / highwayKm), 80));
@@ -3406,7 +3406,9 @@ export function calculateTripScores(
   const intersectionScore = Number.isFinite(stats.intersection_score) ? stats.intersection_score : 100;
 
   // Overall = weighted combination
-  const overall = Math.round(safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15);
+  const overall = Math.min(100, Math.round(
+    safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15
+  ));
 
   const componentScores = {
     score_overall: overall,
