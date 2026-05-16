@@ -8,7 +8,7 @@ import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
   Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag,
-  ParkingSquare, Droplets, GitBranch, Route
+  ParkingSquare, Droplets, GitBranch, Route, Smartphone
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
@@ -194,6 +194,22 @@ export default function TripDetail() {
     appears_dry: 'Dry',
     insufficient_data: 'Not Enough Data',
   }[trip.slippery_proxy] || null;
+  const phoneUseEvents = (trip.driving_events || []).filter((event) => event.type === 'phone_use');
+  const phoneUseWindows = phoneUseEvents.length ? phoneUseEvents : (trip.phone_use_events || []);
+  const phoneUseRisk = trip.phone_use_risk || 'none';
+  const showPhoneUse = (trip.phone_use_window_count || phoneUseWindows.length || 0) > 0 || phoneUseRisk !== 'none';
+  const avgPhoneUseSpeed = phoneUseWindows.length
+    ? Math.round(phoneUseWindows.reduce((sum, event) => sum + (Number(event.speed_kmh) || 0), 0) / phoneUseWindows.length)
+    : 0;
+  const phoneUseRiskClass = {
+    high: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60',
+    medium: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800/60',
+    low: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
+    none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
+  }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
+  const mapEvents = settings.phone_use_show_on_map === false
+    ? (trip.driving_events || []).filter((event) => event.type !== 'phone_use')
+    : (trip.driving_events || []);
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -338,6 +354,94 @@ export default function TripDetail() {
         </div>
       )}
 
+      {showPhoneUse && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Phone Use Analysis</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                GPS-behaviour proxy. DriveSense cannot read actual phone activity.
+              </p>
+            </div>
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${phoneUseRiskClass}`}>
+              {phoneUseRisk}
+            </span>
+          </div>
+
+          {phoneUseRisk === 'none' ? (
+            <div className="mt-4 rounded-2xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+              No phone use patterns detected this trip.
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-secondary/50 p-3">
+                  <Smartphone className="mb-2 h-4 w-4 text-red-500" />
+                  <div className="font-grotesk text-2xl font-bold">{trip.phone_use_window_count ?? phoneUseWindows.length}</div>
+                  <div className="text-xs text-muted-foreground">windows detected</div>
+                </div>
+                <div className="rounded-2xl bg-secondary/50 p-3">
+                  <Clock className="mb-2 h-4 w-4 text-orange-500" />
+                  <div className="font-grotesk text-2xl font-bold">{Math.round(trip.phone_use_total_seconds || 0)}s</div>
+                  <div className="text-xs text-muted-foreground">estimated duration</div>
+                </div>
+                <div className="rounded-2xl bg-secondary/50 p-3">
+                  <Gauge className="mb-2 h-4 w-4 text-blue-500" />
+                  <div className="font-grotesk text-2xl font-bold">{avgPhoneUseSpeed || '-'}</div>
+                  <div className="text-xs text-muted-foreground">avg km/h during detection</div>
+                </div>
+                <div className="rounded-2xl bg-secondary/50 p-3">
+                  <Focus className="mb-2 h-4 w-4 text-violet-500" />
+                  <div className="font-grotesk text-2xl font-bold">{Math.round((trip.phone_use_pct_of_trip || 0) * 10) / 10}%</div>
+                  <div className="text-xs text-muted-foreground">of trip time</div>
+                </div>
+              </div>
+
+              <details className="rounded-2xl bg-secondary/50 p-3">
+                <summary className="cursor-pointer list-none text-sm font-semibold">Window breakdown</summary>
+                <div className="mt-3 space-y-2">
+                  {phoneUseWindows.map((event, index) => (
+                    <div key={`${event.startTime || event.timestamp}-${index}`} className="rounded-xl bg-card p-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold">
+                          Window {index + 1} - {event.startTime ? new Date(event.startTime).toLocaleTimeString() : 'time unknown'}
+                        </div>
+                        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold uppercase">
+                          {event.confidence_level || 'medium'}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {Math.round(event.durationS ?? event.duration_seconds ?? 0)} seconds - {Math.round(event.speed_kmh || 0)} km/h
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Signals: {(event.signals_triggered || []).join(', ') || 'combined GPS behaviour'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => document.querySelector('.map-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                        className="mt-2 rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        View on map
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+
+              {settings.phone_use_affects_score !== false && (trip.phone_use_score || 100) < 95 && (
+                <div className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                  Phone use reduced your Safety score by about {Math.max(1, Math.round((100 - (trip.phone_use_score || 100)) * 0.05))} point{Math.round((100 - (trip.phone_use_score || 100)) * 0.05) === 1 ? '' : 's'}.
+                </div>
+              )}
+            </div>
+          )}
+        </motion.div>
+      )}
+
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
         <div className="mb-2 flex justify-end">
@@ -354,7 +458,7 @@ export default function TripDetail() {
         <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
           <TripMap
             routePoints={trip.route_points || []}
-            events={trip.driving_events || []}
+            events={mapEvents}
             showCorneringHeatmap={showCorneringHeatmap}
             height="300px"
           />

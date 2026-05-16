@@ -61,6 +61,9 @@ export default function MapScreen() {
   });
   const selectedTrip = allCompleted.find(t => t.id === selectedTripId);
   const secondaryTrip = allCompleted.find(t => String(t.id) === String(secondaryTripId));
+  const selectedEvents = settings.phone_use_show_on_map === false
+    ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
+    : (selectedTrip?.driving_events || []);
   const commutePatterns = useMemo(() => identifyCommutePatterns(allCompleted), [allCompleted]);
   const compareOptions = useMemo(() => {
     if (!selectedTrip) return [];
@@ -176,7 +179,7 @@ export default function MapScreen() {
           <div className="rounded-2xl overflow-hidden border border-border shadow-sm relative">
             <TripMap
               routes={mapRoutes}
-              events={selectedTrip?.driving_events || []}
+              events={selectedEvents}
               showCurrentLocation={showCurrentLoc}
               currentLocation={currentLocation}
               parkedLocation={parkedLocation}

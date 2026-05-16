@@ -22,8 +22,9 @@ When a trip ends, the app calculates the trip in this order:
 ```js
 const thresholds = buildDrivingThresholds(settings);
 const stats = calculateTripStats(routePoints, startTime, endTime, thresholds);
-const events = detectDrivingEvents(routePoints, thresholds);
-const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds);
+const detection = detectDrivingEvents(routePoints, thresholds);
+const events = detection.events ?? detection;
+const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, detection.phoneUse ?? {});
 const economics = estimateTripEconomics({ ...stats, ...scores }, vehicle, settings);
 ```
 
@@ -50,6 +51,11 @@ threshold_near_miss_brake_ms2: 3.5,
 threshold_near_miss_turn_degs: 30,
 threshold_drowsy_heading_std: 8,
 threshold_phone_proxy_oscillations: 3,
+phone_use_detection_enabled: true,
+phone_use_live_alert_enabled: true,
+phone_use_show_on_map: true,
+phone_use_affects_score: true,
+phone_use_sensitivity: 'medium',
 threshold_speed_creep_kmh: 10,
 threshold_overtake_accel_ms2: 3.0,
 min_speed_rapid_accel_kmh: 15,
@@ -78,6 +84,17 @@ export function buildDrivingThresholds(settings = {}) {
     ADVANCED_SAFETY_DETECTION_ENABLED: settings.advanced_safety_detection_enabled !== false,
   };
 }
+```
+
+Phone-use thresholds added by `buildDrivingThresholds`:
+
+```js
+PHONE_MICRO_STEER_COUNT: 4,
+PHONE_CREEP_RATE_KMH_S: 1.5,
+PHONE_LANE_DRIFT_DEG: 8,
+PHONE_COUPLING_THRESHOLD: 0.15,
+PHONE_CONFIDENCE_THRESHOLD: low ? 0.60 : high ? 0.25 : 0.40,
+PHONE_MIN_WINDOW_S: 4,
 ```
 
 ## GPS Distance
@@ -465,11 +482,23 @@ Looks for unstable speed behavior across sliding windows. Feeds:
 - `distraction_score`
 - phone/distraction coaching
 
-## Phone Usage Proxy
+## Phone Use Detection
 
-Function: `detectPhoneUsageProxy`
+Primary function: `detectPhoneUseWindows`
 
-This is also a proxy. It looks for oscillating heading/speed behavior that may indicate distraction. It returns:
+This is a GPS-only proxy. It detects likely phone-use windows from micro-steering oscillation, speed creep with correction, attention gaps, lane drift with recovery, and speed-heading decoupling. It returns first-class `phone_use` events and aggregate score fields:
+
+- `phone_use_events`
+- `phone_use_window_count`
+- `phone_use_total_seconds`
+- `phone_use_high_confidence_count`
+- `phone_use_risk`
+- `phone_use_score`
+- `phone_use_pct_of_trip`
+
+Compatibility functions: `detectPhoneUsageProxy` and `detectPhoneProxy`
+
+These return the legacy fields:
 
 - `phone_proxy_count`
 - `phone_proxy_risk`
@@ -805,11 +834,39 @@ const normalize = (totalPenalty) => {
 };
 ```
 
+Phone-use detection:
+
+`detectPhoneUseWindows(routePoints, thresholds)` emits first-class `phone_use` events and aggregate scoring fields. It fuses five GPS behaviour signals: micro-steering oscillation, speed creep with correction, attention-gap windows, lane drift with recovery, and speed-heading decoupling. Votes are smoothed, merged across brief gaps, and converted to windows with confidence, severity, midpoint location, speed, duration, and triggered signal names.
+
+Aggregate outputs include:
+
+- `phone_use_window_count`
+- `phone_use_total_seconds`
+- `phone_use_high_confidence_count`
+- `phone_use_risk`
+- `phone_use_score`
+- `phone_use_pct_of_trip`
+
 Final component scores:
 
 ```js
-const safety = Math.round(baseSafety * 0.85 + followingDistanceScore * 0.15);
-const smoothness = Math.round(baseSmoothness * 0.55 + jerk.jerk_score * 0.30 + svi.svi_score * 0.15);
+const safetyBase =
+  baseSafety * 0.60 +
+  followingDistanceScore * 0.10 +
+  (braking_efficiency_score ?? 100) * 0.15 +
+  overall_compliance_score * 0.10 +
+  (phoneUse.phone_use_score ?? 100) * 0.05;
+const safety = Math.round(overtake_count > 0
+  ? safetyBase * 0.95 + overtake_quality_score * 0.05
+  : safetyBase
+) + safety_condition_bonus;
+const smoothness = Math.round(
+  baseSmoothness * 0.45 +
+  jerk.jerk_score * 0.25 +
+  svi.svi_score * 0.10 +
+  reaction_score * 0.10 +
+  (cornering_consistency_score ?? 100) * 0.10
+);
 const eco = Math.round(baseEco * 0.40 + ecoDriving.eco_driving_score * 0.40 + fuelBand.fuel_band_score * 0.20);
 const overall = Math.round(safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15);
 ```
@@ -1528,6 +1585,7 @@ score_smoothness = round(
 );
 ```
 
-5. Safety now blends base safety, following distance, braking efficiency, road-type speed compliance, optional overtake quality, and road-condition bonus.
+5. Safety now blends base safety, following distance, braking efficiency, road-type speed compliance, optional phone-use penalty, optional overtake quality, and road-condition bonus.
 6. `extractBrakingSequences(routePoints, thresholds, options)` is the shared helper for full-stop braking analysis and slippery-condition proxy detection.
-7. `tripInsights.js` adds display/history-level helpers: `buildFatigueHeatmapData`, `buildDriverSignature`, and `calculatePredictiveMaintenance`.
+7. `detectPhoneUseWindows(routePoints, thresholds)` is the primary phone-use path used by `detectDrivingEvents`; legacy phone proxy helpers remain for backward compatibility.
+8. `tripInsights.js` adds display/history-level helpers: `buildFatigueHeatmapData`, `buildDriverSignature`, and `calculatePredictiveMaintenance`.

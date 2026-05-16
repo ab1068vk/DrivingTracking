@@ -54,6 +54,14 @@ export const DEFAULT_THRESHOLDS = {
   threshold_near_miss_turn_degs: 30,
   threshold_drowsy_heading_std: 8,
   threshold_phone_proxy_oscillations: 3,
+  PHONE_MICRO_STEER_COUNT: 4,
+  PHONE_CREEP_RATE_KMH_S: 1.5,
+  PHONE_LANE_DRIFT_DEG: 8,
+  PHONE_COUPLING_THRESHOLD: 0.15,
+  PHONE_CONFIDENCE_THRESHOLD: 0.40,
+  PHONE_MIN_WINDOW_S: 4,
+  PHONE_USE_DETECTION_ENABLED: true,
+  PHONE_USE_AFFECTS_SCORE: true,
   threshold_speed_creep_kmh: 10,
   threshold_overtake_accel_ms2: 3.0,
   ADVANCED_SAFETY_DETECTION_ENABLED: true,
@@ -70,6 +78,7 @@ export const EVENT_TYPES = {
   ERRATIC_SPEED: 'erratic_speed',
   NEAR_MISS: 'near_miss',
   AGGRESSIVE_OVERTAKE: 'aggressive_overtake',
+  PHONE_USE: 'phone_use',
 };
 
 function settingNumber(value, fallback) {
@@ -98,6 +107,18 @@ export function buildDrivingThresholds(settings = {}) {
     threshold_near_miss_turn_degs: settingNumber(settings.threshold_near_miss_turn_degs, DEFAULT_THRESHOLDS.threshold_near_miss_turn_degs),
     threshold_drowsy_heading_std: settingNumber(settings.threshold_drowsy_heading_std, DEFAULT_THRESHOLDS.threshold_drowsy_heading_std),
     threshold_phone_proxy_oscillations: settingNumber(settings.threshold_phone_proxy_oscillations, DEFAULT_THRESHOLDS.threshold_phone_proxy_oscillations),
+    PHONE_MICRO_STEER_COUNT: settingNumber(settings.phone_micro_steer_count, DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_COUNT),
+    PHONE_CREEP_RATE_KMH_S: settingNumber(settings.phone_creep_rate_kmh_s, DEFAULT_THRESHOLDS.PHONE_CREEP_RATE_KMH_S),
+    PHONE_LANE_DRIFT_DEG: settingNumber(settings.phone_lane_drift_deg, DEFAULT_THRESHOLDS.PHONE_LANE_DRIFT_DEG),
+    PHONE_COUPLING_THRESHOLD: settingNumber(settings.phone_coupling_threshold, DEFAULT_THRESHOLDS.PHONE_COUPLING_THRESHOLD),
+    PHONE_CONFIDENCE_THRESHOLD: settings.phone_use_sensitivity === 'low'
+      ? 0.60
+      : settings.phone_use_sensitivity === 'high'
+        ? 0.25
+        : settingNumber(settings.phone_confidence_threshold, DEFAULT_THRESHOLDS.PHONE_CONFIDENCE_THRESHOLD),
+    PHONE_MIN_WINDOW_S: settingNumber(settings.phone_min_window_s, DEFAULT_THRESHOLDS.PHONE_MIN_WINDOW_S),
+    PHONE_USE_DETECTION_ENABLED: settings.phone_use_detection_enabled !== false,
+    PHONE_USE_AFFECTS_SCORE: settings.phone_use_affects_score !== false,
     threshold_speed_creep_kmh: settingNumber(settings.threshold_speed_creep_kmh, DEFAULT_THRESHOLDS.threshold_speed_creep_kmh),
     threshold_overtake_accel_ms2: settingNumber(settings.threshold_overtake_accel_ms2, DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2),
     NIGHT_DETECTION_MODE: settings.night_detection_mode || DEFAULT_THRESHOLDS.NIGHT_DETECTION_MODE,
@@ -435,8 +456,9 @@ export function simplifyRoute(points = [], toleranceMeters = 10, events = []) {
 export function calculateRouteSummary(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
   const cleaned = cleanRoutePoints(points, thresholds);
   const stats = calculateTripStats(cleaned, startTime, endTime, thresholds);
-  const events = detectDrivingEvents(cleaned, thresholds);
-  const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds);
+  const detection = detectDrivingEvents(cleaned, thresholds);
+  const events = Reflect.get(detection, 'events') ?? detection;
+  const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {});
   return { points: cleaned, stats, events, scores };
 }
 
@@ -488,8 +510,9 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
     const startTime = segmentPoints[0].timestamp;
     const endTime = segmentPoints[segmentPoints.length - 1].timestamp;
     const stats = calculateTripStats(segmentPoints, startTime, endTime, thresholds);
-    const events = detectDrivingEvents(segmentPoints, thresholds);
-    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds);
+    const detection = detectDrivingEvents(segmentPoints, thresholds);
+    const events = Reflect.get(detection, 'events') ?? detection;
+    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {});
     const drivingEvents = scores.driving_events || events;
     const economics = estimateTripEconomics({ ...stats, ...scores });
 
@@ -1114,6 +1137,27 @@ function stddev(values = []) {
   return Math.sqrt(average(values.map((value) => (value - mean) ** 2)));
 }
 
+function pearsonCorrelation(xs = [], ys = []) {
+  const count = Math.min(xs.length, ys.length);
+  if (count < 2) return 0;
+  const x = xs.slice(0, count);
+  const y = ys.slice(0, count);
+  const meanX = average(x);
+  const meanY = average(y);
+  let numerator = 0;
+  let denomX = 0;
+  let denomY = 0;
+  for (let i = 0; i < count; i++) {
+    const dx = x[i] - meanX;
+    const dy = y[i] - meanY;
+    numerator += dx * dy;
+    denomX += dx * dx;
+    denomY += dy * dy;
+  }
+  const denominator = Math.sqrt(denomX * denomY);
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
 function signedHeadingDelta(from, to) {
   let diff = ((to - from + 540) % 360) - 180;
   if (!Number.isFinite(diff)) diff = 0;
@@ -1291,56 +1335,262 @@ export function detectSpeedCreepWithThresholds(cleanPoints = [], thresholds = DE
   };
 }
 
-export function detectPhoneUsageProxy(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
-  const oscillationThreshold = thresholds.threshold_phone_proxy_oscillations ?? DEFAULT_THRESHOLDS.threshold_phone_proxy_oscillations;
-  const samples = cleanPoints
+function emptyPhoneUseResult() {
+  return {
+    phone_use_events: [],
+    phone_use_window_count: 0,
+    phone_use_total_seconds: 0,
+    phone_use_high_confidence_count: 0,
+    phone_use_risk: 'none',
+    phone_use_score: 100,
+    phone_use_pct_of_trip: 0,
+  };
+}
+
+/**
+ * Detect likely phone-use windows from multi-signal GPS behavior evidence.
+ * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number,heading?:number}>} routePoints - Cleaned route points.
+ * @param {Object} thresholds - Driving thresholds from buildDrivingThresholds.
+ * @returns {{phone_use_events:Array,phone_use_window_count:number,phone_use_total_seconds:number,phone_use_high_confidence_count:number,phone_use_risk:string,phone_use_score:number,phone_use_pct_of_trip:number}} Phone-use result.
+ * @example
+ * const phoneUse = detectPhoneUseWindows(routePoints, buildDrivingThresholds(settings));
+ */
+export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+  if (thresholds.PHONE_USE_DETECTION_ENABLED === false) return emptyPhoneUseResult();
+  const points = routePoints || [];
+  if (points.length < 3) return emptyPhoneUseResult();
+
+  const samples = points
     .map((point, index) => ({
       point,
       index,
       timestamp: timestampMs(point),
       speed_kmh: finiteSpeed(point),
-      heading: headingForIndex(cleanPoints, index),
+      heading: headingForIndex(points, index),
     }))
-    .filter((sample) => Number.isFinite(sample.timestamp) && sample.speed_kmh > 30);
-  let count = 0;
-  let lastEventTime = 0;
+    .filter((sample) => Number.isFinite(sample.timestamp));
+  if (samples.length < 3) return emptyPhoneUseResult();
 
+  const votes = [];
+  const addVote = (signal, startIndex, endIndex, strength) => {
+    if (startIndex < 0 || endIndex <= startIndex || !Number.isFinite(strength) || strength <= 0) return;
+    votes.push({
+      signal,
+      startIndex: Math.max(0, startIndex),
+      endIndex: Math.min(points.length - 1, endIndex),
+      strength: Math.max(0, strength),
+    });
+  };
+
+  const signedHeadingDeltas = samples.map((sample, index) => {
+    if (index === 0) return 0;
+    return signedHeadingDelta(samples[index - 1].heading, sample.heading);
+  });
+  const speedDeltas = samples.map((sample, index) => {
+    if (index === 0) return 0;
+    return sample.speed_kmh - samples[index - 1].speed_kmh;
+  });
+  const accelSamples = samples.map((sample, index) => {
+    if (index === 0) return 0;
+    const dt = (sample.timestamp - samples[index - 1].timestamp) / 1000;
+    return dt > 0 ? calculateAcceleration(samples[index - 1].speed_kmh, sample.speed_kmh, dt) : 0;
+  });
+
+  // Signal 1: micro-steering oscillations.
   for (let i = 0; i < samples.length; i++) {
     const start = samples[i];
-    if (start.timestamp - lastEventTime < 15000) continue;
-    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 15000);
-    if (window.length < 5) continue;
-
-    const changes = [];
-    const signedChanges = [];
-    for (let j = 1; j < window.length; j++) {
-      const delta = signedHeadingDelta(window[j - 1].heading, window[j].heading);
-      signedChanges.push(delta);
-      changes.push(Math.abs(delta));
+    if (start.speed_kmh < 30) continue;
+    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 10000);
+    if (window.length < 4) continue;
+    let oscillations = 0;
+    for (let j = 2; j < window.length; j++) {
+      const globalIndex = window[j].index;
+      const d1 = signedHeadingDeltas[Math.max(0, globalIndex - 1)];
+      const d2 = signedHeadingDeltas[globalIndex];
+      const bothMicro = Math.abs(d1) >= 3 && Math.abs(d1) <= 18 && Math.abs(d2) >= 3 && Math.abs(d2) <= 18;
+      if (bothMicro && Math.sign(d1) !== Math.sign(d2)) oscillations++;
     }
-
-    let oscillationCount = 0;
-    for (let j = 1; j < signedChanges.length; j++) {
-      if (
-        Math.abs(signedChanges[j]) > 4 &&
-        Math.abs(signedChanges[j - 1]) > 4 &&
-        Math.sign(signedChanges[j]) !== Math.sign(signedChanges[j - 1])
-      ) {
-        oscillationCount++;
-      }
-    }
-
-    const maxSnapBack = changes.length ? Math.max(...changes) : 0;
-    const windowSpeedStdDev = speedStdDev(window.map((sample) => sample.speed_kmh));
-    if (oscillationCount >= oscillationThreshold && maxSnapBack >= 10 && maxSnapBack < 45 && windowSpeedStdDev < 8) {
-      count++;
-      lastEventTime = start.timestamp;
+    if (oscillations >= (thresholds.PHONE_MICRO_STEER_COUNT ?? 4)) {
+      addVote('micro_steer', window[0].index, window[window.length - 1].index, Math.min(1, oscillations / 8));
+      i += Math.max(1, Math.floor(window.length / 2));
     }
   }
 
+  // Signal 2: speed creep without intent followed by abrupt correction.
+  for (let i = 0; i < samples.length; i++) {
+    const start = samples[i];
+    if (start.speed_kmh < 30) continue;
+    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 15000);
+    if (window.length < 5) continue;
+    const durationS = (window[window.length - 1].timestamp - window[0].timestamp) / 1000;
+    if (durationS <= 0) continue;
+    const speeds = window.map((sample) => sample.speed_kmh);
+    const driftRate = (Math.max(...speeds) - Math.min(...speeds)) / durationS;
+    const risingPairs = speeds.slice(1).filter((speed, index) => speed >= speeds[index] - 0.5).length;
+    const trendIsMonotonic = risingPairs / Math.max(1, speeds.length - 1) >= 0.75 &&
+      Math.max(...window.map((sample) => Math.abs(accelSamples[sample.index] || 0))) < 2.5;
+    const after = samples.filter((sample) => sample.timestamp > window[window.length - 1].timestamp && sample.timestamp <= window[window.length - 1].timestamp + 3000);
+    const correctionAbrupt = after.some((sample) => (accelSamples[sample.index] || 0) <= -1.5);
+    if (driftRate >= (thresholds.PHONE_CREEP_RATE_KMH_S ?? 1.5) && trendIsMonotonic && correctionAbrupt) {
+      addVote('speed_creep', window[0].index, window[window.length - 1].index, 0.7);
+    }
+  }
+
+  // Signal 3: attention gap against rolling speed pattern.
+  for (let i = 0; i < samples.length; i++) {
+    const sample = samples[i];
+    if (sample.speed_kmh < 30) continue;
+    const history = samples.filter((entry) => entry.timestamp >= sample.timestamp - 20000 && entry.timestamp < sample.timestamp);
+    if (history.length < 5) continue;
+    const rollingSpeed = average(history.map((entry) => entry.speed_kmh));
+    if (Math.abs(sample.speed_kmh - rollingSpeed) < 8) continue;
+    const gap = samples.filter((entry) => entry.timestamp >= sample.timestamp && entry.timestamp <= sample.timestamp + 5000);
+    if (gap.length < 3 || gap[gap.length - 1].timestamp - gap[0].timestamp < 4000) continue;
+    const noInput = gap.every((entry) => Math.abs(accelSamples[entry.index] || 0) <= 0.4);
+    if (noInput) addVote('attention_gap', gap[0].index, gap[gap.length - 1].index, 0.8);
+  }
+
+  // Signal 4: lane drift and recovery.
+  for (let i = 0; i < samples.length; i++) {
+    const start = samples[i];
+    if (start.speed_kmh < 40) continue;
+    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 8000);
+    if (window.length < 5) continue;
+    const firstHalf = window.filter((sample) => sample.timestamp <= start.timestamp + 4000);
+    if (firstHalf.length < 3) continue;
+    const driftValues = firstHalf.map((sample) => signedHeadingDelta(firstHalf[0].heading, sample.heading));
+    const driftMagnitude = Math.max(...driftValues.map(Math.abs));
+    const peakOffset = driftValues.findIndex((value) => Math.abs(value) === driftMagnitude);
+    const peak = firstHalf[Math.max(0, peakOffset)];
+    const recovery = window[window.length - 1];
+    const timeToRecover = Math.max(0.5, (recovery.timestamp - peak.timestamp) / 1000);
+    const recoverySpeed = headingDiff(recovery.heading, peak.heading) / timeToRecover;
+    if (driftMagnitude >= (thresholds.PHONE_LANE_DRIFT_DEG ?? 8) && recoverySpeed >= 3) {
+      addVote('lane_drift', window[0].index, window[window.length - 1].index, Math.min(1, driftMagnitude / 20));
+    }
+  }
+
+  // Signal 5: speed-heading decoupling.
+  for (let i = 0; i < samples.length; i++) {
+    const start = samples[i];
+    if (start.speed_kmh < 30) continue;
+    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 20000);
+    if (window.length < 8) continue;
+    const headingChanges = window.map((sample) => Math.abs(signedHeadingDeltas[sample.index] || 0));
+    const speedChanges = window.map((sample) => Math.abs(speedDeltas[sample.index] || 0));
+    if (average(headingChanges) < 1 || average(speedChanges) < 0.2) continue;
+    const correlation = pearsonCorrelation(headingChanges, speedChanges);
+    const threshold = thresholds.PHONE_COUPLING_THRESHOLD ?? 0.15;
+    if (correlation < threshold) {
+      addVote('speed_heading_decoupling', window[0].index, window[window.length - 1].index, Math.min(1, (threshold - correlation) * 5));
+    }
+  }
+
+  if (!votes.length) return emptyPhoneUseResult();
+
+  const timeline = new Array(points.length).fill(0);
+  for (const vote of votes) {
+    for (let i = vote.startIndex; i <= vote.endIndex; i++) timeline[i] += vote.strength;
+  }
+  const kernel = [0.1, 0.2, 0.4, 0.2, 0.1];
+  const smoothed = timeline.map((_, index) => kernel.reduce((sum, weight, kernelIndex) => {
+    const sourceIndex = index + kernelIndex - 2;
+    return sum + weight * (timeline[sourceIndex] || 0);
+  }, 0));
+
+  const confidenceThreshold = thresholds.PHONE_CONFIDENCE_THRESHOLD ?? 0.40;
+  const runs = [];
+  let startRun = null;
+  for (let i = 0; i < smoothed.length; i++) {
+    if (smoothed[i] >= confidenceThreshold && startRun == null) startRun = i;
+    if ((smoothed[i] < confidenceThreshold || i === smoothed.length - 1) && startRun != null) {
+      const endRun = smoothed[i] < confidenceThreshold ? i - 1 : i;
+      if (endRun >= startRun) runs.push({ startIndex: startRun, endIndex: endRun });
+      startRun = null;
+    }
+  }
+
+  const merged = [];
+  for (const run of runs) {
+    const previous = merged[merged.length - 1];
+    const gapS = previous ? (timestampMs(points[run.startIndex]) - timestampMs(points[previous.endIndex])) / 1000 : Infinity;
+    if (previous && gapS < 8) previous.endIndex = run.endIndex;
+    else merged.push({ ...run });
+  }
+
+  const minWindowS = thresholds.PHONE_MIN_WINDOW_S ?? 4;
+  const events = merged
+    .map((run) => {
+      const startTimeMs = timestampMs(points[run.startIndex]);
+      const endTimeMs = timestampMs(points[run.endIndex]);
+      const durationS = Math.max(0, (endTimeMs - startTimeMs) / 1000);
+      if (durationS < minWindowS) return null;
+      const windowPoints = points.slice(run.startIndex, run.endIndex + 1);
+      const midpointIndex = Math.round((run.startIndex + run.endIndex) / 2);
+      const confidence = Math.min(1, average(smoothed.slice(run.startIndex, run.endIndex + 1)));
+      const meanSpeed = average(windowPoints.map(finiteSpeed));
+      const signalsTriggered = [...new Set(votes
+        .filter((vote) => vote.startIndex <= run.endIndex && vote.endIndex >= run.startIndex)
+        .map((vote) => vote.signal))];
+      const confidenceLevel = confidence < 0.55 ? 'low' : confidence < 0.75 ? 'medium' : 'high';
+      const severity = confidence < 0.55 || meanSpeed < 50
+        ? 'low'
+        : confidence < 0.75 || meanSpeed < 80
+          ? 'medium'
+          : 'high';
+      return {
+        type: EVENT_TYPES.PHONE_USE,
+        startIndex: run.startIndex,
+        endIndex: run.endIndex,
+        point_index: midpointIndex,
+        startTime: new Date(startTimeMs).toISOString(),
+        endTime: new Date(endTimeMs).toISOString(),
+        timestamp: new Date(startTimeMs).toISOString(),
+        durationS: Math.round(durationS),
+        duration_seconds: Math.round(durationS),
+        lat: points[midpointIndex]?.lat,
+        lng: points[midpointIndex]?.lng,
+        speed_kmh: Math.round(meanSpeed),
+        confidence: round2(confidence),
+        confidence_level: confidenceLevel,
+        signals_triggered: signalsTriggered,
+        severity,
+        value: round2(confidence),
+      };
+    })
+    .filter(Boolean);
+
+  const totalSeconds = events.reduce((sum, event) => sum + (event.durationS || 0), 0);
+  const highConfidenceCount = events.filter((event) => event.confidence >= 0.75).length;
+  const anyVeryFast = events.some((event) => event.speed_kmh >= 100);
+  const phoneUseRisk = events.length === 0
+    ? 'none'
+    : highConfidenceCount >= 3 || totalSeconds > 90 || anyVeryFast
+      ? 'high'
+      : highConfidenceCount >= 1 || totalSeconds >= 30
+        ? 'medium'
+        : 'low';
+  const scorePenalty = events.reduce((sum, event) => (
+    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 8 : 3)
+  ), 0) + (anyVeryFast ? 15 : 0);
+  const tripDurationS = Math.max(1, (timestampMs(points[points.length - 1]) - timestampMs(points[0])) / 1000);
+
   return {
-    phone_proxy_count: count,
-    phone_proxy_risk: count === 0 ? 'none' : count <= 2 ? 'possible' : 'likely',
+    phone_use_events: events,
+    phone_use_window_count: events.length,
+    phone_use_total_seconds: Math.round(totalSeconds),
+    phone_use_high_confidence_count: highConfidenceCount,
+    phone_use_risk: phoneUseRisk,
+    phone_use_score: Math.max(0, Math.round(100 - scorePenalty)),
+    phone_use_pct_of_trip: round2((totalSeconds / tripDurationS) * 100),
+  };
+}
+
+export function detectPhoneUsageProxy(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+  const result = detectPhoneUseWindows(cleanPoints, thresholds);
+  return {
+    phone_proxy_count: result.phone_use_window_count,
+    phone_proxy_risk: result.phone_use_risk === 'none' ? 'none' : result.phone_use_risk === 'low' ? 'possible' : 'likely',
   };
 }
 
@@ -2049,8 +2299,9 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
       intersection_score: 100,
       idle_time_seconds: 0,
     };
-    const segmentEvents = detectDrivingEvents(slice, thresholds);
-    const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, {
+    const segmentDetection = detectDrivingEvents(slice, thresholds);
+    const segmentEvents = Reflect.get(segmentDetection, 'events') ?? segmentDetection;
+    const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, Reflect.get(segmentDetection, 'phoneUse') ?? {}, {
       includeRoadTypeSegments: false,
     });
     result[`${type}_score`] = {
@@ -2128,9 +2379,10 @@ function calculateSegmentStats(points = [], thresholds = DEFAULT_THRESHOLDS) {
 
 export function scoreSegmentPoints(points = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!points || points.length < 3) return 0;
-  const events = detectDrivingEvents(points, thresholds);
+  const detection = detectDrivingEvents(points, thresholds);
+  const events = Reflect.get(detection, 'events') ?? detection;
   const stats = calculateSegmentStats(points, thresholds);
-  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds).score_overall;
+  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {}).score_overall;
 }
 
 export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTimeMs, thresholds = DEFAULT_THRESHOLDS) {
@@ -2299,9 +2551,23 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
   });
 }
 
+function attachEventResult(events = [], phoneUse = emptyPhoneUseResult()) {
+  Object.defineProperty(events, 'events', {
+    value: events,
+    enumerable: false,
+    configurable: true,
+  });
+  Object.defineProperty(events, 'phoneUse', {
+    value: phoneUse,
+    enumerable: false,
+    configurable: true,
+  });
+  return events;
+}
+
 export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
   const events = [];
-  if (!points || points.length < 3) return events;
+  if (!points || points.length < 3) return attachEventResult(events);
 
   const EVENT_COOLDOWN_SECONDS = {
     [EVENT_TYPES.HARSH_BRAKE]: 4,
@@ -2552,8 +2818,9 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     detectErraticSpeedWindows(points),
   ];
   if (advancedSafetyEnabled) alwaysOnEvents.push(detectAggressiveOvertakes(points, thresholds));
-
-  return events.concat(...alwaysOnEvents);
+  const phoneUse = advancedSafetyEnabled ? detectPhoneUseWindows(points, thresholds) : emptyPhoneUseResult();
+  const combined = events.concat(...alwaysOnEvents, phoneUse.phone_use_events || []);
+  return attachEventResult(combined, phoneUse);
 }
 
 export function detectNearMisses(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
@@ -2975,8 +3242,18 @@ export function calculateTripScores(
   routePoints = [],
   thresholds = DEFAULT_THRESHOLDS,
   durationSeconds = stats?.duration_seconds || 0,
-  options = {}
+  phoneUseOrOptions = {},
+  maybeOptions = {}
 ) {
+  const eventsList = Array.isArray(events) ? events : events?.events || [];
+  const serializableEvents = eventsList.map((event) => ({ ...event }));
+  const phoneUseFromEvents = events?.phoneUse || {};
+  const options = phoneUseOrOptions?.includeRoadTypeSegments != null
+    ? phoneUseOrOptions
+    : maybeOptions;
+  const phoneUse = phoneUseOrOptions?.includeRoadTypeSegments != null
+    ? phoneUseFromEvents
+    : { ...phoneUseFromEvents, ...(phoneUseOrOptions || {}) };
   const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
   const penalties = {
     [EVENT_TYPES.HARSH_BRAKE]: { low: 3, medium: 6, high: 12 },
@@ -3003,6 +3280,7 @@ export function calculateTripScores(
     [EVENT_TYPES.ERRATIC_SPEED]: 0,
     [EVENT_TYPES.NEAR_MISS]: 0,
     [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: 0,
+    [EVENT_TYPES.PHONE_USE]: 0,
   };
   let safetyPenalty = 0;
   let smoothnessPenalty = 0;
@@ -3010,7 +3288,7 @@ export function calculateTripScores(
   let tailgatePenalty = 0;
   let distractionPenalty = 0;
 
-  for (const evt of events) {
+  for (const evt of eventsList) {
     let p = penalties[evt.type]?.[evt.severity] ?? 0;
     if (
       [EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.SHARP_TURN].includes(evt.type) &&
@@ -3048,14 +3326,17 @@ export function calculateTripScores(
       speed_creep_score: 100,
       speed_creep_severity_counts: { low: 0, medium: 0, high: 0 },
     };
-  const phoneProxy = advancedSafetyEnabled
-    ? detectPhoneUsageProxy(routePoints, thresholds)
-    : { phone_proxy_count: 0, phone_proxy_risk: 'none' };
+  const phoneUseResult = {
+    ...emptyPhoneUseResult(),
+    ...(advancedSafetyEnabled ? phoneUse : {}),
+  };
+  const phoneProxy = {
+    phone_proxy_count: phoneUseResult.phone_use_window_count || 0,
+    phone_proxy_risk: phoneUseResult.phone_use_risk === 'none' ? 'none' : phoneUseResult.phone_use_risk === 'low' ? 'possible' : 'likely',
+  };
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.low || 0) * 2;
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.medium || 0) * 5;
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.high || 0) * 10;
-  safetyPenalty += (phoneProxy.phone_proxy_count || 0) * 8;
-
   safetyPenalty += calculateNightPenalty(routePoints, thresholds);
 
   safetyPenalty += (stats.fatigue_risk_score || 0) * 1.2;
@@ -3079,8 +3360,8 @@ export function calculateTripScores(
   const fuelBand = calculateFuelBandScore(routePoints, thresholds);
   const merge = detectHighwayMergeBehavior(routePoints);
   const smoothBraking = calculateSmoothBrakingRatio(routePoints, thresholds);
-  const engineStress = calculateEngineStressScore(events, stats);
-  const tireWear = calculateTireWearUnits(events);
+  const engineStress = calculateEngineStressScore(eventsList, stats);
+  const tireWear = calculateTireWearUnits(eventsList);
   const drowsy = advancedSafetyEnabled
     ? detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds)
     : { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' };
@@ -3089,33 +3370,30 @@ export function calculateTripScores(
   const nearMissScore = counts[EVENT_TYPES.NEAR_MISS] === 0
     ? 100
     : Math.max(20, Math.round(100 - counts[EVENT_TYPES.NEAR_MISS] * 25));
-  const aggressive = calculateAggressiveDrivingScore(events, { ...stats, ...jerk });
+  const aggressive = calculateAggressiveDrivingScore(eventsList, { ...stats, ...jerk });
   const highwayKm = Math.max(1, calculateHighwayDistanceKm(routePoints));
   const followingDistanceScore = Math.max(0, 100 - Math.min(tailgatePenalty * (4 / highwayKm), 80));
   const distractionScore = Math.max(0, 100 - Math.min(distractionPenalty * (3 / distKm), 50));
-  const reaction = calculateReactionTimeProxy(routePoints, events, thresholds);
+  const reaction = calculateReactionTimeProxy(routePoints, eventsList, thresholds);
   const cornering = calculateCorneringConsistency(routePoints, thresholds);
-  const brakingEfficiency = calculateBrakingEfficiency(routePoints, events, thresholds);
+  const brakingEfficiency = calculateBrakingEfficiency(routePoints, eventsList, thresholds);
   const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds);
-  const overtakeQuality = calculateOvertakeQualityScore(routePoints, events, thresholds);
-  const slippery = detectSlipperyConditionProxy(routePoints, events, thresholds);
+  const overtakeQuality = calculateOvertakeQualityScore(routePoints, eventsList, thresholds);
+  const slippery = detectSlipperyConditionProxy(routePoints, eventsList, thresholds);
 
   const brakingScoreForSafety = brakingEfficiency.braking_efficiency_score ?? 100;
   const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
+  const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false ? 100 : (phoneUseResult.phone_use_score ?? 100);
+  const safetyWithoutOvertake = Math.round(
+    baseSafety * 0.60 +
+    followingDistanceScore * 0.10 +
+    brakingScoreForSafety * 0.15 +
+    complianceScoreForSafety * 0.10 +
+    phoneUseScoreForSafety * 0.05
+  );
   let safety = overtakeQuality.overtake_count > 0
-    ? Math.round(
-      baseSafety * 0.6175 +
-      followingDistanceScore * 0.095 +
-      brakingScoreForSafety * 0.1425 +
-      complianceScoreForSafety * 0.095 +
-      (overtakeQuality.overtake_quality_score ?? 100) * 0.05
-    )
-    : Math.round(
-      baseSafety * 0.65 +
-      followingDistanceScore * 0.10 +
-      brakingScoreForSafety * 0.15 +
-      complianceScoreForSafety * 0.10
-    );
+    ? Math.round(safetyWithoutOvertake * 0.95 + (overtakeQuality.overtake_quality_score ?? 100) * 0.05)
+    : safetyWithoutOvertake;
   safety = Math.min(100, safety + (slippery.safety_condition_bonus || 0));
   const smoothness = Math.round(
     baseSmoothness * 0.45 +
@@ -3160,6 +3438,13 @@ export function calculateTripScores(
     ...tireWear,
     ...speedCreep,
     ...phoneProxy,
+    phone_use_events: phoneUseResult.phone_use_events || [],
+    phone_use_window_count: phoneUseResult.phone_use_window_count || 0,
+    phone_use_total_seconds: phoneUseResult.phone_use_total_seconds || 0,
+    phone_use_risk: phoneUseResult.phone_use_risk || 'none',
+    phone_use_score: phoneUseResult.phone_use_score ?? 100,
+    phone_use_pct_of_trip: phoneUseResult.phone_use_pct_of_trip || 0,
+    phone_use_high_confidence_count: phoneUseResult.phone_use_high_confidence_count || 0,
     ...drowsy,
     ...hill,
     ...parking,
@@ -3169,9 +3454,9 @@ export function calculateTripScores(
     ...compliance,
     ...overtakeQuality,
     ...slippery,
-    ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, events, stats, thresholds)),
+    ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, eventsList, stats, thresholds)),
     ...aggressive,
-    driving_events: events,
+    driving_events: serializableEvents,
   };
   delete componentScores.speed_creep_severity_counts;
 
@@ -3376,6 +3661,7 @@ export function tripsToCSV(trips) {
     'Smooth Braking', 'Engine Stress', 'Tire Wear Units', 'Drowsy Risk', 'Phone Proxy', 'Parking Score',
     'Highway Score', 'Urban Score', 'Residential Score', 'Dominant Road Type',
     'Reaction Score', 'Avg Reaction Time (s)', 'Reaction Grade',
+    'Phone Use Windows', 'Phone Use Total Seconds', 'Phone Use Risk', 'Phone Use Score', 'Phone Use Pct Trip',
     'Cornering Consistency Score', 'Mean Lateral G', 'Peak Lateral G',
     'Braking Efficiency Score', 'Braking Efficiency Grade', 'Braking Sequence Count',
     'Highway Compliance Score', 'Urban Compliance Score', 'Residential Compliance Score', 'Overall Compliance Score',
@@ -3424,6 +3710,11 @@ export function tripsToCSV(trips) {
     t.reaction_score ?? '',
     t.avg_reaction_seconds ?? '',
     t.reaction_grade ?? '',
+    t.phone_use_window_count ?? 0,
+    t.phone_use_total_seconds ?? 0,
+    t.phone_use_risk ?? 'none',
+    t.phone_use_score ?? 100,
+    t.phone_use_pct_of_trip ?? 0,
     t.cornering_consistency_score ?? '',
     t.mean_lateral_g ?? '',
     t.peak_lateral_g ?? '',

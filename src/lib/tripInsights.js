@@ -969,6 +969,9 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 10);
   const recentNearMisses = recentTen.reduce((sum, trip) => sum + (trip.near_miss_count || 0), 0);
+  const recentPhoneRiskyTrips = recentTen.filter((trip) => (
+    trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high'
+  )).length;
   const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
   const recentThirty = completed.filter((trip) => new Date(trip.start_time || trip.created_at || 0).getTime() >= thirtyDaysAgo);
   const poorReactionTrips = recentThirty.filter((trip) => ['reactive', 'delayed'].includes(trip.reaction_grade)).length;
@@ -980,7 +983,9 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   };
   const focusArea = recentNearMisses > 0
     ? 'near-miss prevention'
-    : poorReactionTrips >= 3
+    : recentPhoneRiskyTrips >= 3
+      ? 'phone_distraction'
+      : poorReactionTrips >= 3
       ? 'anticipation'
       : emergencyHeavyTrips > 0
         ? 'progressive braking'
@@ -999,6 +1004,9 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
                 : 'consistency';
 
   const actions = [];
+  if (recentPhoneRiskyTrips >= 3) {
+    actions.push(`Put your phone away before driving. Phone use patterns were detected in ${recentPhoneRiskyTrips} of your last 10 trips; use Do Not Disturb, a mount, or Android Auto before starting.`);
+  }
   if (riskRate.worst_event === 'harsh_brakes' && riskRate.worst_event_count > 0) {
     actions.push('Brake earlier for the next five stops and leave one extra car length ahead.');
   } else if (riskRate.worst_event === 'rapid_accel' && riskRate.worst_event_count > 0) {

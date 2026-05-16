@@ -25,6 +25,7 @@ const focusLabels = {
   'distraction risk': 'Distraction Risk',
   anticipation: 'Anticipation',
   'progressive braking': 'Progressive Braking',
+  phone_distraction: 'Phone Distraction',
   consistency: 'Consistency',
 };
 

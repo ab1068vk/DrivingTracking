@@ -24,6 +24,9 @@ import {
   notifyStayAlert,
   notifyTripStarted,
   syncAchievementNotifications,
+  dispatchPostTripNotification,
+  checkAndNotifyPhoneUsePattern,
+  notifyStyleShift,
 } from '@/lib/notificationService';
 import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
 import {
@@ -48,6 +51,7 @@ import {
   calculatePeakHourStress,
   estimateTripEconomics,
   calculateWeeklyDrivingGoals,
+  buildDriverSignature,
 } from '@/lib/tripInsights';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
@@ -266,9 +270,10 @@ export default function Dashboard() {
       return;
     }
 
-    const events = detectDrivingEvents(pts, thresholds);
-
-    const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds);
+    const detection = detectDrivingEvents(pts, thresholds);
+    const events = Reflect.get(detection, 'events') ?? detection;
+    const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+    const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse);
     const tripEvents = scores.driving_events || events;
     const simplifiedPoints = simplifyRoute(pts, 10, tripEvents);
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
@@ -300,6 +305,12 @@ export default function Dashboard() {
       });
     }
     if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
+    await dispatchPostTripNotification(completedTrip, completedTrips, settings).catch(() => {});
+    checkAndNotifyPhoneUsePattern([completedTrip, ...completedTrips], settings).catch(() => {});
+    const driverSignature = buildDriverSignature([completedTrip, ...completedTrips].slice(0, 20));
+    if (driverSignature?.style_shifts?.length > 0) {
+      notifyStyleShift(driverSignature.style_shifts, settings).catch(() => {});
+    }
     await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch(() => {});
     activeTripStore.clear();
     activeTripRef.current = null;
@@ -442,12 +453,14 @@ export default function Dashboard() {
     const firstPoints = points.filter((point) => new Date(point.timestamp).getTime() <= firstWindowEnd);
     const lastPoints = points.filter((point) => new Date(point.timestamp).getTime() >= lastWindowStart);
     if (firstPoints.length < 3 || lastPoints.length < 3) return false;
-    const firstEvents = detectDrivingEvents(firstPoints);
-    const lastEvents = detectDrivingEvents(lastPoints);
+    const firstDetection = detectDrivingEvents(firstPoints);
+    const lastDetection = detectDrivingEvents(lastPoints);
+    const firstEvents = Reflect.get(firstDetection, 'events') ?? firstDetection;
+    const lastEvents = Reflect.get(lastDetection, 'events') ?? lastDetection;
     const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
     const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
-    return calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds).score_overall <
-      calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds).score_overall - 15;
+    return calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, Reflect.get(lastDetection, 'phoneUse') ?? {}).score_overall <
+      calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, Reflect.get(firstDetection, 'phoneUse') ?? {}).score_overall - 15;
   })();
 
   const { color: scoreColor } = getScoreColor(avgScore);

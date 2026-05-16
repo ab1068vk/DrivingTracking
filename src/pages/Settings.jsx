@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus
 } from 'lucide-react';
 import {
   Dialog,
@@ -570,26 +570,129 @@ export default function Settings() {
 
         {/* Notifications */}
         <SectionTitle>Notifications</SectionTitle>
-        <div>
+        <div className="space-y-3">
           <SettingRow
             icon={Bell}
-            label="Enable Notifications"
-            sublabel="Master switch for all DriveSense reminders and summaries"
+            label="Enable all notifications"
+            sublabel="Disabling this turns off all notification groups below"
           >
             <Toggle value={cfg.notifications_enabled !== false} onChange={v => updateNotificationSetting({ notifications_enabled: v })} />
           </SettingRow>
-          {[
-            { key: 'trip_start_notification', label: 'Trip Started', sub: 'Notify when a trip begins' },
-            { key: 'trip_end_notification', label: 'Trip Ended', sub: 'Summary when trip finishes' },
-            { key: 'achievement_notifications', label: 'Achievements', sub: 'Notify when a driving achievement unlocks' },
-            { key: 'weekly_report_notification', label: 'Weekly Report', sub: 'Weekly driving summary' },
-            { key: 'safe_driving_reminder', label: 'Safe Driving Tips', sub: 'Occasional driving reminders' },
-            { key: 'live_coaching_enabled', label: 'Live coaching notifications', sub: 'Show real-time coaching feedback during active trips' },
-          ].map(({ key, label, sub }) => (
-            <SettingRow key={key} label={label} sublabel={sub}>
-              <Toggle value={cfg.notifications_enabled !== false && cfg[key]} onChange={v => updateNotificationSetting({ [key]: v })} />
-            </SettingRow>
-          ))}
+          <div className={`${cfg.notifications_enabled === false ? 'pointer-events-none opacity-50' : ''}`}>
+            <div className="rounded-2xl bg-secondary/40 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Quiet Hours</div>
+              <SettingRow label="Quiet hours" sublabel="Suppress non-safety notifications during this window">
+                <Toggle value={cfg.notif_quiet_hours_enabled === true} onChange={v => updateNotificationSetting({ notif_quiet_hours_enabled: v })} disabled={cfg.notifications_enabled === false} />
+              </SettingRow>
+              <div className="grid grid-cols-2 gap-3 px-1 pt-3">
+                <label className="text-xs font-medium">
+                  Start
+                  <input
+                    type="time"
+                    value={cfg.notif_quiet_start || '22:00'}
+                    disabled={cfg.notif_quiet_hours_enabled !== true}
+                    onChange={e => updateNotificationSetting({ notif_quiet_start: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                  />
+                </label>
+                <label className="text-xs font-medium">
+                  End
+                  <input
+                    type="time"
+                    value={cfg.notif_quiet_end || '07:00'}
+                    disabled={cfg.notif_quiet_hours_enabled !== true}
+                    onChange={e => updateNotificationSetting({ notif_quiet_end: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                  />
+                </label>
+              </div>
+              <p className="mt-2 px-1 text-xs text-muted-foreground">Safety alerts always come through unless that channel is disabled.</p>
+            </div>
+
+            <div className="rounded-2xl bg-secondary/40 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">While Driving</div>
+              {[
+                { key: 'notif_safety_alerts_enabled', label: 'Safety alerts channel', sub: 'Urgent warnings while driving' },
+                { key: 'notif_phone_use_alert_enabled', label: 'Phone use warning', sub: 'Immediate warning when phone-use patterns appear' },
+                { key: 'notif_drowsy_alert_enabled', label: 'Drowsy / fatigue warning', sub: 'Fatigue and long-drive break alerts' },
+                { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
+                { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
+              ].map(({ key, label, sub }) => (
+                <SettingRow key={key} label={label} sublabel={sub}>
+                  <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_safety_alerts_enabled' && cfg.notif_safety_alerts_enabled === false)} />
+                </SettingRow>
+              ))}
+            </div>
+
+            <div className="rounded-2xl bg-secondary/40 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">After Each Trip</div>
+              {[
+                { key: 'trip_start_notification', label: 'Trip started', sub: 'Notify when a trip begins' },
+                { key: 'trip_end_notification', label: 'Trip ended', sub: 'Basic summary when trip finishes' },
+                { key: 'notif_post_trip_summary_enabled', label: 'Post-trip smart summary', sub: 'One contextual notification after a notable trip' },
+                { key: 'notif_post_trip_score_change', label: 'Score improvements and declines', sub: 'Notify when a score moves meaningfully' },
+                { key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' },
+                { key: 'notif_post_trip_fuel_saving', label: 'Eco fuel savings', sub: 'Call out efficient trips with fuel savings' },
+              ].map(({ key, label, sub }) => (
+                <SettingRow key={key} label={label} sublabel={sub}>
+                  <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key.startsWith('notif_post_trip_') && cfg.notif_post_trip_summary_enabled === false && key !== 'notif_post_trip_summary_enabled')} />
+                </SettingRow>
+              ))}
+              <div className="px-1 pt-3">
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="font-medium">Only notify if score is at least</span>
+                  <span className="text-primary font-semibold">{cfg.notif_min_score_for_post_trip ?? 0}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={cfg.notif_min_score_for_post_trip ?? 0}
+                  onChange={e => updateNotificationSetting({ notif_min_score_for_post_trip: Number(e.target.value) })}
+                  className="w-full accent-primary"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">0 means always notify when a post-trip rule matches.</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-secondary/40 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Coaching & Milestones</div>
+              {[
+                { key: 'notif_coaching_enabled', label: 'Coaching notifications', sub: 'Driving improvement tips and pattern changes' },
+                { key: 'achievement_notifications', label: 'Achievements', sub: 'Notify when an achievement unlocks' },
+                { key: 'notif_streak_enabled', label: 'Streak milestones', sub: 'Smooth-driving streak notifications' },
+                { key: 'notif_weekly_pattern_enabled', label: 'Weekly driving summary', sub: 'Monday at 8:30am' },
+                { key: 'weekly_report_notification', label: 'Classic weekly report', sub: 'Legacy Tuesday report' },
+                { key: 'notif_style_shift_enabled', label: 'Driving style shift alerts', sub: 'Notify when your style changes across recent trips' },
+                { key: 'safe_driving_reminder', label: 'Safe driving tips', sub: 'Occasional driving reminders' },
+              ].map(({ key, label, sub }) => (
+                <SettingRow key={key} label={label} sublabel={sub}>
+                  <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_coaching_enabled' && cfg.notif_coaching_enabled === false && key.startsWith('notif_'))} />
+                </SettingRow>
+              ))}
+            </div>
+
+            <div className="rounded-2xl bg-secondary/40 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Vehicle</div>
+              <SettingRow label="Maintenance reminders" sublabel="Vehicle service due and soon notifications">
+                <Toggle value={cfg.notif_maintenance_enabled !== false} onChange={v => updateNotificationSetting({ notif_maintenance_enabled: v })} disabled={cfg.notifications_enabled === false} />
+              </SettingRow>
+              <SettingRow label="No-trip nudge" sublabel="Remind after a period with no recorded trips">
+                <Toggle value={cfg.notif_inactive_nudge_enabled !== false} onChange={v => updateNotificationSetting({ notif_inactive_nudge_enabled: v })} disabled={cfg.notifications_enabled === false} />
+              </SettingRow>
+              <SettingRow label="Nudge after" sublabel="Days without a completed trip">
+                <select
+                  value={cfg.notif_inactive_nudge_days ?? 7}
+                  disabled={cfg.notif_inactive_nudge_enabled === false}
+                  onChange={e => updateNotificationSetting({ notif_inactive_nudge_days: Number(e.target.value) })}
+                  className="bg-card border border-border rounded-lg text-xs px-2 py-1 disabled:opacity-60"
+                >
+                  {[3, 5, 7, 14].map((days) => <option key={days} value={days}>{days} days</option>)}
+                </select>
+              </SettingRow>
+            </div>
+          </div>
         </div>
 
         {/* Driving Goals */}
@@ -793,6 +896,79 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground mt-1">{help}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Phone Use Detection */}
+        <SectionTitle>Phone Use Detection</SectionTitle>
+        <div className="rounded-2xl bg-secondary/40 p-3">
+          <SettingRow
+            icon={Focus}
+            label="Detect phone use while driving"
+            sublabel="Use five GPS behaviour signals to estimate likely phone use during trips"
+          >
+            <Toggle
+              value={cfg.phone_use_detection_enabled !== false}
+              onChange={v => updateCfg({ phone_use_detection_enabled: v })}
+            />
+          </SettingRow>
+          <div className={`${cfg.phone_use_detection_enabled === false ? 'pointer-events-none opacity-50' : ''}`}>
+            <SettingRow
+              label="Phone use live alert"
+              sublabel="Send an immediate warning when phone-use patterns are detected"
+            >
+              <Toggle
+                value={cfg.phone_use_live_alert_enabled !== false}
+                onChange={v => updateCfg({ phone_use_live_alert_enabled: v, notif_phone_use_alert_enabled: v })}
+                disabled={cfg.phone_use_detection_enabled === false}
+              />
+            </SettingRow>
+            <div className="px-1 py-3 border-b border-border/50">
+              <div className="mb-2 text-sm font-medium">Detection sensitivity</div>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'low', label: 'Low', sub: 'Fewer false positives' },
+                  { id: 'medium', label: 'Medium', sub: 'Recommended' },
+                  { id: 'high', label: 'High', sub: 'More sensitive' },
+                ].map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => updateCfg({ phone_use_sensitivity: option.id })}
+                    disabled={cfg.phone_use_detection_enabled === false}
+                    className={`rounded-xl border p-2 text-left transition-all disabled:opacity-50 ${
+                      (cfg.phone_use_sensitivity || 'medium') === option.id
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-border text-muted-foreground hover:border-primary/40'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">{option.label}</div>
+                    <div className="mt-0.5 text-[11px]">{option.sub}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low' ? '0.60' : (cfg.phone_use_sensitivity || 'medium') === 'high' ? '0.25' : '0.40'} confidence.
+              </p>
+            </div>
+            <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">
+              <Toggle
+                value={cfg.phone_use_show_on_map !== false}
+                onChange={v => updateCfg({ phone_use_show_on_map: v })}
+                disabled={cfg.phone_use_detection_enabled === false}
+              />
+            </SettingRow>
+            <SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score">
+              <Toggle
+                value={cfg.phone_use_affects_score !== false}
+                onChange={v => updateCfg({ phone_use_affects_score: v })}
+                disabled={cfg.phone_use_detection_enabled === false}
+              />
+            </SettingRow>
+            <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              Phone use detection is a GPS-based proxy and cannot access your actual phone activity. It looks for driving patterns associated with distraction.
             </div>
           </div>
         </div>

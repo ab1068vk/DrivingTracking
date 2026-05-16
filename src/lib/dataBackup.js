@@ -3,7 +3,7 @@ import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings } from '@/lib/trackingStore';
 
-const BACKUP_VERSION = 2;
+const BACKUP_VERSION = 4;
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 
@@ -73,7 +73,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
   const backup = parseDriveSenseBackup(text);
 
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
-  const tripsToImport = backup.version < 2
+  const tripsToImport = backup.version < 4
     ? backup.trips.map((trip) => ({ ...trip, needs_rescore: true }))
     : backup.trips;
   const importedTrips = await tripService.upsertMany(tripsToImport);

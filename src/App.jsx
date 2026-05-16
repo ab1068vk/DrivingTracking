@@ -1,7 +1,8 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
@@ -28,6 +29,7 @@ import DrivingCoach from '@/pages/DrivingCoach';
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const [onboardingDone, setOnboardingDone] = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     configureNotificationChannels().catch(() => {});
@@ -40,6 +42,21 @@ const AuthenticatedApp = () => {
 
     applyThemeMode(settings.dark_mode);
   }, []);
+
+  useEffect(() => {
+    let listener;
+    LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
+      const extra = action.notification?.extra ?? {};
+      if (extra.tripId) navigate(`/trips/${extra.tripId}`);
+      else if (extra.type === 'phone_use_pattern') navigate('/coach');
+      else if (extra.type === 'maintenance') navigate('/vehicles');
+    }).then((handle) => {
+      listener = handle;
+    }).catch(() => {});
+    return () => {
+      listener?.remove?.();
+    };
+  }, [navigate]);
 
   if (isLoadingPublicSettings || isLoadingAuth || onboardingDone === null) {
     return (

@@ -15,6 +15,7 @@ const EVENT_COLORS = {
   lane_change: '#0ea5e9',
   aggressive_overtake: '#f97316',
   near_miss: '#dc2626',
+  phone_use: '#dc2626',
 };
 
 const EVENT_LABELS = {
@@ -26,7 +27,31 @@ const EVENT_LABELS = {
   lane_change: '<>',
   aggressive_overtake: '>>',
   near_miss: '!',
+  phone_use: 'P',
 };
+
+const phoneUseColor = (event) => {
+  const level = event.confidence_level || event.severity || 'medium';
+  if (level === 'high') return '#dc2626';
+  if (level === 'medium') return '#ea580c';
+  return '#f97316';
+};
+
+const escapeHtml = (value) => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;');
+
+const phoneUseIconHtml = (color) => `
+  <div style="width:28px;height:28px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="7" y="2" width="10" height="20" rx="2"></rect>
+      <path d="M11 18h2"></path>
+    </svg>
+  </div>
+`;
 
 let leafletLoaded = false;
 let loadPromise = null;
@@ -223,15 +248,19 @@ export default function TripMap({
     if (events && events.length > 0) {
       events.forEach(evt => {
         if (!evt.lat || !evt.lng) return;
-        const color = EVENT_COLORS[evt.type] || '#6b7280';
+        const isPhoneUse = evt.type === 'phone_use';
+        const color = isPhoneUse ? phoneUseColor(evt) : (EVENT_COLORS[evt.type] || '#6b7280');
         const icon = window.L.divIcon({
-          html: `<div style="width:20px;height:20px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${EVENT_LABELS[evt.type] || '!'}</div>`,
+          html: isPhoneUse
+            ? phoneUseIconHtml(color)
+            : `<div style="width:20px;height:20px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${EVENT_LABELS[evt.type] || '!'}</div>`,
           className: '',
-          iconSize: [20, 20],
-          iconAnchor: [10, 10],
+          iconSize: isPhoneUse ? [28, 28] : [20, 20],
+          iconAnchor: isPhoneUse ? [14, 14] : [10, 10],
         });
+        const phonePopup = `<b>Possible Phone Use</b><br>Duration: ${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s - Speed: ${Math.round(evt.speed_kmh || 0)} km/h<br>Confidence: ${escapeHtml(evt.confidence_level || 'medium')}<br>Signals: ${escapeHtml((evt.signals_triggered || []).join(', ') || 'combined GPS signals')}`;
         window.L.marker([evt.lat, evt.lng], { icon })
-          .bindPopup(`<b>${evt.type?.replace('_', ' ')}</b><br>Severity: ${evt.severity}`)
+          .bindPopup(isPhoneUse ? phonePopup : `<b>${evt.type?.replace('_', ' ')}</b><br>Severity: ${evt.severity}`)
           .addTo(layers);
       });
     }

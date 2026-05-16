@@ -9,12 +9,14 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.location.Location;
 import android.os.Build;
 import android.os.IBinder;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.gms.location.ActivityRecognition;
@@ -32,7 +34,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Date;
+import java.util.Deque;
 import java.util.Locale;
 import java.util.TimeZone;
 
@@ -69,6 +73,14 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double STATIONARY_SPEED_KMH = 5d;
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
+    private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
+    private static final int PHONE_USE_NOTIFICATION_ID = 4001;
+    private static final int PHONE_MICRO_STEER_WINDOW_MS = 10_000;
+    private static final int PHONE_MICRO_STEER_MIN_COUNT = 4;
+    private static final double PHONE_MICRO_STEER_MIN_DEG = 3.0d;
+    private static final double PHONE_MICRO_STEER_MAX_DEG = 18.0d;
+    private static final double PHONE_DETECT_MIN_SPEED_KMH = 30.0d;
+    private static final long PHONE_NOTIFY_COOLDOWN_MS = 120_000L;
 
     private ActivityRecognitionClient activityClient;
     private FusedLocationProviderClient locationClient;
@@ -83,10 +95,14 @@ public class DriveSenseAutoTrackingService extends Service {
     private double stoppedAnchorLat = Double.NaN;
     private double stoppedAnchorLng = Double.NaN;
     private double maxDriftSinceStopM = 0.0d;
+    private final Deque<double[]> recentHeadings = new ArrayDeque<>();
+    private int nativeMicroSteerCount = 0;
+    private long lastPhoneUseNotifyMs = 0L;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        ensureSafetyAlertsChannel();
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
         activityIntent = PendingIntent.getBroadcast(
@@ -288,6 +304,8 @@ public class DriveSenseAutoTrackingService extends Service {
         stoppedAnchorLat = Double.NaN;
         stoppedAnchorLng = Double.NaN;
         maxDriftSinceStopM = 0.0d;
+        nativeMicroSteerCount = 0;
+        recentHeadings.clear();
         updateNotification("Trip recording active");
         startLocationUpdates();
     }
@@ -332,6 +350,11 @@ public class DriveSenseAutoTrackingService extends Service {
             if (!location.hasSpeed()) speedKmh = reliableSpeed(impliedSpeed, reportedSpeed);
         }
         lastKnownSpeedKmh = speedKmh;
+
+        double bearing = Double.NaN;
+        if (location.hasBearing()) bearing = location.getBearing();
+        else if (previousLocation != null) bearing = previousLocation.bearingTo(location);
+        if (!Double.isNaN(bearing)) updatePhoneUseProxy(bearing, speedKmh, location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
 
         activePoints.put(locationToJson(location));
         previousLocation = location;
@@ -387,6 +410,7 @@ public class DriveSenseAutoTrackingService extends Service {
         stoppedAnchorLat = Double.NaN;
         stoppedAnchorLng = Double.NaN;
         maxDriftSinceStopM = 0.0d;
+        recentHeadings.clear();
         stopLocationUpdates();
         updateNotification("Ready to detect driving");
 
@@ -420,6 +444,7 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("status", "completed");
             trip.put("background_tracking", true);
             trip.put("start_source", "native_auto");
+            trip.put("native_phone_proxy_count", nativeMicroSteerCount);
             trip.put("created_at", iso(endMs));
             trip.put("updated_at", iso(endMs));
         } catch (JSONException ignored) {}
@@ -513,6 +538,93 @@ public class DriveSenseAutoTrackingService extends Service {
             Math.pow(Math.sin(dLng / 2d), 2d);
         double c = 2d * Math.atan2(Math.sqrt(a), Math.sqrt(1d - a));
         return earthKm * c;
+    }
+
+    private void updatePhoneUseProxy(double bearing, double speedKmh, long timestampMs) {
+        while (!recentHeadings.isEmpty() && timestampMs - recentHeadings.peekFirst()[1] > PHONE_MICRO_STEER_WINDOW_MS) {
+            recentHeadings.pollFirst();
+        }
+        recentHeadings.addLast(new double[]{ bearing, timestampMs });
+
+        if (speedKmh < PHONE_DETECT_MIN_SPEED_KMH || recentHeadings.size() < 3) return;
+
+        int oscillations = 0;
+        double[] prev2 = null;
+        double[] prev1 = null;
+        for (double[] entry : recentHeadings) {
+            if (prev2 != null && prev1 != null) {
+                double d1 = signedHeadingDiff(prev2[0], prev1[0]);
+                double d2 = signedHeadingDiff(prev1[0], entry[0]);
+                double abs1 = Math.abs(d1);
+                double abs2 = Math.abs(d2);
+                boolean bothMicro = abs1 >= PHONE_MICRO_STEER_MIN_DEG && abs1 <= PHONE_MICRO_STEER_MAX_DEG
+                    && abs2 >= PHONE_MICRO_STEER_MIN_DEG && abs2 <= PHONE_MICRO_STEER_MAX_DEG;
+                boolean reversed = (d1 > 0d && d2 < 0d) || (d1 < 0d && d2 > 0d);
+                if (bothMicro && reversed) oscillations++;
+            }
+            prev2 = prev1;
+            prev1 = entry;
+        }
+
+        if (oscillations >= PHONE_MICRO_STEER_MIN_COUNT) {
+            nativeMicroSteerCount++;
+            long now = System.currentTimeMillis();
+            if (now - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
+                sendPhoneUseWarningNotification();
+                lastPhoneUseNotifyMs = now;
+            }
+        }
+    }
+
+    private double signedHeadingDiff(double h1, double h2) {
+        double diff = h2 - h1;
+        while (diff > 180d) diff -= 360d;
+        while (diff <= -180d) diff += 360d;
+        return diff;
+    }
+
+    private void sendPhoneUseWarningNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        ensureSafetyAlertsChannel();
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.putExtra("deeplink", "drivesense://dashboard");
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+        );
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, SAFETY_ALERTS_CHANNEL_ID)
+            .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
+            .setContentTitle("Eyes on the Road")
+            .setContentText("Possible distracted driving detected. Stay focused.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setVibrate(new long[]{ 0, 300, 100, 300 });
+
+        NotificationManagerCompat.from(this).notify(PHONE_USE_NOTIFICATION_ID, builder.build());
+    }
+
+    private void ensureSafetyAlertsChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+            SAFETY_ALERTS_CHANNEL_ID,
+            "Safety Alerts",
+            NotificationManager.IMPORTANCE_HIGH
+        );
+        channel.setDescription("Urgent warnings while driving");
+        channel.enableVibration(true);
+        channel.setLightColor(Color.RED);
+        channel.enableLights(true);
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.createNotificationChannel(channel);
     }
 
     private void stopEverything() {

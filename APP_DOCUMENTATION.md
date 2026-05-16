@@ -23,6 +23,8 @@ Primary capabilities:
 - Export trip CSV files, monthly report PDFs, and full JSON backups.
 - Import full JSON backups.
 - Manage permissions, notification preferences, tracking mode, units, theme, detection thresholds, goals, retention, and privacy controls.
+- Detect likely phone use with a five-signal GPS behaviour proxy, show suspected windows on trip maps, include optional Safety score impact, and trigger live safety warnings.
+- Use expanded notification channels for real-time safety alerts, coaching and milestones, vehicle maintenance, quiet hours, smart post-trip summaries, and deep links back into trip detail, coach, or vehicle screens.
 
 The app is intentionally privacy-centered. By default, it uses local storage only. Cloud APIs are supported by the API client shape, but the app falls back to local repositories unless `VITE_API_URL` is configured and the app is not running on a native platform.
 
@@ -98,8 +100,9 @@ App startup behavior:
 3. Sync reminder notifications without forcing a permission request.
 4. Apply light, dark, or system theme.
 5. If running on Android and `tracking_mode` is `background_auto` and tracking is not paused, try to start native auto tracking.
-6. Decide whether onboarding is complete.
-7. Render onboarding or the main layout.
+6. Attach local notification action routing so trip notifications open Trip Detail, coaching patterns open Coach, and maintenance reminders open Vehicles.
+7. Decide whether onboarding is complete.
+8. Render onboarding or the main layout.
 
 Route table:
 
@@ -1687,15 +1690,22 @@ Native notification channels:
 - `drivesense_tracking`: persistent trip tracking notifications.
 - `drivesense_summary`: trip summaries and reminders.
 - `drivesense_achievements`: achievement unlocks.
+- `drivesense_safety_alerts`: urgent real-time safety warnings while driving.
+- `drivesense_coaching`: coaching, milestone, style-shift, and weekly pattern notifications.
+- `drivesense_vehicle`: maintenance and vehicle reminders.
 
 Notification types:
 
 - Trip started.
 - Trip completed.
 - Long-trip reminder after 2 hours.
+- Real-time phone-use, speeding, drowsy, and fatigue-break alerts.
+- Smart post-trip summary, with only one contextual notification per trip.
+- Weekly driving pattern summary, Monday at 8:30.
 - Weekly driving report, Tuesday at 9:00.
 - Safe driving tip, daily at 8:00.
 - Achievement unlocked.
+- Harsh-brake streaks, phone-use patterns, driver style shifts, maintenance, and inactive-driver nudges.
 
 Notification IDs:
 
@@ -1705,11 +1715,14 @@ Notification IDs:
 - Weekly report: `2101`
 - Safe driving tip: `2102`
 - Achievements: derived from base `3000` plus achievement id character codes.
+- Advanced notification registry: `NOTIFICATION_IDS` uses IDs `4001` and above for all new notification types.
 
 Achievement notification state:
 
 - Key: `drivesense_notified_achievements`
 - Storage: localStorage.
+
+Quiet hours are configured from Settings. Non-safety notifications are suppressed during quiet hours; real-time safety alerts bypass quiet hours unless the safety-alert channel itself is disabled.
 
 ## 14. Export, Import, And Backup
 
@@ -1763,7 +1776,7 @@ Backup shape:
 ```js
 {
   app: "DriveSense",
-  version: 2,
+  version: 4,
   exported_at: "...",
   settings: {},
   vehicles: [],
@@ -1785,7 +1798,7 @@ Import behavior:
 - Upserts vehicles.
 - Upserts trips.
 - Optionally merges settings into current settings.
-- Version `1` backup imports mark trips for rescore before upsert.
+- Versions earlier than `4` import cleanly but mark trips for rescore before upsert so phone-use windows and schema-version fields can be regenerated.
 - Native Android JSON backup export also writes to the public Downloads folder through `saveExportToDownloads`.
 
 ## 15. Android Project
@@ -2168,9 +2181,10 @@ Additional engine metrics in `src/lib/tripEngine.js`:
 - `calculateTireWearUnits(events)` returns `trip_tire_wear_units`.
 - `detectDrowsyDrivingSignature(points, durationSeconds)` returns drowsy window count, risk score, and risk level.
 - `detectDrowsyDriving(points, durationSeconds, thresholds)` is the threshold-aware wrapper used by tests and live alert wiring.
+- `detectPhoneUseWindows(points, thresholds)` is the primary multi-signal phone-use detector and emits `phone_use` events plus aggregate phone-use score/risk fields.
 - `detectSpeedCreep(points)` returns straight-road speed creep count, max creep, and score.
 - `calculateDefensiveDrivingScore(scores)` returns `defensive_driving_score` and `defensive_grade`.
-- `detectPhoneUsageProxy(points, thresholds)` / `detectPhoneProxy(points, thresholds)` return `phone_proxy_count` and `phone_proxy_risk`.
+- `detectPhoneUsageProxy(points, thresholds)` / `detectPhoneProxy(points, thresholds)` return legacy `phone_proxy_count` and `phone_proxy_risk`, backed by the new detector for compatibility.
 - `detectNearMisses(points, thresholds)` is exported for direct unit coverage; `detectDrivingEvents` also emits `near_miss`.
 - `analyzeParkingApproach(points, thresholds)` returns `parking_approach_score` and grade.
 - `calculateFuelBandScore(points)` returns optimal cruise-band, high-speed, and city-crawl ratios.
@@ -2186,10 +2200,10 @@ Additional insight exports in `src/lib/tripInsights.js`:
 
 Storage and backup changes:
 
-- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 2`.
+- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 4`.
 - Completed trips missing `defensive_driving_score`, marked `needs_rescore`, or from an older schema are rescored on read/write with the current thresholds.
-- JSON backups now export version `2`; version `1` imports mark trips with `needs_rescore` before upsert.
-- CSV export now includes aggressive, defensive, near-miss, smooth braking, SVI, fuel band, engine stress, tire wear, hill, merge, parking, overtake, phone proxy, drowsy, speed creep, and CO2-saved columns.
+- JSON backups now export version `4`; older imports mark trips with `needs_rescore` before upsert.
+- CSV export now includes aggressive, defensive, near-miss, smooth braking, SVI, fuel band, engine stress, tire wear, hill, merge, parking, overtake, phone proxy, phone-use windows/seconds/risk/score/percent, drowsy, speed creep, and CO2-saved columns.
 
 New advanced threshold settings:
 
@@ -2197,14 +2211,21 @@ New advanced threshold settings:
 - `threshold_near_miss_turn_degs`
 - `threshold_drowsy_heading_std`
 - `threshold_phone_proxy_oscillations`
+- `phone_use_sensitivity`
+- `phone_micro_steer_count`
+- `phone_creep_rate_kmh_s`
+- `phone_lane_drift_deg`
+- `phone_coupling_threshold`
+- `phone_confidence_threshold`
+- `phone_min_window_s`
 - `threshold_speed_creep_kmh`
 - `threshold_overtake_accel_ms2`
 
 Additional UI/documented behavior:
 
-- `TripDetail.jsx` now surfaces near-miss, phone proxy, overtake warnings, aggressive/defensive score rings, SVI, fuel band, engine stress, parking, drowsy, hill control, and braking quality.
-- `Dashboard.jsx` sends a native "Stay Alert" notification when the active trip shows highway heading drift and adds rush-hour behavior to the personal baseline card.
-- `DrivingCoach.jsx` shows highway merge, SVI, peak-hour stress, commute pattern, phone, drowsy, and speed-creep context.
+- `TripDetail.jsx` now surfaces near-miss, phone-use analysis, phone proxy, overtake warnings, aggressive/defensive score rings, SVI, fuel band, engine stress, parking, drowsy, hill control, and braking quality.
+- `Dashboard.jsx` sends native "Stay Alert" and real-time safety notifications when active trips show drowsy, speeding, fatigue, or phone-use patterns.
+- `DrivingCoach.jsx` shows highway merge, SVI, peak-hour stress, commute pattern, phone-use focus, drowsy, and speed-creep context.
 - `Report.jsx` includes efficiency bands, peak-vs-off-peak event rate, commute patterns, and carbon impact.
 - `Vehicles.jsx` includes engine stress and tire wear impact.
 - `TripHistory.jsx` adds filters for near-miss, aggressive driving, distraction risk, drowsy risk, and perfect eco trips.

@@ -10,7 +10,7 @@ const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 3;
+export const TRIP_SCHEMA_VERSION = 4;
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
@@ -21,6 +21,11 @@ export const TRIP_SCHEMA_VERSION = 3;
  * - overtake quality: overtake_quality_score, overtake_quality_grade, overtake_count, unsafe_reentry_count
  * - road condition proxy: slippery_proxy, wet_signal_count, wet_ratio, safety_condition_bonus, avg_distance_ratio
  * - stats speed zones: speed_zones
+ *
+ * Completed trip record schema additions in version 4:
+ * - phone use detection: phone_use_events, phone_use_window_count, phone_use_total_seconds,
+ *   phone_use_risk, phone_use_score, phone_use_pct_of_trip, phone_use_high_confidence_count
+ * - native cross-check: native_phone_proxy_count
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -88,8 +93,10 @@ const rescoreTrip = (trip) => {
   const settings = localSettings.get();
   const thresholds = buildDrivingThresholds(settings);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-  const events = detectDrivingEvents(routePoints, thresholds);
-  const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds);
+  const detection = detectDrivingEvents(routePoints, thresholds);
+  const events = Reflect.get(detection, 'events') ?? detection;
+  const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+  const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse);
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
   return {
     ...trip,
@@ -112,6 +119,8 @@ const needsRescore = (trip) => (
     trip.braking_efficiency_grade == null ||
     trip.overall_compliance_score == null ||
     trip.dominant_road_type == null ||
+    trip.phone_use_score == null ||
+    trip.phone_use_risk == null ||
     trip.schema_version !== TRIP_SCHEMA_VERSION
   )
 );
@@ -143,8 +152,10 @@ const importNativeCompletedTrips = async () => {
       const settings = localSettings.get();
       const thresholds = buildDrivingThresholds(settings);
       const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-      const events = detectDrivingEvents(routePoints, thresholds);
-      const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds);
+      const detection = detectDrivingEvents(routePoints, thresholds);
+      const events = Reflect.get(detection, 'events') ?? detection;
+      const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+      const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse);
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
       const simplifiedRoutePoints = simplifyRoute(routePoints, 10, events);
 
