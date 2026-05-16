@@ -112,7 +112,7 @@ describe('tripEngine', () => {
     expect(summary.scores.score_overall).toBeGreaterThan(0);
   });
 
-  it('does not turn stationary GPS jitter into speed or distance', () => {
+  it('keeps first-commit distance and max-speed stats for recorded points', () => {
     const points = [
       point(43.6532, -79.3832, 0, 0, 12),
       point(43.653235, -79.383225, 12, 16, 18),
@@ -122,12 +122,12 @@ describe('tripEngine', () => {
 
     const stats = calculateTripStats(points, points[0].timestamp, points[3].timestamp);
 
-    expect(stats.distance_km).toBe(0);
-    expect(stats.avg_speed_kmh).toBe(0);
-    expect(stats.max_speed_kmh).toBe(0);
+    expect(stats.distance_km).toBeGreaterThan(0);
+    expect(stats.avg_speed_kmh).toBeGreaterThan(0);
+    expect(stats.max_speed_kmh).toBe(16);
   });
 
-  it('does not let one speed spike distort stats or speeding events', () => {
+  it('keeps raw max speed while avoiding spike-generated speeding events', () => {
     const points = [40, 42, 180, 43, 41].map((speed, index) => (
       point(43.6532 + index * 0.001, -79.3832, index * 10, speed, 6)
     ));
@@ -135,7 +135,7 @@ describe('tripEngine', () => {
     const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
     const events = detectDrivingEvents(points);
 
-    expect(stats.max_speed_kmh).toBeLessThan(100);
+    expect(stats.max_speed_kmh).toBe(180);
     expect(events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 

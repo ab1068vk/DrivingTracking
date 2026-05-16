@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getSpeedColor, getSpeedLabel } from '@/lib/tripInsights';
-import { calculateBearing, calculateSegmentMetrics, headingDiff, reliablePointSpeed } from '@/lib/tripEngine';
+import { buildSpeedSegments } from '@/lib/tripInsights';
+import { calculateBearing, headingDiff } from '@/lib/tripEngine';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -63,30 +63,6 @@ const phoneUseIconHtml = (color) => `
     </svg>
   </div>
 `;
-
-const buildMapSpeedSegments = (points = []) => {
-  const clean = points.filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
-  const segments = [];
-
-  for (let i = 1; i < clean.length; i++) {
-    const prev = clean[i - 1];
-    const curr = clean[i];
-    const segment = calculateSegmentMetrics(prev, curr);
-    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
-
-    const pointSpeed = reliablePointSpeed(clean, i);
-    const speed = pointSpeed ?? segment.impliedSpeedKmh;
-    segments.push({
-      from: prev,
-      to: curr,
-      speed_kmh: speed,
-      color: getSpeedColor(speed),
-      label: getSpeedLabel(speed),
-    });
-  }
-
-  return segments;
-};
 
 let leafletLoaded = false;
 let loadPromise = null;
@@ -200,7 +176,7 @@ export default function TripMap({
         latLngs.forEach((latLng) => bounds.extend(latLng));
 
         const speedSegments = route.selected || !Array.isArray(routes)
-          ? buildMapSpeedSegments(route.route_points)
+          ? buildSpeedSegments(route.route_points)
           : [];
 
         if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
@@ -320,23 +296,21 @@ export default function TripMap({
     }
 
     if (showDangerZones && Array.isArray(dangerZones)) {
-      dangerZones
-        .filter((zone) => zone.riskLevel !== 'low')
-        .forEach((zone) => {
-          if (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng))) return;
-          const color = RISK_COLORS[zone.riskLevel] || RISK_COLORS.low;
-          const lastSeen = zone.lastSeen ? new Date(zone.lastSeen).toLocaleDateString() : 'Unknown';
-          window.L.circle([zone.lat, zone.lng], {
-            radius: zone.radiusM || 100,
-            color,
-            fillColor: color,
-            fillOpacity: 0.18,
-            weight: 1.5,
-            opacity: 0.6,
-          })
-            .bindPopup(`<b>${titleCase(zone.riskLevel)} danger zone</b><br>${zone.eventCount || 0} events<br>${titleCase(zone.dominantType || 'risk event')}<br>Last seen: ${lastSeen}`)
-            .addTo(layers);
-        });
+      dangerZones.forEach((zone) => {
+        if (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng))) return;
+        const color = RISK_COLORS[zone.riskLevel] || RISK_COLORS.low;
+        const lastSeen = zone.lastSeen ? new Date(zone.lastSeen).toLocaleDateString() : 'Unknown';
+        window.L.circle([zone.lat, zone.lng], {
+          radius: zone.radiusM || 100,
+          color,
+          fillColor: color,
+          fillOpacity: 0.18,
+          weight: 1.5,
+          opacity: 0.6,
+        })
+          .bindPopup(`<b>${titleCase(zone.riskLevel)} danger zone</b><br>${zone.eventCount || 0} events<br>${titleCase(zone.dominantType || 'risk event')}<br>Last seen: ${lastSeen}`)
+          .addTo(layers);
+      });
     }
 
     if (showCurrentLocation && currentLocation) {
