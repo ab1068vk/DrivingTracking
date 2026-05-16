@@ -460,7 +460,7 @@ export function simplifyRoute(points = [], toleranceMeters = 10, events = []) {
 
 export function calculateRouteSummary(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
   const cleaned = cleanRoutePoints(points, thresholds);
-  const stats = calculateTripStats(points, startTime, endTime, thresholds);
+  const stats = calculateTripStats(cleaned, startTime, endTime, thresholds);
   const detection = detectDrivingEvents(cleaned, thresholds);
   const events = Reflect.get(detection, 'events') ?? detection;
   const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {});
@@ -588,7 +588,7 @@ function isLikelySpeedSpike(points = [], index = 0, thresholds = DEFAULT_THRESHO
   return speed - maxAdjacentImplied > spikeDelta;
 }
 
-function reliablePointSpeed(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS) {
+export function reliablePointSpeed(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS) {
   return isLikelySpeedSpike(points, index, thresholds) ? null : pointSpeedKmh(points[index]);
 }
 
@@ -3062,7 +3062,7 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
  * @returns {Object} Trip statistics
  */
 export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
-  const routePoints = (points || []).filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
+  const routePoints = cleanRoutePoints(points, thresholds);
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
   const durationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
@@ -3132,12 +3132,6 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   for (let i = 1; i < routePoints.length; i++) {
     const p = routePoints[i - 1];
     const c = routePoints[i];
-    const rawDistance = haversineDistance(p.lat, p.lng, c.lat, c.lng);
-    if (Number.isFinite(rawDistance)) totalDistance += rawDistance;
-
-    const rawSpeed = Number(c.speed_kmh) || 0;
-    if (rawSpeed > maxSpeed) maxSpeed = rawSpeed;
-
     const segment = calculateSegmentMetrics(p, c, thresholds);
     if (segment.dt <= 0 || segment.dt > 120) {
       flushIdleRun();
@@ -3150,9 +3144,12 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       continue;
     }
 
+    totalDistance += segment.distanceKm;
+
     const currPointSpeed = reliablePointSpeed(routePoints, i, thresholds);
     const currRawSpeed = pointSpeedKmh(routePoints[i]);
     const spd = currPointSpeed ?? (currRawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh);
+    if (spd > maxSpeed) maxSpeed = spd;
     if (spd >= thresholds.STATIONARY_SPEED_KMH) {
       movingSeconds += segment.dt;
       flushIdleRun();
@@ -3165,6 +3162,11 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   }
 
   flushIdleRun();
+
+  if (totalDistance * 1000 < thresholds.MIN_POINT_DISTANCE_M) {
+    totalDistance = 0;
+    maxSpeed = 0;
+  }
 
   const idleTime = trafficIdleSeconds + sustainedIdleSeconds;
   // FIX: Keep legacy idle_time_seconds as the sum of traffic and sustained idle buckets.

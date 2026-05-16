@@ -9,8 +9,8 @@ import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
-import { buildDangerZones, loadDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
-import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { buildDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
+import { buildRouteRiskIndex, getSegmentsForTrip, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -123,16 +123,10 @@ export default function MapScreen() {
         return;
       }
 
-      let zones = await loadDangerZones();
-      if (!zones.length) {
-        zones = buildDangerZones(allCompleted);
-        await saveDangerZones(zones);
-      }
-      let index = await loadRouteRiskIndex();
-      if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted);
-        await saveRouteRiskIndex(index);
-      }
+      const zones = buildDangerZones(allCompleted);
+      await saveDangerZones(zones);
+      const index = buildRouteRiskIndex(allCompleted);
+      await saveRouteRiskIndex(index);
       if (!cancelled) {
         setDangerZones(zones);
         setRouteRiskIndex(index);

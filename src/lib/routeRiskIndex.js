@@ -1,5 +1,5 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
-import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
+import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance, reliablePointSpeed } from '@/lib/tripEngine';
 
 export const GRID_PRECISION = 4;
 export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
@@ -55,7 +55,7 @@ export function buildRouteRiskIndex(trips = []) {
         lng: (Number(prev.lng) + Number(curr.lng)) / 2,
       };
       item.tripCount += 1;
-      item.speedSum += Number(segment.reliableSpeedKmh) || 0;
+      item.speedSum += reliablePointSpeed(points, i) ?? segment.impliedSpeedKmh ?? 0;
       index.set(key, item);
       midpoints.push({ key, lat: item.lat, lng: item.lng });
     }
@@ -82,7 +82,7 @@ export function buildRouteRiskIndex(trips = []) {
       harshRate * 40 +
       (item.avgSpeed >= 100 ? 10 : 0)
     ));
-    item.riskLevel = item.riskScore >= 60 ? 'high' : item.riskScore >= 30 ? 'moderate' : 'low';
+    item.riskLevel = item.riskScore >= 60 ? 'high' : item.riskScore >= 30 ? 'medium' : 'low';
   }
 
   return index;
