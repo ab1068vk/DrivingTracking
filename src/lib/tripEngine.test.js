@@ -9,9 +9,12 @@ import {
   calculateRouteSummary,
   calculateTripScores,
   calculateTripStats,
+  calculateHillDrivingScore,
+  calculateSpeedLimitCompliance,
   cleanRoutePoints,
   computeSmoothedAccelerations,
   detectDrivingEvents,
+  detectSpeedCreep,
   inferSpeedZones,
   detectLaneChanges,
   DEFAULT_THRESHOLDS,
@@ -109,7 +112,7 @@ describe('tripEngine', () => {
     expect(summary.scores.score_overall).toBeGreaterThan(0);
   });
 
-  it('does not turn stationary GPS jitter into speed or distance', () => {
+  it('keeps first-commit distance and max-speed stats for recorded points', () => {
     const points = [
       point(43.6532, -79.3832, 0, 0, 12),
       point(43.653235, -79.383225, 12, 16, 18),
@@ -119,9 +122,48 @@ describe('tripEngine', () => {
 
     const stats = calculateTripStats(points, points[0].timestamp, points[3].timestamp);
 
-    expect(stats.distance_km).toBe(0);
-    expect(stats.avg_speed_kmh).toBe(0);
-    expect(stats.max_speed_kmh).toBe(0);
+    expect(stats.distance_km).toBeGreaterThan(0);
+    expect(stats.avg_speed_kmh).toBeGreaterThan(0);
+    expect(stats.max_speed_kmh).toBe(16);
+  });
+
+  it('keeps raw max speed while avoiding spike-generated speeding events', () => {
+    const points = [40, 42, 180, 43, 41].map((speed, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 10, speed, 6)
+    ));
+
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
+    const events = detectDrivingEvents(points);
+
+    expect(stats.max_speed_kmh).toBe(180);
+    expect(events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+  });
+
+  it('ignores low-quality altitude samples for hill control', () => {
+    const points = [40, 45, 50, 45, 40].map((speed, index) => ({
+      ...point(43.6532 + index * 0.001, -79.3832, index * 10, speed, 6),
+      altitude: index % 2 === 0 ? 100 : 130,
+      altitude_accuracy: 80,
+    }));
+
+    expect(calculateHillDrivingScore(points)).toMatchObject({
+      climb_distance_km: null,
+      descent_distance_km: null,
+      hill_infraction_count: 0,
+      hill_driving_score: null,
+    });
+  });
+
+  it('does not let one speed spike distort compliance or speed creep', () => {
+    const points = [90, 91, 92, 170].map((speed, index) => (
+      point(43.6532 + index * 0.0025, -79.3832, index * 10, speed, 6)
+    ));
+    const stats = {
+      speed_zones: [{ startIndex: 0, endIndex: points.length - 1, inferredZoneKmh: 100 }],
+    };
+
+    expect(calculateSpeedLimitCompliance(points, stats, DEFAULT_THRESHOLDS).overall_compliance_score).toBe(100);
+    expect(detectSpeedCreep(points, DEFAULT_THRESHOLDS).speed_creep_event_count).toBe(0);
   });
 
   it('detects sharp turns using lateral G-force at running speed', () => {

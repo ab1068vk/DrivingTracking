@@ -286,8 +286,9 @@ export default function Dashboard() {
     const endTime = new Date().toISOString();
     const cfg = localSettings.get();
     const thresholds = buildDrivingThresholds(cfg);
-    const pts = cleanRoutePoints(tripToEnd.route_points || [], thresholds);
-    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds);
+    const rawPoints = tripToEnd.route_points || [];
+    const pts = cleanRoutePoints(rawPoints, thresholds);
+    const stats = calculateTripStats(rawPoints, tripToEnd.start_time, endTime, thresholds);
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
     const shouldDiscard = isManualTrip

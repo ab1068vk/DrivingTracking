@@ -47,6 +47,11 @@ export const DEFAULT_THRESHOLDS = {
   MIN_TRUSTED_SPEED_KMH: 18,
   // Stationary / crawling speed used to suppress jitter in stats and events.
   STATIONARY_SPEED_KMH: 5,
+  MAX_SPEED_SPIKE_DELTA_KMH: 45,
+  MAX_SPEED_SPIKE_RATIO: 1.8,
+  MAX_ALTITUDE_ACCURACY_M: 40,
+  MIN_HILL_SEGMENT_DISTANCE_M: 20,
+  HILL_GRADE_THRESHOLD_PCT: 6,
   MIN_SPEED_RAPID_ACCEL_KMH: 15,
   MIN_SPEED_HARSH_BRAKE_KMH: 25,
   TAILGATE_DECEL_MS2: 2.5,
@@ -455,7 +460,7 @@ export function simplifyRoute(points = [], toleranceMeters = 10, events = []) {
 
 export function calculateRouteSummary(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
   const cleaned = cleanRoutePoints(points, thresholds);
-  const stats = calculateTripStats(cleaned, startTime, endTime, thresholds);
+  const stats = calculateTripStats(points, startTime, endTime, thresholds);
   const detection = detectDrivingEvents(cleaned, thresholds);
   const events = Reflect.get(detection, 'events') ?? detection;
   const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {});
@@ -546,6 +551,45 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
 // ─── Event Detection ───────────────────────────────────────────────────────────
 function finiteSpeed(point) {
   return Number.isFinite(point?.speed_kmh) ? Math.max(0, point.speed_kmh) : 0;
+}
+
+function pointSpeedKmh(point) {
+  return Number.isFinite(point?.speed_kmh) ? Math.max(0, point.speed_kmh) : null;
+}
+
+function isLikelySpeedSpike(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS) {
+  const speed = pointSpeedKmh(points[index]);
+  if (speed == null) return false;
+
+  const previousSpeed = pointSpeedKmh(points[index - 1]);
+  const nextSpeed = pointSpeedKmh(points[index + 1]);
+  const neighborSpeeds = [previousSpeed, nextSpeed].filter((value) => value != null);
+  if (!neighborSpeeds.length) return false;
+
+  const spikeDelta = thresholds.MAX_SPEED_SPIKE_DELTA_KMH ?? DEFAULT_THRESHOLDS.MAX_SPEED_SPIKE_DELTA_KMH;
+  const spikeRatio = thresholds.MAX_SPEED_SPIKE_RATIO ?? DEFAULT_THRESHOLDS.MAX_SPEED_SPIKE_RATIO;
+  const neighborMax = Math.max(...neighborSpeeds);
+  if (speed - neighborMax <= spikeDelta || speed <= Math.max(1, neighborMax) * spikeRatio) return false;
+
+  let maxAdjacentImplied = 0;
+  if (points[index - 1]) {
+    const previousSegment = calculateSegmentMetrics(points[index - 1], points[index], thresholds);
+    if (previousSegment.dt > 0 && previousSegment.dt <= 120 && !previousSegment.isNoise) {
+      maxAdjacentImplied = Math.max(maxAdjacentImplied, previousSegment.impliedSpeedKmh);
+    }
+  }
+  if (points[index + 1]) {
+    const nextSegment = calculateSegmentMetrics(points[index], points[index + 1], thresholds);
+    if (nextSegment.dt > 0 && nextSegment.dt <= 120 && !nextSegment.isNoise) {
+      maxAdjacentImplied = Math.max(maxAdjacentImplied, nextSegment.impliedSpeedKmh);
+    }
+  }
+
+  return speed - maxAdjacentImplied > spikeDelta;
+}
+
+function reliablePointSpeed(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS) {
+  return isLikelySpeedSpike(points, index, thresholds) ? null : pointSpeedKmh(points[index]);
 }
 
 function round1(value) {
@@ -679,7 +723,7 @@ function zoneFromP85(p85Speed) {
 
 export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const points = (routePoints || [])
-    .map((point, index) => ({ point, index, ts: timestampMs(point), speed: finiteSpeed(point) }))
+    .map((point, index) => ({ point, index, ts: timestampMs(point), speed: reliablePointSpeed(routePoints, index, thresholds) }))
     .filter((entry) => Number.isFinite(entry.ts));
   if (points.length < 2) return [];
 
@@ -767,7 +811,12 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = 1)
 }
 
 export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
-  const altitudePoints = cleanPoints.filter((point) => Number.isFinite(point?.altitude));
+  const maxAltitudeAccuracy = thresholds.MAX_ALTITUDE_ACCURACY_M ?? DEFAULT_THRESHOLDS.MAX_ALTITUDE_ACCURACY_M;
+  const hasReliableAltitude = (point) => (
+    Number.isFinite(point?.altitude) &&
+    (!Number.isFinite(point?.altitude_accuracy) || point.altitude_accuracy <= maxAltitudeAccuracy)
+  );
+  const altitudePoints = cleanPoints.filter(hasReliableAltitude);
   if (!cleanPoints.length || altitudePoints.length / cleanPoints.length < 0.5) {
     return {
       climb_distance_km: null,
@@ -782,23 +831,39 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
   let infractionCount = 0;
   let descentWindowStart = null;
   let descentWindowSpeed = 0;
+  let previousReliableSpeed = null;
   const harshBrakeThreshold = thresholds.threshold_harsh_brake_ms2 ?? thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
+  const minHillDistanceM = thresholds.MIN_HILL_SEGMENT_DISTANCE_M ?? DEFAULT_THRESHOLDS.MIN_HILL_SEGMENT_DISTANCE_M;
+  const hillGradeThreshold = thresholds.HILL_GRADE_THRESHOLD_PCT ?? DEFAULT_THRESHOLDS.HILL_GRADE_THRESHOLD_PCT;
 
   for (let i = 1; i < cleanPoints.length; i++) {
     const prev = cleanPoints[i - 1];
     const curr = cleanPoints[i];
-    if (!Number.isFinite(prev.altitude) || !Number.isFinite(curr.altitude)) continue;
+    if (!hasReliableAltitude(prev) || !hasReliableAltitude(curr)) {
+      previousReliableSpeed = null;
+      descentWindowStart = null;
+      continue;
+    }
 
-    const dt = (timestampMs(curr) - timestampMs(prev)) / 1000;
-    if (dt <= 0 || dt > 120) continue;
+    const segment = calculateSegmentMetrics(prev, curr, thresholds);
+    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) {
+      previousReliableSpeed = null;
+      descentWindowStart = null;
+      continue;
+    }
 
-    const distanceM = haversineMeters(prev.lat, prev.lng, curr.lat, curr.lng);
-    if (distanceM < 5) continue;
+    const distanceM = segment.distanceM;
+    if (distanceM < minHillDistanceM) continue;
 
+    const pointSpeed = reliablePointSpeed(cleanPoints, i, thresholds);
+    const rawSpeed = pointSpeedKmh(curr);
+    const speed = pointSpeed ?? (rawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh);
     const gradient = ((curr.altitude - prev.altitude) / distanceM) * 100;
-    const accelMs2 = calculateAcceleration(finiteSpeed(prev), finiteSpeed(curr), dt);
-    const isClimb = gradient >= 5;
-    const isDescent = gradient <= -5;
+    const accelMs2 = previousReliableSpeed == null
+      ? 0
+      : calculateAcceleration(previousReliableSpeed, speed, segment.dt);
+    const isClimb = gradient >= hillGradeThreshold;
+    const isDescent = gradient <= -hillGradeThreshold;
 
     if (isClimb) {
       climbDistanceKm += distanceM / 1000;
@@ -810,15 +875,16 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
 
       if (!descentWindowStart || (timestampMs(curr) - timestampMs(descentWindowStart)) / 1000 > 10) {
         descentWindowStart = curr;
-        descentWindowSpeed = finiteSpeed(curr);
-      } else if (finiteSpeed(curr) - descentWindowSpeed > 15) {
+        descentWindowSpeed = speed;
+      } else if (speed - descentWindowSpeed > 15) {
         infractionCount++;
         descentWindowStart = curr;
-        descentWindowSpeed = finiteSpeed(curr);
+        descentWindowSpeed = speed;
       }
     } else {
       descentWindowStart = null;
     }
+    previousReliableSpeed = speed;
   }
 
   return {
@@ -831,7 +897,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
 
 export function calculateEcoDrivingScore(cleanPoints = [], stats = {}) {
   const movingSpeeds = cleanPoints
-    .map((point) => Number(point?.speed_kmh))
+    .map((_, index) => reliablePointSpeed(cleanPoints, index))
     .filter((speed) => Number.isFinite(speed) && speed >= 15);
 
   if (movingSpeeds.length < 3) {
@@ -864,7 +930,7 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}) {
 
 export function calculateSpeedVariabilityIndex(cleanPoints = []) {
   const samples = cleanPoints
-    .map((point) => Number(point?.speed_kmh))
+    .map((_, index) => reliablePointSpeed(cleanPoints, index))
     .filter((speed) => Number.isFinite(speed) && speed > 0);
 
   if (samples.length < 3) {
@@ -904,8 +970,11 @@ export function calculateFuelBandScore(cleanPoints = [], thresholds = DEFAULT_TH
     const segment = calculateSegmentMetrics(prev, curr, thresholds);
     if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
 
-    const speed = segment.reliableSpeedKmh;
-    const accelMs2 = calculateAcceleration(finiteSpeed(prev), speed, segment.dt);
+    const pointSpeed = reliablePointSpeed(cleanPoints, i, thresholds);
+    const rawSpeed = pointSpeedKmh(curr);
+    const speed = pointSpeed ?? (rawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh);
+    const previousPointSpeed = reliablePointSpeed(cleanPoints, i - 1, thresholds) ?? finiteSpeed(prev);
+    const accelMs2 = calculateAcceleration(previousPointSpeed, speed, segment.dt);
     if (speed > 5) totalMovingSeconds += segment.dt;
     if (speed >= 60 && speed <= 90 && accelMs2 >= -0.5 && accelMs2 <= 0.5) optimalBandSeconds += segment.dt;
     if (speed > 100) highSpeedSeconds += segment.dt;
@@ -1254,10 +1323,10 @@ export function detectSpeedCreep(cleanPoints = [], thresholds = DEFAULT_THRESHOL
       point,
       index,
       timestamp: timestampMs(point),
-      speed_kmh: finiteSpeed(point),
+      speed_kmh: reliablePointSpeed(cleanPoints, index, thresholds),
       heading: headingForIndex(cleanPoints, index),
     }))
-    .filter((sample) => Number.isFinite(sample.timestamp) && sample.speed_kmh > 0);
+    .filter((sample) => Number.isFinite(sample.timestamp) && Number.isFinite(sample.speed_kmh) && sample.speed_kmh > 0);
   let count = 0;
   let maxCreep = 0;
   const severityCounts = { low: 0, medium: 0, high: 0 };
@@ -1301,10 +1370,10 @@ export function detectSpeedCreepWithThresholds(cleanPoints = [], thresholds = DE
       point,
       index,
       timestamp: timestampMs(point),
-      speed_kmh: finiteSpeed(point),
+      speed_kmh: reliablePointSpeed(cleanPoints, index, thresholds),
       heading: headingForIndex(cleanPoints, index),
     }))
-    .filter((sample) => Number.isFinite(sample.timestamp) && sample.speed_kmh > 0);
+    .filter((sample) => Number.isFinite(sample.timestamp) && Number.isFinite(sample.speed_kmh) && sample.speed_kmh > 0);
   let count = 0;
   let maxCreep = 0;
   const severityCounts = { low: 0, medium: 0, high: 0 };
@@ -1315,7 +1384,7 @@ export function detectSpeedCreepWithThresholds(cleanPoints = [], thresholds = DE
     if (start.timestamp - lastEventTime < 30000) continue;
     const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 30000);
     if (window.length < 3 || window[window.length - 1].timestamp - start.timestamp < 25000) continue;
-    if (headingStdDev(window.map((sample) => sample.heading)) >= 5) continue;
+    if (calculateAngularStdDev(window.map((sample) => sample.heading)) >= 5) continue;
 
     const creep = window[window.length - 1].speed_kmh - window[0].speed_kmh;
     if (creep >= creepThreshold && window[window.length - 1].speed_kmh > 80) {
@@ -2063,7 +2132,8 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
 
   points.forEach((point, index) => {
-    const speed = finiteSpeed(point);
+    const speed = reliablePointSpeed(points, index, thresholds);
+    if (!Number.isFinite(speed)) return;
     if (speed <= (thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH)) return;
     const roadType = roadTypes[index] || 'urban';
     const zone = zones.find((item) => index >= item.startIndex && index <= item.endIndex);
@@ -2663,14 +2733,16 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     }
 
     acceptedSegmentCount++;
-    const speed2 = currSegment.reliableSpeedKmh;
+    const speed2 = reliablePointSpeed(points, i, thresholds) ?? currSegment.impliedSpeedKmh;
 
     if (acceptedSegmentCount <= MIN_POINTS_BEFORE_EVENTS) {
       previousReliableSpeed = speed2;
       continue;
     }
 
-    const smooth = smoothedAccels[i];
+    const smooth = [i - 1, i, i + 1].some((idx) => isLikelySpeedSpike(points, idx, thresholds))
+      ? null
+      : smoothedAccels[i];
     const speed1 = smooth?.speed_kmh ?? previousReliableSpeed;
     const accel = smooth?.accel_ms2 ?? null;
 
@@ -2990,7 +3062,7 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
  * @returns {Object} Trip statistics
  */
 export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
-  const routePoints = cleanRoutePoints(points, thresholds);
+  const routePoints = (points || []).filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
   const durationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
@@ -3060,6 +3132,12 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   for (let i = 1; i < routePoints.length; i++) {
     const p = routePoints[i - 1];
     const c = routePoints[i];
+    const rawDistance = haversineDistance(p.lat, p.lng, c.lat, c.lng);
+    if (Number.isFinite(rawDistance)) totalDistance += rawDistance;
+
+    const rawSpeed = Number(c.speed_kmh) || 0;
+    if (rawSpeed > maxSpeed) maxSpeed = rawSpeed;
+
     const segment = calculateSegmentMetrics(p, c, thresholds);
     if (segment.dt <= 0 || segment.dt > 120) {
       flushIdleRun();
@@ -3072,10 +3150,9 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       continue;
     }
 
-    totalDistance += segment.distanceKm;
-
-    const spd = segment.reliableSpeedKmh;
-    if (spd > maxSpeed) maxSpeed = spd;
+    const currPointSpeed = reliablePointSpeed(routePoints, i, thresholds);
+    const currRawSpeed = pointSpeedKmh(routePoints[i]);
+    const spd = currPointSpeed ?? (currRawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh);
     if (spd >= thresholds.STATIONARY_SPEED_KMH) {
       movingSeconds += segment.dt;
       flushIdleRun();
@@ -3088,11 +3165,6 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   }
 
   flushIdleRun();
-
-  if (totalDistance * 1000 < thresholds.MIN_POINT_DISTANCE_M) {
-    totalDistance = 0;
-    maxSpeed = 0;
-  }
 
   const idleTime = trafficIdleSeconds + sustainedIdleSeconds;
   // FIX: Keep legacy idle_time_seconds as the sum of traffic and sustained idle buckets.
