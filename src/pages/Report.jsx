@@ -86,6 +86,17 @@ export default function Reports() {
     }))
     .filter((item) => item.value > 0);
   const roadColors = ['#3b82f6', '#f59e0b', '#64748b', '#22c55e'];
+  const complianceChartData = ['highway', 'urban', 'residential']
+    .map((type) => {
+      const values = trips
+        .map((trip) => trip[`${type}_compliance`]?.rate)
+        .filter((value) => Number.isFinite(value));
+      return {
+        name: type[0].toUpperCase() + type.slice(1),
+        rate: values.length ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 100) : null,
+      };
+    })
+    .filter((item) => item.rate != null);
   const efficiencyBandsData = [{
     name: 'Selected',
     cityCrawl: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.city_crawl_ratio || 0), 0) / trips.length) : 0,
@@ -315,6 +326,27 @@ export default function Reports() {
                   </div>
                 ))}
               </div>
+            </motion.div>
+          )}
+
+          {complianceChartData.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.186 }}
+              className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+            >
+              <h2 className="font-semibold mb-1">Compliance</h2>
+              <p className="text-xs text-muted-foreground mb-4">Average speed-limit compliance by road type</p>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={complianceChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} formatter={(v) => [`${v}%`, 'Compliance']} />
+                  <Bar dataKey="rate" fill="#22c55e" radius={[4, 4, 0, 0]} name="Compliance" />
+                </BarChart>
+              </ResponsiveContainer>
             </motion.div>
           )}
 

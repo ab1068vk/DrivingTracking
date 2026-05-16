@@ -1502,3 +1502,32 @@ reliableSpeed
 haversineKm
 round
 ```
+## Advanced Driving Analysis Additions
+
+DriveSense now writes the following advanced analysis fields during the scoring pipeline:
+
+1. `calculateTripStats` stores inferred `speed_zones` alongside the existing road-type and fatigue stats.
+2. `calculateTripScores` writes reaction timing, cornering consistency, braking efficiency, speed-limit compliance, overtake quality, slippery-condition proxy, road-type segmented scores, and explicit `near_miss_score` fields onto the returned score object.
+3. `near_miss_score` is explicitly calculated before `defensive_driving_score`:
+
+```js
+near_miss_score = nearMissCount === 0
+  ? 100
+  : Math.max(20, Math.round(100 - nearMissCount * 25));
+```
+
+4. Smoothness now blends base smoothness, jerk, SVI, reaction score, and cornering consistency:
+
+```js
+score_smoothness = round(
+  baseSmoothness * 0.45 +
+  jerk_score * 0.25 +
+  svi_score * 0.10 +
+  reaction_score * 0.10 +
+  (cornering_consistency_score ?? 100) * 0.10
+);
+```
+
+5. Safety now blends base safety, following distance, braking efficiency, road-type speed compliance, optional overtake quality, and road-condition bonus.
+6. `extractBrakingSequences(routePoints, thresholds, options)` is the shared helper for full-stop braking analysis and slippery-condition proxy detection.
+7. `tripInsights.js` adds display/history-level helpers: `buildFatigueHeatmapData`, `buildDriverSignature`, and `calculatePredictiveMaintenance`.

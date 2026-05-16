@@ -5,7 +5,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
-import { calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
+import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 
@@ -219,11 +219,17 @@ export default function Vehicles() {
           const score = avgScoreFor(v);
           const isEditing = editId === v.id;
           const odometerKm = getVehicleOdometerKm(v, trips);
+          const vehicleTrips = tripListFor(v);
+          const predictiveMaintenance = calculatePredictiveMaintenance(vehicleTrips, v, {});
+          const stressLabel = predictiveMaintenance.stress_index > 0.6
+            ? 'High'
+            : predictiveMaintenance.stress_index > 0.3
+              ? 'Moderate'
+              : 'Low';
           const maintenance = getMaintenanceStatus(v, trips);
           const dueMaintenance = maintenance.filter((item) => item.status !== 'ok');
           const fuelTotals = fuelTotalsFor(v);
           const healthImpact = calculateVehicleHealthImpact(tripListFor(v), v);
-          const vehicleTrips = tripListFor(v);
           const avgEngineStress = vehicleTrips.length
             ? Math.round(vehicleTrips.reduce((sum, trip) => sum + (trip.engine_stress_score ?? 100), 0) / vehicleTrips.length)
             : null;
@@ -250,6 +256,15 @@ export default function Vehicles() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm">{v.name}</span>
+                        <span className={`text-xs border px-1.5 py-0.5 rounded-full ${
+                          stressLabel === 'High'
+                            ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:border-red-800/50'
+                            : stressLabel === 'Moderate'
+                              ? 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-950/30 dark:border-yellow-800/50'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800/50'
+                        }`}>
+                          {stressLabel} stress
+                        </span>
                         {v.is_default && (
                           <span className="text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-600 border border-amber-200 dark:border-amber-800/50 px-1.5 py-0.5 rounded-full">
                             ★ Default
@@ -344,27 +359,43 @@ export default function Vehicles() {
                   </div>
 
                   <div className="space-y-2 mt-3">
-                    {maintenance.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-3 text-xs border border-border rounded-xl p-2">
-                        <div className="min-w-0">
-                          <div className="font-medium">{item.label}</div>
-                          <div className={`mt-0.5 ${
-                            item.status === 'due' ? 'text-red-500' : item.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
-                          }`}>
-                            {item.status === 'due'
-                              ? `${Math.abs(item.remaining_km).toLocaleString()} km overdue`
-                              : `${item.remaining_km.toLocaleString()} km left`}
+                    {maintenance.map((item) => {
+                      const predictive = item.id === 'oil'
+                        ? predictiveMaintenance.oil_change
+                        : item.id === 'tires'
+                          ? predictiveMaintenance.tire_rotation
+                          : predictiveMaintenance.inspection;
+                      const adjustedFrom = Math.abs((predictive.urgency_delta || 0));
+                      return (
+                        <div key={item.id} className="flex items-center justify-between gap-3 text-xs border border-border rounded-xl p-2">
+                          <div className="min-w-0">
+                            <div className="font-medium">{item.label}</div>
+                            <div className={`mt-0.5 ${
+                              predictive.status === 'due' ? 'text-red-500' : predictive.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
+                            }`}>
+                              {predictive.status === 'due'
+                                ? `${Math.abs(predictive.remaining_km).toLocaleString()} km overdue`
+                                : `${predictive.remaining_km.toLocaleString()} km left`}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-muted-foreground">
+                              Adjusted {predictive.adjusted_interval_km.toLocaleString()} km from {item.interval_km.toLocaleString()} km{adjustedFrom ? ` (${adjustedFrom.toLocaleString()} km sooner)` : ''}
+                            </div>
                           </div>
+                          <button
+                            onClick={() => handleServiceDone(v, item, odometerKm)}
+                            className="px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground whitespace-nowrap"
+                          >
+                            Done
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleServiceDone(v, item, odometerKm)}
-                          className="px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground whitespace-nowrap"
-                        >
-                          Done
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  {predictiveMaintenance.stress_index > 0.6 && (
+                    <div className="mt-3 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-800 dark:border-yellow-800/50 dark:bg-yellow-950/30 dark:text-yellow-300">
+                      Your aggressive driving style is accelerating wear. Smoother acceleration and earlier braking can stretch service intervals.
+                    </div>
+                  )}
                 </div>
               )}
             </motion.div>

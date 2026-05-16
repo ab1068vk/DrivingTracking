@@ -19,6 +19,8 @@ export const DEFAULT_MAINTENANCE_ITEMS = [
 
 const DAY_MS = 86400000;
 
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
 const startOfDay = (date) => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -163,6 +165,185 @@ export function getMaintenanceStatus(vehicle, trips = []) {
       status: remainingKm <= 0 ? 'due' : remainingKm <= 1000 ? 'soon' : 'ok',
     };
   });
+}
+
+/**
+ * Convert fatigue progression segments into timeline heatmap points.
+ * @param {{fatigue_progression?:Array,route_points?:Array,start_time?:string}} trip - Completed trip with route points.
+ * @returns {Array<{minuteOffset:number,fatigueLevel:number,color:string,lat:number,lng:number}>} Timeline heatmap points.
+ * @example
+ * const heatmap = buildFatigueHeatmapData(trip);
+ */
+export function buildFatigueHeatmapData(trip) {
+  let segments = Array.isArray(trip?.fatigue_progression)
+    ? trip.fatigue_progression
+    : Array.isArray(trip?.fatigue_progression?.segments)
+      ? trip.fatigue_progression.segments
+      : [];
+  const points = Array.isArray(trip?.route_points) ? trip.route_points : [];
+  if (!segments.length && Array.isArray(trip?.segment_scores) && trip.segment_scores.length) {
+    const segmentSize = Math.max(1, Math.floor(points.length / trip.segment_scores.length));
+    segments = trip.segment_scores.map((score, index) => ({
+      start_index: index * segmentSize,
+      end_index: index === trip.segment_scores.length - 1 ? points.length - 1 : Math.min(points.length - 1, (index + 1) * segmentSize - 1),
+      score,
+    }));
+  }
+  if (!segments.length || !points.length) return [];
+
+  const tripStart = new Date(points[0]?.timestamp || trip.start_time || Date.now()).getTime();
+  const raw = segments
+    .map((segment) => {
+      const midpointIndex = clamp(
+        Math.round(((Number(segment.start_index) || 0) + (Number(segment.end_index) || 0)) / 2),
+        0,
+        points.length - 1
+      );
+      const point = points[midpointIndex];
+      if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return null;
+      const fatigueLevel = clamp(100 - (Number(segment.score) || 0), 0, 100);
+      return {
+        minuteOffset: Math.round(((new Date(point.timestamp).getTime() - tripStart) / 60000) * 10) / 10,
+        fatigueLevel,
+        color: fatigueLevel >= 60 ? '#ef4444' : fatigueLevel >= 35 ? '#f97316' : '#22c55e',
+        lat: point.lat,
+        lng: point.lng,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.minuteOffset - b.minuteOffset);
+
+  return raw.map((entry, index) => {
+    const window = raw.slice(Math.max(0, index - 1), Math.min(raw.length, index + 2));
+    const smoothed = Math.round(window.reduce((sum, item) => sum + item.fatigueLevel, 0) / window.length);
+    return {
+      ...entry,
+      fatigueLevel: smoothed,
+      color: smoothed >= 60 ? '#ef4444' : smoothed >= 35 ? '#f97316' : '#22c55e',
+    };
+  });
+}
+
+function iqr(values = []) {
+  const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  return percentile(sorted, 75) - percentile(sorted, 25);
+}
+
+/**
+ * Build a persistent driving style signature from recent trips.
+ * @param {Array<Object>} trips - Completed trips, newest or oldest order accepted.
+ * @returns {{archetype:string,dimensions:Object,style_shifts:Array,trip_count_used:number}|null} Driver signature.
+ * @example
+ * const signature = buildDriverSignature(lastTwentyTrips);
+ */
+export function buildDriverSignature(trips) {
+  const completed = (trips || [])
+    .filter((trip) => trip.status === 'completed')
+    .sort((a, b) => new Date(b.start_time || b.created_at || 0).getTime() - new Date(a.start_time || a.created_at || 0).getTime())
+    .slice(0, 20);
+  if (completed.length < 5) return null;
+
+  const scoreIqr = iqr(completed.map((trip) => Number(trip.score_overall)).filter(Number.isFinite));
+  const consistencyIdx = clamp(1 - scoreIqr / 100, 0, 1);
+  const featureRows = completed.map((trip) => ({
+    aggression: clamp(1 - (Number(trip.aggressive_driving_score ?? 100) / 100), 0, 1),
+    smoothness: clamp(Number(trip.score_smoothness ?? trip.smoothness_score ?? 0) / 100, 0, 1),
+    ecoMindedness: clamp(Number(trip.score_eco ?? trip.eco_score ?? 0) / 100, 0, 1),
+    speedTolerance: clamp(((Number(trip.avg_speed_kmh) || 0) - 40) / 80, 0, 1),
+    brakingStyle: clamp(Number(trip.braking_efficiency_score ?? 100) / 100, 0, 1),
+    consistencyIdx,
+  }));
+
+  const keys = ['aggression', 'smoothness', 'ecoMindedness', 'speedTolerance', 'brakingStyle', 'consistencyIdx'];
+  const dimensions = Object.fromEntries(keys.map((key) => [
+    key,
+    Math.round((featureRows.reduce((sum, row) => sum + row[key], 0) / featureRows.length) * 100) / 100,
+  ]));
+
+  const archetype = dimensions.aggression > 0.55 && dimensions.speedTolerance > 0.6
+    ? 'aggressive_commuter'
+    : dimensions.ecoMindedness > 0.75 && dimensions.smoothness > 0.7
+      ? 'eco_conscious'
+      : dimensions.consistencyIdx > 0.85
+        ? 'precision_driver'
+        : dimensions.smoothness > 0.75 && dimensions.aggression < 0.3
+          ? 'smooth_cruiser'
+          : 'balanced';
+
+  const recent = featureRows.slice(0, 5);
+  const prior = featureRows.slice(5, 20);
+  const avgDim = (rows, key) => rows.length ? rows.reduce((sum, row) => sum + row[key], 0) / rows.length : null;
+  const styleShifts = prior.length ? keys
+    .map((key) => {
+      const recentAvg = avgDim(recent, key);
+      const priorAvg = avgDim(prior, key);
+      if (recentAvg == null || priorAvg == null) return null;
+      const delta = recentAvg - priorAvg;
+      return Math.abs(delta) > 0.20
+        ? { dimension: key, direction: delta > 0 ? 'increasing' : 'decreasing', delta: Math.round(Math.abs(delta) * 100) / 100 }
+        : null;
+    })
+    .filter(Boolean)
+    : [];
+
+  return {
+    archetype,
+    dimensions,
+    style_shifts: styleShifts,
+    trip_count_used: completed.length,
+  };
+}
+
+/**
+ * Adjust maintenance intervals based on measured driving stress.
+ * @param {Array<Object>} trips - Trips for the vehicle.
+ * @param {{oil_change_km?:number,tire_rotation_km?:number,inspection_km?:number,odometer_km?:number,maintenance_items?:Array}} vehicle - Vehicle service settings.
+ * @param {Object} settings - User settings for fallback intervals.
+ * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number,corner_stress_index:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
+ * @example
+ * const maintenance = calculatePredictiveMaintenance(trips, vehicle, settings);
+ */
+export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {}) {
+  const completed = (trips || []).filter((trip) => trip.status === 'completed');
+  const mean = (values, fallback = 0) => {
+    const finite = values.filter((value) => Number.isFinite(value));
+    return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : fallback;
+  };
+  const aggressionIndex = clamp(1 - mean(completed.map((trip) => Number(trip.aggressive_driving_score)), 100) / 100, 0, 1);
+  const brakeStressIndex = clamp(1 - mean(completed.map((trip) => Number(trip.braking_efficiency_score ?? 100)), 100) / 100, 0, 1);
+  const cornerStressIndex = clamp(mean(completed.map((trip) => Number(trip.trip_tire_wear_units)), 0) / 10, 0, 1);
+  const stressIndex = clamp(aggressionIndex * 0.40 + brakeStressIndex * 0.35 + cornerStressIndex * 0.25, 0, 1);
+  const adjustmentFactor = 1 - stressIndex * 0.40;
+  const items = getMaintenanceItems(vehicle);
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const odometer = getVehicleOdometerKm(vehicle, completed);
+  const itemFor = (ids, fallbackInterval) => ids.map((id) => byId.get(id)).find(Boolean) || { interval_km: fallbackInterval, last_service_km: 0 };
+  const build = (item, baseInterval) => {
+    const adjustedInterval = Math.round(baseInterval * adjustmentFactor);
+    const usedKm = odometer - (Number(item.last_service_km) || 0);
+    const remainingKm = Math.round(adjustedInterval - usedKm);
+    return {
+      adjusted_interval_km: adjustedInterval,
+      remaining_km: remainingKm,
+      status: remainingKm <= 0 ? 'due' : remainingKm <= 500 ? 'soon' : 'ok',
+      urgency_delta: adjustedInterval - baseInterval,
+    };
+  };
+
+  const oilBase = Number(vehicle.oil_change_km || vehicle.oil_change_interval_km || settings.oil_change_km) || itemFor(['oil'], 8000).interval_km;
+  const tireBase = Number(vehicle.tire_rotation_km || vehicle.tire_rotation_interval_km || settings.tire_rotation_km) || itemFor(['tires'], 10000).interval_km;
+  const inspectionBase = Number(vehicle.inspection_km || settings.inspection_km) || itemFor(['inspection'], 20000).interval_km;
+
+  return {
+    stress_index: Math.round(stressIndex * 100) / 100,
+    aggression_index: Math.round(aggressionIndex * 100) / 100,
+    brake_stress_index: Math.round(brakeStressIndex * 100) / 100,
+    corner_stress_index: Math.round(cornerStressIndex * 100) / 100,
+    oil_change: build(itemFor(['oil'], oilBase), oilBase),
+    tire_rotation: build(itemFor(['tires'], tireBase), tireBase),
+    inspection: build(itemFor(['inspection'], inspectionBase), inspectionBase),
+  };
 }
 
 export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
@@ -788,6 +969,10 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 10);
   const recentNearMisses = recentTen.reduce((sum, trip) => sum + (trip.near_miss_count || 0), 0);
+  const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
+  const recentThirty = completed.filter((trip) => new Date(trip.start_time || trip.created_at || 0).getTime() >= thirtyDaysAgo);
+  const poorReactionTrips = recentThirty.filter((trip) => ['reactive', 'delayed'].includes(trip.reaction_grade)).length;
+  const emergencyHeavyTrips = recentThirty.filter((trip) => trip.braking_efficiency_grade === 'emergency_heavy').length;
   const common = (field) => {
     const counts = new Map();
     recentTen.forEach((trip) => counts.set(trip[field], (counts.get(trip[field]) || 0) + 1));
@@ -795,7 +980,11 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   };
   const focusArea = recentNearMisses > 0
     ? 'near-miss prevention'
-    : common('drowsy_risk_level') === 'high'
+    : poorReactionTrips >= 3
+      ? 'anticipation'
+      : emergencyHeavyTrips > 0
+        ? 'progressive braking'
+        : common('drowsy_risk_level') === 'high'
       ? 'fatigue management'
       : common('aggressive_grade') === 'aggressive'
         ? 'aggressive driving'
@@ -834,6 +1023,12 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   }
   if ((riskRate.totals.erratic_speed || 0) > 0) {
     actions.push('On city routes, keep a steadier throttle through low-speed stretches.');
+  }
+  if (poorReactionTrips >= 3) {
+    actions.push('Scan two vehicles ahead and lift earlier when traffic compresses; your recent reaction pattern is trending late.');
+  }
+  if (emergencyHeavyTrips > 0) {
+    actions.push('Start braking with light pressure, then build smoothly so full stops are less abrupt.');
   }
   const maxSpeedCreep = completed.reduce((max, trip) => Math.max(max, trip.max_speed_creep_kmh || 0), 0);
   if (maxSpeedCreep > 20) {

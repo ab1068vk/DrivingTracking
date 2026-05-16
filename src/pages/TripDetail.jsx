@@ -8,7 +8,7 @@ import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
   Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag,
-  ParkingSquare
+  ParkingSquare, Droplets, GitBranch, Route
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
@@ -24,7 +24,7 @@ import {
   splitTripAtStops,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
+import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,6 +57,7 @@ export default function TripDetail() {
   const qc = useQueryClient();
   const settings = localSettings.get();
   const units = settings.units || 'metric';
+  const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
 
   const { data: trip, isLoading } = useQuery({
     queryKey: ['trip', id],
@@ -134,6 +135,9 @@ export default function TripDetail() {
     }
     return [...byZone.values()].sort((a, b) => a.inferredZoneKmh - b.inferredZoneKmh);
   }, [trip]);
+  const fatigueHeatmapData = useMemo(() => (
+    trip ? buildFatigueHeatmapData(trip) : []
+  ), [trip]);
 
   if (isLoading) {
     return (
@@ -171,7 +175,25 @@ export default function TripDetail() {
     localStorage.setItem('drivesense_dismissed_tag_suggestions', JSON.stringify(next));
   };
   const roadCfg = roadTypeConfig[trip.road_type];
+  const dominantRoadCfg = roadTypeConfig[trip.dominant_road_type] || roadCfg;
   const RoadIcon = roadCfg?.icon;
+  const DominantRoadIcon = dominantRoadCfg?.icon;
+  const roadTypeScores = [
+    { key: 'highway', label: 'Highway', data: trip.highway_score },
+    { key: 'urban', label: 'Urban', data: trip.urban_score },
+    { key: 'residential', label: 'Residential', data: trip.residential_score },
+  ].filter((item) => item.data && Number.isFinite(item.data.overall));
+  const complianceRows = [
+    { key: 'highway', label: 'Highway', data: trip.highway_compliance },
+    { key: 'urban', label: 'Urban', data: trip.urban_compliance },
+    { key: 'residential', label: 'Residential', data: trip.residential_compliance },
+  ].filter((item) => item.data);
+  const roadConditionLabel = {
+    likely_wet: 'Likely Wet',
+    possible_wet: 'Possibly Wet',
+    appears_dry: 'Dry',
+    insufficient_data: 'Not Enough Data',
+  }[trip.slippery_proxy] || null;
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -301,12 +323,39 @@ export default function TripDetail() {
         </div>
       )}
 
+      {roadConditionLabel && trip.slippery_proxy !== 'insufficient_data' && (
+        <div
+          title="Road condition is inferred from stopping-distance patterns and is not a weather measurement."
+          className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3 text-sm font-medium"
+        >
+          <Droplets className={`h-4 w-4 ${trip.slippery_proxy === 'appears_dry' ? 'text-emerald-500' : 'text-sky-500'}`} />
+          <span>Road Conditions: {roadConditionLabel}</span>
+          {(trip.safety_condition_bonus || 0) > 0 && (
+            <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              +{trip.safety_condition_bonus} safety context
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+        <div className="mb-2 flex justify-end">
+          <button
+            onClick={() => setShowCorneringHeatmap((value) => !value)}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
+              showCorneringHeatmap ? 'bg-primary text-primary-foreground' : 'bg-card border border-border text-muted-foreground'
+            }`}
+          >
+            <Route className="h-3.5 w-3.5" />
+            Cornering Heatmap
+          </button>
+        </div>
         <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
           <TripMap
             routePoints={trip.route_points || []}
             events={trip.driving_events || []}
+            showCorneringHeatmap={showCorneringHeatmap}
             height="300px"
           />
         </div>
@@ -359,6 +408,40 @@ export default function TripDetail() {
           ))}
         </div>
       </motion.div>
+
+      {roadTypeScores.length > 0 && (
+        <motion.details
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.18 }}
+          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          open
+        >
+          <summary className="cursor-pointer list-none font-semibold">By Road Type</summary>
+          <div className="mt-4 space-y-3">
+            {roadTypeScores.map(({ key, label, data }) => {
+              const { color: scoreColor } = getScoreColor(data.overall || 0);
+              return (
+                <div key={key} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">{label}</span>
+                    <span className={`font-semibold ${scoreColor}`}>{data.overall}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-secondary">
+                    <div
+                      className="h-full rounded-full bg-primary"
+                      style={{ width: `${Math.max(0, Math.min(100, data.overall || 0))}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatDistance(data.distance_km || 0, units)} analyzed, {data.event_count || 0} event{(data.event_count || 0) === 1 ? '' : 's'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.details>
+      )}
 
       {/* Trip metadata */}
       <motion.div
@@ -423,6 +506,12 @@ export default function TripDetail() {
               <span>{roadCfg.label} route</span>
             </div>
           )}
+          {dominantRoadCfg && trip.dominant_road_type && (
+            <div className={`inline-flex w-fit items-center gap-2 text-sm border rounded-full px-3 py-1 ${dominantRoadCfg.className}`}>
+              <DominantRoadIcon className="w-4 h-4" />
+              <span>Dominant: {dominantRoadCfg.label}</span>
+            </div>
+          )}
           {tripVehicle && (
             <div className="flex items-center gap-2 text-sm">
               <Car className="w-4 h-4 text-muted-foreground" />
@@ -451,6 +540,25 @@ export default function TripDetail() {
                 <div className="text-sm font-semibold">{formatDistance(zone.distanceKm, units)}</div>
               </div>
             ))}
+            {complianceRows.map(({ key, label, data }) => (
+              <div key={`compliance-${key}`} className="rounded-xl bg-secondary/50 p-3">
+                <div className="mb-2 flex items-center justify-between text-sm">
+                  <div className="font-semibold">{label} compliance</div>
+                  <div className="font-semibold">{Math.round((data.rate || 0) * 100)}%</div>
+                </div>
+                <div className="h-2 rounded-full bg-background">
+                  <div
+                    className={`h-full rounded-full ${
+                      (data.score || 0) >= 80 ? 'bg-emerald-500' : (data.score || 0) >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                    }`}
+                    style={{ width: `${Math.max(0, Math.min(100, (data.rate || 0) * 100))}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Limit {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}
+                </div>
+              </div>
+            ))}
           </div>
         </motion.div>
       )}
@@ -468,6 +576,7 @@ export default function TripDetail() {
             { icon: MapPin, label: 'detected stops', value: trip.stop_count ?? stops.length, color: 'text-primary' },
             { icon: AlertTriangle, label: 'fatigue risk', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'jerk score', value: trip.jerk_score ?? '-', color: 'text-sky-500' },
+            { icon: GitBranch, label: 'reaction', value: trip.avg_reaction_seconds ? `${trip.avg_reaction_seconds}s` : '-', color: ['reactive', 'delayed'].includes(trip.reaction_grade) ? 'text-red-500' : 'text-emerald-500' },
             { icon: Leaf, label: 'eco driving', value: trip.eco_driving_score ?? '-', color: 'text-emerald-500' },
             { icon: ShieldCheck, label: 'following score', value: trip.following_distance_score ?? '-', color: 'text-blue-500' },
             { icon: Focus, label: 'focus score', value: trip.distraction_score ?? '-', color: 'text-violet-500' },
@@ -487,7 +596,41 @@ export default function TripDetail() {
           ))}
         </div>
 
-        {fatigueChartData.length === 3 && (
+        {fatigueHeatmapData.length > 0 ? (
+          <div className="mb-4 bg-secondary/50 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-medium">Fatigue progression</div>
+              <span className="text-xs text-muted-foreground">fatigue level 0-100</span>
+            </div>
+            <ResponsiveContainer width="100%" height={140}>
+              <AreaChart data={fatigueHeatmapData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
+                <defs>
+                  <linearGradient id="fatigueLevelFill" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="#ef4444" stopOpacity={0.25} />
+                    <stop offset="55%" stopColor="#f97316" stopOpacity={0.18} />
+                    <stop offset="100%" stopColor="#22c55e" stopOpacity={0.10} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="minuteOffset" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                <Area
+                  type="monotone"
+                  dataKey="fatigueLevel"
+                  stroke="#f97316"
+                  fill="url(#fatigueLevelFill)"
+                  strokeWidth={2}
+                  dot={(props) => {
+                    const { cx, cy, payload } = props;
+                    return payload.fatigueLevel >= 60
+                      ? <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+                      : null;
+                  }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : fatigueChartData.length === 3 && (
           <div className="mb-4 bg-secondary/50 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-medium">Driving quality over trip</div>
@@ -504,18 +647,28 @@ export default function TripDetail() {
           </div>
         )}
 
-        {Number.isFinite(trip.smooth_braking_ratio) && (
+        {(Number.isFinite(trip.braking_efficiency_score) || Number.isFinite(trip.smooth_braking_ratio)) && (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3">
             <div className="mb-2 flex items-center justify-between text-sm">
-              <span className="font-medium">Braking Quality</span>
-              <span className="font-semibold">{trip.smooth_braking_ratio}% smooth</span>
+              <span className="font-medium">Braking Efficiency</span>
+              <span className="font-semibold capitalize">
+                {trip.braking_efficiency_grade?.replace('_', ' ') || `${trip.smooth_braking_ratio}% smooth`}
+              </span>
             </div>
+            {Number.isFinite(trip.braking_efficiency_score) && (
+              <div className="mb-2 flex items-baseline gap-2">
+                <span className="font-grotesk text-2xl font-bold">{trip.braking_efficiency_score}</span>
+                <span className="text-xs text-muted-foreground">
+                  {trip.braking_sequence_count || 0} stop sequence{(trip.braking_sequence_count || 0) === 1 ? '' : 's'}, smoothness {Math.round((trip.avg_braking_smoothness || 0) * 100)}%
+                </span>
+              </div>
+            )}
             <div className="h-2 overflow-hidden rounded-full bg-background">
               <div
                 className={`h-full rounded-full ${
-                  trip.smooth_braking_ratio >= 80 ? 'bg-emerald-500' : trip.smooth_braking_ratio >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                  (trip.braking_efficiency_score ?? trip.smooth_braking_ratio) >= 80 ? 'bg-emerald-500' : (trip.braking_efficiency_score ?? trip.smooth_braking_ratio) >= 50 ? 'bg-yellow-500' : 'bg-red-500'
                 }`}
-                style={{ width: `${Math.max(0, Math.min(100, trip.smooth_braking_ratio))}%` }}
+                style={{ width: `${Math.max(0, Math.min(100, trip.braking_efficiency_score ?? trip.smooth_braking_ratio))}%` }}
               />
             </div>
           </div>
@@ -526,6 +679,31 @@ export default function TripDetail() {
             <div className="font-medium">Hill Control</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {trip.climb_distance_km ?? 0} km climbing, {trip.descent_distance_km ?? 0} km descending. Use engine braking on descents rather than braking repeatedly.
+            </div>
+          </div>
+        )}
+
+        {trip.cornering_consistency_score != null && (
+          <div className="mb-4 rounded-xl bg-secondary/50 p-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-medium">Cornering</div>
+              <span className="rounded-full bg-card px-2 py-0.5 text-xs font-semibold capitalize">
+                {trip.cornering_grade}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg bg-card p-2">
+                <div className="font-grotesk text-lg font-bold">{trip.cornering_consistency_score}</div>
+                <div className="text-[11px] text-muted-foreground">score</div>
+              </div>
+              <div className="rounded-lg bg-card p-2">
+                <div className="font-grotesk text-lg font-bold">{trip.mean_lateral_g}</div>
+                <div className="text-[11px] text-muted-foreground">mean g</div>
+              </div>
+              <div className="rounded-lg bg-card p-2">
+                <div className="font-grotesk text-lg font-bold">{trip.peak_lateral_g}</div>
+                <div className="text-[11px] text-muted-foreground">peak g</div>
+              </div>
             </div>
           </div>
         )}
@@ -576,6 +754,7 @@ export default function TripDetail() {
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
               { label: 'Near-Miss', value: trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
               { label: 'Overtakes', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />

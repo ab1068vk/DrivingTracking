@@ -1,4 +1,4 @@
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
@@ -6,10 +6,22 @@ import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 
 const TRIPS_KEY = 'drivesense_trips';
+const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 2;
+export const TRIP_SCHEMA_VERSION = 3;
+/*
+ * Completed trip record schema additions in version 3:
+ * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
+ * - reaction proxy: reaction_score, avg_reaction_seconds, reaction_grade, reaction_sample_count
+ * - cornering consistency: cornering_consistency_score, cornering_grade, mean_lateral_g, peak_lateral_g, corner_sample_count
+ * - braking efficiency: braking_efficiency_score, braking_efficiency_grade, braking_sequence_count, avg_braking_smoothness
+ * - compliance: highway_compliance, urban_compliance, residential_compliance, overall_compliance_score
+ * - overtake quality: overtake_quality_score, overtake_quality_grade, overtake_count, unsafe_reentry_count
+ * - road condition proxy: slippery_proxy, wet_signal_count, wet_ratio, safety_condition_bonus, avg_distance_ratio
+ * - stats speed zones: speed_zones
+ */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
 
@@ -93,7 +105,15 @@ const rescoreTrip = (trip) => {
 
 const needsRescore = (trip) => (
   trip?.status === 'completed' &&
-  (trip.needs_rescore || trip.defensive_driving_score == null || trip.schema_version !== TRIP_SCHEMA_VERSION)
+  (
+    trip.needs_rescore ||
+    trip.defensive_driving_score == null ||
+    trip.reaction_score == null ||
+    trip.braking_efficiency_grade == null ||
+    trip.overall_compliance_score == null ||
+    trip.dominant_road_type == null ||
+    trip.schema_version !== TRIP_SCHEMA_VERSION
+  )
 );
 
 const rescoreTripsIfNeeded = async (trips = []) => {
@@ -228,6 +248,7 @@ export const localTripRepository = {
   async create(trip) {
     const saved = withId({ ...trip, created_at: new Date().toISOString() });
     await putTrip(saved);
+    if (saved.status === 'completed') await removeJson(DRIVER_SIGNATURE_KEY);
     await pruneExpiredTrips();
     return saved;
   },
@@ -236,6 +257,7 @@ export const localTripRepository = {
     const current = await this.getById(id);
     const updated = withId({ ...current, ...patch, id: current.id });
     await putTrip(updated);
+    if (updated.status === 'completed') await removeJson(DRIVER_SIGNATURE_KEY);
     return updated;
   },
 
@@ -253,6 +275,7 @@ export const localTripRepository = {
       return needsRescore(next) ? rescoreTrip(next) : next;
     });
     await putTrips(normalized);
+    if (normalized.some((trip) => trip.status === 'completed')) await removeJson(DRIVER_SIGNATURE_KEY);
     await pruneExpiredTrips();
     return normalized;
   },

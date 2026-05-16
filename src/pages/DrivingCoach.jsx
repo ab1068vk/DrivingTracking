@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
+import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Brain, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { tripService } from '@/api/trips';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -9,7 +10,9 @@ import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
   buildDrivingCoachInsights,
+  buildDriverSignature,
 } from '@/lib/tripInsights';
+import { setJson } from '@/lib/mobileStorage';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -20,8 +23,12 @@ const focusLabels = {
   'lane discipline': 'Lane Discipline',
   'following distance': 'Following Distance',
   'distraction risk': 'Distraction Risk',
+  anticipation: 'Anticipation',
+  'progressive braking': 'Progressive Braking',
   consistency: 'Consistency',
 };
+
+const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 
 export default function DrivingCoach() {
   const settings = localSettings.get();
@@ -33,6 +40,23 @@ export default function DrivingCoach() {
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');
   const coach = buildDrivingCoachInsights(completed, settings);
+  const driverSignature = useMemo(() => buildDriverSignature(completed), [completed]);
+  const signatureChartData = driverSignature
+    ? [
+      { dimension: 'Aggression', value: Math.round(driverSignature.dimensions.aggression * 100) },
+      { dimension: 'Smooth', value: Math.round(driverSignature.dimensions.smoothness * 100) },
+      { dimension: 'Eco', value: Math.round(driverSignature.dimensions.ecoMindedness * 100) },
+      { dimension: 'Speed', value: Math.round(driverSignature.dimensions.speedTolerance * 100) },
+      { dimension: 'Braking', value: Math.round(driverSignature.dimensions.brakingStyle * 100) },
+      { dimension: 'Consistent', value: Math.round(driverSignature.dimensions.consistencyIdx * 100) },
+    ]
+    : [];
+  const increasingAggressionShift = driverSignature?.style_shifts?.find((shift) => (
+    shift.dimension === 'aggression' && shift.direction === 'increasing'
+  ));
+  useEffect(() => {
+    if (driverSignature) setJson(DRIVER_SIGNATURE_KEY, driverSignature).catch(() => {});
+  }, [driverSignature]);
   const timeOfDay = analyzeTimeOfDay(completed);
   const dayOfWeek = analyzeDayOfWeek(completed);
   const avgMergeScore = completed.length
@@ -69,6 +93,48 @@ export default function DrivingCoach() {
         </div>
       ) : (
         <>
+          {increasingAggressionShift && (
+            <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
+              <div className="font-semibold">Style shift detected</div>
+              <div className="mt-1">
+                Your driving has become more aggressive in the last 5 trips. The shift is +{Math.round(increasingAggressionShift.delta * 100)} percentage points from your prior baseline.
+              </div>
+            </div>
+          )}
+
+          {driverSignature && (
+            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">Your Driving Style</h2>
+                  <div className="mt-1 text-2xl font-grotesk font-bold capitalize">
+                    {driverSignature.archetype.replaceAll('_', ' ')}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Built from {driverSignature.trip_count_used} recent trips.
+                  </p>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <RadarChart data={signatureChartData} outerRadius={76}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
+                  <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.22} />
+                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                </RadarChart>
+              </ResponsiveContainer>
+              {driverSignature.style_shifts.length > 0 && (
+                <div className="rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+                  {driverSignature.style_shifts.map((shift) => (
+                    <span key={`${shift.dimension}-${shift.direction}`} className="mr-2 capitalize">
+                      {shift.dimension}: {shift.direction} {Math.round(shift.delta * 100)}%
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center">

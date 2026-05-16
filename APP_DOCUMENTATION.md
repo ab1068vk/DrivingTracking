@@ -4428,3 +4428,24 @@ All calculation details known from the current source are included in section 27
 - `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java`
 
 It includes GPS formulas, cleaning, route simplification, stats, all event detectors, all score formulas, all insight formulas, all vehicle/economics formulas, export formatting, JavaScript auto-start/auto-stop, native Android auto-stop, native stats, and native GPS noise filtering.
+## Advanced Analysis Update
+
+Trip schema version 3 adds these completed-trip fields:
+
+- Road type scoring: `highway_score`, `urban_score`, `residential_score`, `dominant_road_type`.
+- Reaction proxy: `reaction_score`, `avg_reaction_seconds`, `reaction_grade`, `reaction_sample_count`.
+- Cornering consistency: `cornering_consistency_score`, `cornering_grade`, `mean_lateral_g`, `peak_lateral_g`, `corner_sample_count`.
+- Braking efficiency: `braking_efficiency_score`, `braking_efficiency_grade`, `braking_sequence_count`, `avg_braking_smoothness`.
+- Speed compliance: `highway_compliance`, `urban_compliance`, `residential_compliance`, `overall_compliance_score`.
+- Overtake quality: `overtake_quality_score`, `overtake_quality_grade`, `overtake_count`, `unsafe_reentry_count`.
+- Road condition proxy: `slippery_proxy`, `wet_signal_count`, `wet_ratio`, `safety_condition_bonus`, `avg_distance_ratio`.
+- Stats: `speed_zones`.
+
+Completed trips missing any version-3 advanced field are rescored on read/import. The driver signature cache uses the `drivesense_driver_signature` Preferences key and is invalidated when completed trips are created, updated, or bulk imported.
+
+UI placements:
+
+- Trip Detail shows road-type score bars, reaction/braking/cornering cards, compliance bars, fatigue timeline data, a road-condition badge, overtake quality, and an optional cornering heatmap map layer.
+- Driving Coach shows a driver-style radar profile, style-shift alerts, and new anticipation/progressive-braking focus areas.
+- Reports show road-type compliance over the selected period.
+- Vehicles show predictive maintenance adjusted intervals and vehicle stress badges.

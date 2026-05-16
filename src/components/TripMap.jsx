@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildSpeedSegments } from '@/lib/tripInsights';
+import { calculateBearing, headingDiff } from '@/lib/tripEngine';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -11,6 +12,9 @@ const EVENT_COLORS = {
   sharp_turn: '#3b82f6',
   speeding: '#f97316',
   idle: '#6b7280',
+  lane_change: '#0ea5e9',
+  aggressive_overtake: '#f97316',
+  near_miss: '#dc2626',
 };
 
 const EVENT_LABELS = {
@@ -19,6 +23,9 @@ const EVENT_LABELS = {
   sharp_turn: '<',
   speeding: '>',
   idle: 'P',
+  lane_change: '<>',
+  aggressive_overtake: '>>',
+  near_miss: '!',
 };
 
 let leafletLoaded = false;
@@ -59,6 +66,7 @@ export default function TripMap({
   showCurrentLocation = false,
   currentLocation = null,
   parkedLocation = null,
+  showCorneringHeatmap = false,
   height = '350px',
   className = '',
 }) {
@@ -131,7 +139,32 @@ export default function TripMap({
           ? buildSpeedSegments(route.route_points)
           : [];
 
-        if (speedSegments.length > 0) {
+        if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
+          for (let i = 1; i < route.route_points.length - 1; i++) {
+            const prev = route.route_points[i - 1];
+            const curr = route.route_points[i];
+            const next = route.route_points[i + 1];
+            const dtPrev = (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
+            const dtNext = (new Date(next.timestamp).getTime() - new Date(curr.timestamp).getTime()) / 1000;
+            if (dtPrev <= 0 || dtNext <= 0 || dtPrev > 15 || dtNext > 15) continue;
+            const h1 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
+            const h2 = calculateBearing(curr.lat, curr.lng, next.lat, next.lng);
+            const speed = Number(curr.speed_kmh) || Number(next.speed_kmh) || 0;
+            const lateralG = ((speed / 3.6) * ((headingDiff(h1, h2) * Math.PI / 180) / Math.max(1.5, (dtPrev + dtNext) / 2))) / 9.81;
+            const color = lateralG >= 0.4 ? '#ef4444' : lateralG >= 0.2 ? '#f59e0b' : '#22c55e';
+            window.L.polyline(
+              [[curr.lat, curr.lng], [next.lat, next.lng]],
+              {
+                color,
+                weight: route.selected ? 6 : 3,
+                opacity: route.opacity,
+                smoothFactor: 1.5,
+              }
+            )
+              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}Cornering: ${lateralG.toFixed(2)}g`)
+              .addTo(layers);
+          }
+        } else if (speedSegments.length > 0) {
           speedSegments.forEach((segment) => {
             window.L.polyline(
               [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
@@ -225,7 +258,7 @@ export default function TripMap({
         .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
