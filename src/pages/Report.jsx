@@ -17,6 +17,8 @@ import ScoreRing from '@/components/ScoreRing';
 import { localSettings } from '@/lib/trackingStore';
 import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 import { computeUBIReport } from '@/lib/ubiReport';
+import { notifyExportSaved } from '@/lib/notificationService';
+import { toast } from '@/components/ui/use-toast';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -187,19 +189,58 @@ export default function Reports() {
   const handleExport = async () => {
     const csv = tripsToCSV(trips);
     const result = await downloadCSV(csv, `drivesense-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
-    if (result?.native) alert(`Export saved to Downloads as ${result.filename}.`);
+    toast({
+      title: 'Export saved',
+      description: result?.native
+        ? `${result.filename} was saved to Downloads.`
+        : `${result?.filename || 'CSV report'} is downloading.`,
+    });
+    if (result?.native) {
+      await notifyExportSaved({
+        filename: result.filename,
+        uri: result.uri,
+        mimeType: 'text/csv',
+        label: 'CSV export',
+      }).catch(() => {});
+    }
   };
 
   const handlePdfExport = async () => {
     const result = await exportMonthlyReportPDF(trips, period, settings);
-    if (result?.native) alert(`PDF report saved to Downloads as ${result.filename}.`);
+    toast({
+      title: 'PDF saved',
+      description: result?.native
+        ? `${result.filename} was saved to Downloads.`
+        : `${result?.filename || 'Monthly PDF report'} is downloading.`,
+    });
+    if (result?.native) {
+      await notifyExportSaved({
+        filename: result.filename,
+        uri: result.uri,
+        mimeType: 'application/pdf',
+        label: 'PDF report',
+      }).catch(() => {});
+    }
   };
 
   const handleUbiExport = async () => {
     setUbiLoading(true);
     const result = await exportUBIReportPDF(ubiReport, settings);
     setUbiLoading(false);
-    if (result?.native) alert(`Score card saved to Downloads as ${result.filename}.`);
+    toast({
+      title: 'Score card saved',
+      description: result?.native
+        ? `${result.filename} was saved to Downloads.`
+        : `${result?.filename || 'Score card PDF'} is downloading.`,
+    });
+    if (result?.native) {
+      await notifyExportSaved({
+        filename: result.filename,
+        uri: result.uri,
+        mimeType: 'application/pdf',
+        label: 'Score card',
+      }).catch(() => {});
+    }
   };
 
   const { color: bestColor } = getScoreColor(summary.best_trip?.score_overall || 0);

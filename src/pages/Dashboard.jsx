@@ -34,6 +34,7 @@ import {
   startActivityRecognition,
   startNativeAutoTracking,
   stopNativeAutoTracking,
+  computeGpsPositionDrift,
   shouldAutoStartTracking,
   shouldAutoStopTracking,
 } from '@/lib/activityRecognition';
@@ -75,6 +76,10 @@ export default function Dashboard() {
   const latestActivityRef = useRef(null);
   const recentMovingSinceRef = useRef(null);
   const stillSinceRef = useRef(null);
+  const stoppedAnchorRef = useRef(null);
+  const lastMovingSpeedRef = useRef(0);
+  const autoEndingTripRef = useRef(false);
+  const endTripRef = useRef(null);
   const timerRef = useRef(null);
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
@@ -95,6 +100,10 @@ export default function Dashboard() {
       stayAlertSentRef.current = false;
       lastStayAlertAtRef.current = 0;
       lastProximityAlertRef.current = 0;
+      stillSinceRef.current = null;
+      stoppedAnchorRef.current = null;
+      lastMovingSpeedRef.current = 0;
+      autoEndingTripRef.current = false;
     }
   }, [tracking]);
 
@@ -199,6 +208,7 @@ export default function Dashboard() {
           }
         }
         activeTripStore.addPoint(point);
+        const speed = Number(point.speed_kmh) || 0;
         setActiveTrip(prev => {
           if (!prev) return prev;
           const updated = { ...prev, route_points: [...(prev.route_points || []), point] };
@@ -206,6 +216,45 @@ export default function Dashboard() {
           activeTripRef.current = updated;
           return updated;
         });
+        const trip = activeTripRef.current;
+        if (!trip || !trackingRef.current || autoEndingTripRef.current) return;
+
+        const nowMs = Date.now();
+        if (speed >= 5) {
+          lastMovingSpeedRef.current = speed;
+          stillSinceRef.current = null;
+          stoppedAnchorRef.current = null;
+          return;
+        }
+
+        stillSinceRef.current ??= nowMs;
+        stoppedAnchorRef.current ??= { lat: point.lat, lng: point.lng };
+        const stillSeconds = (nowMs - stillSinceRef.current) / 1000;
+        const recentPoints = [...(trip.route_points || []), point].filter((routePoint) => (
+          new Date(routePoint.timestamp).getTime() >= stillSinceRef.current - 5000
+        ));
+        const gpsPositionDriftM = computeGpsPositionDrift(
+          stoppedAnchorRef.current.lat,
+          stoppedAnchorRef.current.lng,
+          recentPoints
+        );
+        const activity = latestActivityRef.current;
+        const activityParked = shouldAutoStopTracking({
+          activity,
+          currentSpeedKmh: speed,
+          stillSeconds,
+          gpsPositionDriftM,
+          lastMovingSpeedKmh: lastMovingSpeedRef.current,
+        });
+        const gpsParked = speed < 2 && (
+          (stillSeconds >= 300 && gpsPositionDriftM < 20) ||
+          stillSeconds >= 600
+        );
+
+        if (activityParked || gpsParked) {
+          autoEndingTripRef.current = true;
+          endTripRef.current?.();
+        }
       },
       (err) => setLocationError(err.message)
     );
@@ -369,6 +418,10 @@ export default function Dashboard() {
     if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
     refetch();
   };
+
+  useEffect(() => {
+    endTripRef.current = handleEndTrip;
+  });
 
   useEffect(() => {
     const cfg = localSettings.get();

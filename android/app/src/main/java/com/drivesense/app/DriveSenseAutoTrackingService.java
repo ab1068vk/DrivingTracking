@@ -61,9 +61,10 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
     private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
     // FIX: Add a relaxed six-minute in-vehicle auto-stop timer for urban GPS drift.
-    private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 480_000L;
+    private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
     // FIX: Add an eight-minute speed-only safety net for prolonged parked trips.
-    private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
+    private static final long AUTO_STOP_NO_ACTIVITY_MS = 300_000L;
+    private static final long STALE_LOCATION_STOP_MS = 30_000L;
     private static final double GPS_STILL_DRIFT_M = 8.0d;
     private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
     private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
@@ -74,7 +75,9 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
+    private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
+    private static final int TRIP_COMPLETED_NOTIFICATION_ID = 2002;
     private static final int PHONE_MICRO_STEER_WINDOW_MS = 10_000;
     private static final int PHONE_MICRO_STEER_MIN_COUNT = 4;
     private static final double PHONE_MICRO_STEER_MIN_DEG = 3.0d;
@@ -91,6 +94,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private long stillSinceMs = 0L;
     private long nonVehicleSinceMs = 0L;
     private Location previousLocation;
+    private long lastLocationMs = 0L;
     private double lastKnownSpeedKmh = 0.0d;
     private double stoppedAnchorLat = Double.NaN;
     private double stoppedAnchorLng = Double.NaN;
@@ -194,11 +198,8 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void handleActivity(int type, int confidence) {
+        long now = System.currentTimeMillis();
         double speedKmh = lastKnownSpeedKmh;
-        boolean speedStopped = speedKmh < STATIONARY_SPEED_KMH;
-        boolean gpsStable = maxDriftSinceStopM < GPS_STILL_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
-        boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
-
         boolean onFoot = (type == DetectedActivity.WALKING ||
             type == DetectedActivity.RUNNING ||
             type == DetectedActivity.ON_BICYCLE) &&
@@ -206,6 +207,13 @@ public class DriveSenseAutoTrackingService extends Service {
 
         boolean isStill = type == DetectedActivity.STILL && confidence >= MIN_STILL_CONFIDENCE;
         boolean inVehicle = type == DetectedActivity.IN_VEHICLE && confidence >= MIN_VEHICLE_CONFIDENCE;
+        boolean staleParkedSignal = isTripActive() &&
+            lastLocationMs > 0L &&
+            now - lastLocationMs >= STALE_LOCATION_STOP_MS &&
+            (isStill || onFoot);
+        boolean speedStopped = speedKmh < STATIONARY_SPEED_KMH || staleParkedSignal;
+        boolean gpsStable = maxDriftSinceStopM < GPS_STILL_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
+        boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 
         if (!isTripActive()) {
             if (inVehicle) startTripIfNeeded();
@@ -222,8 +230,8 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         if (onFoot && speedStopped) {
-            if (nonVehicleSinceMs == 0L) nonVehicleSinceMs = System.currentTimeMillis();
-            if (System.currentTimeMillis() - nonVehicleSinceMs >= AUTO_STOP_FOOT_MS) {
+            if (nonVehicleSinceMs == 0L) nonVehicleSinceMs = now;
+            if (now - nonVehicleSinceMs >= AUTO_STOP_FOOT_MS) {
                 finishTrip();
                 return;
             }
@@ -231,8 +239,8 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         if (isStill && speedStopped) {
-            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
-            long elapsed = System.currentTimeMillis() - stillSinceMs;
+            if (stillSinceMs == 0L) stillSinceMs = now;
+            long elapsed = now - stillSinceMs;
             long threshold = gpsStable ? AUTO_STOP_STILL_STABLE_MS : AUTO_STOP_STILL_DRIFT_MS;
             if (elapsed >= threshold) {
                 finishTrip();
@@ -242,8 +250,8 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         if (inVehicle && speedStopped) {
-            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
-            long elapsed = System.currentTimeMillis() - stillSinceMs;
+            if (stillSinceMs == 0L) stillSinceMs = now;
+            long elapsed = now - stillSinceMs;
             if (elapsed >= AUTO_STOP_IN_VEHICLE_MS && gpsVeryStable) {
                 finishTrip();
                 // FIX: Keep the original four-minute fast path for very stable parked GPS.
@@ -265,8 +273,8 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         if (type == DetectedActivity.UNKNOWN && speedStopped) {
-            if (stillSinceMs == 0L) stillSinceMs = System.currentTimeMillis();
-            long elapsed = System.currentTimeMillis() - stillSinceMs;
+            if (stillSinceMs == 0L) stillSinceMs = now;
+            long elapsed = now - stillSinceMs;
             if (elapsed >= AUTO_STOP_NO_ACTIVITY_MS && gpsStable) {
                 finishTrip();
                 return;
@@ -301,6 +309,7 @@ public class DriveSenseAutoTrackingService extends Service {
         stillSinceMs = 0L;
         nonVehicleSinceMs = 0L;
         lastKnownSpeedKmh = 0.0d;
+        lastLocationMs = 0L;
         stoppedAnchorLat = Double.NaN;
         stoppedAnchorLng = Double.NaN;
         maxDriftSinceStopM = 0.0d;
@@ -350,6 +359,7 @@ public class DriveSenseAutoTrackingService extends Service {
             if (!location.hasSpeed()) speedKmh = reliableSpeed(impliedSpeed, reportedSpeed);
         }
         lastKnownSpeedKmh = speedKmh;
+        lastLocationMs = location.getTime() > 0L ? location.getTime() : System.currentTimeMillis();
 
         double bearing = Double.NaN;
         if (location.hasBearing()) bearing = location.getBearing();
@@ -407,6 +417,7 @@ public class DriveSenseAutoTrackingService extends Service {
         stillSinceMs = 0L;
         nonVehicleSinceMs = 0L;
         lastKnownSpeedKmh = 0.0d;
+        lastLocationMs = 0L;
         stoppedAnchorLat = Double.NaN;
         stoppedAnchorLng = Double.NaN;
         maxDriftSinceStopM = 0.0d;
@@ -450,6 +461,7 @@ public class DriveSenseAutoTrackingService extends Service {
         } catch (JSONException ignored) {}
 
         DriveSenseNativeTripStore.addCompletedTrip(this, trip);
+        sendTripCompletedNotification(trip, stats);
     }
 
     private TripStats calculateStats(JSONArray points, long startMs, long endMs) {
@@ -612,6 +624,41 @@ public class DriveSenseAutoTrackingService extends Service {
         NotificationManagerCompat.from(this).notify(PHONE_USE_NOTIFICATION_ID, builder.build());
     }
 
+    private void sendTripCompletedNotification(JSONObject trip, TripStats stats) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        ensureSummaryChannel();
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.putExtra("deeplink", "drivesense://trips/" + trip.optString("id", ""));
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            this,
+            1,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+        );
+
+        String body = String.format(
+            Locale.US,
+            "%.1f km recorded in %d min. Open DriveSense to review events and score.",
+            stats.distanceKm,
+            Math.max(1L, stats.durationSeconds / 60L)
+        );
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, SUMMARY_CHANNEL_ID)
+            .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
+            .setContentTitle("Trip saved")
+            .setContentText(body)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent);
+
+        NotificationManagerCompat.from(this).notify(TRIP_COMPLETED_NOTIFICATION_ID, builder.build());
+    }
+
     private void ensureSafetyAlertsChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationChannel channel = new NotificationChannel(
@@ -623,6 +670,18 @@ public class DriveSenseAutoTrackingService extends Service {
         channel.enableVibration(true);
         channel.setLightColor(Color.RED);
         channel.enableLights(true);
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.createNotificationChannel(channel);
+    }
+
+    private void ensureSummaryChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+            SUMMARY_CHANNEL_ID,
+            "Trip Summaries",
+            NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Trip completion and driving summary notifications.");
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) manager.createNotificationChannel(channel);
     }

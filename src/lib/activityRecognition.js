@@ -5,6 +5,7 @@ import { haversineDistance } from '@/lib/tripEngine';
 
 const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
 const UNKNOWN_GPS_STABLE_M = 8;
+const PARKED_GPS_DRIFT_M = 20;
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -136,7 +137,8 @@ export function shouldAutoStopTracking({
     // FIX: Preserve the fast in-vehicle parked path for very stable GPS drift.
     if (secondsStopped >= 360 && driftM < 20) return true;
     // FIX: Add the in_vehicle_extended_stop fallback for realistic urban parked GPS drift.
-    if (secondsStopped >= 480 && speed < 2 && lastMovingSpeed < 2) return true;
+    if (secondsStopped >= 420 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return true;
+    if (secondsStopped >= 600 && speed < 2 && lastMovingSpeed < 5) return true;
     // FIX: Add the prolonged_zero_speed safety net so trips cannot run forever on GPS drift alone.
   }
 

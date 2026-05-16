@@ -776,8 +776,10 @@ Auto-start logic:
 Auto-stop logic:
 
 - Current speed below 5 km/h.
-- Still time at least 180 seconds.
-- Activity is `still` with confidence at least 70, or non-vehicle with confidence at least 80.
+- Still time, activity recognition, and GPS drift are evaluated together.
+- Walking/running/cycling after the car stops can end the trip after 15 seconds.
+- STILL activity with stable GPS ends after 90 seconds; noisier stopped GPS waits longer.
+- A GPS-only parked fallback can end a foreground trip after 5 minutes of near-zero speed with parked-like drift, or after 10 minutes at near-zero speed.
 
 On non-Android web, speed-only auto start can trigger when speed is at least 18 km/h for at least 20 seconds.
 
@@ -800,7 +802,7 @@ Native auto tracking behavior:
 6. In-vehicle activity with confidence at least 70 starts a native trip.
 7. The service starts high-accuracy location updates every 5 seconds, with a 3 second minimum interval and 10 meter minimum distance.
 8. Native route points are filtered for accuracy, noise, and impossible speed.
-9. Still or non-vehicle activity plus stationary speed for about 180 seconds ends the trip.
+9. Still, walking, unknown, or long in-vehicle stopped states end the trip only after the parked timers and GPS drift checks pass.
 10. Trips under 30 seconds, under 0.1 km, or with fewer than 2 points are discarded.
 11. Completed native trips are saved to SharedPreferences.
 12. React imports native trips on trip list/detail reads and rescoring happens in JavaScript.
@@ -809,7 +811,8 @@ Important native thresholds:
 
 - Minimum vehicle confidence: 70.
 - Minimum still confidence: 70.
-- Auto-stop still duration: 180000 ms.
+- Auto-stop STILL duration: 90000 ms when GPS is stable, 150000 ms when GPS is drifting.
+- Auto-stop IN_VEHICLE duration: 240000 ms with very stable GPS, 360000 ms with relaxed drift, 420000 ms at near-zero speed with parked-like drift, 600000 ms as a final near-zero-speed safety net.
 - Maximum GPS accuracy: 75 m.
 - Minimum point distance: 8 m.
 - Stationary speed: 5 km/h.
@@ -2625,7 +2628,7 @@ if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= minRapidAcc
 }
 ```
 
-Default threshold: `3.5 m/s2`, minimum speed `15 km/h`.
+Default threshold: `3.5 m/s2`, minimum speed `5 km/h` so hard launches from a stop are counted once the car is actually moving.
 
 #### Sharp Turn
 
@@ -3499,8 +3502,9 @@ export function shouldAutoStopTracking({
   // IN_VEHICLE + stopped has three paths:
   // 240s with very stable GPS (< 5m drift).
   // 360s with relaxed urban GPS drift (< 20m).
-  // 480s at current speed < 2 km/h and last moving speed < 2 km/h, regardless of GPS drift.
-  // Missing or UNKNOWN activity waits 180s and requires stable GPS (< 8m drift).
+  // 420s at current speed < 2 km/h with parked-like drift (< 20m).
+  // 600s at current speed < 2 km/h and last moving speed < 5 km/h as a final parked safety net.
+  // Missing or UNKNOWN activity waits 300s and requires stable GPS (< 8m drift).
 }
 ```
 
@@ -3520,8 +3524,9 @@ private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
 private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
 private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
 private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
-private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 480_000L;
-private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
+private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
+private static final long AUTO_STOP_NO_ACTIVITY_MS = 300_000L;
+private static final long STALE_LOCATION_STOP_MS = 30_000L;
 private static final double GPS_STILL_DRIFT_M = 8.0d;
 private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
 private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
@@ -3552,8 +3557,9 @@ boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNa
 // STILL + stopped: finish after 90s when GPS is stable, otherwise wait 150s.
 // IN_VEHICLE + stopped: finish after 240s when GPS drift is under 5m.
 // IN_VEHICLE + stopped: finish after 360s when GPS drift is under 20m.
-// IN_VEHICLE + stopped: finish after 480s when speed is under 2 km/h, regardless of GPS drift.
-// UNKNOWN + stopped: finish after 180s only when GPS drift is under 8m.
+// IN_VEHICLE + stopped: finish after 420s when speed is under 2 km/h and drift is under 20m.
+// IN_VEHICLE + stopped: finish after 600s when near-zero speed persists as a safety net.
+// UNKNOWN + stopped: finish after 300s only when GPS drift is under 8m.
 ```
 
 Native `recordLocation()` maintains `stoppedAnchorLat`, `stoppedAnchorLng`, and `maxDriftSinceStopM`. Moving at or above `5 km/h` resets the anchor, max GPS drift, and stop timers; dropping below `5 km/h` anchors the stop position and tracks maximum drift from that point.
@@ -4340,8 +4346,11 @@ Native auto-stop timing:
 - STILL with drift: 150 seconds.
 - IN_VEHICLE while stopped and GPS very stable under 5 m drift: 240 seconds.
 - IN_VEHICLE while stopped with relaxed urban GPS drift under 20 m: 360 seconds.
-- IN_VEHICLE while stopped at under 2 km/h regardless of GPS drift: 480 seconds.
-- UNKNOWN while stopped and GPS stable: 180 seconds.
+- IN_VEHICLE while stopped at under 2 km/h with parked-like GPS drift under 20 m: 420 seconds.
+- IN_VEHICLE while stopped at under 2 km/h with no recent movement: 600 seconds safety net.
+- UNKNOWN while stopped and GPS stable: 300 seconds.
+
+If activity recognition reports STILL or walking after the last GPS update becomes stale for 30 seconds, the native service treats the speed as stopped. This handles the common parked-car case where Android stops sending fresh location points because the phone is no longer moving.
 
 ### 28.9 Tracking Modes And Permission Matrix
 
@@ -4379,6 +4388,7 @@ Notification ids:
 - `2102`: safe driving tip.
 - `2005`: stay alert.
 - `3000 + hash`: achievement notifications.
+- `4050`: export saved.
 
 Notification functions:
 
@@ -4387,6 +4397,7 @@ Notification functions:
 - `cancelLongTripReminder()`
 - `notifyTripStarted()`
 - `notifyTripCompleted(trip)`
+- `notifyExportSaved({ filename, uri, mimeType, label })`
 - `notifyStayAlert()`
 - `syncReminderNotifications(settings, options)`
 - `syncAchievementNotifications(achievements, options)`
@@ -4404,6 +4415,7 @@ CSV export:
 - `downloadCSV(content, filename)` sanitizes forbidden filename characters.
 - Native Android export writes to Downloads through `saveExportToDownloads`.
 - Browser export creates a Blob URL and triggers an anchor download.
+- Reports shows a toast after CSV/PDF export. On Android it also sends an export-saved notification; tapping it opens the saved file or Downloads location through `openExportLocation`.
 
 Full JSON backup:
 

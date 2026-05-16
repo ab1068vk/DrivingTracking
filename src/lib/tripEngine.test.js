@@ -361,6 +361,22 @@ describe('tripEngine', () => {
     expect(lenient.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
+  it('detects rapid acceleration and harsh braking in the first valid acceleration window', () => {
+    const rapidStart = [
+      point(43.6532, -79.3832, 0, 5),
+      point(43.6535, -79.3832, 1, 28),
+      point(43.6540, -79.3832, 2, 55),
+    ];
+    const hardStop = [
+      point(43.6532, -79.3832, 0, 75),
+      point(43.6535, -79.3832, 1, 35),
+      point(43.6540, -79.3832, 2, 0),
+    ];
+
+    expect(detectDrivingEvents(rapidStart).some((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION)).toBe(true);
+    expect(detectDrivingEvents(hardStop).some((event) => event.type === EVENT_TYPES.HARSH_BRAKE)).toBe(true);
+  });
+
   it('does not emit idle events below the 90 second traffic-stop grace period', () => {
     const points = [
       point(43.6532, -79.3832, 0, 30),

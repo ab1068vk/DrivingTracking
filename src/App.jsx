@@ -11,6 +11,7 @@ import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import { openExportLocation } from '@/lib/nativeDownloads';
 
 // Page imports
 import Layout from '@/components/Layout';
@@ -50,6 +51,11 @@ const AuthenticatedApp = () => {
       if (extra.tripId) navigate(`/trips/${extra.tripId}`);
       else if (extra.type === 'phone_use_pattern') navigate('/coach');
       else if (extra.type === 'maintenance') navigate('/vehicles');
+      else if (extra.type === 'export_saved') {
+        openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch(() => {
+          navigate('/reports');
+        });
+      }
     }).then((handle) => {
       listener = handle;
     }).catch(() => {});

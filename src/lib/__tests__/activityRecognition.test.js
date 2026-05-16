@@ -52,6 +52,16 @@ describe('activityRecognition auto-stop logic', () => {
     })).toBe(true);
   });
 
+  it('ends a long parked in-vehicle stop without waiting forever on moderate GPS drift', () => {
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 80 },
+      currentSpeedKmh: 0,
+      stillSeconds: 420,
+      gpsPositionDriftM: 12,
+      lastMovingSpeedKmh: 0,
+    })).toBe(true);
+  });
+
   it('falls back to GPS-only stop when activity is missing and GPS is stable', () => {
     expect(shouldAutoStopTracking({
       activity: null,

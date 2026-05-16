@@ -147,12 +147,13 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
 
   if (isNativePlatform()) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
-    return saveExportToDownloads({
+    const result = await saveExportToDownloads({
       filename,
       data: base64,
       mimeType: 'application/pdf',
       base64: true,
     });
+    return { ...result, filename, native: true };
   }
 
   doc.save(filename);
@@ -216,12 +217,13 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
 
   if (isNativePlatform()) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
-    return saveExportToDownloads({
+    const result = await saveExportToDownloads({
       filename,
       data: base64,
       mimeType: 'application/pdf',
       base64: true,
     });
+    return { ...result, filename, native: true };
   }
 
   doc.save(filename);

@@ -44,6 +44,7 @@ export const NOTIFICATION_IDS = {
   FUEL_COST_MONTHLY: 4033,
   INACTIVE_DRIVER_NUDGE: 4034,
   BACKGROUND_TRACKING_ACTIVE: 4040,
+  EXPORT_SAVED: 4050,
 };
 const LONG_TRIP_REMINDER_ID = NOTIFICATION_IDS.LONG_TRIP_REMINDER;
 const TRIP_STARTED_ID = NOTIFICATION_IDS.TRIP_STARTED;
@@ -271,6 +272,26 @@ export async function notifyTripCompleted(trip) {
       channelId: SUMMARY_CHANNEL_ID,
     }],
   });
+}
+
+export async function notifyExportSaved({ filename, uri, mimeType, label = 'Export' } = {}) {
+  if (!isNativePlatform()) return null;
+  if (!notificationsEnabled('notifications_enabled')) return null;
+
+  const notification = {
+    id: NOTIFICATION_IDS.EXPORT_SAVED,
+    title: `${label} saved`,
+    body: `${filename || 'Your file'} was saved to Downloads. Tap to open it.`,
+    channelId: SUMMARY_CHANNEL_ID,
+    schedule: { at: new Date() },
+    extra: {
+      type: 'export_saved',
+      filename,
+      uri,
+      mimeType,
+    },
+  };
+  return scheduleNotification(notification);
 }
 
 export async function notifyStayAlert(opts = {}) {

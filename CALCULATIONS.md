@@ -359,7 +359,7 @@ if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= minRapidAcc
 }
 ```
 
-Default threshold: `3.5 m/s2`, minimum speed `15 km/h`.
+Default threshold: `3.5 m/s2`, minimum speed `5 km/h` so hard launches from a stop are counted once the car is actually moving.
 
 ### Sharp Turn
 
@@ -1298,8 +1298,9 @@ export function shouldAutoStopTracking({
   // IN_VEHICLE + stopped has three paths:
   // 240s with very stable GPS (< 5m drift).
   // 360s with relaxed urban GPS drift (< 20m).
-  // 480s at current speed < 2 km/h and last moving speed < 2 km/h, regardless of GPS drift.
-  // Missing or UNKNOWN activity waits 180s and requires stable GPS (< 8m drift).
+  // 420s at current speed < 2 km/h with parked-like drift (< 20m).
+  // 600s at current speed < 2 km/h and last moving speed < 5 km/h as a final parked safety net.
+  // Missing or UNKNOWN activity waits 300s and requires stable GPS (< 8m drift).
 }
 ```
 
@@ -1319,8 +1320,9 @@ private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
 private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
 private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
 private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
-private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 480_000L;
-private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
+private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
+private static final long AUTO_STOP_NO_ACTIVITY_MS = 300_000L;
+private static final long STALE_LOCATION_STOP_MS = 30_000L;
 private static final double GPS_STILL_DRIFT_M = 8.0d;
 private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
 private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
@@ -1351,8 +1353,9 @@ boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNa
 // STILL + stopped: finish after 90s when GPS is stable, otherwise wait 150s.
 // IN_VEHICLE + stopped: finish after 240s when GPS drift is under 5m.
 // IN_VEHICLE + stopped: finish after 360s when GPS drift is under 20m.
-// IN_VEHICLE + stopped: finish after 480s when speed is under 2 km/h, regardless of GPS drift.
-// UNKNOWN + stopped: finish after 180s only when GPS drift is under 8m.
+// IN_VEHICLE + stopped: finish after 420s when speed is under 2 km/h and drift is under 20m.
+// IN_VEHICLE + stopped: finish after 600s when near-zero speed persists as a safety net.
+// UNKNOWN + stopped: finish after 300s only when GPS drift is under 8m.
 ```
 
 Native `recordLocation()` maintains `stoppedAnchorLat`, `stoppedAnchorLng`, and `maxDriftSinceStopM`. Moving at or above `5 km/h` resets the anchor, max GPS drift, and stop timers; dropping below `5 km/h` anchors the stop position and tracks maximum drift from that point.
@@ -1438,6 +1441,8 @@ const sortedByDistance = [...tripList].sort((a, b) => (b.distance_km ?? 0) - (a.
 ```
 
 It reuses `generateReportSummary`, `calculateNoHarshBrakeStreak`, and `estimateTripEconomics` for best/worst/longest trip, streak, cost, and CO2 summaries. PDF charts are intentionally omitted in v1; charts remain in the Reports page.
+
+Reports now shows an in-app toast for CSV, monthly PDF, and score-card PDF exports on both browser and Android. Android exports also schedule an `export_saved` local notification with the saved content URI and MIME type; tapping it asks the native plugin to open the saved file or Downloads location.
 
 ## Full Function Index
 

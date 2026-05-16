@@ -52,7 +52,7 @@ export const DEFAULT_THRESHOLDS = {
   MAX_ALTITUDE_ACCURACY_M: 40,
   MIN_HILL_SEGMENT_DISTANCE_M: 20,
   HILL_GRADE_THRESHOLD_PCT: 6,
-  MIN_SPEED_RAPID_ACCEL_KMH: 15,
+  MIN_SPEED_RAPID_ACCEL_KMH: 5,
   MIN_SPEED_HARSH_BRAKE_KMH: 25,
   TAILGATE_DECEL_MS2: 2.5,
   threshold_near_miss_brake_ms2: 3.5,
@@ -2651,7 +2651,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
     [EVENT_TYPES.SHARP_TURN]: null,
     [EVENT_TYPES.SPEEDING]: null,
   };
-  const MIN_POINTS_BEFORE_EVENTS = 2;
+  const MIN_POINTS_BEFORE_EVENTS = 0;
   const MIN_SPEEDING_SECONDS = 3;
   const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
   const smoothedAccels = computeSmoothedAccelerations(points, thresholds);
@@ -2744,7 +2744,8 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
       ? null
       : smoothedAccels[i];
     const speed1 = smooth?.speed_kmh ?? previousReliableSpeed;
-    const accel = smooth?.accel_ms2 ?? null;
+    const rawAccel = dt <= 10 ? calculateAcceleration(previousReliableSpeed, speed2, dt) : null;
+    const accel = smooth?.accel_ms2 ?? rawAccel;
 
     // ── Harsh Braking
     // Threshold: deceleration > 4.5 m/s² while above 20 km/h (to avoid parking noise)
@@ -2762,7 +2763,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS) {
 
     // ── Rapid Acceleration
     // Threshold: acceleration > 3.5 m/s² from speed > 5 km/h
-    if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= (thresholds.MIN_SPEED_RAPID_ACCEL_KMH ?? 15)) {
+    if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= (thresholds.MIN_SPEED_RAPID_ACCEL_KMH ?? DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH)) {
       pushEvent({
         type: EVENT_TYPES.RAPID_ACCELERATION,
         severity: accel > 5 ? 'high' : accel > 4 ? 'medium' : 'low',

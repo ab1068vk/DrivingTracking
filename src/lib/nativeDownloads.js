@@ -8,3 +8,7 @@ const DriveSenseNative = registerPlugin('DriveSenseActivityRecognition');
 export async function saveExportToDownloads({ filename, data, mimeType, base64 }) {
   return DriveSenseNative.saveExportToDownloads({ filename, data, mimeType, base64 });
 }
+
+export async function openExportLocation({ uri, mimeType } = {}) {
+  return DriveSenseNative.openExportLocation({ uri, mimeType });
+}

@@ -241,6 +241,41 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         }
     }
 
+    @PluginMethod
+    public void openExportLocation(PluginCall call) {
+        String uriString = call.getString("uri");
+        String mimeType = call.getString("mimeType", "*/*");
+
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (uriString != null && !uriString.trim().isEmpty()) {
+                intent.setDataAndType(Uri.parse(uriString), mimeType);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } else {
+                intent.setData(Uri.parse("content://com.android.providers.downloads.documents/root/downloads"));
+            }
+            getContext().startActivity(intent);
+            JSObject payload = new JSObject();
+            payload.put("opened", true);
+            call.resolve(payload);
+        } catch (ActivityNotFoundException error) {
+            try {
+                Intent fallback = new Intent(Intent.ACTION_VIEW);
+                fallback.setData(Uri.parse("content://com.android.externalstorage.documents/root/primary"));
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(fallback);
+                JSObject payload = new JSObject();
+                payload.put("opened", true);
+                call.resolve(payload);
+            } catch (Exception fallbackError) {
+                call.reject("No app is available to open the exported file or Downloads folder.", fallbackError);
+            }
+        } catch (Exception error) {
+            call.reject(error.getMessage(), error);
+        }
+    }
+
     static void publishActivity(DetectedActivity activity) {
         DriveSenseActivityRecognitionPlugin plugin = instance != null ? instance.get() : null;
         if (plugin == null || activity == null) return;
