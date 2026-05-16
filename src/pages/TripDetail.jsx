@@ -78,7 +78,8 @@ export default function TripDetail() {
     },
   });
   const splitMutation = useMutation({
-    mutationFn: async ({ sourceTrip }) => {
+    mutationFn: async (/** @type {{sourceTrip:any}} */ vars) => {
+      const { sourceTrip } = vars;
       const subTrips = splitTripAtStops(sourceTrip, 5);
       await Promise.all(subTrips.map((subTrip) => tripService.create(subTrip)));
       await tripService.delete(sourceTrip.id);
@@ -91,7 +92,7 @@ export default function TripDetail() {
     },
   });
   const tagMutation = useMutation({
-    mutationFn: (tag) => tripService.update(id, { tag, tag_reviewed: true }),
+    mutationFn: (/** @type {any} */ tag) => tripService.update(id, { tag, tag_reviewed: true }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['trip', id] }),
   });
   const [dismissedTags, setDismissedTags] = useState(() => {

@@ -87,14 +87,14 @@ export default function TripHistory() {
   });
 
   const tagMut = useMutation({
-    mutationFn: ({ id, tag }) => tripService.update(id, { tag }),
+    mutationFn: (/** @type {{id:any,tag:any}} */ vars) => tripService.update(vars.id, { tag: vars.tag }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['all-trips'] }); setTaggingId(null); },
   });
 
   const completed = trips.filter(t => t.status === 'completed');
   const dateScoped = completed.filter(t => matchesDateFilter(t, dateFilter));
   const recentChronological = [...completed]
-    .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
+    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(-5);
   const sparklineData = recentChronological.map((trip, index) => ({
     index,
@@ -103,7 +103,7 @@ export default function TripHistory() {
     score_smoothness: trip.score_smoothness ?? 0,
     score_eco: trip.score_eco ?? 0,
   }));
-  const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
+  const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const scoreDeltaForTrip = (trip) => {
     const index = tripsByRecentOrder.findIndex((item) => String(item.id) === String(trip.id));
     const previousFive = tripsByRecentOrder.slice(index + 1, index + 6).map((item) => Number(item.score_overall)).filter(Number.isFinite);
@@ -142,8 +142,8 @@ export default function TripHistory() {
 
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
-      case 'date_desc': return new Date(b.start_time) - new Date(a.start_time);
-      case 'date_asc': return new Date(a.start_time) - new Date(b.start_time);
+      case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+      case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
       case 'score_desc': return (b.score_overall ?? 0) - (a.score_overall ?? 0);
       case 'score_asc': return (a.score_overall ?? 0) - (b.score_overall ?? 0);
       case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);

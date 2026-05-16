@@ -169,7 +169,7 @@ export function getMaintenanceStatus(vehicle, trips = []) {
 
 /**
  * Convert fatigue progression segments into timeline heatmap points.
- * @param {{fatigue_progression?:Array,route_points?:Array,start_time?:string}} trip - Completed trip with route points.
+ * @param {{fatigue_progression?:Array|{segments?:Array},segment_scores?:Array<number>,route_points?:Array,start_time?:string}} trip - Completed trip with route points.
  * @returns {Array<{minuteOffset:number,fatigueLevel:number,color:string,lat:number,lng:number}>} Timeline heatmap points.
  * @example
  * const heatmap = buildFatigueHeatmapData(trip);
@@ -298,7 +298,7 @@ export function buildDriverSignature(trips) {
 /**
  * Adjust maintenance intervals based on measured driving stress.
  * @param {Array<Object>} trips - Trips for the vehicle.
- * @param {{oil_change_km?:number,tire_rotation_km?:number,inspection_km?:number,odometer_km?:number,maintenance_items?:Array}} vehicle - Vehicle service settings.
+ * @param {{oil_change_km?:number,oil_change_interval_km?:number,tire_rotation_km?:number,tire_rotation_interval_km?:number,inspection_km?:number,odometer_km?:number,maintenance_items?:Array}} vehicle - Vehicle service settings.
  * @param {Object} settings - User settings for fallback intervals.
  * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number,corner_stress_index:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
  * @example

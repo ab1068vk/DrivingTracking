@@ -2109,7 +2109,7 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
 /**
  * Score the quality of detected overtake windows.
  * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number,heading?:number}>} routePoints - Ordered GPS route points.
- * @param {Array<{type:string,timestamp?:string}>} drivingEvents - Events from detectDrivingEvents.
+ * @param {Array<{type:string,timestamp?:string,speed_kmh?:number}>} drivingEvents - Events from detectDrivingEvents.
  * @param {Object} thresholds - Driving thresholds.
  * @returns {{overtake_quality_score:number|null,overtake_quality_grade:string,overtake_count:number,unsafe_reentry_count:number}} Overtake fields.
  * @example

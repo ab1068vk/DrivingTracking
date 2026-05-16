@@ -121,17 +121,17 @@ export default function Vehicles() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });
 
   const createMut = useMutation({
-    mutationFn: (d) => vehicleService.create(d),
+    mutationFn: (/** @type {any} */ d) => vehicleService.create(d),
     onSuccess: () => { invalidate(); setShowAdd(false); },
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, d }) => vehicleService.update(id, d),
+    mutationFn: (/** @type {{id:any,d:any}} */ vars) => vehicleService.update(vars.id, vars.d),
     onSuccess: () => { invalidate(); setEditId(null); },
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id) => vehicleService.delete(id),
+    mutationFn: (/** @type {any} */ id) => vehicleService.delete(id),
     onSuccess: invalidate,
   });
 

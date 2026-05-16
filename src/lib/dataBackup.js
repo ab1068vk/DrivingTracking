@@ -22,6 +22,9 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
   };
 }
 
+/**
+ * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string}} options
+ */
 export async function exportDriveSenseBackup({ trips, vehicles, settings, filename } = {}) {
   const backup = buildDriveSenseBackup({ trips, vehicles, settings });
   const outputName = safeFilename(filename || `drivesense-full-backup-${new Date().toISOString().split('T')[0]}.json`);

@@ -2,6 +2,10 @@ export const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export class ApiError extends Error {
+  /**
+   * @param {string} message
+   * @param {{status?:number,data?:any,response?:Response}} details
+   */
   constructor(message, { status, data, response } = {}) {
     super(message);
     this.name = "ApiError";
@@ -45,6 +49,10 @@ const parseJsonSafely = async (response) => {
   }
 };
 
+/**
+ * @param {string} path
+ * @param {{method?:string,body?:any,headers?:Record<string,string>,query?:Record<string,any>} & RequestInit} options
+ */
 async function request(path, { method = "GET", body, headers, query, ...options } = {}) {
   const token = getAuthToken();
   const hasBody = body !== undefined && body !== null;

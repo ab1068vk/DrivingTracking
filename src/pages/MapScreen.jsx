@@ -71,7 +71,7 @@ export default function MapScreen() {
     if (!selectedKey || !commutePatterns.some((pattern) => pattern.route_key === selectedKey)) return [];
     return allCompleted
       .filter((trip) => String(trip.id) !== String(selectedTrip.id) && routeKeyForTrip(trip) === selectedKey)
-      .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
+      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
       .slice(0, 5);
   }, [allCompleted, commutePatterns, selectedTrip]);
   const mapRoutes = selectedTrip

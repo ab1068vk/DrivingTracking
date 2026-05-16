@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { TrendingUp } from 'lucide-react';
 
-export default function StatCard({ icon: Icon, label, value, sub, gradient, index = 0, onClick }) {
+export default function StatCard({ icon: Icon, label, value, sub = '', gradient, index = 0, onClick = null }) {
   const IconComponent = Icon || TrendingUp;
   return (
     <motion.div

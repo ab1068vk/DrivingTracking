@@ -39,7 +39,7 @@ function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
 }
 
-function SettingRow({ icon: Icon, label, sublabel, children, onClick, danger }) {
+function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false }) {
   return (
     <div
       className={`flex items-center justify-between py-3 px-1 border-b border-border/50 last:border-0 ${onClick ? 'cursor-pointer hover:bg-secondary/50 rounded-xl -mx-1 px-2 transition-colors' : ''}`}
