@@ -426,6 +426,20 @@ describe('tripEngine', () => {
     expect(detectHighwayMergeBehavior(mergePoints).merge_event_count).toBe(1);
   });
 
+  it('detects gentler lane switches without counting sustained road curves', () => {
+    const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({
+      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 42),
+      heading,
+    }));
+    const roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({
+      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 42),
+      heading,
+    }));
+
+    expect(detectLaneChanges(gentleLaneSwitch).length).toBeGreaterThan(0);
+    expect(detectLaneChanges(roadCurve).length).toBe(0);
+  });
+
   it('simplifies straight route points while preserving corners', () => {
     const straight = Array.from({ length: 10 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index, 40));
     const corner = point(43.6542, -79.3822, 10, 40);

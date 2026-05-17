@@ -58,7 +58,7 @@ export const DEFAULT_THRESHOLDS = {
   FOLLOWING_GAP_MIN_SPEED_KMH: 55,
   FOLLOWING_GAP_CRUISE_SECONDS: 4,
   FOLLOWING_GAP_SPEED_DROP_KMH: 10,
-  LANE_CHANGE_MIN_SPEED_KMH: 45,
+  LANE_CHANGE_MIN_SPEED_KMH: 35,
   LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH: 80,
   LANE_CHANGE_MIN_TURN_RATE_DEG_S: 2,
   LANE_CHANGE_MAX_TURN_RATE_DEG_S: 20,
@@ -1069,24 +1069,57 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
     const turnRate = Math.abs(signedDelta) / dt;
     const minRate = thresholds.LANE_CHANGE_MIN_TURN_RATE_DEG_S ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_TURN_RATE_DEG_S;
     const maxRate = thresholds.LANE_CHANGE_MAX_TURN_RATE_DEG_S ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MAX_TURN_RATE_DEG_S;
-    if (turnRate < minRate || turnRate > maxRate) continue;
 
     const highwaySpeed = thresholds.LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH;
+    const windowStart = Math.max(0, i - 3);
+    const windowEnd = Math.min(points.length - 1, i + 3);
+    const windowPoints = points.slice(windowStart, windowEnd + 1);
+    const windowDurationS = (timestampMs(points[windowEnd]) - timestampMs(points[windowStart])) / 1000;
+    if (windowDurationS <= 0 || windowDurationS > 40) continue;
+
+    let leftChange = 0;
+    let rightChange = 0;
+    let totalAbsChange = Math.abs(signedDelta);
     const nearbyHeadingDeltas = [];
-    for (let j = Math.max(1, i - 3); j <= Math.min(points.length - 1, i + 3); j++) {
-      if (j === i) continue;
+    for (let j = Math.max(1, windowStart + 1); j <= windowEnd; j++) {
       const a = headingForIndex(points, j - 1);
       const b = headingForIndex(points, j);
       const delta = signedHeadingDelta(a, b);
       const deltaSeconds = Math.abs(timestampMs(points[j]) - timestampMs(curr)) / 1000;
-      if (deltaSeconds <= 8 && Math.abs(delta) >= 2 && Math.abs(delta) <= 20) nearbyHeadingDeltas.push(delta);
+      const absDelta = Math.abs(delta);
+      totalAbsChange += j === i ? 0 : absDelta;
+      if (deltaSeconds <= 8 && absDelta >= 1.5 && absDelta <= 20) nearbyHeadingDeltas.push(delta);
+      if (delta > 0) rightChange += delta;
+      if (delta < 0) leftChange += Math.abs(delta);
     }
     const hasCounterSteer = nearbyHeadingDeltas.some((delta) => (
       (signedDelta > 0 && delta < 0) || (signedDelta < 0 && delta > 0)
-    ));
+    )) || (leftChange >= 2.5 && rightChange >= 2.5);
 
-    if (speed >= highwaySpeed || hasCounterSteer) {
-      candidates.push({ point: curr, turnRate, speed, pointIndex: i });
+    const headings = windowPoints.map((_, offset) => headingForIndex(points, windowStart + offset));
+    const startHeading = headings[0];
+    const endHeading = headings[headings.length - 1];
+    const netHeadingChange = Math.abs(signedHeadingDelta(startHeading, endHeading));
+    const peakExcursion = headings.reduce((peak, heading) => Math.max(peak, Math.abs(signedHeadingDelta(startHeading, heading))), 0);
+    const windowSpeeds = windowPoints.map((_, offset) => reliablePointSpeed(points, windowStart + offset, thresholds) ?? finiteSpeed(points[windowStart + offset]));
+    const stableSpeed = speedStdDev(windowSpeeds) <= (speed >= highwaySpeed ? 16 : 12);
+    const sCurveLaneChange = hasCounterSteer &&
+      peakExcursion >= 4 &&
+      peakExcursion <= 22 &&
+      netHeadingChange <= 9 &&
+      totalAbsChange >= 7 &&
+      totalAbsChange <= 45 &&
+      stableSpeed;
+    const highwayLaneShift = speed >= highwaySpeed &&
+      peakExcursion >= 3.5 &&
+      netHeadingChange <= 10 &&
+      totalAbsChange >= 5 &&
+      totalAbsChange <= 40 &&
+      stableSpeed;
+    const pointRateFits = turnRate >= minRate && turnRate <= maxRate;
+
+    if ((pointRateFits && (speed >= highwaySpeed || hasCounterSteer)) || sCurveLaneChange || highwayLaneShift) {
+      candidates.push({ point: curr, turnRate: Math.max(turnRate, totalAbsChange / windowDurationS), speed, pointIndex: i });
     }
   }
 
