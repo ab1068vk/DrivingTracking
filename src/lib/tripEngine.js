@@ -50,8 +50,8 @@ export const DEFAULT_THRESHOLDS = {
   MAX_SPEED_SPIKE_DELTA_KMH: 45,
   MAX_SPEED_SPIKE_RATIO: 1.8,
   MAX_ALTITUDE_ACCURACY_M: 40,
-  MIN_HILL_SEGMENT_DISTANCE_M: 20,
-  HILL_GRADE_THRESHOLD_PCT: 6,
+  MIN_HILL_SEGMENT_DISTANCE_M: 5,
+  HILL_GRADE_THRESHOLD_PCT: 5,
   MIN_SPEED_RAPID_ACCEL_KMH: 5,
   MIN_SPEED_HARSH_BRAKE_KMH: 25,
   TAILGATE_DECEL_MS2: 2.5,
@@ -888,38 +888,39 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
       continue;
     }
 
-    const segment = calculateSegmentMetrics(prev, curr, thresholds);
-    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) {
+    const dt = (timestampMs(curr) - timestampMs(prev)) / 1000;
+    if (dt <= 0 || dt > 120) {
       previousReliableSpeed = null;
       descentWindowStart = null;
       continue;
     }
 
-    const distanceM = segment.distanceM;
+    const distanceM = haversineMeters(prev.lat, prev.lng, curr.lat, curr.lng);
     if (distanceM < minHillDistanceM) continue;
 
+    const segment = calculateSegmentMetrics(prev, curr, thresholds);
     const pointSpeed = reliablePointSpeed(cleanPoints, i, thresholds);
     const rawSpeed = pointSpeedKmh(curr);
-    const speed = pointSpeed ?? (rawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh);
+    const speed = pointSpeed ?? rawSpeed ?? segment.impliedSpeedKmh;
     const gradient = ((curr.altitude - prev.altitude) / distanceM) * 100;
     const accelMs2 = previousReliableSpeed == null
       ? 0
-      : calculateAcceleration(previousReliableSpeed, speed, segment.dt);
+      : calculateAcceleration(previousReliableSpeed, speed, dt);
     const isClimb = gradient >= hillGradeThreshold;
     const isDescent = gradient <= -hillGradeThreshold;
 
     if (isClimb) {
       climbDistanceKm += distanceM / 1000;
-      if (speed >= 15 && accelMs2 > 2.5) infractionCount++;
+      if (!segment.isNoise && speed >= 15 && accelMs2 > 2.5) infractionCount++;
       descentWindowStart = null;
     } else if (isDescent) {
       descentDistanceKm += distanceM / 1000;
-      if (speed >= 15 && accelMs2 < -harshBrakeThreshold) infractionCount++;
+      if (!segment.isNoise && speed >= 15 && accelMs2 < -harshBrakeThreshold) infractionCount++;
 
       if (!descentWindowStart || (timestampMs(curr) - timestampMs(descentWindowStart)) / 1000 > 10) {
         descentWindowStart = curr;
         descentWindowSpeed = speed;
-      } else if (speed >= 15 && speed - descentWindowSpeed > 15) {
+      } else if (!segment.isNoise && speed >= 15 && speed - descentWindowSpeed > 15) {
         infractionCount++;
         descentWindowStart = curr;
         descentWindowSpeed = speed;

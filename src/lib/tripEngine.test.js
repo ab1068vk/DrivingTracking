@@ -157,6 +157,24 @@ describe('tripEngine', () => {
     });
   });
 
+  it('keeps hill distance sensitive enough for short mapped climbs and descents', () => {
+    const uphill = Array.from({ length: 12 }, (_, index) => ({
+      ...point(43.6532 + index * 0.00009, -79.3832, index * 2, 25, 6),
+      altitude: 100 + index * 0.55,
+      altitude_accuracy: 8,
+    }));
+    const downhill = Array.from({ length: 12 }, (_, index) => ({
+      ...point(43.6543 + index * 0.00009, -79.3832, 24 + index * 2, 25, 6),
+      altitude: 106.05 - index * 0.55,
+      altitude_accuracy: 8,
+    }));
+
+    const result = calculateHillDrivingScore([...uphill, ...downhill]);
+
+    expect(result.climb_distance_km).toBeGreaterThanOrEqual(0.08);
+    expect(result.descent_distance_km).toBeGreaterThanOrEqual(0.08);
+  });
+
   it('does not let one speed spike distort compliance or speed creep', () => {
     const points = [90, 91, 92, 170].map((speed, index) => (
       point(43.6532 + index * 0.0025, -79.3832, index * 10, speed, 6)
