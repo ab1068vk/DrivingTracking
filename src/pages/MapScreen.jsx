@@ -9,8 +9,9 @@ import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
-import { buildDangerZones, loadDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
+import { loadDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { buildRiskHotspots } from '@/lib/mediumInsights';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -125,7 +126,7 @@ export default function MapScreen() {
 
       let zones = await loadDangerZones();
       if (!zones.length) {
-        zones = buildDangerZones(allCompleted);
+        zones = buildRiskHotspots(allCompleted);
         await saveDangerZones(zones);
       }
       let index = await loadRouteRiskIndex();
@@ -303,6 +304,42 @@ export default function MapScreen() {
           </div>
         )}
       </div>
+
+      {dangerZones.length > 0 && (
+        <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-base">Risk Hotspots</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Places where harsh braking, speeding, or sharp turns repeat</p>
+            </div>
+            <button
+              onClick={() => setShowDangerZones(true)}
+              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+            >
+              Show on map
+            </button>
+          </div>
+          <div className="grid gap-2 md:grid-cols-3">
+            {dangerZones.slice(0, 6).map((zone) => (
+              <div key={zone.id} className="rounded-2xl bg-secondary/50 p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold capitalize">{String(zone.dominantType || 'risk').replace(/_/g, ' ')}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ${
+                    zone.riskLevel === 'critical' || zone.riskLevel === 'high'
+                      ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                      : 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                  }`}>
+                    {zone.riskLevel}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {zone.eventCount} repeated event{zone.eventCount === 1 ? '' : 's'} near {Number(zone.lat).toFixed(4)}, {Number(zone.lng).toFixed(4)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-3 gap-3">

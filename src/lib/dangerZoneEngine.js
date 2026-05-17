@@ -3,7 +3,7 @@ import { haversineDistance } from '@/lib/tripEngine';
 
 export const DANGER_ZONES_KEY = 'drivesense_danger_zones';
 const EARTH_M_PER_DEG = 111320;
-const DEFAULT_EVENT_TYPES = ['harsh_brake', 'near_miss', 'sharp_turn', 'aggressive_overtake'];
+const DEFAULT_EVENT_TYPES = ['harsh_brake', 'near_miss', 'sharp_turn', 'aggressive_overtake', 'speeding'];
 const SEVERITY_POINTS = { high: 3, medium: 2, low: 1 };
 
 const hashKey = (key) => {

@@ -963,7 +963,7 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="font-medium">{goal.label}</span>
                     <span className={goal.met ? 'text-emerald-500 font-semibold' : 'text-orange-500 font-semibold'}>
-                      {goal.value}/{goal.target}{goal.direction === 'over' ? '+' : ''}
+                      {goal.value}/{goal.target}{goal.unit ? ` ${goal.unit}` : goal.direction === 'over' ? '+' : ''}
                     </span>
                   </div>
                   <div className="h-2 bg-secondary rounded-full overflow-hidden">

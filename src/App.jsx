@@ -27,6 +27,7 @@ import Vehicles from '@/pages/Vehicles';
 import Achievements from '@/pages/Achievements';
 import DrivingCoach from '@/pages/DrivingCoach';
 import Diagnostics from '@/pages/Diagnostics';
+import Insights from '@/pages/Insights';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -98,6 +99,7 @@ const AuthenticatedApp = () => {
         <Route path="/trips/:id" element={<TripDetail />} />
         <Route path="/map" element={<MapScreen />} />
         <Route path="/coach" element={<DrivingCoach />} />
+        <Route path="/insights" element={<Insights />} />
         <Route path="/achievements" element={<Achievements />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/diagnostics" element={<Diagnostics />} />

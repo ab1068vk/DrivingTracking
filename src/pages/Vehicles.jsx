@@ -6,6 +6,7 @@ import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
+import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 
@@ -20,6 +21,9 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
     odometer_km: 0,
     fuel_efficiency_l_per_100km: 8.5,
     fuel_price_per_liter: 1.65,
+    maintenance_reserve_per_km: 0.08,
+    registration_renewal_date: '',
+    insurance_renewal_date: '',
     ...initial,
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -70,6 +74,21 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
           <input value={form.fuel_price_per_liter} onChange={e => set('fuel_price_per_liter', e.target.value)} placeholder="1.65" type="number" step="0.01"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
+        <div className="col-span-2">
+          <label className="text-xs text-muted-foreground mb-1 block">Maintenance reserve ($/km)</label>
+          <input value={form.maintenance_reserve_per_km} onChange={e => set('maintenance_reserve_per_km', e.target.value)} placeholder="0.08" type="number" step="0.01"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Registration renewal</label>
+          <input value={form.registration_renewal_date || ''} onChange={e => set('registration_renewal_date', e.target.value)} type="date"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Insurance renewal</label>
+          <input value={form.insurance_renewal_date || ''} onChange={e => set('insurance_renewal_date', e.target.value)} type="date"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
       </div>
       <div>
         <label className="text-xs text-muted-foreground mb-1.5 block">Color</label>
@@ -92,6 +111,7 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
             odometer_km: Number(form.odometer_km) || 0,
             fuel_efficiency_l_per_100km: Number(form.fuel_efficiency_l_per_100km) || 8.5,
             fuel_price_per_liter: Number(form.fuel_price_per_liter) || 1.65,
+            maintenance_reserve_per_km: Number(form.maintenance_reserve_per_km) || 0.08,
           })}
           disabled={!form.name.trim()}
           className="flex-1 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-40"
@@ -149,6 +169,14 @@ export default function Vehicles() {
         : entry
     ));
     await vehicleService.update(vehicle.id, { maintenance_items: items });
+    invalidate();
+  };
+
+  const handleRenewalDone = async (vehicle, reminder) => {
+    const nextDate = new Date();
+    nextDate.setFullYear(nextDate.getFullYear() + 1);
+    const key = reminder.id === 'registration' ? 'registration_renewal_date' : 'insurance_renewal_date';
+    await vehicleService.update(vehicle.id, { [key]: nextDate.toISOString().slice(0, 10) });
     invalidate();
   };
 
@@ -237,6 +265,9 @@ export default function Vehicles() {
           const dueMaintenance = maintenance.filter((item) => item.status !== 'ok');
           const fuelTotals = fuelTotalsFor(v);
           const healthImpact = calculateVehicleHealthImpact(tripListFor(v), v);
+          const costSummary = buildVehicleCostSummary(v, vehicleTrips);
+          const reminders = buildMaintenanceReminders(v, vehicleTrips);
+          const urgentReminders = reminders.filter((item) => item.status !== 'ok');
           const avgEngineStress = vehicleTrips.length
             ? Math.round(vehicleTrips.reduce((sum, trip) => sum + (trip.engine_stress_score ?? 100), 0) / vehicleTrips.length)
             : null;
@@ -362,6 +393,76 @@ export default function Vehicles() {
                       </div>
                       <div className="font-semibold text-sm mt-1 capitalize">{healthImpact.tire_wear_grade}</div>
                       <div className="text-xs text-muted-foreground">{healthImpact.tire_life_impact_km.toLocaleString()} km estimated tire life reduction</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-border bg-card p-3">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-sm font-semibold">
+                        <Fuel className="h-4 w-4 text-primary" />
+                        Cost dashboard
+                      </div>
+                      <span className="text-xs text-muted-foreground">{costSummary.monthly_distance_km} km this month</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      <div className="rounded-xl bg-secondary/50 p-3">
+                        <div className="text-xs text-muted-foreground">Monthly cost</div>
+                        <div className="mt-1 text-sm font-semibold">${costSummary.monthly_cost.toFixed(2)}</div>
+                      </div>
+                      <div className="rounded-xl bg-secondary/50 p-3">
+                        <div className="text-xs text-muted-foreground">Cost per km</div>
+                        <div className="mt-1 text-sm font-semibold">${costSummary.cost_per_km.toFixed(2)}</div>
+                      </div>
+                      <div className="rounded-xl bg-secondary/50 p-3">
+                        <div className="text-xs text-muted-foreground">Fuel estimate</div>
+                        <div className="mt-1 text-sm font-semibold">${costSummary.fuel_cost.toFixed(2)}</div>
+                      </div>
+                      <div className="rounded-xl bg-secondary/50 p-3">
+                        <div className="text-xs text-muted-foreground">Maintenance reserve</div>
+                        <div className="mt-1 text-sm font-semibold">${costSummary.maintenance_reserve.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-border bg-card p-3">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-sm font-semibold">
+                        <Wrench className="h-4 w-4 text-primary" />
+                        Maintenance reminders
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        urgentReminders.length ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                      }`}>
+                        {urgentReminders.length ? `${urgentReminders.length} due soon` : 'All clear'}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {reminders.map((reminder) => (
+                        <div key={`${reminder.type}-${reminder.id}`} className="flex items-center justify-between gap-3 rounded-xl bg-secondary/50 p-2 text-xs">
+                          <div>
+                            <div className="font-medium">{reminder.label}</div>
+                            <div className={`mt-0.5 ${
+                              reminder.status === 'due' ? 'text-red-500' : reminder.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
+                            }`}>
+                              {reminder.type === 'date'
+                                ? reminder.remaining_days <= 0
+                                  ? `${Math.abs(reminder.remaining_days)} day${Math.abs(reminder.remaining_days) === 1 ? '' : 's'} overdue`
+                                  : `${reminder.remaining_days} day${reminder.remaining_days === 1 ? '' : 's'} left`
+                                : reminder.remaining_km <= 0
+                                  ? `${Math.abs(reminder.remaining_km).toLocaleString()} km overdue`
+                                  : `${reminder.remaining_km.toLocaleString()} km left`}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => reminder.type === 'date'
+                              ? handleRenewalDone(v, reminder)
+                              : handleServiceDone(v, reminder, odometerKm)}
+                            className="rounded-lg bg-card px-2 py-1 text-muted-foreground hover:text-foreground"
+                          >
+                            Done
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
 

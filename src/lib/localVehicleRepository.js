@@ -3,6 +3,14 @@ import { DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripInsights';
 
 const VEHICLES_KEY = 'drivesense_vehicles';
 
+const mergeMaintenanceItems = (items = []) => {
+  const byId = new Map((Array.isArray(items) ? items : []).map((item) => [item.id, item]));
+  return DEFAULT_MAINTENANCE_ITEMS.map((item) => ({
+    ...item,
+    ...(byId.get(item.id) || {}),
+  }));
+};
+
 const normalizeVehicle = (vehicle) => ({
   id: vehicle.id || `vehicle_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
   name: String(vehicle.name || '').trim(),
@@ -14,9 +22,10 @@ const normalizeVehicle = (vehicle) => ({
   odometer_km: Number(vehicle.odometer_km) || 0,
   fuel_efficiency_l_per_100km: Number(vehicle.fuel_efficiency_l_per_100km) || 8.5,
   fuel_price_per_liter: Number(vehicle.fuel_price_per_liter) || 1.65,
-  maintenance_items: Array.isArray(vehicle.maintenance_items) && vehicle.maintenance_items.length
-    ? vehicle.maintenance_items
-    : DEFAULT_MAINTENANCE_ITEMS,
+  maintenance_reserve_per_km: Number(vehicle.maintenance_reserve_per_km) || 0.08,
+  registration_renewal_date: vehicle.registration_renewal_date || '',
+  insurance_renewal_date: vehicle.insurance_renewal_date || '',
+  maintenance_items: mergeMaintenanceItems(vehicle.maintenance_items),
   is_default: Boolean(vehicle.is_default),
   created_date: vehicle.created_date || vehicle.created_at || new Date().toISOString(),
   updated_at: new Date().toISOString(),

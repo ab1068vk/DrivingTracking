@@ -14,6 +14,7 @@ export const STRESS_UNITS = {
 export const DEFAULT_MAINTENANCE_ITEMS = [
   { id: 'oil', label: 'Oil change', interval_km: 8000, last_service_km: 0 },
   { id: 'tires', label: 'Tire rotation', interval_km: 10000, last_service_km: 0 },
+  { id: 'brakes', label: 'Brake check', interval_km: 20000, last_service_km: 0 },
   { id: 'inspection', label: 'Inspection', interval_km: 20000, last_service_km: 0 },
 ];
 
@@ -464,6 +465,9 @@ export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
   const harshBrakes = weekTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
   const speedingEvents = weekTrips.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0);
   const nightTrips = weekTrips.filter((trip) => trip.night_driving).length;
+  const nightDistanceKm = Math.round(weekTrips
+    .filter((trip) => trip.night_driving)
+    .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0) * 10) / 10;
   const scoreCount = weekTrips.filter((trip) => trip.score_overall > 0).length;
   const avgScore = scoreCount
     ? Math.round(weekTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount)
@@ -493,6 +497,15 @@ export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
       target: Number(settings.weekly_goal_min_avg_score ?? 80),
       direction: 'over',
       met: scoreCount > 0 && avgScore >= Number(settings.weekly_goal_min_avg_score ?? 80),
+    },
+    {
+      id: 'night_distance',
+      label: 'Night distance',
+      value: nightDistanceKm,
+      target: Number(settings.weekly_goal_max_night_km ?? 20),
+      direction: 'under',
+      met: nightDistanceKm <= Number(settings.weekly_goal_max_night_km ?? 20),
+      unit: 'km',
     },
     {
       id: 'night_trips',

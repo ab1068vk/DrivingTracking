@@ -744,6 +744,7 @@ export default function Settings() {
             { key: 'weekly_goal_harsh_brakes', label: 'Max harsh brakes', min: 0, max: 20, step: 1 },
             { key: 'weekly_goal_speeding_events', label: 'Max speeding events', min: 0, max: 20, step: 1 },
             { key: 'weekly_goal_min_avg_score', label: 'Minimum average score', min: 50, max: 100, step: 5 },
+            { key: 'weekly_goal_max_night_km', label: 'Max night km', min: 0, max: 100, step: 5 },
             { key: 'weekly_goal_max_night_trips', label: 'Max night trips', min: 0, max: 14, step: 1 },
           ].map(({ key, label, min, max, step }) => (
             <div key={key} className="px-1">
