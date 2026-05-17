@@ -59,10 +59,11 @@ export const DEFAULT_THRESHOLDS = {
   FOLLOWING_GAP_MIN_SPEED_KMH: 55,
   FOLLOWING_GAP_CRUISE_SECONDS: 4,
   FOLLOWING_GAP_SPEED_DROP_KMH: 10,
-  LANE_CHANGE_MIN_SPEED_KMH: 45,
+  LANE_CHANGE_MIN_SPEED_KMH: 50,
   LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH: 80,
-  LANE_CHANGE_MIN_TURN_RATE_DEG_S: 2,
+  LANE_CHANGE_MIN_TURN_RATE_DEG_S: 3,
   LANE_CHANGE_MAX_TURN_RATE_DEG_S: 20,
+  LANE_CHANGE_MIN_WINDOW_SECONDS: 6,
   MERGE_ENTRY_SPEED_KMH: 65,
   MERGE_EXIT_SPEED_KMH: 85,
   PARKING_LOOKBACK_SECONDS: 90,
@@ -1098,6 +1099,8 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
     const windowPoints = points.slice(windowStart, windowEnd + 1);
     const windowDurationS = (timestampMs(points[windowEnd]) - timestampMs(points[windowStart])) / 1000;
     if (windowDurationS <= 0 || windowDurationS > 40) continue;
+    const minWindowSeconds = thresholds.LANE_CHANGE_MIN_WINDOW_SECONDS ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_WINDOW_SECONDS;
+    if (windowDurationS < minWindowSeconds) continue;
 
     let leftChange = 0;
     let rightChange = 0;
@@ -1125,6 +1128,13 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
     const peakExcursion = headings.reduce((peak, heading) => Math.max(peak, Math.abs(signedHeadingDelta(startHeading, heading))), 0);
     const windowSpeeds = windowPoints.map((_, offset) => reliablePointSpeed(points, windowStart + offset, thresholds) ?? finiteSpeed(points[windowStart + offset]));
     const stableSpeed = speedStdDev(windowSpeeds) <= (speed >= highwaySpeed ? 12 : 8);
+    const usableGpsShape = windowPoints.every((point, offset) => {
+      if (point.accuracy != null && point.accuracy > 35) return false;
+      if (offset === 0) return true;
+      const segment = calculateSegmentMetrics(windowPoints[offset - 1], point, thresholds);
+      return segment.dt > 0 && segment.dt <= 10 && !segment.isNoise && segment.distanceM >= 8;
+    });
+    if (!usableGpsShape) continue;
     const sCurveLaneChange = hasCounterSteer &&
       peakExcursion >= 5 &&
       peakExcursion <= 18 &&
@@ -1141,8 +1151,16 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
       totalAbsChange <= 32 &&
       stableSpeed;
     const pointRateFits = turnRate >= minRate && turnRate <= maxRate;
+    const pointRateLaneChange = pointRateFits &&
+      hasCounterSteer &&
+      peakExcursion >= 5 &&
+      peakExcursion <= 18 &&
+      netHeadingChange <= 6 &&
+      totalAbsChange >= 10 &&
+      totalAbsChange <= 32 &&
+      stableSpeed;
 
-    if ((pointRateFits && hasCounterSteer && stableSpeed) || sCurveLaneChange || highwayLaneShift) {
+    if (pointRateLaneChange || sCurveLaneChange || highwayLaneShift) {
       candidates.push({ point: curr, turnRate: Math.max(turnRate, totalAbsChange / windowDurationS), speed, pointIndex: i });
     }
   }
@@ -1399,9 +1417,14 @@ export function calculateAngularStdDev(headings = []) {
   return stddev(deltas);
 }
 
-export function detectErraticSpeedWindows(cleanPoints = []) {
+export function detectErraticSpeedWindows(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const samples = cleanPoints
-    .map((point) => ({ point, timestamp: timestampMs(point), speed_kmh: finiteSpeed(point) }))
+    .map((point, index) => ({
+      point,
+      index,
+      timestamp: timestampMs(point),
+      speed_kmh: reliablePointSpeed(cleanPoints, index, thresholds) ?? finiteSpeed(point),
+    }))
     .filter((sample) => Number.isFinite(sample.timestamp) && sample.speed_kmh > 0)
     .sort((a, b) => a.timestamp - b.timestamp);
 
@@ -1421,9 +1444,22 @@ export function detectErraticSpeedWindows(cleanPoints = []) {
       sample.speed_kmh <= 65
     ));
     if (windowSamples.length < 4) continue;
+    if (windowSamples[windowSamples.length - 1].timestamp - windowSamples[0].timestamp < 25000) continue;
 
     const stats = calculateWindowStats(windowSamples.map((sample) => sample.speed_kmh));
-    if (stats.oscillationRatio > 0.25) flagged.push({ start, end, point: windowSamples[0].point });
+    const speedRange = Math.max(...windowSamples.map((sample) => sample.speed_kmh)) -
+      Math.min(...windowSamples.map((sample) => sample.speed_kmh));
+    let reversals = 0;
+    let previousSign = 0;
+    for (let i = 1; i < windowSamples.length; i++) {
+      const delta = windowSamples[i].speed_kmh - windowSamples[i - 1].speed_kmh;
+      const sign = Math.abs(delta) >= 4 ? Math.sign(delta) : 0;
+      if (sign !== 0 && previousSign !== 0 && sign !== previousSign) reversals++;
+      if (sign !== 0) previousSign = sign;
+    }
+    if (stats.oscillationRatio > 0.28 && stats.stddev >= 8 && speedRange >= 18 && reversals >= 2) {
+      flagged.push({ start, end, point: windowSamples[0].point });
+    }
   }
 
   const merged = [];
@@ -2373,7 +2409,21 @@ export function calculateOvertakeQualityScore(routePoints, drivingEvents = [], t
     const index = nearestPointIndexByTimestamp(points, event);
     if (index < 0) continue;
     const center = timestampMs(points[index]);
-    windows.push({ start: center - 3000, end: center + 3000 });
+    const start = center - 4000;
+    const end = center + 4000;
+    if (event.type === EVENT_TYPES.LANE_CHANGE) {
+      const samples = points.filter((point) => {
+        const time = timestampMs(point);
+        return time >= start && time <= end;
+      });
+      const speeds = samples.map((point, sampleIndex) => reliablePointSpeed(samples, sampleIndex, thresholds) ?? finiteSpeed(point));
+      const speedDelta = speeds.length ? Math.max(...speeds) - speeds[0] : 0;
+      const headingSpread = samples.length
+        ? calculateAngularStdDev(samples.map((point, sampleIndex) => Number.isFinite(point.heading) ? point.heading : headingForIndex(samples, sampleIndex)))
+        : 0;
+      if (speedDelta < 12 || headingSpread < 1.5) continue;
+    }
+    windows.push({ start, end });
   }
   windows.sort((a, b) => a.start - b.start);
   const merged = [];
@@ -2405,10 +2455,11 @@ export function calculateOvertakeQualityScore(routePoints, drivingEvents = [], t
       return time >= window.start && time <= window.end;
     });
     if (samples.length < 2) continue;
-    const speeds = samples.map(finiteSpeed);
+    const speeds = samples.map((point, index) => reliablePointSpeed(samples, index, thresholds) ?? finiteSpeed(point));
     const entrySpeed = speeds[0];
     const peakSpeed = Math.max(...speeds);
     const speedDelta = peakSpeed - entrySpeed;
+    if (speedDelta < 8 && !harshBrakeTimes.some((time) => time > window.end && time <= window.end + 5000)) continue;
     const headings = samples.map((point, index) => (
       Number.isFinite(point.heading) ? point.heading : headingForIndex(samples, index)
     ));
@@ -2742,15 +2793,19 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
     let maxAccel = 0;
     let minDecel = 0;
     let headingRatePeak = 0;
+    let peakSpeedDelta = 0;
 
     for (let j = 1; j < window.length; j++) {
       const prev = window[j - 1];
       const curr = window[j];
       const dt = (timestampMs(curr) - timestampMs(prev)) / 1000;
       if (dt <= 0 || dt > 5) continue;
-      const accel = calculateAcceleration(finiteSpeed(prev), finiteSpeed(curr), dt);
+      const prevSpeed = reliablePointSpeed(cleanPoints, i + j - 1, thresholds) ?? finiteSpeed(prev);
+      const currSpeed = reliablePointSpeed(cleanPoints, i + j, thresholds) ?? finiteSpeed(curr);
+      const accel = calculateAcceleration(prevSpeed, currSpeed, dt);
       const { h1, h2 } = headingBetweenPair(prev, curr, window[j - 2] || null);
       const headingRate = headingDiff(h1, h2) / dt;
+      peakSpeedDelta = Math.max(peakSpeedDelta, currSpeed - finiteSpeed(start));
 
       if (phase === 'NONE') {
         if (accel > accelThreshold) {
@@ -2775,7 +2830,7 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
       } else if (phase === 'CHANGE') {
         headingRatePeak = Math.max(headingRatePeak, headingRate);
         if ((timestampMs(curr) - changeMs) / 1000 > 5) break;
-        if (accel < -2.5) {
+        if (accel < -2.5 && peakSpeedDelta >= 12 && headingRatePeak >= 18) {
           minDecel = Math.min(minDecel, accel);
           const severity = maxAccel > 5.0 && minDecel < -4.0 && headingRatePeak > 30
             ? 'high'
@@ -2789,7 +2844,7 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
             lng: changePoint?.lng ?? curr.lng,
             timestamp: changePoint?.timestamp ?? curr.timestamp,
             value: round1(maxAccel),
-            speed_kmh: Math.round(finiteSpeed(curr)),
+            speed_kmh: Math.round(currSpeed),
           });
           lastEventTime = startMs;
           break;
@@ -3092,7 +3147,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   const alwaysOnEvents = [
     detectLaneChanges(points, thresholds),
     detectTailgateCycles(points, thresholds),
-    detectErraticSpeedWindows(points),
+    detectErraticSpeedWindows(points, thresholds),
   ];
   if (advancedSafetyEnabled) alwaysOnEvents.push(detectAggressiveOvertakes(points, thresholds));
   const phoneUse = advancedSafetyEnabled ? detectPhoneUseWindows(points, thresholds) : emptyPhoneUseResult();
@@ -3326,7 +3381,8 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
 
   const flushIdleRun = () => {
     if (idleRunDuration <= 0) return;
-    if (idleRunDuration >= 90) {
+    const parkedIdleSeconds = Math.max(300, thresholds.IDLE_EVENT_SECONDS ?? DEFAULT_THRESHOLDS.IDLE_EVENT_SECONDS);
+    if (idleRunDuration >= parkedIdleSeconds) {
       sustainedIdleSeconds += idleRunDuration;
     } else {
       trafficIdleSeconds += idleRunDuration;

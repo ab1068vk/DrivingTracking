@@ -17,7 +17,7 @@ const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 6;
+export const TRIP_SCHEMA_VERSION = 7;
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
@@ -38,6 +38,9 @@ export const TRIP_SCHEMA_VERSION = 6;
  * - Android Usage Access phone-use evidence: native_phone_usage_events,
  *   native_phone_usage_event_count, native_phone_usage_total_seconds,
  *   native_phone_usage_access_granted
+ *
+ * Version 7 recalculates completed trips with stricter lane-change,
+ * erratic-speed, overtake-quality, traffic-stop, and night-card logic.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

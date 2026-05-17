@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -70,6 +70,7 @@ export default function TripDetail() {
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
+  const metadataSectionRef = useRef(null);
 
   const { data: trip, isLoading } = useQuery({
     queryKey: ['trip', id],
@@ -108,9 +109,16 @@ export default function TripDetail() {
       const tags = [...new Set([...normalizeTripTags(trip), tag])];
       return tripService.update(id, { tags, tag, tag_reviewed: true });
     },
-    onSuccess: () => {
+    onSuccess: (updatedTrip) => {
+      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
       qc.invalidateQueries({ queryKey: ['all-trips'] });
+      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      setMetadataDraft({
+        nickname: updatedTrip?.nickname || trip?.nickname || '',
+        notes: updatedTrip?.notes || trip?.notes || '',
+        tags: normalizeTripTags(updatedTrip || trip || {}),
+      });
     },
   });
   const metadataMutation = useMutation({
@@ -242,6 +250,16 @@ export default function TripDetail() {
     const next = [...new Set([...dismissedTags, String(trip.id)])];
     setDismissedTags(next);
     localStorage.setItem('drivesense_dismissed_tag_suggestions', JSON.stringify(next));
+  };
+  const openTagEditorWithSuggestion = () => {
+    setEditingMetadata(true);
+    setMetadataDraft((draft) => ({
+      ...draft,
+      tags: normalizeTripTags([...draft.tags, tagSuggestion.auto_tag]),
+    }));
+    requestAnimationFrame(() => {
+      metadataSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
   const roadCfg = roadTypeConfig[trip.road_type];
   const dominantRoadCfg = roadTypeConfig[trip.dominant_road_type] || roadCfg;
@@ -394,15 +412,13 @@ export default function TripDetail() {
           </div>
           <button
             onClick={() => tagMutation.mutate(tagSuggestion.auto_tag)}
+            disabled={tagMutation.isPending}
             className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
           >
-            Accept
+            {tagMutation.isPending ? 'Saving' : 'Accept'}
           </button>
           <button
-            onClick={() => {
-              setEditingMetadata(true);
-              setMetadataDraft((draft) => ({ ...draft, tags: normalizeTripTags([...draft.tags, tagSuggestion.auto_tag]) }));
-            }}
+            onClick={openTagEditorWithSuggestion}
             className="px-2.5 py-1.5 rounded-lg bg-secondary text-xs font-semibold"
           >
             Change
@@ -666,6 +682,7 @@ export default function TripDetail() {
       </motion.div>
 
       <motion.div
+        ref={metadataSectionRef}
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         className="rounded-3xl border border-border bg-card p-5 shadow-sm"

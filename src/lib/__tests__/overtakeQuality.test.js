@@ -26,10 +26,10 @@ describe('overtake quality', () => {
   });
 
   it('penalizes unsafe re-entry after an overtake', () => {
-    const points = Array.from({ length: 12 }, (_, index) => p(index, 95, index));
-    const clean = calculateOvertakeQualityScore(points, [{ type: EVENT_TYPES.LANE_CHANGE, timestamp: points[3].timestamp, speed_kmh: 95 }]);
+    const points = Array.from({ length: 12 }, (_, index) => p(index, 90 + Math.min(index, 3) * 5, index));
+    const clean = calculateOvertakeQualityScore(points, [{ type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, timestamp: points[3].timestamp, speed_kmh: 105 }]);
     const unsafe = calculateOvertakeQualityScore(points, [
-      { type: EVENT_TYPES.LANE_CHANGE, timestamp: points[3].timestamp, speed_kmh: 95 },
+      { type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, timestamp: points[3].timestamp, speed_kmh: 105 },
       { type: EVENT_TYPES.HARSH_BRAKE, timestamp: points[9].timestamp },
     ]);
     expect(clean.overtake_quality_score).toBeGreaterThan(unsafe.overtake_quality_score);
@@ -42,5 +42,14 @@ describe('overtake quality', () => {
       { type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, timestamp: points[4].timestamp },
     ]);
     expect(result.overtake_count).toBe(1);
+  });
+
+  it('does not count a steady highway lane change as an overtake', () => {
+    const points = Array.from({ length: 10 }, (_, index) => p(index, 95, index < 5 ? index : 10 - index));
+    const result = calculateOvertakeQualityScore(points, [
+      { type: EVENT_TYPES.LANE_CHANGE, timestamp: points[4].timestamp, speed_kmh: 95 },
+    ]);
+    expect(result.overtake_count).toBe(0);
+    expect(result.overtake_quality_score).toBeNull();
   });
 });

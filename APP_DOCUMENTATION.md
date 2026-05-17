@@ -769,9 +769,9 @@ Foreground auto detection uses:
 
 Auto-start logic:
 
-- Vehicle activity confidence must be at least 70.
-- Current speed must be at least 12 km/h.
-- Recent moving time must be at least 20 seconds.
+- Vehicle activity confidence must be at least 65.
+- Current speed must be at least 3 km/h.
+- Recent moving time must be at least 3 seconds.
 
 Auto-stop logic:
 
@@ -781,7 +781,7 @@ Auto-stop logic:
 - STILL activity with stable GPS ends after 90 seconds; noisier stopped GPS waits longer.
 - A GPS-only parked fallback can end a foreground trip after 5 minutes of near-zero speed with parked-like drift, or after 10 minutes at near-zero speed.
 
-On non-Android web, speed-only auto start can trigger when speed is at least 18 km/h for at least 20 seconds.
+On non-Android web, speed-only auto start can trigger when speed is at least 3 km/h for at least 3 seconds.
 
 ### 9.3 Android Native Auto Tracking
 
@@ -797,10 +797,10 @@ Native auto tracking behavior:
 1. React calls `startNativeAutoTracking()`.
 2. The Capacitor plugin checks required native permissions.
 3. `DriveSenseAutoTrackingService` starts as a foreground service.
-4. The service requests activity updates every 15 seconds.
+4. The service requests activity updates every 15 seconds and keeps an armed high-accuracy location watch.
 5. `DriveSenseActivityReceiver` receives activity updates.
-6. In-vehicle activity with confidence at least 70 starts a native trip.
-7. The service starts high-accuracy location updates every 5 seconds, with a 3 second minimum interval and 10 meter minimum distance.
+6. In-vehicle activity with confidence at least 65 and movement above 3 km/h for 3 seconds starts a native trip.
+7. The service starts high-accuracy location updates every 2 seconds, with a 1 second minimum interval and 5 meter minimum distance.
 8. Native route points are filtered for accuracy, noise, and impossible speed.
 9. Still, walking, unknown, or long in-vehicle stopped states end the trip only after the parked timers and GPS drift checks pass.
 10. Trips under 30 seconds, under 0.1 km, or with fewer than 2 points are discarded.
@@ -809,7 +809,7 @@ Native auto tracking behavior:
 
 Important native thresholds:
 
-- Minimum vehicle confidence: 70.
+- Minimum vehicle confidence: 65.
 - Minimum still confidence: 70.
 - Auto-stop STILL duration: 90000 ms when GPS is stable, 150000 ms when GPS is drifting.
 - Auto-stop IN_VEHICLE duration: 240000 ms with very stable GPS, 360000 ms with relaxed drift, 420000 ms at near-zero speed with parked-like drift, 600000 ms as a final near-zero-speed safety net.
@@ -1809,7 +1809,7 @@ Import behavior:
 - Upserts vehicles.
 - Upserts trips.
 - Optionally merges settings into current settings.
-- Versions earlier than `4` import cleanly but mark trips for rescore before upsert so phone-use windows and schema-version fields can be regenerated.
+- Versions earlier than `7` import cleanly but mark trips for rescore before upsert so phone-use windows, advanced metrics, false-positive fixes, and schema-version fields can be regenerated.
 - Native Android JSON backup export also writes to the public Downloads folder through `saveExportToDownloads`.
 
 ## 15. Android Project
@@ -2142,10 +2142,10 @@ Core engine additions in `src/lib/tripEngine.js`:
 
 - `classifyRoadType(cleanPoints)` classifies trips as `highway`, `urban`, `mixed`, or `residential` from speed distribution and applies context-aware fallback speeding thresholds.
 - `calculateJerkScore(cleanPoints, distanceKm)` measures rate of acceleration change and blends `jerk_score` into smoothness.
-- `detectLaneChanges(points)` emits `lane_change` events from high-speed heading-rate changes.
+- `detectLaneChanges(points)` emits `lane_change` events from high-speed heading-rate changes only when the GPS window has usable accuracy, counter-steer, bounded heading excursion, low net heading change, and stable speed.
 - `detectTailgateCycles(points)` emits `tailgate_cycle` events from highway cruise followed by short-cycle deceleration.
 - `calculateEcoDrivingScore(points, stats)` computes continuous eco quality from speed stability, cruise-band ratio, and idle ratio.
-- `detectErraticSpeedWindows(points)` emits `erratic_speed` events as a distraction-risk proxy.
+- `detectErraticSpeedWindows(points)` emits `erratic_speed` events as a distraction-risk proxy only after repeated speed reversals across a sustained high-variance window.
 - `analyzeIntersectionBehavior(points)` computes `intersection_score`, stop count, rolling stops, and smooth approaches.
 - `analyzeFatigueProgression(points, start, end)` scores trip thirds and stores `fatigue_progression` plus `segment_scores`.
 
@@ -2162,7 +2162,7 @@ New persisted trip score fields include:
 
 Insight additions in `src/lib/tripInsights.js`:
 
-- `suggestTripTag(trip)` suggests `work`, `personal`, or `errands`; `src/api/trips.js` stores the suggestion without applying it as the user tag.
+- `suggestTripTag(trip)` suggests `work`, `personal`, `errands`, `night`, `rain`, or route-context tags; `src/api/trips.js` stores the suggestion without applying it as the user tag.
 - `computePersonalBaseline(completedTrips)` calculates rolling 4-week baseline, this-week average, trend, percentile, and best scores.
 - `calculateVehicleHealthImpact(vehicleTrips, vehicle)` converts risky events into stress units, extra wear kilometers, service interval adjustments, and a health grade.
 - `estimateTripEconomics` now uses `eco_driving_score` to estimate actual L/100 km and fuel saved.
@@ -2175,6 +2175,8 @@ UI surfaces updated:
 - `Report.jsx` includes baseline comparison, road type pie chart, and cumulative fuel saved.
 - `Vehicles.jsx` shows driving impact, extra wear kilometers, adjusted service intervals, and health grade.
 - `Settings.jsx` exposes `threshold_tailgate_decel_ms2`.
+
+Weather context is calculated by `src/lib/weatherContext.js`. Past trips use Open-Meteo historical archive data, current trips use forecast data, and weather samples are constrained to the actual trip time window. Rain labels require precipitation evidence, so a nearby rainy hourly forecast bucket does not automatically mark a dry/sunny trip as rainy.
 
 ## 24. Advanced Feature Expansion Implemented
 
@@ -2199,7 +2201,7 @@ Additional engine metrics in `src/lib/tripEngine.js`:
 - `detectNearMisses(points, thresholds)` is exported for direct unit coverage; `detectDrivingEvents` also emits `near_miss`.
 - `analyzeParkingApproach(points, thresholds)` returns `parking_approach_score` and grade.
 - `calculateFuelBandScore(points)` returns optimal cruise-band, high-speed, and city-crawl ratios.
-- `detectAggressiveOvertakes(points, thresholds)` emits `aggressive_overtake` events and drives `overtake_event_count` / `overtake_score`.
+- `detectAggressiveOvertakes(points, thresholds)` emits `aggressive_overtake` events only when acceleration, lane-change heading rate, re-entry deceleration, and speed gain line up. It drives `overtake_event_count` / `overtake_score`.
 
 Additional insight exports in `src/lib/tripInsights.js`:
 
@@ -2211,8 +2213,8 @@ Additional insight exports in `src/lib/tripInsights.js`:
 
 Storage and backup changes:
 
-- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 4`.
-- Completed trips missing `defensive_driving_score`, marked `needs_rescore`, or from an older schema are rescored on read/write with the current thresholds.
+- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 7`.
+- Completed trips missing advanced fields, marked `needs_rescore`, or from an older schema are rescored on read/write with the current thresholds. Version 7 forces older trips through the stricter lane-change, erratic-speed, overtake, traffic-stop, and night-card behavior.
 - JSON backups now export version `4`; older imports mark trips with `needs_rescore` before upsert.
 - CSV export now includes aggressive, defensive, near-miss, smooth braking, SVI, fuel band, engine stress, tire wear, hill, merge, parking, overtake, phone proxy, phone-use windows/seconds/risk/score/percent, drowsy, speed creep, and CO2-saved columns.
 
@@ -2571,9 +2573,11 @@ const avgRunningSpeed = movingSeconds > 0 && totalDistance > 0
 
 Idle runs below `5 km/h` are classified when the run ends:
 
-- less than `90 seconds`: `traffic_idle_seconds`
-- `90 seconds` or more: `sustained_idle_seconds`
+- less than `300 seconds`: `traffic_idle_seconds`
+- `300 seconds` or more: `sustained_idle_seconds`
 - `idle_time_seconds`: sum of both buckets for backward compatibility
+
+The configurable idle event threshold still defaults to `90 seconds`; it affects whether an idle event is emitted, not whether the stopped timer is treated as traffic or parked idle.
 
 `gap_seconds` is short noise-filtered time (`dt <= 120`) excluded from both moving and idle buckets. It is retained for debugging and does not affect scores.
 
@@ -4176,8 +4180,8 @@ Local trip repository rules:
 
 - Primary web store is IndexedDB database `drivesense_mobile`, version `1`, object store `trips`, key path `id`.
 - Fallback store is JSON under `drivesense_trips`.
-- `TRIP_SCHEMA_VERSION` is `2`.
-- Completed trips with missing advanced fields, `needs_rescore`, or old schema version are rescored before being returned.
+- `TRIP_SCHEMA_VERSION` is `7`.
+- Completed trips with missing advanced fields, `needs_rescore`, or old schema version are rescored before being returned. Version 7 refreshes false-positive-sensitive metrics such as lane changes, overtakes, erratic speed, and traffic idle buckets.
 - Android native completed trips are imported before list/get operations on Android.
 - Imported native trips are recalculated by JS, simplified to 10-meter route tolerance, marked `imported_from_native: true`, and then native completed trips are cleared.
 - Data retention deletes trips older than `data_retention_days` based on `end_time`, `start_time`, or `created_at`.
@@ -4504,6 +4508,14 @@ Trip schema version 3 adds these completed-trip fields:
 - Stats: `speed_zones`.
 
 Completed trips missing any version-3 advanced field are rescored on read/import. The driver signature cache uses the `drivesense_driver_signature` Preferences key and is invalidated when completed trips are created, updated, or bulk imported.
+
+Trip schema version 7 is the current local schema. It preserves the version-3 advanced fields and forces a rescore for older completed trips so the stricter May 2026 false-positive fixes are applied to existing history:
+
+- Lane changes require stronger GPS shape, speed stability, and counter-steer evidence.
+- Erratic-speed windows require sustained variance plus repeated speed reversals.
+- Overtake quality ignores steady highway lane changes unless they include an overtake-like speed-up.
+- Traffic-stop idle is bucketed separately from parked/avoidable idle until 300 seconds.
+- Trip cards show Night automatically from `night_driving`.
 
 UI placements:
 

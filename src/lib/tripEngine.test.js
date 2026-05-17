@@ -19,6 +19,7 @@ import {
   detectHighwayMergeBehavior,
   inferSpeedZones,
   detectLaneChanges,
+  detectErraticSpeedWindows,
   detectTailgateCycles,
   DEFAULT_THRESHOLDS,
   EVENT_TYPES,
@@ -475,6 +476,14 @@ describe('tripEngine', () => {
     expect(detectLaneChanges(roadCurve).length).toBe(0);
   });
 
+  it('does not flag normal steady city speed as erratic speed', () => {
+    const steady = Array.from({ length: 10 }, (_, index) => (
+      point(43.6532 + index * 0.00022, -79.3832, index * 5, index % 2 === 0 ? 42 : 45)
+    ));
+
+    expect(detectErraticSpeedWindows(steady)).toHaveLength(0);
+  });
+
   it('simplifies straight route points while preserving corners', () => {
     const straight = Array.from({ length: 10 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index, 40));
     const corner = point(43.6542, -79.3822, 10, 40);
@@ -564,7 +573,7 @@ describe('auto tracking decision logic', () => {
 
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 90 },
-      currentSpeedKmh: 4,
+      currentSpeedKmh: 2,
       recentMovingSeconds: 20,
     })).toBe(false);
 

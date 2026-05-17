@@ -2,6 +2,7 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const HISTORICAL_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
@@ -30,6 +31,10 @@ function weatherCodeLabel(code) {
   return 'clear';
 }
 
+function isRainCode(code) {
+  return [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code);
+}
+
 function classifyWeather(samples = []) {
   const temperatures = samples.map((sample) => sample.temperature_2m).filter(Number.isFinite);
   const precipitation = samples.map((sample) => sample.precipitation).filter(Number.isFinite);
@@ -50,7 +55,19 @@ function classifyWeather(samples = []) {
   const freezingPrecip = avgTempC != null && avgTempC <= 1.5 && (totalPrecipMm > 0.2 || totalRainMm > 0.2);
   const fog = label === 'fog' || (minVisibilityM != null && minVisibilityM < 1000);
   const snowing = label === 'snow' || totalSnowCm > 0.1;
-  const rainy = label === 'rain' || totalRainMm > 0.2 || totalPrecipMm > 0.4;
+  const rainCodeShare = codes.length ? codes.filter(isRainCode).length / codes.length : 0;
+  const rainy = totalRainMm > 0.1 || totalPrecipMm > 0.2 || (rainCodeShare >= 0.75 && (totalRainMm > 0.02 || totalPrecipMm > 0.05));
+  const condition = freezingPrecip
+    ? 'freezing_precipitation'
+    : snowing
+      ? 'snow'
+      : fog
+        ? 'fog'
+        : rainy
+          ? 'rain'
+          : label === 'rain'
+            ? 'cloudy'
+            : label;
 
   let riskScore = 0;
   if (rainy) riskScore += 22;
@@ -62,7 +79,7 @@ function classifyWeather(samples = []) {
 
   return {
     provider: 'open-meteo',
-    condition: freezingPrecip ? 'freezing_precipitation' : snowing ? 'snow' : fog ? 'fog' : rainy ? 'rain' : label,
+    condition,
     riskLevel: riskScore >= 60 ? 'high' : riskScore >= 30 ? 'moderate' : 'low',
     riskScore,
     riskMultiplier: riskScore >= 60 ? 1.45 : riskScore >= 30 ? 1.2 : 1,
@@ -77,7 +94,10 @@ function classifyWeather(samples = []) {
 
 async function fetchOpenMeteoWeather({ lat, lng, date }) {
   const startDate = dayKey(date);
-  const url = new URL('https://api.open-meteo.com/v1/forecast');
+  const tripDate = new Date(startDate);
+  const today = new Date(dayKey(Date.now()));
+  const useArchive = Number.isFinite(tripDate.getTime()) && tripDate < today;
+  const url = new URL(useArchive ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast');
   url.searchParams.set('latitude', lat.toFixed(4));
   url.searchParams.set('longitude', lng.toFixed(4));
   url.searchParams.set('hourly', 'temperature_2m,precipitation,rain,snowfall,weather_code,visibility');
@@ -101,10 +121,11 @@ function samplesForTrip(data, startTime, endTime) {
   const times = hourly.time || [];
   const startMs = new Date(startTime || Date.now()).getTime();
   const endMs = new Date(endTime || startTime || Date.now()).getTime();
-  return times.map((time, index) => {
+  const samples = times.map((time, index) => {
     const ms = new Date(time).getTime();
-    if (!Number.isFinite(ms) || ms < startMs - 60 * 60 * 1000 || ms > endMs + 60 * 60 * 1000) return null;
+    if (!Number.isFinite(ms) || ms < startMs || ms > endMs) return null;
     return {
+      sample_time: time,
       temperature_2m: Number(hourly.temperature_2m?.[index]),
       precipitation: Number(hourly.precipitation?.[index]),
       rain: Number(hourly.rain?.[index]),
@@ -113,6 +134,31 @@ function samplesForTrip(data, startTime, endTime) {
       visibility: Number(hourly.visibility?.[index]),
     };
   }).filter(Boolean);
+  if (samples.length) return samples;
+
+  const midpointMs = Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? startMs + (endMs - startMs) / 2
+    : startMs;
+  let nearest = null;
+  times.forEach((time, index) => {
+    const ms = new Date(time).getTime();
+    if (!Number.isFinite(ms)) return;
+    const delta = Math.abs(ms - midpointMs);
+    if (delta > 60 * 60 * 1000) return;
+    if (!nearest || delta < nearest.delta) {
+      nearest = { time, index, delta };
+    }
+  });
+  if (!nearest) return [];
+  return [{
+    sample_time: nearest.time,
+    temperature_2m: Number(hourly.temperature_2m?.[nearest.index]),
+    precipitation: Number(hourly.precipitation?.[nearest.index]),
+    rain: Number(hourly.rain?.[nearest.index]),
+    snowfall: Number(hourly.snowfall?.[nearest.index]),
+    weather_code: Number(hourly.weather_code?.[nearest.index]),
+    visibility: Number(hourly.visibility?.[nearest.index]),
+  }];
 }
 
 export async function fetchWeatherContextForTrip(routePoints = [], startTime, endTime, settings = {}) {
@@ -127,7 +173,11 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
   const cached = cache[key];
   let data = cached?.data;
   let status = 'cache_hit';
-  if (!data || Date.now() - cached.savedAt > CACHE_MAX_AGE_MS) {
+  const tripDate = new Date(dayKey(startTime));
+  const today = new Date(dayKey(Date.now()));
+  const historical = Number.isFinite(tripDate.getTime()) && tripDate < today;
+  const maxAge = historical ? HISTORICAL_CACHE_MAX_AGE_MS : CACHE_MAX_AGE_MS;
+  if (!data || Date.now() - cached.savedAt > maxAge) {
     data = await fetchOpenMeteoWeather({ lat: center.lat, lng: center.lng, date: startTime });
     status = 'fetched';
     await setJson(WEATHER_CACHE_KEY, {

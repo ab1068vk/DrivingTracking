@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone, Star, StickyNote } from 'lucide-react';
+import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone, Star, StickyNote, Moon } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
 import {
   buildScoreExplanation,
@@ -19,6 +19,7 @@ export default function TripCard({
   const navigate = useNavigate();
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
   const tags = normalizeTripTags(trip);
+  const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
   const title = getTripDisplayName(trip);
 
   return (
@@ -92,12 +93,13 @@ export default function TripCard({
             )}
           </div>
 
-          {tags.length > 0 && (
+          {displayTags.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {tags.map((tagId) => {
+              {displayTags.map((tagId) => {
                 const option = getTripTagOption(tagId);
                 return (
-                  <span key={tagId} className={`rounded-full border px-2 py-0.5 text-xs font-medium ${option?.className || 'bg-secondary text-muted-foreground border-border'}`}>
+                  <span key={tagId} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${option?.className || 'bg-secondary text-muted-foreground border-border'}`}>
+                    {tagId === 'night' && <Moon className="h-3 w-3" />}
                     {option?.label || tagId}
                   </span>
                 );

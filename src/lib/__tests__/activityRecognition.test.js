@@ -2,10 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVITY_TYPES,
   computeGpsPositionDrift,
+  shouldAutoStartTracking,
   shouldAutoStopTracking,
 } from '@/lib/activityRecognition';
 
 describe('activityRecognition auto-stop logic', () => {
+  it('auto-starts after a short confirmed in-vehicle movement window', () => {
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 66 },
+      currentSpeedKmh: 3.5,
+      recentMovingSeconds: 3,
+    })).toBe(true);
+  });
+
   it('does not stop at a red light with still activity and GPS drift', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.STILL, confidence: 90 },

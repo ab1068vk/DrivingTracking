@@ -50,7 +50,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final int NOTIFICATION_ID = 4101;
     private static final int ACTIVITY_REQUEST_CODE = 4102;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
-    private static final int MIN_VEHICLE_CONFIDENCE = 70;
+    private static final int MIN_VEHICLE_CONFIDENCE = 65;
     private static final int MIN_STILL_CONFIDENCE = 70;
     private static final int MIN_POINTS_TO_SAVE = 2;
     private static final long MIN_TRIP_MS = 30_000L;
@@ -73,8 +73,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double STATIONARY_SPEED_KMH = 5d;
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
-    private static final double AUTO_START_SPEED_KMH = 5d;
-    private static final long AUTO_START_MOVING_MS = 5_000L;
+    private static final double AUTO_START_SPEED_KMH = 3d;
+    private static final long AUTO_START_MOVING_MS = 3_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
@@ -376,9 +376,9 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         stopLocationUpdates();
-        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
-            .setMinUpdateIntervalMillis(3_000L)
-            .setMinUpdateDistanceMeters(10f)
+        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
+            .setMinUpdateIntervalMillis(1_000L)
+            .setMinUpdateDistanceMeters(5f)
             .build();
 
         locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
@@ -392,9 +392,9 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         stopLocationUpdates();
-        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 15_000L)
-            .setMinUpdateIntervalMillis(5_000L)
-            .setMinUpdateDistanceMeters(8f)
+        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+            .setMinUpdateIntervalMillis(2_000L)
+            .setMinUpdateDistanceMeters(5f)
             .build();
 
         locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());

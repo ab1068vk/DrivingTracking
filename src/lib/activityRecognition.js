@@ -125,7 +125,7 @@ export async function clearNativeCompletedTrips() {
 
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
-  return vehicleConfidence >= 70 && currentSpeedKmh >= 5 && recentMovingSeconds >= 5;
+  return vehicleConfidence >= 65 && currentSpeedKmh >= 3 && recentMovingSeconds >= 3;
 }
 
 export function computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = []) {

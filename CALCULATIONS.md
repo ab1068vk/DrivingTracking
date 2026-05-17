@@ -32,6 +32,14 @@ This flow is used in `src/pages/Dashboard.jsx` and in `src/lib/localTripReposito
 
 When a user splits a trip, `splitTripAtStops(trip, minParkMinutes)` runs the same pipeline for each generated sub-trip. Each sub-trip gets fresh statistics, events, scores, and economics rather than copying the parent values.
 
+## Weather Context
+
+File: `src/lib/weatherContext.js`
+
+Weather context comes from Open-Meteo. Past trips use the historical archive endpoint, while same-day/future trips use the forecast endpoint. The app samples only the actual trip window, falling back to the nearest hourly sample within one hour when a short trip does not cross an hourly bucket.
+
+Rain is no longer inferred from a rain weather code alone. The trip needs measured rain/precipitation in the selected sample window, or a dominant rain-code window with non-zero precipitation. This avoids showing "rain" for a sunny drive just because a nearby hourly model bucket had rainy weather.
+
 ## Default Settings And Thresholds
 
 Default user settings live in `src/lib/trackingStore.js`.
@@ -58,7 +66,7 @@ phone_use_affects_score: true,
 phone_use_sensitivity: 'medium',
 threshold_speed_creep_kmh: 10,
 threshold_overtake_accel_ms2: 3.0,
-min_speed_rapid_accel_kmh: 15,
+min_speed_rapid_accel_kmh: 5,
 min_speed_harsh_brake_kmh: 25,
 weekly_goal_harsh_brakes: 5,
 weekly_goal_speeding_events: 3,
@@ -270,11 +278,13 @@ const avgRunningSpeed = movingSeconds > 0 && totalDistance > 0
 
 Idle runs below `5 km/h` are classified when the run ends:
 
-- less than `90 seconds`: `traffic_idle_seconds`
-- `90 seconds` or more: `sustained_idle_seconds`
+- less than `300 seconds`: `traffic_idle_seconds`
+- `300 seconds` or more: `sustained_idle_seconds`
 - `idle_time_seconds`: sum of both buckets for backward compatibility
 
 `gap_seconds` is short noise-filtered time (`dt <= 120`) excluded from both moving and idle buckets. It is retained for debugging and does not affect scores.
+
+The separate idle event threshold remains configurable and defaults to `90 seconds`. That means a long traffic light can still be shown as an idle event while the trip timer keeps it in the traffic-stop bucket instead of treating it like parked/avoidable idle.
 
 ## Road Type
 
@@ -340,6 +350,12 @@ erratic_speed
 near_miss
 aggressive_overtake
 ```
+
+Lane-change detection is intentionally conservative because it is inferred from GPS/heading, not a camera. A candidate now needs a 6-second usable GPS window, speed of at least `50 km/h`, counter-steer, bounded heading excursion, low net heading change, stable speed, and point accuracy no worse than about `35 m`.
+
+Erratic-speed windows now require a 25-second window, high speed variance, at least `18 km/h` of speed range, and repeated speed-direction reversals. Normal cruise, traffic flow, or small GPS speed wobble should not create a distraction event.
+
+Overtake quality is scored only when an aggressive-overtake event exists or when a high-speed lane-change event also has an overtake-like speed-up. A steady highway lane change no longer creates an overtake count by itself.
 
 ### Harsh Braking
 

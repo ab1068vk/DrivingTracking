@@ -11,10 +11,10 @@ const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const watchOptions = {
   enableHighAccuracy: true,
-  timeout: 10000,
+  timeout: 7000,
   maximumAge: 0,
-  minimumUpdateInterval: 3000,
-  interval: 5000,
+  minimumUpdateInterval: 1000,
+  interval: 2000,
 };
 
 export async function getCurrentLocation() {
@@ -52,9 +52,12 @@ export function createDrivingTrackingService({ background = false } = {}) {
   };
 
   const emitInitialPoint = async (onPoint) => {
-    if (!isNativePlatform()) return;
     try {
-      const position = await Geolocation.getCurrentPosition(watchOptions);
+      const position = isNativePlatform()
+        ? await Geolocation.getCurrentPosition(watchOptions)
+        : await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, watchOptions);
+        });
       emitPoint(position, onPoint);
     } catch {
       // A watcher below can still recover when GPS gets a fix.
@@ -82,7 +85,7 @@ export function createDrivingTrackingService({ background = false } = {}) {
               backgroundMessage: 'Road Sage is recording your driving route. Tap Stop Tracking in the app when done.',
               requestPermissions: false,
               stale: false,
-              distanceFilter: 10,
+              distanceFilter: 5,
             },
             (location, error) => {
               if (error) {
