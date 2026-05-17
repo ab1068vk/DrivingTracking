@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target
 } from 'lucide-react';
 import {
   Dialog,
@@ -45,6 +45,7 @@ import {
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
+import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -457,6 +458,7 @@ export default function Settings() {
   };
 
   const effectiveTrackingMode = cfg.tracking_paused ? 'manual' : cfg.tracking_mode;
+  const obdSupport = getObdBluetoothSupport();
 
   return (
     <div className="space-y-4 pb-6">
@@ -1030,6 +1032,94 @@ export default function Settings() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Advanced Models */}
+        <SectionTitle>Advanced Models</SectionTitle>
+        <div className="rounded-2xl bg-secondary/40 p-3">
+          <SettingRow
+            icon={SlidersHorizontal}
+            label="Sensor fusion model"
+            sublabel="Combine GPS, device motion, gyroscope, and Android activity context"
+          >
+            <Toggle
+              value={cfg.sensor_fusion_enabled !== false}
+              onChange={v => updateCfg({ sensor_fusion_enabled: v })}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={AlertTriangle}
+            label="Crash / incident detection"
+            sublabel="Detect impact-like motion followed by little movement"
+          >
+            <Toggle
+              value={cfg.crash_detection_enabled !== false}
+              onChange={v => updateCfg({ crash_detection_enabled: v })}
+              disabled={cfg.sensor_fusion_enabled === false}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Bell}
+            label="Emergency workflow"
+            sublabel="Keep optional; disabled by default until you configure contacts"
+          >
+            <Toggle
+              value={cfg.emergency_workflow_enabled === true}
+              onChange={v => updateCfg({ emergency_workflow_enabled: v })}
+              disabled={cfg.crash_detection_enabled === false}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Route}
+            label="OSRM map matching"
+            sublabel="Snap GPS to roads with an open-source OSRM endpoint"
+          >
+            <Toggle
+              value={cfg.map_matching_enabled !== false}
+              onChange={v => updateCfg({ map_matching_enabled: v })}
+            />
+          </SettingRow>
+          <div className="px-1 py-3 border-b border-border/50">
+            <div className="mb-1 text-xs font-medium">OSRM endpoint</div>
+            <input
+              value={cfg.osrm_map_matching_url || 'https://router.project-osrm.org'}
+              onChange={event => updateCfg({ osrm_map_matching_url: event.target.value })}
+              disabled={cfg.map_matching_enabled === false}
+              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">Use a self-hosted OSRM server for production privacy and reliability.</p>
+          </div>
+          <SettingRow
+            icon={Target}
+            label="Predictive route risk"
+            sublabel="Estimate safest route window from history, danger zones, and context"
+          >
+            <Toggle
+              value={cfg.predictive_route_risk_enabled !== false}
+              onChange={v => updateCfg({ predictive_route_risk_enabled: v })}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Volume2}
+            label="Live voice alerts"
+            sublabel="Speak urgent coaching alerts on device"
+          >
+            <Toggle
+              value={cfg.voice_alerts_enabled !== false}
+              onChange={v => updateCfg({ voice_alerts_enabled: v })}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Bluetooth}
+            label="OBD-II Bluetooth"
+            sublabel={obdSupport.supported ? 'BLE OBD-II parsing is available for compatible adapters' : obdSupport.note}
+          >
+            <Toggle
+              value={cfg.obd_bluetooth_enabled === true}
+              onChange={v => updateCfg({ obd_bluetooth_enabled: v })}
+              disabled={!obdSupport.supported}
+            />
+          </SettingRow>
         </div>
 
         {/* Phone Use Detection */}

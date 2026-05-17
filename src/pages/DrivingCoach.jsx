@@ -13,6 +13,8 @@ import {
   buildDriverSignature,
 } from '@/lib/tripInsights';
 import { setJson } from '@/lib/mobileStorage';
+import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
+import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -41,7 +43,10 @@ export default function DrivingCoach() {
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');
   const coach = buildDrivingCoachInsights(completed, settings);
+  const weeklySummary = buildWeeklyCoachSummary(completed);
   const driverSignature = useMemo(() => buildDriverSignature(completed), [completed]);
+  const driverModel = useMemo(() => buildOnDeviceDriverModel(completed), [completed]);
+  const latestAnomaly = completed[0] && driverModel ? scoreTripAnomaly(completed[0], driverModel) : null;
   const signatureChartData = driverSignature
     ? [
       { dimension: 'Aggression', value: Math.round(driverSignature.dimensions.aggression * 100) },
@@ -133,6 +138,48 @@ export default function DrivingCoach() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <Brain className="mt-0.5 h-5 w-5 text-primary" />
+              <div>
+                <h2 className="font-semibold">Local Weekly Coach</h2>
+                <div className="mt-2 text-lg font-grotesk font-bold">{weeklySummary.headline}</div>
+                <p className="mt-1 text-xs text-muted-foreground">{weeklySummary.insight}</p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2">
+              {weeklySummary.actions.map((action) => (
+                <div key={action} className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">{action}</div>
+              ))}
+            </div>
+          </div>
+
+          {latestAnomaly && latestAnomaly.anomaly_level !== 'unknown' && (
+            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">On-Device Driver Signature</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Last trip compared against {latestAnomaly.model_trip_count} local trips.
+                  </p>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${
+                  latestAnomaly.anomaly_level === 'high'
+                    ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                    : latestAnomaly.anomaly_level === 'moderate'
+                      ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                }`}>
+                  {latestAnomaly.anomaly_level}
+                </span>
+              </div>
+              <div className="mt-3 text-sm text-muted-foreground">
+                Anomaly score {latestAnomaly.anomaly_score}/100
+                {latestAnomaly.reasons.length ? ` · unusual: ${latestAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
+              </div>
             </div>
           )}
 

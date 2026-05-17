@@ -70,6 +70,15 @@ import { recordTrackingDiagnostic } from '@/lib/trackingDiagnostics';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import { mapMatchRoute } from '@/lib/mapMatching';
+import {
+  buildSensorFusionSummary,
+  createMotionSensorFusion,
+  detectCrashIncident,
+  enrichEventsWithSensorContext,
+} from '@/lib/sensorFusionModel';
+import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
+import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -92,6 +101,8 @@ export default function Dashboard() {
   const autoEndingTripRef = useRef(false);
   const endTripRef = useRef(null);
   const timerRef = useRef(null);
+  const sensorFusionRef = useRef(null);
+  const incidentAlertRef = useRef(0);
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
   const lastProximityAlertRef = useRef(0);
@@ -116,6 +127,8 @@ export default function Dashboard() {
       stoppedAnchorRef.current = null;
       lastMovingSpeedRef.current = 0;
       autoEndingTripRef.current = false;
+      incidentAlertRef.current = 0;
+      sensorFusionRef.current?.stop();
     }
   }, [tracking]);
 
@@ -153,7 +166,15 @@ export default function Dashboard() {
   const completedTrips = recentTrips.filter(t => t.status === 'completed');
   const todayTrips = getTodayTrips(completedTrips);
   const dailyFatigue = computeDailyFatigue(todayTrips, settings);
-  const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue);
+  const predictiveRouteRisk = estimatePredictiveRouteRisk({
+    trips: completedTrips,
+    dangerZones: [],
+    weatherRiskScore: 0,
+    currentLocation,
+  });
+  const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue, {
+    nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
+  });
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch(() => {});
@@ -234,6 +255,32 @@ export default function Dashboard() {
         });
         const trip = activeTripRef.current;
         if (!trip || !trackingRef.current || autoEndingTripRef.current) return;
+        const incident = detectCrashIncident({
+          routePoints: [...(trip.route_points || []), point],
+          motionSamples: sensorFusionRef.current?.getSamples?.() || [],
+          activity: latestActivityRef.current,
+          settings: latestSettings,
+        });
+        if (incident && Date.now() - incidentAlertRef.current > 5 * 60 * 1000) {
+          incidentAlertRef.current = Date.now();
+          setHazardMessage({ body: 'Possible crash or incident detected. Check in now.', at: Date.now() });
+          notifyStayAlert({
+            id: 4011,
+            title: 'Possible Incident Detected',
+            body: 'DriveSense detected impact-like motion followed by little movement.',
+            extra: { type: 'possible_crash', severity: incident.severity },
+          }).catch(() => {});
+          setActiveTrip(prev => {
+            if (!prev) return prev;
+            const updated = {
+              ...prev,
+              driving_events: [...(prev.driving_events || []), incident],
+            };
+            activeTripStore.set(updated);
+            activeTripRef.current = updated;
+            return updated;
+          });
+        }
 
         const nowMs = Date.now();
         if (speed >= 15) {
@@ -352,6 +399,10 @@ export default function Dashboard() {
     trackingRef.current = true;
     setActiveTrip(tripData);
     setTracking(true);
+    if (cfg.sensor_fusion_enabled !== false) {
+      sensorFusionRef.current = createMotionSensorFusion();
+      sensorFusionRef.current.start().catch(() => {});
+    }
     startTimer(new Date());
     startGPS();
     notifyTripStarted();
@@ -364,6 +415,7 @@ export default function Dashboard() {
 
     locationService.current?.stop();
     locationService.current = null;
+    sensorFusionRef.current?.stop();
     stopTimer();
     await cancelLongTripReminder();
 
@@ -405,8 +457,10 @@ export default function Dashboard() {
       return;
     }
 
-    const speedLimitContext = await annotateRouteSpeedLimits(cleanedPoints, cfg);
-    pts = speedLimitContext.routePoints || cleanedPoints;
+    const mapMatchingContext = await mapMatchRoute(cleanedPoints, cfg);
+    pts = mapMatchingContext.routePoints || cleanedPoints;
+    const speedLimitContext = await annotateRouteSpeedLimits(pts, cfg);
+    pts = speedLimitContext.routePoints || pts;
     const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds);
     const weatherContext = await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
       provider: 'open-meteo',
@@ -418,7 +472,9 @@ export default function Dashboard() {
     }));
 
     const detection = detectDrivingEvents(pts, thresholds, endTime);
-    const events = Reflect.get(detection, 'events') ?? detection;
+    const detectedEvents = Reflect.get(detection, 'events') ?? detection;
+    const activeIncidentEvents = (tripToEnd.driving_events || []).filter((event) => event.type === 'possible_crash');
+    const events = enrichEventsWithSensorContext([...detectedEvents, ...activeIncidentEvents], sensorFusionRef.current?.getSamples?.() || []);
     const gpsPhoneUse = Reflect.get(detection, 'phoneUse') ?? {};
     const startMs = new Date(tripToEnd.start_time).getTime();
     const endMs = new Date(endTime).getTime();
@@ -434,6 +490,9 @@ export default function Dashboard() {
     const simplifiedPoints = simplifyRoute(pts, 10, tripEvents);
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
     const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
+    const sensorFusionSummary = buildSensorFusionSummary(sensorFusionRef.current?.getSamples?.() || [], pts, latestActivityRef.current);
+    const driverModel = buildOnDeviceDriverModel(completedTrips);
+    const anomaly = scoreTripAnomaly({ ...stats, ...scores }, driverModel);
 
     const completedTrip = {
       ...stats,
@@ -449,7 +508,17 @@ export default function Dashboard() {
         status: speedLimitContext.status,
         coverage: speedLimitContext.coverage,
       },
+      map_matching_context: {
+        provider: mapMatchingContext.provider,
+        status: mapMatchingContext.status,
+        confidence: mapMatchingContext.confidence ?? null,
+        snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
+      },
       weather_context: weatherContext,
+      sensor_fusion_summary: sensorFusionSummary,
+      driver_anomaly: anomaly,
+      anomaly_score: anomaly.anomaly_score,
+      anomaly_level: anomaly.anomaly_level,
       co2_saved_kg: economics.co2_saved_kg,
       status: 'completed',
       background_tracking: tripToEnd.background_tracking,
@@ -899,6 +968,20 @@ export default function Dashboard() {
                   <div className="mt-1 text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
                   <div className="mt-1 text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
                 </>
+              )}
+              {settings.predictive_route_risk_enabled !== false && (
+                <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">Predictive route risk</span>
+                    <span className={`font-bold capitalize ${
+                      predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
+                    }`}>
+                      {predictiveRouteRisk.riskScore}/100
+                    </span>
+                  </div>
+                  <div className="mt-1 text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
+                  <div className="mt-1 text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
+                </div>
               )}
             </div>
           </div>

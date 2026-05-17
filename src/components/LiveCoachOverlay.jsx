@@ -20,6 +20,21 @@ const CHECK_INTERVAL_MS = 60000;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
 
+const plainText = (message) => {
+  if (typeof message === 'string') return message;
+  if (typeof message?.props?.children === 'string') return message.props.children;
+  return 'DriveSense safety alert';
+};
+
+function speakAlert(text, settings) {
+  if (settings.voice_alerts_enabled === false || typeof window === 'undefined' || !window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.95;
+  utterance.volume = 0.9;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+
 export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {
   const [message, setMessage] = useState(null);
   const [dismissed, setDismissed] = useState(false);
@@ -38,6 +53,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     setMessage(normalized);
+    speakAlert(plainText(normalized.text), localSettings.get());
     setTimeout(() => {
       visibleRef.current = false;
       setMessage(null);

@@ -265,6 +265,9 @@ export default function TripDetail() {
   }[trip.slippery_proxy] || null;
   const weatherContext = trip.weather_context || null;
   const speedLimitContext = trip.speed_limit_context || null;
+  const mapMatchingContext = trip.map_matching_context || null;
+  const sensorFusionSummary = trip.sensor_fusion_summary || null;
+  const driverAnomaly = trip.driver_anomaly || null;
   const phoneUseEvents = (trip.driving_events || []).filter((event) => event.type === 'phone_use');
   const phoneUseWindows = phoneUseEvents.length ? phoneUseEvents : (trip.phone_use_events || []);
   const phoneUseRisk = trip.phone_use_risk || 'none';
@@ -442,7 +445,7 @@ export default function TripDetail() {
         </div>
       )}
 
-      {(weatherContext || speedLimitContext) && (
+      {(weatherContext || speedLimitContext || mapMatchingContext || sensorFusionSummary || driverAnomaly) && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {weatherContext && (
             <div className="rounded-2xl border border-border bg-card p-3 text-sm">
@@ -480,6 +483,55 @@ export default function TripDetail() {
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
                 OpenStreetMap/Overpass coverage: {speedLimitContext.coverage ?? 0}% of route points. Fallback inferred zones fill any gaps.
+              </div>
+            </div>
+          )}
+          {mapMatchingContext && (
+            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Route className="h-4 w-4 text-blue-500" />
+                  Map matching
+                </div>
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                  {mapMatchingContext.status?.replace(/_/g, ' ') || 'unknown'}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                OSRM snapped coverage {mapMatchingContext.snapped_coverage ?? 0}% · confidence {mapMatchingContext.confidence ?? 'n/a'}.
+              </div>
+            </div>
+          )}
+          {sensorFusionSummary && (
+            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Smartphone className="h-4 w-4 text-violet-500" />
+                  Sensor fusion
+                </div>
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                  {sensorFusionSummary.quality || 'partial'}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                {sensorFusionSummary.sample_count || 0} motion samples · peak {sensorFusionSummary.peak_linear_ms2 || 0} m/s² · phone movement {sensorFusionSummary.phone_movement_score || 0}/100.
+              </div>
+            </div>
+          )}
+          {driverAnomaly && (
+            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                  Driver signature
+                </div>
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                  {driverAnomaly.anomaly_level || 'unknown'}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Anomaly score {driverAnomaly.anomaly_score ?? 0}/100
+                {driverAnomaly.reasons?.length ? ` · ${driverAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
               </div>
             </div>
           )}
