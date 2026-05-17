@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { parseObdPidResponse } from '@/lib/obdBluetooth';
-import { buildSensorFusionSummary, detectCrashIncident, enrichEventsWithSensorContext } from '@/lib/sensorFusionModel';
+import { buildSensorFusionSummary, detectCrashIncident, enrichEventsWithSensorContext, getMotionSensorSupport } from '@/lib/sensorFusionModel';
+import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 
 const trip = (score, index = 0, patch = {}) => ({
@@ -41,6 +42,10 @@ describe('advanced open-source features', () => {
     expect(enriched[0].sensor_confirmed).toBe(true);
   });
 
+  it('reports motion sensor support for permission checks', () => {
+    expect(['granted', 'not_requested', 'unavailable']).toContain(getMotionSensorSupport().status);
+  });
+
   it('parses common OBD-II PID responses', () => {
     expect(parseObdPidResponse('41 0C 1A F8')?.value).toBe(1726);
     expect(parseObdPidResponse('41 11 80')?.label).toBe('Throttle');
@@ -52,6 +57,16 @@ describe('advanced open-source features', () => {
     const anomaly = scoreTripAnomaly(trip(45, 11, { harsh_brakes_count: 6, rapid_accel_count: 4 }), model);
     expect(anomaly.anomaly_score).toBeGreaterThan(40);
     expect(anomaly.reasons.length).toBeGreaterThan(0);
+  });
+
+  it('includes known danger zones in predictive route risk', () => {
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(80, 1)],
+      currentLocation: { lat: 43.65, lng: -79.38 },
+      dangerZones: [{ id: 'dz1', lat: 43.6501, lng: -79.3801, riskLevel: 'high' }],
+    });
+    expect(risk.nearbyDangerZoneCount).toBe(1);
+    expect(risk.primaryFactor).toBe('Known danger zones nearby');
   });
 
   it('builds a local weekly coaching sentence without AI services', () => {

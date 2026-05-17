@@ -112,6 +112,7 @@ export default function Dashboard() {
   const [hazardMessage, setHazardMessage] = useState(null);
   const [readinessDismissed, setReadinessDismissed] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
+  const [dangerZones, setDangerZones] = useState([]);
 
   useEffect(() => {
     activeTripRef.current = activeTrip;
@@ -128,6 +129,7 @@ export default function Dashboard() {
       lastMovingSpeedRef.current = 0;
       autoEndingTripRef.current = false;
       incidentAlertRef.current = 0;
+      setHazardMessage(null);
       sensorFusionRef.current?.stop();
     }
   }, [tracking]);
@@ -168,7 +170,7 @@ export default function Dashboard() {
   const dailyFatigue = computeDailyFatigue(todayTrips, settings);
   const predictiveRouteRisk = estimatePredictiveRouteRisk({
     trips: completedTrips,
-    dangerZones: [],
+    dangerZones,
     weatherRiskScore: 0,
     currentLocation,
   });
@@ -178,6 +180,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch(() => {});
+  }, [completedTrips[0]?.id]);
+
+  useEffect(() => {
+    loadDangerZones().then(setDangerZones).catch(() => {});
   }, [completedTrips[0]?.id]);
 
   useEffect(() => {
@@ -263,18 +269,29 @@ export default function Dashboard() {
         });
         if (incident && Date.now() - incidentAlertRef.current > 5 * 60 * 1000) {
           incidentAlertRef.current = Date.now();
-          setHazardMessage({ body: 'Possible crash or incident detected. Check in now.', at: Date.now() });
+          const emergencyWorkflow = latestSettings.emergency_workflow_enabled === true;
+          const workflowBody = emergencyWorkflow
+            ? 'Possible crash detected. Emergency check-in is active until you end or review the trip.'
+            : 'Possible crash or incident detected. Check in now.';
+          const incidentEvent = {
+            ...incident,
+            emergency_workflow_pending: emergencyWorkflow,
+          };
+          setHazardMessage({ body: workflowBody, at: Date.now(), persistent: emergencyWorkflow });
           notifyStayAlert({
             id: 4011,
             title: 'Possible Incident Detected',
-            body: 'DriveSense detected impact-like motion followed by little movement.',
-            extra: { type: 'possible_crash', severity: incident.severity },
+            body: emergencyWorkflow
+              ? 'Impact-like motion and little movement detected. Open DriveSense to check in.'
+              : 'DriveSense detected impact-like motion followed by little movement.',
+            extra: { type: 'possible_crash', severity: incident.severity, emergencyWorkflow },
           }).catch(() => {});
           setActiveTrip(prev => {
             if (!prev) return prev;
             const updated = {
               ...prev,
-              driving_events: [...(prev.driving_events || []), incident],
+              driving_events: [...(prev.driving_events || []), incidentEvent],
+              emergency_workflow_pending: emergencyWorkflow,
             };
             activeTripStore.set(updated);
             activeTripRef.current = updated;
@@ -895,7 +912,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {hazardMessage && Date.now() - hazardMessage.at < 2 * 60 * 1000 && (
+            {hazardMessage && (hazardMessage.persistent || Date.now() - hazardMessage.at < 2 * 60 * 1000) && (
               <div className="mb-4 rounded-xl bg-red-500/25 px-3 py-2 text-sm font-medium text-red-50">
                 {hazardMessage.body}
               </div>

@@ -37,6 +37,14 @@ export function getObdBluetoothSupport() {
   };
 }
 
+export function getObdBluetoothPermissionStatus() {
+  const support = getObdBluetoothSupport();
+  return {
+    ...support,
+    status: support.supported ? 'not_requested' : 'unavailable',
+  };
+}
+
 export async function connectObdBleAdapter() {
   const nav = /** @type {any} */ (navigator);
   if (!nav.bluetooth) throw new Error('Web Bluetooth is not available on this device.');

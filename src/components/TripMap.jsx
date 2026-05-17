@@ -18,6 +18,7 @@ const EVENT_COLORS = {
   aggressive_overtake: '#f97316',
   near_miss: '#dc2626',
   phone_use: '#dc2626',
+  possible_crash: '#991b1b',
 };
 
 const EVENT_LABELS = {
@@ -30,6 +31,7 @@ const EVENT_LABELS = {
   aggressive_overtake: '>>',
   near_miss: '!',
   phone_use: 'P',
+  possible_crash: '!!',
 };
 
 const RISK_COLORS = {

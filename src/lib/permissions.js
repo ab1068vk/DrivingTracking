@@ -3,6 +3,8 @@ import { Geolocation } from '@capacitor/geolocation';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { isAndroid, isNativePlatform, openNativeSettings } from '@/lib/nativePlatform';
 import { localSettings } from '@/lib/trackingStore';
+import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
+import { getMotionSensorSupport } from '@/lib/sensorFusionModel';
 
 const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
 
@@ -15,6 +17,8 @@ export async function getPermissionStatus() {
     activityRecognition: 'unknown',
     notifications: 'unknown',
     phoneUsageAccess: 'unknown',
+    motionSensors: 'unknown',
+    bluetooth: 'unknown',
   };
 
   try {
@@ -51,6 +55,11 @@ export async function getPermissionStatus() {
   if (status.backgroundLocation === 'unknown') {
     status.backgroundLocation = localSettings.get().background_location_granted ? 'granted' : 'not_requested';
   }
+
+  const motionSupport = getMotionSensorSupport();
+  status.motionSensors = motionSupport.status;
+  const bluetoothSupport = getObdBluetoothSupport();
+  status.bluetooth = bluetoothSupport.supported ? 'not_requested' : 'unavailable';
 
   localSettings.update({
     location_permission_granted: status.foregroundLocation === 'granted',
@@ -147,6 +156,8 @@ export function getPermissionExplanation(kind) {
     activityRecognition: 'Physical activity helps DriveSense tell driving apart from walking, cycling, and still time before auto-tracking starts.',
     notifications: 'Notifications are used for the persistent tracking notice, long-trip reminders, completed-trip summaries, weekly summaries, achievements, and maintenance reminders.',
     phoneUsageAccess: 'Optional Android Usage Access lets DriveSense detect foreground app use during a trip, so phone-use scoring is based on real phone activity instead of GPS behaviour only.',
+    motionSensors: 'Motion and gyroscope access lets DriveSense confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.',
+    bluetooth: 'OBD-II Bluetooth is optional and only used when you connect a compatible adapter. Android may ask for Nearby Devices/Bluetooth access before pairing.',
   };
   return copy[kind] || '';
 }

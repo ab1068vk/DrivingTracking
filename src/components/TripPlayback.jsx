@@ -14,6 +14,11 @@ const EVENT_COLORS = {
   sharp_turn: '#3b82f6',
   speeding: '#f97316',
   idle: '#6b7280',
+  lane_change: '#0ea5e9',
+  aggressive_overtake: '#f97316',
+  near_miss: '#dc2626',
+  phone_use: '#dc2626',
+  possible_crash: '#991b1b',
 };
 
 let leafletLoaded = false;

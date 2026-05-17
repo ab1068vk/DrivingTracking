@@ -7,6 +7,31 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 const round2 = (value) => Math.round(value * 100) / 100;
 
+export function getMotionSensorSupport() {
+  const win = /** @type {any} */ (typeof window !== 'undefined' ? window : {});
+  const supported = Boolean(win.DeviceMotionEvent);
+  const permissionRequired = typeof win.DeviceMotionEvent?.requestPermission === 'function';
+  return {
+    supported,
+    permissionRequired,
+    status: !supported ? 'unavailable' : permissionRequired ? 'not_requested' : 'granted',
+    note: supported
+      ? permissionRequired
+        ? 'This device asks before DriveSense can use motion and gyroscope samples.'
+        : 'Motion and gyroscope samples are available without a separate Android prompt.'
+      : 'Device motion events are not available in this browser or WebView.',
+  };
+}
+
+export async function requestMotionSensorPermission() {
+  const win = /** @type {any} */ (typeof window !== 'undefined' ? window : {});
+  if (!win.DeviceMotionEvent) return false;
+  const permissionApi = win.DeviceMotionEvent.requestPermission;
+  if (typeof permissionApi !== 'function') return true;
+  const result = await permissionApi.call(win.DeviceMotionEvent).catch(() => 'denied');
+  return result === 'granted';
+}
+
 export function normalizeMotionSample(input = {}) {
   const acceleration = input.accelerationIncludingGravity || input.acceleration || input;
   const rotation = input.rotationRate || input.rotation || {};
@@ -164,11 +189,7 @@ export function createMotionSensorFusion({ maxSamples = 5000, onIncidentSample =
   return {
     async start() {
       if (listening || typeof window === 'undefined') return false;
-      const permissionApi = /** @type {any} */ (window.DeviceMotionEvent)?.requestPermission;
-      if (typeof permissionApi === 'function') {
-        const result = await permissionApi.call(window.DeviceMotionEvent).catch(() => 'denied');
-        if (result !== 'granted') return false;
-      }
+      if (!await requestMotionSensorPermission()) return false;
       window.addEventListener('devicemotion', onMotion);
       listening = true;
       return true;

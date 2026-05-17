@@ -45,7 +45,8 @@ import {
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
-import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
+import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
+import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -87,11 +88,16 @@ function Toggle({ value, onChange, disabled = false }) {
 
 function PermissionBadge({ value }) {
   const granted = value === 'granted';
+  const unavailable = value === 'unavailable';
   return (
     <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
-      granted ? 'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
+      granted
+        ? 'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300'
+        : unavailable
+          ? 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300'
+          : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
     }`}>
-      {granted ? 'Granted' : value === 'denied' ? 'Denied' : 'Needs setup'}
+      {granted ? 'Granted' : unavailable ? 'Unavailable' : value === 'denied' ? 'Denied' : 'Needs setup'}
     </span>
   );
 }
@@ -160,6 +166,7 @@ export default function Settings() {
   const [calibLoading, setCalibLoading] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: 180 });
+  const [obdPairingStatus, setObdPairingStatus] = useState('');
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -425,6 +432,26 @@ export default function Settings() {
     }
   };
 
+  const handleMotionPermission = async () => {
+    const granted = await requestMotionSensorPermission();
+    await refreshPermissions();
+    if (!granted) alert(getPermissionExplanation('motionSensors'));
+  };
+
+  const handleObdPairing = async () => {
+    setObdPairingStatus('Opening Bluetooth chooser...');
+    try {
+      const result = await connectObdBleAdapter();
+      const name = result.device?.name || 'OBD-II adapter';
+      setObdPairingStatus(result.connected ? `${name} connected for this session.` : `${name} selected. Could not open a GATT session.`);
+      updateCfg({ obd_bluetooth_enabled: true });
+      await refreshPermissions();
+    } catch (error) {
+      setObdPairingStatus(error?.message || 'Could not connect to the OBD-II adapter.');
+      await refreshPermissions();
+    }
+  };
+
   const handleDeleteAllTrips = async () => {
     if (!confirm('Delete ALL trips? This cannot be undone.')) return;
     const trips = allTrips;
@@ -470,6 +497,7 @@ export default function Settings() {
 
   const effectiveTrackingMode = cfg.tracking_paused ? 'manual' : cfg.tracking_mode;
   const obdSupport = getObdBluetoothSupport();
+  const motionSupport = getMotionSensorSupport();
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
 
@@ -579,6 +607,8 @@ export default function Settings() {
             { key: 'backgroundLocation', label: 'Background Location', sub: getPermissionExplanation('backgroundLocation'), action: requestBackgroundLocationPermission },
             { key: 'activityRecognition', label: 'Physical Activity', sub: getPermissionExplanation('activityRecognition'), action: requestActivityRecognitionPermission },
             { key: 'notifications', label: 'Notifications', sub: getPermissionExplanation('notifications'), action: requestNotificationPermission },
+            { key: 'motionSensors', label: 'Motion Sensors', sub: getPermissionExplanation('motionSensors'), action: handleMotionPermission },
+            { key: 'bluetooth', label: 'Bluetooth / Nearby Devices', sub: getPermissionExplanation('bluetooth'), action: handleObdPairing },
             ...(isAndroid() ? [{ key: 'phoneUsageAccess', label: 'Phone Usage Access', sub: getPermissionExplanation('phoneUsageAccess'), action: openAndroidUsageAccessSettings }] : []),
           ].map(({ key, label, sub, action }) => (
             <SettingRow key={key} icon={Info} label={label} sublabel={sub}>
@@ -640,6 +670,28 @@ export default function Settings() {
               sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications.',
               value: permissionStatus?.backgroundLocation,
               action: requestBackgroundLocationPermission,
+            },
+            {
+              label: 'Sensor fusion, crash detection, phone movement, and incident check-in',
+              sub: 'Uses GPS plus device motion and Android activity context. Motion usually has no Android prompt, but this row will request it on platforms that require one.',
+              value: permissionStatus?.motionSensors,
+              action: handleMotionPermission,
+            },
+            {
+              label: 'Real speed limits, weather, OSRM map matching, and offline route previews',
+              sub: 'Uses open-source map/weather data over the network or cached local route data. Android does not show a runtime prompt for Internet access.',
+              value: 'none',
+            },
+            {
+              label: 'Live voice alerts and AI driving coach summaries',
+              sub: 'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.',
+              value: 'none',
+            },
+            {
+              label: 'OBD-II Bluetooth diagnostics',
+              sub: 'Optional. Pairing a compatible BLE adapter may trigger Android Nearby Devices/Bluetooth permission and the Bluetooth chooser.',
+              value: permissionStatus?.bluetooth,
+              action: handleObdPairing,
             },
           ].map(({ label, sub, value, action }) => (
             <SettingRow key={label} icon={Info} label={label} sublabel={sub}>
@@ -1101,12 +1153,26 @@ export default function Settings() {
           <SettingRow
             icon={SlidersHorizontal}
             label="Sensor fusion model"
-            sublabel="Combine GPS, device motion, gyroscope, and Android activity context"
+            sublabel={motionSupport.supported ? 'Combine GPS, device motion, gyroscope, and Android activity context' : motionSupport.note}
           >
-            <Toggle
-              value={cfg.sensor_fusion_enabled !== false}
-              onChange={v => updateCfg({ sensor_fusion_enabled: v })}
-            />
+            <div className="flex items-center gap-2">
+              {motionSupport.permissionRequired && permissionStatus?.motionSensors !== 'granted' && (
+                <button
+                  className="text-xs font-semibold text-primary"
+                  onClick={async e => {
+                    e.stopPropagation();
+                    await handleMotionPermission();
+                  }}
+                >
+                  Enable
+                </button>
+              )}
+              <Toggle
+                value={cfg.sensor_fusion_enabled !== false}
+                onChange={v => updateCfg({ sensor_fusion_enabled: v })}
+                disabled={!motionSupport.supported}
+              />
+            </div>
           </SettingRow>
           <SettingRow
             icon={AlertTriangle}
@@ -1122,7 +1188,7 @@ export default function Settings() {
           <SettingRow
             icon={Bell}
             label="Emergency workflow"
-            sublabel="Keep optional; disabled by default until you configure contacts"
+            sublabel="Optional local check-in notice after a possible incident; no SMS or paid emergency service is used"
           >
             <Toggle
               value={cfg.emergency_workflow_enabled === true}
@@ -1175,12 +1241,29 @@ export default function Settings() {
             label="OBD-II Bluetooth"
             sublabel={obdSupport.supported ? 'BLE OBD-II parsing is available for compatible adapters' : obdSupport.note}
           >
-            <Toggle
-              value={cfg.obd_bluetooth_enabled === true}
-              onChange={v => updateCfg({ obd_bluetooth_enabled: v })}
-              disabled={!obdSupport.supported}
-            />
+            <div className="flex items-center gap-2">
+              <button
+                className="text-xs font-semibold text-primary disabled:text-muted-foreground"
+                disabled={!obdSupport.supported}
+                onClick={async e => {
+                  e.stopPropagation();
+                  await handleObdPairing();
+                }}
+              >
+                Pair
+              </button>
+              <Toggle
+                value={cfg.obd_bluetooth_enabled === true}
+                onChange={v => updateCfg({ obd_bluetooth_enabled: v })}
+                disabled={!obdSupport.supported}
+              />
+            </div>
           </SettingRow>
+          {obdPairingStatus && (
+            <div className="px-1 pb-3 text-xs text-muted-foreground">
+              {obdPairingStatus}
+            </div>
+          )}
         </div>
 
         {/* Phone Use Detection */}

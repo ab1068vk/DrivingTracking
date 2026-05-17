@@ -268,6 +268,7 @@ export default function TripDetail() {
   const mapMatchingContext = trip.map_matching_context || null;
   const sensorFusionSummary = trip.sensor_fusion_summary || null;
   const driverAnomaly = trip.driver_anomaly || null;
+  const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
   const phoneUseEvents = (trip.driving_events || []).filter((event) => event.type === 'phone_use');
   const phoneUseWindows = phoneUseEvents.length ? phoneUseEvents : (trip.phone_use_events || []);
   const phoneUseRisk = trip.phone_use_risk || 'none';
@@ -415,6 +416,18 @@ export default function TripDetail() {
       {(trip.near_miss_count || 0) > 0 && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
           {trip.near_miss_count} near-miss event{trip.near_miss_count === 1 ? '' : 's'} detected on this trip. Review your route for hazardous zones.
+        </div>
+      )}
+
+      {possibleIncidentEvents.length > 0 && (
+        <div className="rounded-2xl border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-200">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="h-4 w-4" />
+            Possible crash / incident detected
+          </div>
+          <div className="mt-1 text-xs">
+            Impact-like motion and low movement were recorded. {possibleIncidentEvents.some((event) => event.emergency_workflow_pending) ? 'Emergency check-in was active for this trip.' : 'Review the trip timeline and notes while the details are fresh.'}
+          </div>
         </div>
       )}
 
@@ -1202,8 +1215,12 @@ export default function TripDetail() {
                 lane_change: { label: 'Lane Change', icon: '<>', color: 'text-sky-600' },
                 tailgate_cycle: { label: 'Tailgate Cycle', icon: '!!', color: 'text-red-600' },
                 erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
+                possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
               };
               const cfg = labels[evt.type] || { label: evt.type, icon: '⚠', color: 'text-foreground' };
+              const eventValueText = evt.type === 'possible_crash'
+                ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
+                : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
               return (
                 <div key={i} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                   <div className="flex items-center gap-2.5">
@@ -1211,7 +1228,7 @@ export default function TripDetail() {
                     <div>
                       <div className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</div>
                       <div className="text-xs text-muted-foreground">
-                        {new Date(evt.timestamp).toLocaleTimeString()} · {evt.value?.toFixed(1)} {evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s²'}
+                        {new Date(evt.timestamp).toLocaleTimeString()} - {eventValueText}
                       </div>
                     </div>
                   </div>
