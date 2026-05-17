@@ -44,7 +44,10 @@ describe('tracking diagnostics', () => {
         foregroundLocation: 'granted',
         backgroundLocation: 'denied',
         activityRecognition: 'granted',
+        motionSensors: 'granted',
+        notifications: 'granted',
         phoneUsageAccess: 'granted',
+        bluetooth: 'not_requested',
       },
       nativeStatus: { enabled: true },
       batteryStatus: { batteryOptimizationIgnored: true },
@@ -53,5 +56,8 @@ describe('tracking diagnostics', () => {
 
     expect(health.find((item) => item.id === 'native')?.status).toBe('good');
     expect(health.find((item) => item.id === 'background')?.status).toBe('warn');
+    expect(health.find((item) => item.id === 'motion')?.status).toBe('good');
+    expect(health.find((item) => item.id === 'notifications')?.status).toBe('good');
+    expect(health.find((item) => item.id === 'bluetooth')?.detail).toContain('OBD-II');
   });
 });

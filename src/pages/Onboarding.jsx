@@ -8,6 +8,7 @@ import {
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
+import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { useNavigate } from 'react-router-dom';
@@ -37,7 +38,7 @@ const STEPS = [
     icon: Activity,
     title: 'Motion & Activity',
     subtitle: 'For smarter trip detection',
-    description: 'We use device motion sensors to detect acceleration, braking, and turns. This helps us accurately score your driving without draining your battery.',
+    description: 'DriveSense can use motion sensors and Android activity to confirm harsh events, improve auto tracking, and support possible incident detection.',
     color: 'bg-gradient-to-br from-purple-500 to-purple-700',
     textColor: 'text-white',
   },
@@ -91,6 +92,9 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [trackingMode, setTrackingMode] = useState('manual');
   const [locationGranted, setLocationGranted] = useState(false);
+  const [motionGranted, setMotionGranted] = useState(getMotionSensorSupport().status === 'granted');
+  const [activityGranted, setActivityGranted] = useState(false);
+  const [notificationsGranted, setNotificationsGranted] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const navigate = useNavigate();
 
@@ -102,6 +106,24 @@ export default function Onboarding() {
     const granted = await requestForegroundLocationPermission();
     setLocationGranted(granted);
     localSettings.update({ location_permission_granted: granted });
+    setRequesting(false);
+  };
+
+  const handleMotionActivityRequest = async () => {
+    setRequesting(true);
+    const motionOk = await requestMotionSensorPermission();
+    const activityOk = isAndroid() ? await requestActivityRecognitionPermission() : true;
+    setMotionGranted(motionOk);
+    setActivityGranted(activityOk);
+    localSettings.update({ activity_permission_granted: activityOk });
+    setRequesting(false);
+  };
+
+  const handleNotificationRequest = async () => {
+    setRequesting(true);
+    const granted = await requestNotificationPermission();
+    setNotificationsGranted(granted);
+    localSettings.update({ notification_permission_granted: granted });
     setRequesting(false);
   };
 
@@ -205,6 +227,47 @@ export default function Onboarding() {
                   className="w-full p-3 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl text-sm font-medium transition-colors border border-primary/20"
                 >
                   {requesting ? 'Requesting...' : 'Grant Location Access'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {currentStep.id === 'activity' && (
+            <div className="mb-6 space-y-2">
+              {motionGranted && (!isAndroid() || activityGranted) ? (
+                <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-xl text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50">
+                  <Check className="w-4 h-4" />
+                  <span className="text-sm font-medium">Motion and activity access ready</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleMotionActivityRequest}
+                  disabled={requesting}
+                  className="w-full p-3 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl text-sm font-medium transition-colors border border-primary/20"
+                >
+                  {requesting ? 'Requesting...' : isAndroid() ? 'Enable Motion & Activity' : 'Enable Motion Sensors'}
+                </button>
+              )}
+              <p className="text-xs text-muted-foreground text-center">
+                Android may not show a separate motion prompt, but Physical Activity is requested for auto tracking.
+              </p>
+            </div>
+          )}
+
+          {currentStep.id === 'notifications' && (
+            <div className="mb-6">
+              {notificationsGranted ? (
+                <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-xl text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50">
+                  <Check className="w-4 h-4" />
+                  <span className="text-sm font-medium">Notifications enabled</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleNotificationRequest}
+                  disabled={requesting}
+                  className="w-full p-3 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl text-sm font-medium transition-colors border border-primary/20"
+                >
+                  {requesting ? 'Requesting...' : 'Enable Notifications'}
                 </button>
               )}
             </div>

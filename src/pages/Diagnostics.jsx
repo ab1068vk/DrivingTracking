@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   Battery,
+  Bluetooth,
   Car,
   CheckCircle2,
   Clock,
@@ -13,6 +14,7 @@ import {
   Satellite,
   Shield,
   Smartphone,
+  SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
 import { tripService } from '@/api/trips';
@@ -96,6 +98,9 @@ function HealthIcon({ id }) {
     location: MapPin,
     background: Satellite,
     activity: Activity,
+    motion: SlidersHorizontal,
+    notifications: Smartphone,
+    bluetooth: Bluetooth,
     battery: Battery,
     usage: Smartphone,
     'latest-trip': Car,

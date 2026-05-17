@@ -976,9 +976,33 @@ export default function Settings() {
           </div>
 
           {cfg.night_detection_mode === 'sunset' && (
-            <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
-              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, DriveSense falls back to the custom window.
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+                <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, DriveSense falls back to the custom window.
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  { key: 'night_sunset_offset_minutes', label: 'Sunset offset', min: -120, max: 120 },
+                  { key: 'night_sunrise_offset_minutes', label: 'Sunrise offset', min: -120, max: 120 },
+                ].map(({ key, label, min, max }) => (
+                  <div key={key} className="rounded-xl border border-border bg-secondary/30 p-3">
+                    <div className="mb-1.5 flex justify-between text-xs">
+                      <span className="font-medium">{label}</span>
+                      <span className="font-semibold text-primary">{cfg[key] || 0} min</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      step={15}
+                      value={cfg[key] || 0}
+                      onChange={e => updateCfg({ [key]: Number(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -1078,9 +1102,13 @@ export default function Settings() {
             { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', min: 2, max: 8, step: 0.5 },
             { key: 'threshold_rapid_accel_ms2', label: 'Rapid Acceleration', unit: 'm/s²', min: 1.5, max: 6, step: 0.5 },
             { key: 'threshold_tailgate_decel_ms2', label: 'Tailgate Decel', unit: 'm/s²', min: 1.5, max: 5, step: 0.25 },
-            { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn', unit: 'g', min: 0.2, max: 0.6, step: 0.05 },
+            { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn Low', unit: 'g', min: 0.2, max: 0.6, step: 0.05 },
+            { key: 'threshold_sharp_turn_g_medium', label: 'Sharp Turn Medium', unit: 'g', min: 0.25, max: 0.8, step: 0.05 },
+            { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', min: 0.35, max: 1.0, step: 0.05 },
             { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 180, step: 10 },
             { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
+            { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },
+            { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },
           ].map(({ key, label, unit, min, max, step }) => (
             <div key={key} className="px-1">
               <div className="flex justify-between text-xs mb-1.5">
@@ -1335,6 +1363,44 @@ export default function Settings() {
             <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
               For real phone activity detection on Android, enable Phone Usage Access above. Without it, DriveSense falls back to GPS behaviour patterns only.
+            </div>
+            <div className="mt-3 rounded-2xl border border-border bg-card p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold">Expert phone-use tuning</div>
+                  <div className="text-xs text-muted-foreground">Backend detection knobs exposed for calibration and testing.</div>
+                </div>
+                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${thresholdEditingEnabled ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : 'bg-secondary text-muted-foreground'}`}>
+                  {thresholdEditingEnabled ? 'Editable' : 'Locked'}
+                </span>
+              </div>
+              <div className="space-y-3">
+                {[
+                  { key: 'phone_micro_steer_count', label: 'Micro-steer count', min: 2, max: 8, step: 1, unit: 'turns' },
+                  { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },
+                  { key: 'phone_lane_drift_deg', label: 'Lane drift angle', min: 3, max: 18, step: 1, unit: 'deg' },
+                  { key: 'phone_coupling_threshold', label: 'Coupling threshold', min: 0.05, max: 0.4, step: 0.05, unit: '' },
+                  { key: 'phone_confidence_threshold', label: 'Confidence threshold', min: 0.15, max: 0.8, step: 0.05, unit: '' },
+                  { key: 'phone_min_window_s', label: 'Minimum window', min: 2, max: 12, step: 1, unit: 's' },
+                ].map(({ key, label, min, max, step, unit }) => (
+                  <div key={key}>
+                    <div className="mb-1 flex justify-between text-xs">
+                      <span className="font-medium">{label}</span>
+                      <span className="font-semibold text-primary">{cfg[key]} {unit}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      step={step}
+                      value={cfg[key]}
+                      disabled={!thresholdEditingEnabled || cfg.phone_use_detection_enabled === false}
+                      onChange={e => updateCfg({ [key]: Number(e.target.value) })}
+                      className="w-full accent-primary disabled:opacity-45"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
