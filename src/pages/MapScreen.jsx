@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
-import { MapPin, Crosshair, Car, AlertCircle, Play, Filter } from 'lucide-react';
+import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
 import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
@@ -52,6 +52,7 @@ export default function MapScreen() {
   const [showDangerZones, setShowDangerZones] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [showRouteRisk, setShowRouteRisk] = useState(false);
+  const [showSpeedLimits, setShowSpeedLimits] = useState(false);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
 
@@ -71,6 +72,8 @@ export default function MapScreen() {
   const selectedEvents = settings.phone_use_show_on_map === false
     ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
     : (selectedTrip?.driving_events || []);
+  const selectedSpeedLimitCoverage = selectedTrip?.speed_limit_context?.coverage ?? 0;
+  const selectedHasSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
   const selectedRiskSegments = useMemo(() => (
     selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
   ), [routeRiskIndex, selectedTrip]);
@@ -225,6 +228,7 @@ export default function MapScreen() {
               dangerZones={dangerZones}
               showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
               routeRiskSegments={selectedRiskSegments}
+              showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
               height="400px"
             />
             <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
@@ -300,7 +304,58 @@ export default function MapScreen() {
             Danger zone
           </div>
         )}
+        {selectedHasSpeedLimits && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 bg-emerald-500 rounded-full" />
+            OSM speed limit
+          </div>
+        )}
       </div>
+
+      {selectedTrip && (
+        <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Layers className="h-4 w-4 text-primary" />
+            <h2 className="font-semibold">Map layers</h2>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <button
+              onClick={() => setShowSpeedLimits(value => !value)}
+              disabled={!selectedHasSpeedLimits}
+              className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
+                showSpeedLimits ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-border bg-secondary/40 text-muted-foreground'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Gauge className="h-4 w-4" />
+                OSM speed limits
+              </div>
+              <div className="mt-1 font-normal">
+                {selectedHasSpeedLimits ? `${selectedSpeedLimitCoverage}% route coverage` : 'Open a trip detail and refresh context'}
+              </div>
+            </button>
+            <button
+              onClick={() => setShowRouteRisk(value => !value)}
+              disabled={!selectedTrip}
+              className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
+                showRouteRisk ? 'border-orange-500 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300' : 'border-border bg-secondary/40 text-muted-foreground'
+              }`}
+            >
+              Route risk
+              <div className="mt-1 font-normal">{selectedRiskSegments.length} matched segments</div>
+            </button>
+            <button
+              onClick={() => setShowDangerZones(value => !value)}
+              className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all ${
+                showDangerZones ? 'border-red-500 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300' : 'border-border bg-secondary/40 text-muted-foreground'
+              }`}
+            >
+              Risk hotspots
+              <div className="mt-1 font-normal">{dangerZones.length} local zones</div>
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-start justify-between gap-3">
@@ -376,6 +431,15 @@ export default function MapScreen() {
                 }`}
               >
                 Route risk
+              </button>
+              <button
+                onClick={() => setShowSpeedLimits(value => !value)}
+                disabled={!selectedTrip || !selectedHasSpeedLimits}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
+                  showSpeedLimits ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                OSM speed
               </button>
             </div>
           </div>

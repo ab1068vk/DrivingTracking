@@ -16,17 +16,25 @@ import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
 import {
   calculateSegmentMetrics,
+  buildDrivingThresholds,
+  calculateTripStats,
+  calculateTripScores,
+  detectDrivingEvents,
   formatDistance,
   formatDuration,
   formatDateTime,
   formatSpeed,
   getScoreColor,
   inferSpeedZones,
+  simplifyRoute,
   splitTripAtStops,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
+import { mapMatchRoute } from '@/lib/mapMatching';
+import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import {
   TRIP_TAG_OPTIONS,
   buildScoreExplanation,
@@ -67,6 +75,7 @@ export default function TripDetail() {
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
+  const [showSpeedLimitsOnMap, setShowSpeedLimitsOnMap] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
@@ -133,6 +142,63 @@ export default function TripDetail() {
         tags: normalizeTripTags(updatedTrip || {}),
       });
       setEditingMetadata(false);
+    },
+  });
+  const contextMutation = useMutation({
+    mutationFn: async () => {
+      if (!trip) throw new Error('Trip not loaded');
+      const thresholds = buildDrivingThresholds(localSettings.get());
+      const originalPoints = trip.route_points || [];
+      const mapMatchingContext = await mapMatchRoute(originalPoints, localSettings.get());
+      let routePoints = mapMatchingContext.routePoints || originalPoints;
+      const speedLimitContext = await annotateRouteSpeedLimits(routePoints, localSettings.get());
+      routePoints = speedLimitContext.routePoints || routePoints;
+      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
+      const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
+      const detectedEvents = Reflect.get(detection, 'events') ?? detection;
+      const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+      const weatherContext = await fetchWeatherContextForTrip(routePoints, trip.start_time, trip.end_time, localSettings.get()).catch((error) => ({
+        provider: 'open-meteo',
+        status: 'unavailable',
+        riskLevel: 'low',
+        riskScore: 0,
+        riskMultiplier: 1,
+        error: error?.message || 'Weather lookup unavailable',
+      }));
+      let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
+      scores = applyWeatherRiskToScores(scores, weatherContext);
+      const events = scores.driving_events || detectedEvents;
+      const simplifiedPoints = simplifyRoute(routePoints, 10, events);
+      return tripService.update(id, {
+        ...stats,
+        ...scores,
+        route_points: simplifiedPoints,
+        route_points_raw_count: routePoints.length,
+        driving_events: events,
+        speed_limit_context: {
+          provider: 'openstreetmap_overpass',
+          status: speedLimitContext.status,
+          coverage: speedLimitContext.coverage,
+          source: speedLimitContext.source,
+          error: speedLimitContext.error,
+        },
+        map_matching_context: {
+          provider: mapMatchingContext.provider,
+          status: mapMatchingContext.status,
+          confidence: mapMatchingContext.confidence ?? null,
+          snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
+          error: mapMatchingContext.error,
+        },
+        weather_context: weatherContext,
+        needs_rescore: false,
+      });
+    },
+    onSuccess: (updatedTrip) => {
+      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+      qc.invalidateQueries({ queryKey: ['trip', id] });
+      qc.invalidateQueries({ queryKey: ['all-trips'] });
+      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      qc.invalidateQueries({ queryKey: ['map-trips'] });
     },
   });
   const [dismissedTags, setDismissedTags] = useState(() => {
@@ -284,6 +350,12 @@ export default function TripDetail() {
   const weatherContext = trip.weather_context || null;
   const speedLimitContext = trip.speed_limit_context || null;
   const mapMatchingContext = trip.map_matching_context || null;
+  const osmSpeedLimitPoints = (trip.route_points || []).filter((point) => (
+    point.speed_limit_source === 'openstreetmap' &&
+    Number.isFinite(Number(point.speed_limit_kmh))
+  ));
+  const osmSpeedLimits = [...new Set(osmSpeedLimitPoints.map((point) => Number(point.speed_limit_kmh)).filter(Number.isFinite))]
+    .sort((a, b) => a - b);
   const sensorFusionSummary = trip.sensor_fusion_summary || null;
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
@@ -511,8 +583,11 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                OpenStreetMap/Overpass coverage: {speedLimitContext.coverage ?? 0}% of route points. Fallback inferred zones fill any gaps.
+                OpenStreetMap/Overpass coverage: {speedLimitContext.coverage ?? 0}% of route points. {osmSpeedLimits.length ? `Detected limits: ${osmSpeedLimits.join(', ')} km/h.` : 'Fallback inferred zones fill any gaps.'}
               </div>
+              {speedLimitContext.error && (
+                <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
+              )}
             </div>
           )}
           {mapMatchingContext && (
@@ -658,7 +733,25 @@ export default function TripDetail() {
 
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex flex-wrap justify-end gap-2">
+          <button
+            onClick={() => contextMutation.mutate()}
+            disabled={contextMutation.isPending || !trip.route_points?.length}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
+          >
+            <Route className="h-3.5 w-3.5" />
+            {contextMutation.isPending ? 'Refreshing context...' : 'Refresh OSM Context'}
+          </button>
+          <button
+            onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
+            disabled={osmSpeedLimitPoints.length === 0}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
+              showSpeedLimitsOnMap ? 'bg-emerald-600 text-white' : 'bg-card border border-border text-muted-foreground'
+            }`}
+          >
+            <Gauge className="h-3.5 w-3.5" />
+            OSM Speed Limits
+          </button>
           <button
             onClick={() => setShowCorneringHeatmap((value) => !value)}
             className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
@@ -669,11 +762,22 @@ export default function TripDetail() {
             Cornering Heatmap
           </button>
         </div>
+        {!speedLimitContext && (
+          <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+            OpenStreetMap speed limits have not been fetched for this trip yet. Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
+          </div>
+        )}
+        {contextMutation.isError && (
+          <div className="mb-2 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
+            {contextMutation.error?.message || 'Could not refresh open-source context.'}
+          </div>
+        )}
         <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
           <TripMap
             routePoints={trip.route_points || []}
             events={mapEvents}
             showCorneringHeatmap={showCorneringHeatmap}
+            showSpeedLimits={showSpeedLimitsOnMap}
             showRouteRisk={routeRiskSegments.length > 0}
             routeRiskSegments={routeRiskSegments}
             height="300px"

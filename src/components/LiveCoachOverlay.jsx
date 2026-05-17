@@ -16,23 +16,36 @@ import {
 } from '@/lib/notificationService';
 
 const RECENT_WINDOW_MS = 120000;
-const CHECK_INTERVAL_MS = 60000;
+const CHECK_INTERVAL_MS = 15000;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
 
 const plainText = (message) => {
   if (typeof message === 'string') return message;
   if (typeof message?.props?.children === 'string') return message.props.children;
+  if (Array.isArray(message?.props?.children)) {
+    return message.props.children
+      .map((child) => plainText(child))
+      .join(' ')
+      .trim();
+  }
   return 'Road Sage safety alert';
 };
 
 function speakAlert(text, settings) {
-  if (settings.voice_alerts_enabled === false || typeof window === 'undefined' || !window.speechSynthesis) return;
-  const utterance = new SpeechSynthesisUtterance(text);
+  if (settings.voice_alerts_enabled === false || typeof window === 'undefined' || !window.speechSynthesis) return false;
+  const Utterance = window.SpeechSynthesisUtterance || globalThis.SpeechSynthesisUtterance;
+  if (!Utterance) return false;
+  const utterance = new Utterance(text);
   utterance.rate = 0.95;
   utterance.volume = 0.9;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+export function testVoiceAlert(settings = localSettings.get()) {
+  return speakAlert('Road Sage voice alerts are working.', settings);
 }
 
 export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {

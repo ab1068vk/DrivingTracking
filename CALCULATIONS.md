@@ -40,6 +40,34 @@ Weather context comes from Open-Meteo. Past trips use the historical archive end
 
 Rain is no longer inferred from a rain weather code alone. The trip needs measured rain/precipitation in the selected sample window, or a dominant rain-code window with non-zero precipitation. This avoids showing "rain" for a sunny drive just because a nearby hourly model bucket had rainy weather.
 
+## OpenStreetMap Speed Limits And Context Refresh
+
+Files:
+
+- `src/lib/speedLimitSource.js`
+- `src/lib/mapMatching.js`
+- `src/pages/TripDetail.jsx`
+- `src/components/TripMap.jsx`
+
+When a trip ends, Dashboard runs OSRM map matching first, then annotates route points with OpenStreetMap `maxspeed` tags from Overpass. Trip Detail also exposes **Refresh OSM Context** so existing trips can rerun the same open-source context without recording a new drive.
+
+The speed-limit matcher uses point-to-road-segment distance, not just nearby way vertices. Each matched point receives:
+
+```js
+speed_limit_kmh
+speed_limit_source: 'openstreetmap'
+speed_limit_way_id
+speed_limit_road_name
+```
+
+After refresh, Trip Detail recalculates stats, events, speed compliance, scores, weather adjustment, map-matching status, and OSM coverage. Trip Detail and Map can draw an **OSM Speed Limits** layer:
+
+- green segment: at or below matched limit
+- orange segment: above matched limit
+- red segment: more than 10 km/h over matched limit
+
+If Overpass or OSRM is unavailable, the trip keeps inferred speed zones and records the context status/error instead of hiding the feature.
+
 ## Default Settings And Thresholds
 
 Default user settings live in `src/lib/trackingStore.js`.
@@ -1269,6 +1297,8 @@ Only one message is shown at a time. Priority is:
 5. More than 5 minutes of idle time.
 
 The setting `live_coaching_enabled` disables this feature completely.
+
+Live coaching evaluates active trips every `15 seconds`. Voice alerts use the device/browser `speechSynthesis` API when `voice_alerts_enabled` is true. Settings includes a test button that speaks a short Road Sage phrase and reports when speech output is unavailable in the current browser or Android WebView.
 
 ## Achievement Badges
 

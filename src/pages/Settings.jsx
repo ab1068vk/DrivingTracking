@@ -47,6 +47,7 @@ import { getCurrentLocation } from '@/lib/trackingService';
 import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
+import { testVoiceAlert } from '@/components/LiveCoachOverlay';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -167,6 +168,7 @@ export default function Settings() {
   const [parkedLocation, setParkedLocation] = useState(null);
   const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: 180 });
   const [obdPairingStatus, setObdPairingStatus] = useState('');
+  const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -208,6 +210,12 @@ export default function Settings() {
   const updateTheme = (mode) => {
     const updated = updateCfg({ dark_mode: mode });
     applyThemeMode(updated.dark_mode);
+  };
+
+  const runVoiceTest = () => {
+    const ok = testVoiceAlert(cfg);
+    setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
+    setTimeout(() => setVoiceTestStatus(''), 3000);
   };
 
   const runCalibration = async () => {
@@ -1259,11 +1267,28 @@ export default function Settings() {
             label="Live voice alerts"
             sublabel="Speak urgent coaching alerts on device"
           >
-            <Toggle
-              value={cfg.voice_alerts_enabled !== false}
-              onChange={v => updateCfg({ voice_alerts_enabled: v })}
-            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  runVoiceTest();
+                }}
+                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Test
+              </button>
+              <Toggle
+                value={cfg.voice_alerts_enabled !== false}
+                onChange={v => updateCfg({ voice_alerts_enabled: v })}
+              />
+            </div>
           </SettingRow>
+          {voiceTestStatus && (
+            <div className="px-1 pb-3 text-xs text-muted-foreground">
+              {voiceTestStatus}
+            </div>
+          )}
           <SettingRow
             icon={Bluetooth}
             label="OBD-II Bluetooth"

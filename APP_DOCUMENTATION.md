@@ -2178,6 +2178,14 @@ UI surfaces updated:
 
 Weather context is calculated by `src/lib/weatherContext.js`. Past trips use Open-Meteo historical archive data, current trips use forecast data, and weather samples are constrained to the actual trip time window. Rain labels require precipitation evidence, so a nearby rainy hourly forecast bucket does not automatically mark a dry/sunny trip as rainy.
 
+Open-source route context is visible and refreshable:
+
+- `Dashboard.jsx` runs OSRM map matching and OpenStreetMap/Overpass speed-limit annotation when a trip ends.
+- `TripDetail.jsx` includes **Refresh OSM Context** for older trips or failed lookups. It reruns OSRM, OSM speed limits, weather context, stats, events, speed compliance, and scores.
+- `TripDetail.jsx` and `MapScreen.jsx` expose an **OSM Speed Limits** map layer when matched route points contain `speed_limit_kmh`.
+- `TripMap.jsx` draws speed-limit compliance segments in green, orange, or red and shows the OSM road name/limit in the popup.
+- `speedLimitSource.js` matches points to OSM way segments using point-to-segment distance so coverage is not limited to way vertices.
+
 ## 24. Advanced Feature Expansion Implemented
 
 The second advanced driving-habit expansion is also implemented as real calculations in the scoring and insights pipeline.
@@ -4011,6 +4019,12 @@ It stores dismissed tag suggestions in `drivesense_dismissed_tag_suggestions`. D
 
 The map also provides the last-parked shortcut. Pressing "Where did I park?" reads `drivesense_last_parked`, pans/zooms the map to the saved point, renders the distinct parked marker, and shows a small card with relative time plus a cached Nominatim reverse-geocoded address when available.
 
+When a single trip is selected, Map Screen also shows a dedicated layer panel:
+
+- OSM speed limits, available when the trip has matched `speed_limit_kmh` points.
+- Route risk, from local repeated-event route segment indexing.
+- Risk hotspots, from local historical event clusters.
+
 When a selected trip has matching commute-pattern history, the replay panel shows a "Compare with previous run" dropdown. Selecting a prior run passes it to `TripPlayback` as `secondaryTrip` so both cursors advance by normalized progress on the same wall-clock playback rate.
 
 #### Driving Coach
@@ -4539,6 +4553,13 @@ Cache invalidation:
 
 - Completed trip creation/import invalidates `drivesense_danger_zones`, `drivesense_route_risk_index`, and the driver signature cache.
 - Native trip imports rebuild the same derived caches on the next map/detail/dashboard read.
+- Trip Detail can refresh OpenStreetMap speed limits, OSRM map matching, and Open-Meteo weather context for existing trips. This makes open-source context visible even for trips recorded before the feature existed.
+
+Live voice alerts:
+
+- `LiveCoachOverlay.jsx` evaluates active trip points every 15 seconds.
+- It speaks urgent alerts with `window.speechSynthesis` when `voice_alerts_enabled` is true.
+- `Settings.jsx` includes a **Test** button beside Live voice alerts to confirm speech output is available in the current browser/WebView.
 
 New tests cover:
 

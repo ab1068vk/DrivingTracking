@@ -112,6 +112,7 @@ export default function TripMap({
   dangerZones = [],
   showRouteRisk = false,
   routeRiskSegments = [],
+  showSpeedLimits = false,
   height = '350px',
   className = '',
 }) {
@@ -228,6 +229,30 @@ export default function TripMap({
               .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${segment.label}: ${Math.round(segment.speed_kmh)} km/h`)
               .addTo(layers);
           });
+          if (showSpeedLimits && route.selected) {
+            for (let i = 1; i < route.route_points.length; i++) {
+              const prev = route.route_points[i - 1];
+              const curr = route.route_points[i];
+              const limit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
+              if (!Number.isFinite(limit) || limit <= 0) continue;
+              const speed = Number(curr.speed_kmh ?? prev.speed_kmh) || 0;
+              const overBy = speed - limit;
+              const color = overBy > 10 ? '#ef4444' : overBy > 0 ? '#f97316' : '#22c55e';
+              const source = curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
+              const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || 'matched road';
+              window.L.polyline(
+                [[prev.lat, prev.lng], [curr.lat, curr.lng]],
+                {
+                  color,
+                  weight: route.selected ? 8 : 5,
+                  opacity: 0.48,
+                  smoothFactor: 1.5,
+                }
+              )
+                .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${escapeHtml(roadName)}<br>Limit: ${Math.round(limit)} km/h (${escapeHtml(source)})<br>Speed: ${Math.round(speed)} km/h`)
+                .addTo(layers);
+            }
+          }
         } else {
           window.L.polyline(latLngs, {
             color: route.color,
@@ -349,7 +374,7 @@ export default function TripMap({
         .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
@@ -407,14 +432,14 @@ function OfflineRoutePreview({ routePoints = [], routes = null, events = [], hei
 
   if (!allPoints.length) {
     return (
-      <div className={`map-container flex items-center justify-center bg-secondary/40 text-sm text-muted-foreground ${className}`} style={{ height }}>
+      <div className={`map-container relative flex items-center justify-center bg-secondary/40 text-sm text-muted-foreground ${className}`} style={{ height }}>
         Offline route preview unavailable.
       </div>
     );
   }
 
   return (
-    <div className={`map-container bg-secondary/40 ${className}`} style={{ height }}>
+    <div className={`map-container relative bg-secondary/40 ${className}`} style={{ height }}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
         <rect width="100" height="100" fill="hsl(var(--secondary))" opacity="0.45" />
         {maskedRoutes.map((route) => (

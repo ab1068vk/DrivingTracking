@@ -98,17 +98,31 @@ function normalizeWays(elements = []) {
     .filter(Boolean);
 }
 
+function pointToSegmentDistanceM(point, start, end) {
+  const latScale = 111320;
+  const lngScale = 111320 * Math.cos((Number(point.lat) || 0) * Math.PI / 180);
+  const px = point.lng * lngScale;
+  const py = point.lat * latScale;
+  const ax = start.lng * lngScale;
+  const ay = start.lat * latScale;
+  const bx = end.lng * lngScale;
+  const by = end.lat * latScale;
+  const dx = bx - ax;
+  const dy = by - ay;
+  if (dx === 0 && dy === 0) return haversineDistance(point.lat, point.lng, start.lat, start.lng) * 1000;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+  const nearestX = ax + t * dx;
+  const nearestY = ay + t * dy;
+  return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
+}
+
 function nearestWayLimit(point, ways = [], maxDistanceM = 75) {
   let best = null;
   for (const way of ways) {
     for (let i = 1; i < way.geometry.length; i++) {
       const prev = way.geometry[i - 1];
       const curr = way.geometry[i];
-      const distanceM = Math.min(
-        haversineDistance(point.lat, point.lng, prev.lat, prev.lng),
-        haversineDistance(point.lat, point.lng, curr.lat, curr.lng),
-        haversineDistance(point.lat, point.lng, (prev.lat + curr.lat) / 2, (prev.lng + curr.lng) / 2)
-      ) * 1000;
+      const distanceM = pointToSegmentDistanceM(point, prev, curr);
       if (distanceM <= maxDistanceM && (!best || distanceM < best.distanceM)) {
         best = { ...way, distanceM };
       }

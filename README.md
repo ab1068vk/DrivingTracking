@@ -68,6 +68,13 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 - Trip cards automatically show a Night tag when `night_driving` is true, even if the user did not manually tag the trip.
 - Local trip schema version 7 rescans older completed trips so advanced trip-page fields are recalculated with the current engine.
 
+## Open-Source Context And Live Coaching
+
+- Trip Detail has a **Refresh OSM Context** action that reruns OpenStreetMap speed limits, OSRM map matching, and weather context for existing trips.
+- Trip Detail and Map can show an **OSM Speed Limits** layer when matched speed-limit tags exist on route points.
+- Settings includes a **Test** button for live voice alerts so speech support can be verified before driving.
+- Live coaching checks active trips every 15 seconds and can speak urgent speed, phone, braking, following-gap, fatigue, and near-miss alerts when voice alerts are enabled.
+
 ## Native Background Tracking
 
 Native background auto tracking lives in:
