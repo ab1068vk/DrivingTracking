@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { registerPlugin } from '@capacitor/core';
 import { AlertTriangle, X } from 'lucide-react';
 import {
   buildDrivingThresholds,
@@ -14,11 +15,13 @@ import {
   notifyPhoneUseDetected,
   notifySpeedingAlert,
 } from '@/lib/notificationService';
+import { isNativePlatform } from '@/lib/nativePlatform';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
+const NativeSpeech = registerPlugin('DriveSenseActivityRecognition');
 
 const plainText = (message) => {
   if (typeof message === 'string') return message;
@@ -32,8 +35,17 @@ const plainText = (message) => {
   return 'Road Sage safety alert';
 };
 
-function speakAlert(text, settings) {
-  if (settings.voice_alerts_enabled === false || typeof window === 'undefined' || !window.speechSynthesis) return false;
+async function speakAlert(text, settings) {
+  if (settings.voice_alerts_enabled === false || typeof window === 'undefined') return false;
+  if (!window.speechSynthesis) {
+    if (!isNativePlatform()) return false;
+    try {
+      await NativeSpeech.speakText({ text });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const Utterance = window.SpeechSynthesisUtterance || globalThis.SpeechSynthesisUtterance;
   if (!Utterance) return false;
   const utterance = new Utterance(text);
@@ -66,7 +78,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     setMessage(normalized);
-    speakAlert(plainText(normalized.text), localSettings.get());
+    speakAlert(plainText(normalized.text), localSettings.get()).catch(() => {});
     setTimeout(() => {
       visibleRef.current = false;
       setMessage(null);
@@ -136,7 +148,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       } else if (recentNearMiss) nextMessage = 'Near miss detected - increase following distance';
       else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) nextMessage = 'Brake earlier and more gradually';
       else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) nextMessage = 'Open your following gap';
-      else if (latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 130)) nextMessage = "You're above the speed threshold";
+      else if (latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100)) nextMessage = "You're above the speed threshold";
       else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) nextMessage = 'Accelerate more smoothly';
       else if ((stats.idle_time_seconds || 0) > 300) nextMessage = 'Extended idling detected';
 

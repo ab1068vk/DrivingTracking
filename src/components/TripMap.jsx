@@ -68,6 +68,41 @@ const phoneUseIconHtml = (color) => `
   </div>
 `;
 
+const formatEventTime = (value) => {
+  const date = value ? new Date(value) : null;
+  return date && Number.isFinite(date.getTime())
+    ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null;
+};
+
+const eventPopupHtml = (event) => {
+  const label = titleCase(event.type || 'event');
+  const rows = [
+    ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
+    ['Time', formatEventTime(event.timestamp)],
+    ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],
+    ['Limit', Number.isFinite(Number(event.speed_limit_kmh ?? event.inferred_zone_kmh)) ? `${Math.round(Number(event.speed_limit_kmh ?? event.inferred_zone_kmh))} km/h` : null],
+    ['Over by', Number.isFinite(Number(event.speed_kmh)) && Number.isFinite(Number(event.speed_limit_kmh ?? event.inferred_zone_kmh))
+      ? `${Math.max(0, Math.round(Number(event.speed_kmh) - Number(event.speed_limit_kmh ?? event.inferred_zone_kmh)))} km/h`
+      : null],
+    ['Duration', Number.isFinite(Number(event.durationS ?? event.duration_seconds ?? event.value)) && (event.type === 'phone_use' || event.type === 'idle' || event.duration_seconds != null)
+      ? `${Math.round(Number(event.durationS ?? event.duration_seconds ?? event.value))}s`
+      : null],
+    ['Source', event.speed_limit_source || event.source || null],
+    ['Confidence', event.zone_confidence || event.confidence_level || null],
+    ['Signals', Array.isArray(event.signals_triggered) && event.signals_triggered.length ? event.signals_triggered.join(', ') : null],
+  ].filter(([, value]) => value != null && value !== '');
+
+  return `
+    <div style="min-width:190px">
+      <b>${escapeHtml(label)}</b>
+      <div style="margin-top:6px;display:grid;gap:3px">
+        ${rows.map(([key, value]) => `<div><span style="color:#64748b">${escapeHtml(key)}:</span> ${escapeHtml(value)}</div>`).join('')}
+      </div>
+    </div>
+  `;
+};
+
 let leafletLoaded = false;
 let loadPromise = null;
 
@@ -312,9 +347,8 @@ export default function TripMap({
           iconSize: isPhoneUse ? [28, 28] : [20, 20],
           iconAnchor: isPhoneUse ? [14, 14] : [10, 10],
         });
-        const phonePopup = `<b>Possible Phone Use</b><br>Duration: ${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s - Speed: ${Math.round(evt.speed_kmh || 0)} km/h<br>Confidence: ${escapeHtml(evt.confidence_level || 'medium')}<br>Signals: ${escapeHtml((evt.signals_triggered || []).join(', ') || 'combined GPS signals')}`;
         window.L.marker([evt.lat, evt.lng], { icon })
-          .bindPopup(isPhoneUse ? phonePopup : `<b>${evt.type?.replace('_', ' ')}</b><br>Severity: ${evt.severity}`)
+          .bindPopup(eventPopupHtml(evt))
           .addTo(layers);
       });
     }
@@ -329,7 +363,7 @@ export default function TripMap({
             [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
             { color, weight: 5, opacity: 0.55, smoothFactor: 1.5 }
           )
-            .bindPopup(`<b>${titleCase(segment.riskLevel)} risk segment</b><br>Seen across ${segment.tripCount} trips<br>Avg ${perPass.toFixed(1)} events per pass<br>Most common: ${titleCase(segment.dominantEventType || 'none')}`)
+            .bindPopup(`<b>${titleCase(segment.riskLevel)} risk segment</b><br>Seen across ${segment.tripCount} trips<br>Total events: ${segment.totalEvents || 0}<br>Avg ${perPass.toFixed(1)} events per pass<br>Most common: ${titleCase(segment.dominantEventType || 'none')}`)
             .addTo(layers);
         });
     }
@@ -347,7 +381,7 @@ export default function TripMap({
           weight: 1.5,
           opacity: 0.6,
         })
-          .bindPopup(`<b>${titleCase(zone.riskLevel)} danger zone</b><br>${zone.eventCount || 0} events<br>${titleCase(zone.dominantType || 'risk event')}<br>Last seen: ${lastSeen}`)
+          .bindPopup(`<b>${titleCase(zone.riskLevel)} danger zone</b><br>${zone.eventCount || 0} repeated events<br>Dominant event: ${titleCase(zone.dominantType || 'risk event')}<br>Radius: ${Math.round(zone.radiusM || 100)} m<br>Last seen: ${lastSeen}`)
           .addTo(layers);
       });
     }

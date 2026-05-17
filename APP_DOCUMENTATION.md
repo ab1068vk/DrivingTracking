@@ -711,10 +711,10 @@ Important settings:
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
   data_retention_days: 365,
-  threshold_harsh_brake_ms2: 4.5,
+  threshold_harsh_brake_ms2: 3.5,
   threshold_rapid_accel_ms2: 3.5,
   threshold_sharp_turn_degs: 45,
-  threshold_speeding_kmh: 130,
+  threshold_speeding_kmh: 100,
   threshold_idle_seconds: 60,
   threshold_long_drive_minutes: 120,
   weekly_goal_harsh_brakes: 5,
@@ -844,10 +844,10 @@ The trip engine owns:
 
 ```js
 {
-  HARSH_BRAKE_MS2: 4.5,
+  HARSH_BRAKE_MS2: 3.5,
   RAPID_ACCEL_MS2: 3.5,
   SHARP_TURN_DEG_PER_S: 45,
-  SPEEDING_FALLBACK_KMH: 130,
+  SPEEDING_FALLBACK_KMH: 100,
   IDLE_SPEED_KMH: 5,
   IDLE_EVENT_SECONDS: 60,
   LONG_DRIVE_MINUTES: 120,
@@ -1559,8 +1559,8 @@ The multiplication by `1000` and division by `10` is how the app rounds events p
 Speed discipline analyzes all sampled route point speeds from completed trips.
 
 ```txt
-speed_limit = settings.threshold_speeding_kmh or 130
-warn_limit = speed_limit + settings.threshold_speed_over_kmh or speed_limit + 10
+speed_limit = settings.threshold_speeding_kmh or 100
+warn_limit = speed_limit + settings.threshold_speed_over_kmh or speed_limit + 5
 points = all completed trip route points with finite speed_kmh
 max_speed_kmh = round(max(points.speed_kmh))
 avg_speed_kmh = round(sum(points.speed_kmh) / point_count)
@@ -2364,21 +2364,21 @@ This flow is used in `src/pages/Dashboard.jsx` and in `src/lib/localTripReposito
 Default user settings live in `src/lib/trackingStore.js`.
 
 ```js
-threshold_harsh_brake_ms2: 4.5,
+threshold_harsh_brake_ms2: 3.5,
 threshold_rapid_accel_ms2: 3.5,
 threshold_tailgate_decel_ms2: 2.5,
 threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
-threshold_speeding_kmh: 130,
-threshold_speed_over_kmh: 10,
+threshold_speeding_kmh: 100,
+threshold_speed_over_kmh: 5,
 threshold_idle_seconds: 90,
 threshold_long_drive_minutes: 120,
 threshold_near_miss_brake_ms2: 3.5,
 threshold_near_miss_turn_degs: 30,
 threshold_drowsy_heading_std: 8,
 threshold_phone_proxy_oscillations: 3,
-threshold_speed_creep_kmh: 10,
+threshold_speed_creep_kmh: 5,
 threshold_overtake_accel_ms2: 3.0,
 min_speed_rapid_accel_kmh: 15,
 min_speed_harsh_brake_kmh: 25,
@@ -3417,8 +3417,8 @@ Routes need at least 3 trips to count as a commute pattern.
 Function: `calculateSpeedDiscipline`
 
 ```js
-const speedLimit = Number(settings.threshold_speeding_kmh ?? 130);
-const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 10);
+const speedLimit = Number(settings.threshold_speeding_kmh ?? 100);
+const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 5);
 const overLimitPercent = Math.round((overLimit / speeds.length) * 100);
 const p85Speed = percentile(speeds, 85);
 ```
@@ -4130,14 +4130,14 @@ background_tracking_enabled: false,
 auto_tracking_enabled: false,
 activity_permission_granted: false,
 data_retention_days: 365,
-threshold_harsh_brake_ms2: 4.5,
+threshold_harsh_brake_ms2: 3.5,
 threshold_rapid_accel_ms2: 3.5,
 threshold_tailgate_decel_ms2: 2.5,
 threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
-threshold_speeding_kmh: 130,
-threshold_speed_over_kmh: 10,
+threshold_speeding_kmh: 100,
+threshold_speed_over_kmh: 5,
 threshold_idle_seconds: 90,
 threshold_long_drive_minutes: 120,
 night_detection_mode: 'sunset',
@@ -4149,7 +4149,7 @@ threshold_near_miss_brake_ms2: 3.5,
 threshold_near_miss_turn_degs: 30,
 threshold_drowsy_heading_std: 8,
 threshold_phone_proxy_oscillations: 3,
-threshold_speed_creep_kmh: 10,
+threshold_speed_creep_kmh: 5,
 threshold_overtake_accel_ms2: 3.0,
 advanced_safety_detection_enabled: true,
 speed_warning_enabled: true,

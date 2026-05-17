@@ -16,25 +16,18 @@ import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
 import {
   calculateSegmentMetrics,
-  buildDrivingThresholds,
-  calculateTripStats,
-  calculateTripScores,
-  detectDrivingEvents,
   formatDistance,
   formatDuration,
   formatDateTime,
   formatSpeed,
   getScoreColor,
   inferSpeedZones,
-  simplifyRoute,
   splitTripAtStops,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
-import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
-import { mapMatchRoute } from '@/lib/mapMatching';
-import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import { buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
 import {
   TRIP_TAG_OPTIONS,
   buildScoreExplanation,
@@ -146,52 +139,7 @@ export default function TripDetail() {
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
-      if (!trip) throw new Error('Trip not loaded');
-      const thresholds = buildDrivingThresholds(localSettings.get());
-      const originalPoints = trip.route_points || [];
-      const mapMatchingContext = await mapMatchRoute(originalPoints, localSettings.get());
-      let routePoints = mapMatchingContext.routePoints || originalPoints;
-      const speedLimitContext = await annotateRouteSpeedLimits(routePoints, localSettings.get());
-      routePoints = speedLimitContext.routePoints || routePoints;
-      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-      const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
-      const detectedEvents = Reflect.get(detection, 'events') ?? detection;
-      const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
-      const weatherContext = await fetchWeatherContextForTrip(routePoints, trip.start_time, trip.end_time, localSettings.get()).catch((error) => ({
-        provider: 'open-meteo',
-        status: 'unavailable',
-        riskLevel: 'low',
-        riskScore: 0,
-        riskMultiplier: 1,
-        error: error?.message || 'Weather lookup unavailable',
-      }));
-      let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
-      scores = applyWeatherRiskToScores(scores, weatherContext);
-      const events = scores.driving_events || detectedEvents;
-      const simplifiedPoints = simplifyRoute(routePoints, 10, events);
-      return tripService.update(id, {
-        ...stats,
-        ...scores,
-        route_points: simplifiedPoints,
-        route_points_raw_count: routePoints.length,
-        driving_events: events,
-        speed_limit_context: {
-          provider: 'openstreetmap_overpass',
-          status: speedLimitContext.status,
-          coverage: speedLimitContext.coverage,
-          source: speedLimitContext.source,
-          error: speedLimitContext.error,
-        },
-        map_matching_context: {
-          provider: mapMatchingContext.provider,
-          status: mapMatchingContext.status,
-          confidence: mapMatchingContext.confidence ?? null,
-          snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
-          error: mapMatchingContext.error,
-        },
-        weather_context: weatherContext,
-        needs_rescore: false,
-      });
+      return tripService.update(id, await buildOpenSourceTripContextPatch(trip, localSettings.get()));
     },
     onSuccess: (updatedTrip) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
@@ -583,7 +531,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                OpenStreetMap/Overpass coverage: {speedLimitContext.coverage ?? 0}% of route points. {osmSpeedLimits.length ? `Detected limits: ${osmSpeedLimits.join(', ')} km/h.` : 'Fallback inferred zones fill any gaps.'}
+                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Detected limits: ${osmSpeedLimits.join(', ')} km/h.` : 'Fallback thresholds fill gaps.'}
               </div>
               {speedLimitContext.error && (
                 <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
@@ -764,7 +712,7 @@ export default function TripDetail() {
         </div>
         {!speedLimitContext && (
           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-            OpenStreetMap speed limits have not been fetched for this trip yet. Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
+            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
           </div>
         )}
         {contextMutation.isError && (

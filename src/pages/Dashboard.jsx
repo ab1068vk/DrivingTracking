@@ -467,7 +467,9 @@ export default function Dashboard() {
       setActiveTrip(null);
       setTracking(false);
       setElapsed(0);
-      if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
+      if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+        await startNativeAutoTracking().catch(() => {});
+      }
       setLocationError(isManualTrip
         ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
@@ -524,6 +526,8 @@ export default function Dashboard() {
         provider: 'openstreetmap_overpass',
         status: speedLimitContext.status,
         coverage: speedLimitContext.coverage,
+        source: speedLimitContext.source,
+        error: speedLimitContext.error,
       },
       map_matching_context: {
         provider: mapMatchingContext.provider,
@@ -591,7 +595,9 @@ export default function Dashboard() {
     setActiveTrip(null);
     setTracking(false);
     setElapsed(0);
-    if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
+    if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+      await startNativeAutoTracking().catch(() => {});
+    }
     refetch();
   };
 
@@ -890,8 +896,8 @@ export default function Dashboard() {
 
             {currentLocation && (() => {
               const spd = currentLocation.speed_kmh || 0;
-              const overLimit = settings.threshold_speeding_kmh || 130;
-              const warnOffset = settings.threshold_speed_over_kmh ?? 10;
+              const overLimit = settings.threshold_speeding_kmh || 100;
+              const warnOffset = settings.threshold_speed_over_kmh ?? 5;
               const speedWarningsEnabled = settings.speed_warning_enabled !== false;
               const isOverWarn = speedWarningsEnabled && spd > overLimit + warnOffset;
               return (

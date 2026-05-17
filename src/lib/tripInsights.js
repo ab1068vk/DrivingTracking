@@ -875,8 +875,8 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
 }
 
 export function calculateSpeedDiscipline(trips = [], settings = {}) {
-  const speedLimit = Number(settings.threshold_speeding_kmh ?? 130);
-  const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 10);
+  const speedLimit = Number(settings.threshold_speeding_kmh ?? 100);
+  const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 5);
   const speeds = trips
     .filter((trip) => trip.status === 'completed')
     .flatMap((trip) => Array.isArray(trip.route_points) ? trip.route_points : [])

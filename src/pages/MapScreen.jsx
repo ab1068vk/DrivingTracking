@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
 import TripMap from '@/components/TripMap';
@@ -12,6 +12,7 @@ import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
+import { buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -39,6 +40,7 @@ const relativeTime = (value) => {
 };
 
 export default function MapScreen() {
+  const qc = useQueryClient();
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [showCurrentLoc, setShowCurrentLoc] = useState(false);
@@ -59,6 +61,18 @@ export default function MapScreen() {
   const { data: trips = [] } = useQuery({
     queryKey: ['map-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+  });
+  const contextMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTrip) throw new Error('Select a trip first.');
+      return tripService.update(selectedTrip.id, await buildOpenSourceTripContextPatch(selectedTrip, localSettings.get()));
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['map-trips'] });
+      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      qc.invalidateQueries({ queryKey: ['all-trips'] });
+      if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
+    },
   });
 
   const allCompleted = trips.filter(t => t.status === 'completed' && t.route_points?.length > 1);
@@ -354,6 +368,24 @@ export default function MapScreen() {
               <div className="mt-1 font-normal">{dangerZones.length} local zones</div>
             </button>
           </div>
+          {!selectedHasSpeedLimits && (
+            <div className="mt-3 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+              <div>{describeOsmSpeedLimitStatus(selectedTrip.speed_limit_context)}</div>
+              <button
+                type="button"
+                onClick={() => contextMutation.mutate()}
+                disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
+                className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {contextMutation.isPending ? 'Refreshing...' : 'Refresh OSM Context'}
+              </button>
+              {contextMutation.isError && (
+                <div className="mt-2 text-orange-600 dark:text-orange-300">
+                  {contextMutation.error?.message || 'Could not refresh OSM context.'}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

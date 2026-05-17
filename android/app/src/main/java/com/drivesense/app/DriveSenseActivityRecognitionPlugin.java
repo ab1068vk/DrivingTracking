@@ -14,6 +14,7 @@ import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
 import android.util.Base64;
 
 import com.getcapacitor.JSObject;
@@ -37,6 +38,7 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 @CapacitorPlugin(
     name = "DriveSenseActivityRecognition",
@@ -55,6 +57,8 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private static WeakReference<DriveSenseActivityRecognitionPlugin> instance;
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
+    private TextToSpeech textToSpeech;
+    private boolean textToSpeechReady = false;
 
     @Override
     public void load() {
@@ -67,6 +71,17 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
         );
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+            textToSpeech.shutdown();
+            textToSpeech = null;
+            textToSpeechReady = false;
+        }
+        super.handleOnDestroy();
     }
 
     @PluginMethod
@@ -151,6 +166,33 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void speakText(PluginCall call) {
+        String text = call.getString("text", "");
+        if (text == null || text.trim().isEmpty()) {
+            call.reject("text is required.");
+            return;
+        }
+
+        if (textToSpeech != null && textToSpeechReady) {
+            speakNow(text);
+            call.resolve();
+            return;
+        }
+
+        textToSpeech = new TextToSpeech(getContext(), status -> {
+            if (status != TextToSpeech.SUCCESS || textToSpeech == null) {
+                call.reject("Android text-to-speech is unavailable.");
+                return;
+            }
+            textToSpeech.setLanguage(Locale.getDefault());
+            textToSpeech.setSpeechRate(0.95f);
+            textToSpeechReady = true;
+            speakNow(text);
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
     public void openAppLocationSettings(PluginCall call) {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.setData(Uri.parse("package:" + getContext().getPackageName()));
@@ -160,6 +202,16 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             call.resolve();
         } catch (ActivityNotFoundException error) {
             call.reject(error.getMessage());
+        }
+    }
+
+    private void speakNow(String text) {
+        if (textToSpeech == null) return;
+        String utteranceId = "roadsage_" + System.currentTimeMillis();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+        } else {
+            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
         }
     }
 

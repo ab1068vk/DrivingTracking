@@ -64,7 +64,7 @@ After refresh, Trip Detail recalculates stats, events, speed compliance, scores,
 
 - green segment: at or below matched limit
 - orange segment: above matched limit
-- red segment: more than 10 km/h over matched limit
+- red segment: more than 5 km/h over matched limit
 
 If Overpass or OSRM is unavailable, the trip keeps inferred speed zones and records the context status/error instead of hiding the feature.
 
@@ -73,14 +73,14 @@ If Overpass or OSRM is unavailable, the trip keeps inferred speed zones and reco
 Default user settings live in `src/lib/trackingStore.js`.
 
 ```js
-threshold_harsh_brake_ms2: 4.5,
+threshold_harsh_brake_ms2: 3.5,
 threshold_rapid_accel_ms2: 3.5,
 threshold_tailgate_decel_ms2: 2.5,
 threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
-threshold_speeding_kmh: 130,
-threshold_speed_over_kmh: 10,
+threshold_speeding_kmh: 100,
+threshold_speed_over_kmh: 5,
 threshold_idle_seconds: 90,
 threshold_long_drive_minutes: 120,
 threshold_near_miss_brake_ms2: 3.5,
@@ -92,7 +92,7 @@ phone_use_live_alert_enabled: true,
 phone_use_show_on_map: true,
 phone_use_affects_score: true,
 phone_use_sensitivity: 'medium',
-threshold_speed_creep_kmh: 10,
+threshold_speed_creep_kmh: 5,
 threshold_overtake_accel_ms2: 3.0,
 min_speed_rapid_accel_kmh: 5,
 min_speed_harsh_brake_kmh: 25,
@@ -393,7 +393,7 @@ if (accel != null && accel < -thresholds.HARSH_BRAKE_MS2 && speed1 >= minHarshBr
 }
 ```
 
-Default threshold: `-4.5 m/s2`, minimum speed `25 km/h`.
+Default threshold: `-3.5 m/s2`, minimum speed `25 km/h`.
 
 ### Rapid Acceleration
 
@@ -435,7 +435,7 @@ Defaults:
 
 ### Speeding
 
-Speeding uses the lower of the configured fallback threshold and the inferred zone threshold:
+Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM limits. Otherwise, it uses the lower of the configured fallback threshold and the inferred zone threshold:
 
 ```js
 const contextualSpeedingThreshold = Math.min(
@@ -448,8 +448,8 @@ if (speed2 > contextualSpeedingThreshold) {
 }
 ```
 
-Default fallback threshold: `130 km/h`.
-Default inferred-zone buffer: `10 km/h`.
+Default fallback threshold: `100 km/h`.
+Default OSM/inferred-zone buffer: `5 km/h`.
 
 ### Idle
 
@@ -1224,8 +1224,8 @@ Routes need at least 3 trips to count as a commute pattern.
 Function: `calculateSpeedDiscipline`
 
 ```js
-const speedLimit = Number(settings.threshold_speeding_kmh ?? 130);
-const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 10);
+const speedLimit = Number(settings.threshold_speeding_kmh ?? 100);
+const warnLimit = speedLimit + Number(settings.threshold_speed_over_kmh ?? 5);
 const overLimitPercent = Math.round((overLimit / speeds.length) * 100);
 const p85Speed = percentile(speeds, 85);
 ```

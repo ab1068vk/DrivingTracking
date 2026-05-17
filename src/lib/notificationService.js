@@ -381,7 +381,7 @@ export async function notifySpeedingAlert(opts = {}, settings = localSettings.ge
 
   const durationS = Number(opts.durationS) || 0;
   const currentSpeed = Number(opts.currentSpeedKmh) || 0;
-  const limit = Number(opts.limitKmh) || Number(settings.threshold_speeding_kmh) || 130;
+  const limit = Number(opts.limitKmh) || Number(settings.threshold_speeding_kmh) || 100;
   const id = durationS < 60 ? NOTIFICATION_IDS.SPEEDING_WARNING : NOTIFICATION_IDS.SPEEDING_ESCALATION;
   const notification = {
     id,

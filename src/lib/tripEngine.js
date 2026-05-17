@@ -10,17 +10,17 @@ import { maskTripForPrivacy } from './privacyZones';
 
 // ─── Default Thresholds ────────────────────────────────────────────────────────
 export const DEFAULT_THRESHOLDS = {
-  // Harsh braking: deceleration > 4.5 m/s² (≈ 16 km/h per second drop)
-  HARSH_BRAKE_MS2: 4.5,
+  // Harsh braking: deceleration > 3.5 m/s2, a common telematics trigger.
+  HARSH_BRAKE_MS2: 3.5,
   // Rapid acceleration: > 3.5 m/s² (≈ 12.6 km/h per second gain)
   RAPID_ACCEL_MS2: 3.5,
   // Sharp turn: heading change > 45° per GPS sample at > 30 km/h
   SHARP_TURN_G_LOW: 0.30,
   SHARP_TURN_G_MEDIUM: 0.45,
   SHARP_TURN_G_HIGH: 0.60,
-  // Speeding fallback: above 130 km/h (when no speed limit data)
-  SPEEDING_FALLBACK_KMH: 130,
-  SPEED_OVER_KMH: 10,
+  // Speeding fallback: above 100 km/h when no open-source speed limit data is available.
+  SPEEDING_FALLBACK_KMH: 100,
+  SPEED_OVER_KMH: 5,
   REACTION_SPEED_TRIGGER_KMH: 5,
   // Idle threshold: speed < 5 km/h
   IDLE_SPEED_KMH: 5,
@@ -80,7 +80,7 @@ export const DEFAULT_THRESHOLDS = {
   PHONE_MIN_WINDOW_S: 4,
   PHONE_USE_DETECTION_ENABLED: true,
   PHONE_USE_AFFECTS_SCORE: true,
-  threshold_speed_creep_kmh: 10,
+  threshold_speed_creep_kmh: 5,
   threshold_overtake_accel_ms2: 3.0,
   ADVANCED_SAFETY_DETECTION_ENABLED: true,
 };
@@ -3052,7 +3052,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     }
 
     // ── Speeding (fallback – no speed limit data)
-    // Flag when speed exceeds the fallback threshold (default 130 km/h)
+    // Flag when speed exceeds OSM maxspeed + margin, or the fallback threshold.
     const nearMissBrakeThreshold = thresholds.threshold_near_miss_brake_ms2 ?? DEFAULT_THRESHOLDS.threshold_near_miss_brake_ms2;
     const nearMissTurnThreshold = thresholds.threshold_near_miss_turn_degs ?? DEFAULT_THRESHOLDS.threshold_near_miss_turn_degs;
     if (advancedSafetyEnabled && accel != null && dt <= 2.0 && speed2 > 40 && accel < -nearMissBrakeThreshold) {
@@ -3077,12 +3077,12 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       ...(zoneForIndex(i) || {}),
       actualLimitKmh,
     };
-    const contextualSpeedingThreshold = Math.min(
-      configuredSpeedThreshold,
-      actualLimitKmh
-        ? actualLimitKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH)
-        : segmentZone?.threshold_kmh ?? configuredSpeedThreshold
-    );
+    const contextualSpeedingThreshold = actualLimitKmh
+      ? actualLimitKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH)
+      : Math.min(
+        configuredSpeedThreshold,
+        segmentZone?.threshold_kmh ?? configuredSpeedThreshold
+      );
 
     if (speed2 > contextualSpeedingThreshold) {
       if (!speedingStart) speedingStart = curr;

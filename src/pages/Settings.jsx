@@ -56,7 +56,7 @@ function SectionTitle({ children }) {
 function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false }) {
   return (
     <div
-      className={`flex items-center justify-between py-3 px-1 border-b border-border/50 last:border-0 ${onClick ? 'cursor-pointer hover:bg-secondary/50 rounded-xl -mx-1 px-2 transition-colors' : ''}`}
+      className={`flex items-center justify-between gap-3 py-3 px-1 border-b border-border/50 last:border-0 ${onClick ? 'cursor-pointer hover:bg-secondary/50 rounded-xl -mx-1 px-2 transition-colors' : ''}`}
       onClick={onClick}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -66,11 +66,11 @@ function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, 
           </div>
         )}
         <div className="min-w-0">
-          <div className={`text-sm font-medium ${danger ? 'text-red-600 dark:text-red-400' : ''}`}>{label}</div>
-          {sublabel && <div className="text-xs text-muted-foreground mt-0.5">{sublabel}</div>}
+          <div className={`break-words text-sm font-medium ${danger ? 'text-red-600 dark:text-red-400' : ''}`}>{label}</div>
+          {sublabel && <div className="mt-0.5 break-words text-xs text-muted-foreground">{sublabel}</div>}
         </div>
       </div>
-      <div className="flex-shrink-0">{children}</div>
+      <div className="flex-shrink-0 max-w-[46%]">{children}</div>
     </div>
   );
 }
@@ -212,8 +212,8 @@ export default function Settings() {
     applyThemeMode(updated.dark_mode);
   };
 
-  const runVoiceTest = () => {
-    const ok = testVoiceAlert(cfg);
+  const runVoiceTest = async () => {
+    const ok = await testVoiceAlert(cfg);
     setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
     setTimeout(() => setVoiceTestStatus(''), 3000);
   };
@@ -1113,7 +1113,7 @@ export default function Settings() {
             { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn Low', unit: 'g', min: 0.2, max: 0.6, step: 0.05 },
             { key: 'threshold_sharp_turn_g_medium', label: 'Sharp Turn Medium', unit: 'g', min: 0.25, max: 0.8, step: 0.05 },
             { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', min: 0.35, max: 1.0, step: 0.05 },
-            { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 180, step: 10 },
+            { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 160, step: 5 },
             { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
             { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },
             { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },
@@ -1345,7 +1345,7 @@ export default function Settings() {
             </SettingRow>
             <div className="px-1 py-3 border-b border-border/50">
               <div className="mb-2 text-sm font-medium">Detection sensitivity</div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
                 {[
                   { id: 'low', label: 'Low', sub: 'Fewer false positives' },
                   { id: 'medium', label: 'Medium', sub: 'Recommended' },
@@ -1356,14 +1356,14 @@ export default function Settings() {
                     type="button"
                     onClick={() => updateCfg({ phone_use_sensitivity: option.id })}
                     disabled={cfg.phone_use_detection_enabled === false}
-                    className={`rounded-xl border p-2 text-left transition-all disabled:opacity-50 ${
+                    className={`min-w-0 rounded-xl border p-2 text-left transition-all disabled:opacity-50 ${
                       (cfg.phone_use_sensitivity || 'medium') === option.id
                         ? 'border-primary bg-primary/5 text-primary'
                         : 'border-border text-muted-foreground hover:border-primary/40'
                     }`}
                   >
                     <div className="text-xs font-semibold">{option.label}</div>
-                    <div className="mt-0.5 text-[11px]">{option.sub}</div>
+                    <div className="mt-0.5 break-words text-[11px] leading-tight">{option.sub}</div>
                   </button>
                 ))}
               </div>
@@ -1465,11 +1465,11 @@ export default function Settings() {
         <div className="px-1">
           <div className="flex justify-between text-xs mb-1.5">
             <span className="font-medium">Warn when over limit by</span>
-            <span className="text-primary font-semibold">+{cfg.threshold_speed_over_kmh ?? 10} km/h</span>
+            <span className="text-primary font-semibold">+{cfg.threshold_speed_over_kmh ?? 5} km/h</span>
           </div>
           <input
             type="range" min={5} max={30} step={5}
-            value={cfg.threshold_speed_over_kmh ?? 10}
+            value={cfg.threshold_speed_over_kmh ?? 5}
             disabled={cfg.speed_warning_enabled === false}
             onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}
             className="w-full accent-primary disabled:opacity-45"
@@ -1502,11 +1502,11 @@ export default function Settings() {
               </div>
               <span className="rounded-full bg-card px-2 py-1 text-xs font-semibold">{privacyZones.length}</span>
             </div>
-            <div className="grid grid-cols-[1fr_92px] gap-2">
+            <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_88px]">
               <input
                 value={privacyDraft.label}
                 onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, label: event.target.value }))}
-                className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
+                className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
                 placeholder="Home, work, school"
               />
               <input
@@ -1516,7 +1516,7 @@ export default function Settings() {
                 step="10"
                 value={privacyDraft.radius_m}
                 onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, radius_m: Number(event.target.value) || 180 }))}
-                className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
+                className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
                 aria-label="Privacy zone radius in meters"
               />
             </div>

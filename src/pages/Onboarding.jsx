@@ -10,7 +10,7 @@ import {
 } from '@/lib/permissions';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { isAndroid } from '@/lib/nativePlatform';
-import { startNativeAutoTracking } from '@/lib/activityRecognition';
+import { openAndroidUsageAccessSettings, startNativeAutoTracking } from '@/lib/activityRecognition';
 import { useNavigate } from 'react-router-dom';
 
 const STEPS = [
@@ -96,6 +96,7 @@ export default function Onboarding() {
   const [activityGranted, setActivityGranted] = useState(false);
   const [notificationsGranted, setNotificationsGranted] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [setupStatus, setSetupStatus] = useState('');
   const navigate = useNavigate();
 
   const currentStep = STEPS[step];
@@ -128,19 +129,34 @@ export default function Onboarding() {
   };
 
   const requestTrackingModePermissions = async () => {
-    if (trackingMode === 'manual') return;
-
     await requestForegroundLocationPermission();
+    await requestNotificationPermission();
+    await requestMotionSensorPermission();
     if (isAndroid()) await requestActivityRecognitionPermission();
-    if (trackingMode === 'background_auto') {
-      await requestNotificationPermission();
+    if (isAndroid() || trackingMode === 'background_auto') {
       await requestBackgroundLocationPermission();
+    }
+    if (trackingMode === 'background_auto') {
       if (isAndroid()) {
         try {
           await startNativeAutoTracking();
         } catch {}
       }
     }
+  };
+
+  const handleRecommendedSetup = async () => {
+    setRequesting(true);
+    setSetupStatus('Requesting location, notifications, motion, activity, and background tracking permissions...');
+    await requestTrackingModePermissions();
+    setLocationGranted(localSettings.get().location_permission_granted === true);
+    setNotificationsGranted(localSettings.get().notification_permission_granted === true);
+    setMotionGranted(getMotionSensorSupport().status === 'granted');
+    setActivityGranted(!isAndroid() || localSettings.get().activity_permission_granted === true);
+    setSetupStatus(isAndroid()
+      ? 'Core prompts complete. Phone Usage Access opens in Android Settings because Android does not allow an in-app prompt.'
+      : 'Core prompts complete.');
+    setRequesting(false);
   };
 
   const handleNext = async () => {
@@ -276,6 +292,25 @@ export default function Onboarding() {
           {/* Tracking mode choices */}
           {currentStep.isChoice && (
             <div className="space-y-3 mb-6">
+              <button
+                type="button"
+                onClick={handleRecommendedSetup}
+                disabled={requesting}
+                className="w-full rounded-2xl border border-primary/30 bg-primary/10 p-3 text-left text-sm font-semibold text-primary disabled:opacity-50"
+              >
+                {requesting ? 'Requesting permissions...' : 'Enable all recommended permissions'}
+                {setupStatus && <span className="mt-1 block text-xs font-normal text-muted-foreground">{setupStatus}</span>}
+              </button>
+              {isAndroid() && (
+                <button
+                  type="button"
+                  onClick={openAndroidUsageAccessSettings}
+                  className="w-full rounded-2xl border border-border bg-card p-3 text-left text-sm font-semibold text-foreground"
+                >
+                  Open Phone Usage Access
+                  <span className="mt-1 block text-xs font-normal text-muted-foreground">Needed only for real Android app-use detection while driving.</span>
+                </button>
+              )}
               {TRACKING_OPTIONS.map(opt => (
                 <button
                   key={opt.id}
@@ -289,10 +324,10 @@ export default function Onboarding() {
                   <div className="flex items-start gap-3">
                     <span className="text-2xl">{opt.icon}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-sm">{opt.title}</span>
                         {opt.recommended && (
-                          <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-medium">
+                          <span className="max-w-full whitespace-normal rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium leading-tight text-primary">
                             Recommended
                           </span>
                         )}

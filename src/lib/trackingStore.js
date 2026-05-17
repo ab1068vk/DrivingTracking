@@ -11,6 +11,7 @@ const LAST_PARKED_KEY = 'drivesense_last_parked';
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
+  settings_defaults_version: 2,
   tracking_mode: 'manual',
   units: 'metric',
   dark_mode: 'system',
@@ -25,14 +26,14 @@ export const DEFAULT_SETTINGS = {
   auto_tracking_enabled: false,
   activity_permission_granted: false,
   data_retention_days: 365,
-  threshold_harsh_brake_ms2: 4.5,
+  threshold_harsh_brake_ms2: 3.5,
   threshold_rapid_accel_ms2: 3.5,
   threshold_tailgate_decel_ms2: 2.5,
   threshold_sharp_turn_g_low: 0.30,
   threshold_sharp_turn_g_medium: 0.45,
   threshold_sharp_turn_g_high: 0.60,
-  threshold_speeding_kmh: 130,
-  threshold_speed_over_kmh: 10,
+  threshold_speeding_kmh: 100,
+  threshold_speed_over_kmh: 5,
   threshold_idle_seconds: 90,
   threshold_long_drive_minutes: 120,
   night_detection_mode: 'sunset',
@@ -55,7 +56,7 @@ export const DEFAULT_SETTINGS = {
   phone_coupling_threshold: 0.15,
   phone_confidence_threshold: 0.40,
   phone_min_window_s: 4,
-  threshold_speed_creep_kmh: 10,
+  threshold_speed_creep_kmh: 5,
   threshold_overtake_accel_ms2: 3.0,
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
@@ -68,7 +69,7 @@ export const DEFAULT_SETTINGS = {
   weekly_goal_min_avg_score: 80,
   weekly_goal_max_night_trips: 3,
   weekly_goal_max_night_km: 20,
-  onboarding_completed: true, // true by default for web; native Android handles its own onboarding
+  onboarding_completed: false,
   location_permission_granted: false,
   background_location_granted: false,
   tracking_paused: false,
@@ -132,7 +133,17 @@ export const localSettings = {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (raw) {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+        const parsed = JSON.parse(raw);
+        const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        if ((parsed.settings_defaults_version || 1) < 2) {
+          if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
+          if (parsed.threshold_speeding_kmh == null || parsed.threshold_speeding_kmh === 130) merged.threshold_speeding_kmh = 100;
+          if (parsed.threshold_speed_over_kmh == null || parsed.threshold_speed_over_kmh === 10) merged.threshold_speed_over_kmh = 5;
+          if (parsed.threshold_speed_creep_kmh == null || parsed.threshold_speed_creep_kmh === 10) merged.threshold_speed_creep_kmh = 5;
+          merged.settings_defaults_version = 2;
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+        }
+        return merged;
       }
       // New user: save defaults immediately so we can detect returning users
       const defaults = { ...DEFAULT_SETTINGS };
