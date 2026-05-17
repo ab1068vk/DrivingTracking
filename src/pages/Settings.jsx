@@ -96,6 +96,17 @@ function PermissionBadge({ value }) {
   );
 }
 
+function FeaturePermissionBadge({ value }) {
+  if (value === 'none') {
+    return (
+      <span className="rounded-full bg-secondary px-2 py-1 text-xs font-semibold text-muted-foreground">
+        No prompt
+      </span>
+    );
+  }
+  return <PermissionBadge value={value} />;
+}
+
 const DRIVING_PATTERN_DEFINITIONS = [
   {
     term: 'Aggression score',
@@ -459,6 +470,8 @@ export default function Settings() {
 
   const effectiveTrackingMode = cfg.tracking_paused ? 'manual' : cfg.tracking_mode;
   const obdSupport = getObdBluetoothSupport();
+  const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
+  const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
 
   return (
     <div className="space-y-4 pb-6">
@@ -599,6 +612,54 @@ export default function Settings() {
               <ChevronRight className="w-4 h-4 text-muted-foreground" />
             </div>
           </SettingRow>
+        </div>
+
+        {/* Feature Permission Check */}
+        <SectionTitle>Feature Permissions</SectionTitle>
+        <div className="space-y-1">
+          {[
+            {
+              label: 'Trip history, search, tags, notes, favorites, calendar, weekly summary, goals, costs',
+              sub: 'No new Android permission prompt. These features use local trips, vehicles, and settings already stored on this device.',
+              value: 'none',
+            },
+            {
+              label: 'Route comparison, commute detection, road types, parking reminder, risk hotspots',
+              sub: 'Uses trip GPS data. Android asks for Location when you start tracking, use current location, or enable auto tracking.',
+              value: locationFeatureStatus,
+              action: requestForegroundLocationPermission,
+            },
+            {
+              label: 'Maintenance reminders and weekly driver digests',
+              sub: 'In-app dashboards need no prompt. Android asks for Notifications only if reminder notifications are enabled.',
+              value: notificationFeatureStatus,
+              action: requestNotificationPermission,
+            },
+            {
+              label: 'Background auto tracking for richer repeated-route history',
+              sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications.',
+              value: permissionStatus?.backgroundLocation,
+              action: requestBackgroundLocationPermission,
+            },
+          ].map(({ label, sub, value, action }) => (
+            <SettingRow key={label} icon={Info} label={label} sublabel={sub}>
+              <div className="flex items-center gap-2">
+                <FeaturePermissionBadge value={value} />
+                {action && value !== 'granted' && (
+                  <button
+                    className="text-xs font-semibold text-primary"
+                    onClick={async e => {
+                      e.stopPropagation();
+                      await action();
+                      await refreshPermissions();
+                    }}
+                  >
+                    Enable
+                  </button>
+                )}
+              </div>
+            </SettingRow>
+          ))}
         </div>
 
         {/* Appearance */}
