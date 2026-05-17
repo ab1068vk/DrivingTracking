@@ -5,7 +5,8 @@ import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
-  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X
+  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
+  ParkingSquare
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
@@ -13,9 +14,9 @@ import {
   calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
-  formatDistance, formatDuration, formatSpeed, getScoreColor, simplifyRoute
+  formatDistance, formatDuration, formatSpeed, simplifyRoute
 } from '@/lib/tripEngine';
-import { activeTripStore, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { activeTripStore, getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import {
   scheduleLongTripReminder,
@@ -66,6 +67,7 @@ import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { computePreTripRisk } from '@/lib/preTripRisk';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { recordTrackingDiagnostic } from '@/lib/trackingDiagnostics';
+import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -96,6 +98,7 @@ export default function Dashboard() {
   const [pendingStartOptions, setPendingStartOptions] = useState(null);
   const [hazardMessage, setHazardMessage] = useState(null);
   const [readinessDismissed, setReadinessDismissed] = useState(false);
+  const [parkedLocation, setParkedLocation] = useState(null);
 
   useEffect(() => {
     activeTripRef.current = activeTrip;
@@ -149,6 +152,10 @@ export default function Dashboard() {
   const todayTrips = getTodayTrips(completedTrips);
   const dailyFatigue = computeDailyFatigue(todayTrips, settings);
   const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue);
+
+  useEffect(() => {
+    getLastParkedLocation().then(setParkedLocation).catch(() => {});
+  }, [completedTrips[0]?.id]);
 
   useEffect(() => {
     setReadinessDismissed(false);
@@ -448,13 +455,14 @@ export default function Dashboard() {
       Number(completedTrip.parking_stop_duration_seconds || 0) > 0 ||
       Number(parkedPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH);
     if (parkedPoint && endedStopped) {
-      await saveLastParkedLocation({
+      const savedParkedLocation = await saveLastParkedLocation({
         lat: parkedPoint.lat,
         lng: parkedPoint.lng,
         timestamp: parkedPoint.timestamp || endTime,
         tripId: savedTrip?.id || completedTrip.id,
         source: completedTrip.parking_stop_detected ? 'parking_stop' : 'stopped_trip_end',
       });
+      setParkedLocation(savedParkedLocation);
     }
     if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
     await dispatchPostTripNotification(completedTrip, completedTrips, settings).catch(() => {});
@@ -609,6 +617,8 @@ export default function Dashboard() {
   const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: t.score_overall || 0 }));
   const tips = buildScoreTips(completedTrips);
   const weeklyGoals = calculateWeeklyDrivingGoals(completedTrips, settings);
+  const brakingImprovement = calculateRecentBrakingImprovement(completedTrips);
+  const parkingReminder = formatParkingReminder(parkedLocation);
   const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
   const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
   const baseline = computePersonalBaseline(completedTrips);
@@ -631,7 +641,6 @@ export default function Dashboard() {
       calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, Reflect.get(firstDetection, 'phoneUse') ?? {}).score_overall - 15;
   })();
 
-  const { color: scoreColor } = getScoreColor(avgScore);
   const units = settings.units || 'metric';
 
   return (
@@ -661,6 +670,29 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {(brakingImprovement || parkingReminder) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {brakingImprovement && (
+            <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+              <TrendingDown className="h-5 w-5" />
+              <div>
+                <div className="text-sm font-semibold">{brakingImprovement.message}</div>
+                <div className="text-xs opacity-80">Braking score {brakingImprovement.previous} to {brakingImprovement.current}</div>
+              </div>
+            </div>
+          )}
+          {parkingReminder && (
+            <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4">
+              <ParkingSquare className="h-5 w-5 text-primary" />
+              <div>
+                <div className="text-sm font-semibold">Parking reminder</div>
+                <div className="text-xs text-muted-foreground">{parkingReminder}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <AnimatePresence>
         {fatigueDialogOpen && (

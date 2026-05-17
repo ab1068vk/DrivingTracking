@@ -300,10 +300,12 @@ export default function Reports() {
           {[1, 2, 3].map(i => <div key={i} className="h-32 bg-secondary/50 rounded-2xl animate-pulse" />)}
         </div>
       ) : trips.length === 0 ? (
-        <div className="flex flex-col items-center py-16 text-center">
+        <div className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card py-16 px-4 text-center">
           <BarChart3 className="w-12 h-12 text-muted-foreground mb-3" />
-          <div className="font-semibold">No data for this period</div>
-          <div className="text-muted-foreground text-sm mt-1">Record some trips first</div>
+          <div className="font-semibold">No report data yet</div>
+          <div className="mt-1 max-w-xs text-muted-foreground text-sm">
+            Complete a trip in this period to unlock score trends, risk events, exports, and route comparisons.
+          </div>
         </div>
       ) : (
         <>

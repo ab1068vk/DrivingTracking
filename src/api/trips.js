@@ -2,6 +2,7 @@ import { apiClient } from "@/api/client";
 import { localTripRepository } from "@/lib/localTripRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
+import { normalizeTripTags } from "@/lib/tripMetadata";
 
 const shouldUseLocalStore = () => isNativePlatform() || !import.meta.env.VITE_API_URL;
 
@@ -24,6 +25,10 @@ export const tripService = {
     const withSuggestion = {
       ...suggestion,
       tag: trip.tag ?? null,
+      tags: normalizeTripTags(trip),
+      nickname: trip.nickname ?? "",
+      notes: trip.notes ?? "",
+      is_favorite: trip.is_favorite === true,
       ...trip,
       auto_tag: trip.auto_tag ?? suggestion.auto_tag,
       auto_tag_confidence: trip.auto_tag_confidence ?? suggestion.auto_tag_confidence,

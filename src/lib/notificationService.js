@@ -277,7 +277,7 @@ export async function notifyTripCompleted(trip) {
   });
 }
 
-export async function notifyExportSaved({ filename, uri, mimeType, label = 'Export' } = {}) {
+export async function notifyExportSaved(/** @type {any} */ { filename, uri, mimeType, label = 'Export' } = {}) {
   if (!isNativePlatform()) return null;
   if (!notificationsEnabled('notifications_enabled')) return null;
 

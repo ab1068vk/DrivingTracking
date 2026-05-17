@@ -20,7 +20,7 @@ const currentValue = (thresholds, lowerKey, upperKey) => (
   Number(thresholds?.[lowerKey]) || Number(thresholds?.[upperKey]) || 0
 );
 
-export function computeCalibrationProfile(trips = [], currentThresholds = {}) {
+export function computeCalibrationProfile(trips = [], /** @type {any} */ currentThresholds = {}) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const tripsAnalyzed = completed.length;
   const kmAnalyzedRaw = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);

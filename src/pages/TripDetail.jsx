@@ -8,7 +8,8 @@ import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
   Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag,
-  ParkingSquare, Droplets, GitBranch, Route, Smartphone
+  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star,
+  StickyNote, X
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
@@ -26,6 +27,13 @@ import {
 import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
+import {
+  TRIP_TAG_OPTIONS,
+  buildScoreExplanation,
+  getTripDisplayName,
+  getTripTagOption,
+  normalizeTripTags,
+} from '@/lib/tripMetadata';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,6 +68,8 @@ export default function TripDetail() {
   const units = settings.units || 'metric';
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
+  const [editingMetadata, setEditingMetadata] = useState(false);
+  const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
 
   const { data: trip, isLoading } = useQuery({
     queryKey: ['trip', id],
@@ -94,8 +104,28 @@ export default function TripDetail() {
     },
   });
   const tagMutation = useMutation({
-    mutationFn: (/** @type {any} */ tag) => tripService.update(id, { tag, tag_reviewed: true }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['trip', id] }),
+    mutationFn: (/** @type {any} */ tag) => {
+      const tags = [...new Set([...normalizeTripTags(trip), tag])];
+      return tripService.update(id, { tags, tag, tag_reviewed: true });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['trip', id] });
+      qc.invalidateQueries({ queryKey: ['all-trips'] });
+    },
+  });
+  const metadataMutation = useMutation({
+    mutationFn: (/** @type {any} */ patch) => tripService.update(id, patch),
+    onSuccess: (updatedTrip) => {
+      qc.invalidateQueries({ queryKey: ['trip', id] });
+      qc.invalidateQueries({ queryKey: ['all-trips'] });
+      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      setMetadataDraft({
+        nickname: updatedTrip?.nickname || '',
+        notes: updatedTrip?.notes || '',
+        tags: normalizeTripTags(updatedTrip || {}),
+      });
+      setEditingMetadata(false);
+    },
   });
   const [dismissedTags, setDismissedTags] = useState(() => {
     try {
@@ -149,6 +179,15 @@ export default function TripDetail() {
     loadRouteRiskIndex().then(setRouteRiskIndex);
   }, []);
 
+  useEffect(() => {
+    if (!trip) return;
+    setMetadataDraft({
+      nickname: trip.nickname || '',
+      notes: trip.notes || '',
+      tags: normalizeTripTags(trip),
+    });
+  }, [trip]);
+
   if (isLoading) {
     return (
       <div className="space-y-4 pb-4">
@@ -176,9 +215,29 @@ export default function TripDetail() {
   const economics = estimateTripEconomics(trip, tripVehicle, settings);
   const fatigueRisk = calculateFatigueRisk([trip], settings);
   const tagSuggestion = suggestTripTag(trip);
-  const showTagSuggestion = !trip.tag &&
+  const tripTags = normalizeTripTags(trip);
+  const tripTitle = getTripDisplayName(trip);
+  const showTagSuggestion = tripTags.length === 0 &&
     ['high', 'medium'].includes(tagSuggestion.auto_tag_confidence) &&
     !dismissedTags.includes(String(trip.id));
+  const toggleDraftTag = (tagId) => {
+    setMetadataDraft((draft) => {
+      const nextTags = draft.tags.includes(tagId)
+        ? draft.tags.filter((item) => item !== tagId)
+        : [...draft.tags, tagId];
+      return { ...draft, tags: nextTags };
+    });
+  };
+  const saveMetadata = () => {
+    const tags = normalizeTripTags(metadataDraft.tags);
+    metadataMutation.mutate({
+      nickname: metadataDraft.nickname.trim(),
+      notes: metadataDraft.notes.trim(),
+      tags,
+      tag: tags[0] || null,
+      tag_reviewed: true,
+    });
+  };
   const dismissTagSuggestion = () => {
     const next = [...new Set([...dismissedTags, String(trip.id)])];
     setDismissedTags(next);
@@ -297,6 +356,15 @@ export default function TripDetail() {
             </AlertDialog>
           )}
           <button
+            onClick={() => metadataMutation.mutate({ is_favorite: trip.is_favorite !== true })}
+            title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
+            className={`p-2 rounded-xl transition-colors ${
+              trip.is_favorite ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/30' : 'text-muted-foreground hover:bg-secondary'
+            }`}
+          >
+            <Star className={`w-4 h-4 ${trip.is_favorite ? 'fill-current' : ''}`} />
+          </button>
+          <button
             onClick={() => {
               if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
             }}
@@ -315,7 +383,7 @@ export default function TripDetail() {
         >
           <Tag className="w-4 h-4 text-primary" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium capitalize">Suggested tag: {tagSuggestion.auto_tag}</div>
+            <div className="text-sm font-medium">Suggested tag: {getTripTagOption(tagSuggestion.auto_tag)?.label || tagSuggestion.auto_tag}</div>
             <div className="text-xs text-muted-foreground capitalize">{tagSuggestion.auto_tag_confidence} confidence</div>
           </div>
           <button
@@ -326,8 +394,8 @@ export default function TripDetail() {
           </button>
           <button
             onClick={() => {
-              const next = prompt('Tag this trip as work, errands, or personal', tagSuggestion.auto_tag);
-              if (next && ['work', 'errands', 'personal'].includes(next.toLowerCase())) tagMutation.mutate(next.toLowerCase());
+              setEditingMetadata(true);
+              setMetadataDraft((draft) => ({ ...draft, tags: normalizeTripTags([...draft.tags, tagSuggestion.auto_tag]) }));
             }}
             className="px-2.5 py-1.5 rounded-lg bg-secondary text-xs font-semibold"
           >
@@ -486,6 +554,101 @@ export default function TripDetail() {
         </div>
       </motion.div>
 
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-3xl border border-border bg-card p-5 shadow-sm"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-grotesk font-bold">{tripTitle}</h1>
+            <div className="mt-1 text-sm text-muted-foreground">{formatDateTime(trip.start_time)}</div>
+          </div>
+          <button
+            onClick={() => setEditingMetadata((value) => !value)}
+            className="rounded-xl border border-border p-2 text-muted-foreground hover:bg-secondary"
+            title={editingMetadata ? 'Close editor' : 'Edit trip details'}
+          >
+            {editingMetadata ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+          </button>
+        </div>
+
+        {editingMetadata ? (
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Nickname</label>
+              <input
+                value={metadataDraft.nickname}
+                onChange={(event) => setMetadataDraft((draft) => ({ ...draft, nickname: event.target.value }))}
+                placeholder="Work commute"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Notes</label>
+              <textarea
+                value={metadataDraft.notes}
+                onChange={(event) => setMetadataDraft((draft) => ({ ...draft, notes: event.target.value }))}
+                placeholder="Heavy rain, construction, passenger in car..."
+                rows={3}
+                className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+            </div>
+            <div>
+              <div className="mb-2 text-xs font-medium text-muted-foreground">Tags</div>
+              <div className="flex flex-wrap gap-2">
+                {TRIP_TAG_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => toggleDraftTag(option.id)}
+                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                      metadataDraft.tags.includes(option.id)
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : option.className
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={saveMetadata}
+              disabled={metadataMutation.isPending}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+            >
+              <Save className="h-4 w-4" />
+              {metadataMutation.isPending ? 'Saving...' : 'Save trip details'}
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {tripTags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {tripTags.map((tagId) => {
+                  const option = getTripTagOption(tagId);
+                  return (
+                    <span key={tagId} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${option?.className || 'bg-secondary text-muted-foreground border-border'}`}>
+                      {option?.label || tagId}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {trip.notes ? (
+              <div className="flex gap-2 rounded-2xl bg-secondary/50 p-3 text-sm">
+                <StickyNote className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <div>{trip.notes}</div>
+              </div>
+            ) : (
+              <button onClick={() => setEditingMetadata(true)} className="text-sm font-medium text-primary">
+                Add notes for this trip
+              </button>
+            )}
+          </div>
+        )}
+      </motion.div>
+
       {routeRiskSegments.length > 0 && (
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <h2 className="font-semibold mb-3">Route history</h2>
@@ -516,16 +679,22 @@ export default function TripDetail() {
         className="bg-card border border-border rounded-3xl p-5 shadow-sm"
       >
         <div className="flex items-center gap-6">
-          <ScoreRing score={trip.score_overall || 0} size={100} strokeWidth={8} sublabel="overall" />
+          <ScoreRing
+            score={trip.score_overall || 0}
+            size={100}
+            strokeWidth={8}
+            sublabel="overall"
+            title={buildScoreExplanation(trip, 'score_overall')}
+          />
           <div className="flex-1 grid grid-cols-3 gap-3">
             {[
-              { label: 'Safety', value: trip.score_safety },
-              { label: 'Smooth', value: trip.score_smoothness },
-              { label: 'Eco', value: trip.score_eco },
-            ].map(({ label, value }) => {
+              { label: 'Safety', key: 'score_safety', value: trip.score_safety },
+              { label: 'Smooth', key: 'score_smoothness', value: trip.score_smoothness },
+              { label: 'Eco', key: 'score_eco', value: trip.score_eco },
+            ].map(({ label, key, value }) => {
               const { color: c } = getScoreColor(value || 0);
               return (
-                <div key={label} className="text-center">
+                <div key={label} className="text-center" title={buildScoreExplanation(trip, key)}>
                   <div className={`font-grotesk font-bold text-xl ${c}`}>{value ?? '—'}</div>
                   <div className="text-xs text-muted-foreground">{label}</div>
                 </div>
@@ -540,7 +709,12 @@ export default function TripDetail() {
           ].map(({ label, score, grade }) => (
             <div key={label} className="flex min-w-0 items-center gap-3 rounded-2xl bg-secondary/50 p-3">
               <div className="shrink-0">
-                <ScoreRing score={score ?? 0} size={56} strokeWidth={5} />
+                <ScoreRing
+                  score={score ?? 0}
+                  size={56}
+                  strokeWidth={5}
+                  title={buildScoreExplanation(trip, label === 'Aggression' ? 'aggressive_driving_score' : 'defensive_driving_score')}
+                />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold leading-tight">{label}</div>
@@ -572,7 +746,7 @@ export default function TripDetail() {
                 <div key={key} className="space-y-1.5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">{label}</span>
-                    <span className={`font-semibold ${scoreColor}`}>{data.overall}</span>
+                    <span className={`font-semibold ${scoreColor}`} title={buildScoreExplanation(trip, 'score_overall')}>{data.overall}</span>
                   </div>
                   <div className="h-2 rounded-full bg-secondary">
                     <div

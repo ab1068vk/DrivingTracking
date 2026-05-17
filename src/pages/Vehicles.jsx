@@ -200,12 +200,19 @@ export default function Vehicles() {
       )}
 
       {!isLoading && vehicles.length === 0 && !showAdd && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 px-4 text-center">
           <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
             <Car className="w-8 h-8 text-muted-foreground" />
           </div>
           <div className="font-semibold mb-1">No vehicles yet</div>
-          <div className="text-muted-foreground text-sm">Add your first vehicle to track stats per car</div>
+          <div className="max-w-xs text-muted-foreground text-sm">Add your first vehicle to connect trips with fuel cost, maintenance, odometer, and per-car scores.</div>
+          <button
+            onClick={() => setShowAdd(true)}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+          >
+            <Plus className="h-4 w-4" />
+            Add vehicle
+          </button>
         </div>
       )}
 

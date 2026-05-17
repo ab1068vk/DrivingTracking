@@ -204,7 +204,7 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
     const score = Number(row.score) || 0;
     const color = score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68];
     writeRow(doc, [row.label, score, row.grade, row.value], y, [58, 28, 24, 60]);
-    doc.setFillColor(...color);
+    doc.setFillColor(color[0], color[1], color[2]);
     doc.rect(72, y + 2, Math.max(1, score / 5), 2, 'F');
     y += 11;
   });

@@ -748,7 +748,7 @@ describe('trip insights', () => {
       score_overall: 80 + index,
     }));
 
-    expect(suggestTripTag(commute).auto_tag).toBe('work');
+    expect(suggestTripTag(commute).auto_tag).toBe('commute');
     expect(estimateTripEconomics(commute, { fuel_efficiency_l_per_100km: 10 }).fuel_saved_liters).toBeGreaterThan(0);
     expect(computePersonalBaseline(trips).baseline_avg).not.toBeNull();
     expect(calculateVehicleHealthImpact([commute], {}).extra_wear_km).toBe(32);

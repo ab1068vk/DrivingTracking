@@ -2,11 +2,19 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
-import { Search, Filter, Car, Tag } from 'lucide-react';
+import { vehicleService } from '@/api/vehicles';
+import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import { localSettings } from '@/lib/trackingStore';
 import { getScoreColor } from '@/lib/tripEngine';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
+import {
+  TRIP_TAG_OPTIONS,
+  buildTripSearchText,
+  calculateRecentBrakingImprovement,
+  isHighRiskTrip,
+  normalizeTripTags,
+} from '@/lib/tripMetadata';
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -17,35 +25,15 @@ const SORT_OPTIONS = [
   { id: 'distance_asc', label: 'Shortest' },
 ];
 
-const DATE_FILTERS = [
-  { id: 'this_month', label: 'This Month' },
-  { id: 'last_30', label: 'Last 30 Days' },
-  { id: 'last_90', label: 'Last 90 Days' },
-  { id: 'all_time', label: 'All Time' },
-];
-
-const FILTER_OPTIONS = [
+const QUICK_FILTERS = [
   { id: 'all', label: 'All Trips' },
-  { id: 'excellent', label: '85+' },
-  { id: 'good', label: '70-84' },
-  { id: 'fair', label: '55-69' },
-  { id: 'poor', label: '<55' },
-  { id: 'night', label: 'Night' },
-  { id: 'harsh_braking', label: 'Harsh Braking' },
-  { id: 'near_miss', label: 'Near-Miss Trips' },
-  { id: 'aggressive', label: 'Aggressive Driving' },
-  { id: 'distraction', label: 'Distraction Risk' },
-  { id: 'drowsy', label: 'Drowsy Risk' },
-  { id: 'perfect_eco', label: 'Perfect Eco' },
-  { id: 'tag_work', label: 'Work' },
-  { id: 'tag_personal', label: 'Personal' },
-  { id: 'tag_errands', label: 'Errands' },
-];
-
-const TAG_OPTIONS = [
-  { id: 'work', label: 'Work', color: 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/50' },
-  { id: 'personal', label: 'Personal', color: 'bg-green-50 dark:bg-green-950/30 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800/50' },
-  { id: 'errands', label: 'Errands', color: 'bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800/50' },
+  { id: 'this_week', label: 'This Week' },
+  { id: 'this_month', label: 'This Month' },
+  { id: 'best', label: 'Best Trips' },
+  { id: 'worst', label: 'Worst Trips' },
+  { id: 'night', label: 'Night Drives' },
+  { id: 'high_risk', label: 'High Risk' },
+  { id: 'favorites', label: 'Favorites' },
 ];
 
 const SCORE_SPARKLINES = [
@@ -55,27 +43,38 @@ const SCORE_SPARKLINES = [
   { key: 'score_eco', label: 'Eco' },
 ];
 
-const isSameMonth = (value, now = new Date()) => {
-  const date = new Date(value);
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+const startOfWeek = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - date.getDay());
+  return date.getTime();
 };
 
-const matchesDateFilter = (trip, dateFilter) => {
+const startOfMonth = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(1);
+  return date.getTime();
+};
+
+const matchesQuickFilter = (trip, filter) => {
   const start = new Date(trip.start_time).getTime();
   if (!Number.isFinite(start)) return false;
-  const now = Date.now();
-  if (dateFilter === 'this_month') return isSameMonth(trip.start_time);
-  if (dateFilter === 'last_30') return start >= now - 30 * 86400000;
-  if (dateFilter === 'last_90') return start >= now - 90 * 86400000;
+  if (filter === 'this_week') return start >= startOfWeek();
+  if (filter === 'this_month') return start >= startOfMonth();
+  if (filter === 'best') return (trip.score_overall ?? 0) >= 85;
+  if (filter === 'worst') return (trip.score_overall ?? 100) < 60;
+  if (filter === 'night') return trip.night_driving || normalizeTripTags(trip).includes('night');
+  if (filter === 'high_risk') return isHighRiskTrip(trip);
+  if (filter === 'favorites') return trip.is_favorite === true;
   return true;
 };
 
 export default function TripHistory() {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
-  const [dateFilter, setDateFilter] = useState('this_month');
   const [filterBy, setFilterBy] = useState('all');
-  const [taggingId, setTaggingId] = useState(null);
+  const [selectedTag, setSelectedTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
@@ -86,13 +85,23 @@ export default function TripHistory() {
     queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
   });
 
-  const tagMut = useMutation({
-    mutationFn: (/** @type {{id:any,tag:any}} */ vars) => tripService.update(vars.id, { tag: vars.tag }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['all-trips'] }); setTaggingId(null); },
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles'],
+    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
 
-  const completed = trips.filter(t => t.status === 'completed');
-  const dateScoped = completed.filter(t => matchesDateFilter(t, dateFilter));
+  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
+  const invalidateTrips = () => {
+    qc.invalidateQueries({ queryKey: ['all-trips'] });
+    qc.invalidateQueries({ queryKey: ['recent-trips'] });
+  };
+
+  const updateTripMut = useMutation({
+    mutationFn: (/** @type {{id:any,patch:any}} */ vars) => tripService.update(vars.id, vars.patch),
+    onSuccess: invalidateTrips,
+  });
+
+  const completed = trips.filter((trip) => trip.status === 'completed');
   const recentChronological = [...completed]
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(-5);
@@ -103,6 +112,7 @@ export default function TripHistory() {
     score_smoothness: trip.score_smoothness ?? 0,
     score_eco: trip.score_eco ?? 0,
   }));
+  const improvement = calculateRecentBrakingImprovement(completed);
   const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const scoreDeltaForTrip = (trip) => {
     const index = tripsByRecentOrder.findIndex((item) => String(item.id) === String(trip.id));
@@ -116,26 +126,12 @@ export default function TripHistory() {
     };
   };
 
-  const filtered = dateScoped.filter(t => {
-    if (filterBy === 'excellent' && (t.score_overall ?? 0) < 85) return false;
-    if (filterBy === 'good' && ((t.score_overall ?? 0) < 70 || (t.score_overall ?? 0) >= 85)) return false;
-    if (filterBy === 'fair' && ((t.score_overall ?? 0) < 55 || (t.score_overall ?? 0) >= 70)) return false;
-    if (filterBy === 'poor' && (t.score_overall ?? 0) >= 55) return false;
-    if (filterBy === 'night' && !t.night_driving) return false;
-    if (filterBy === 'harsh_braking' && !(t.harsh_brakes_count > 0)) return false;
-    if (filterBy === 'near_miss' && !(t.near_miss_count > 0)) return false;
-    if (filterBy === 'aggressive' && t.aggressive_grade !== 'aggressive') return false;
-    if (filterBy === 'distraction' && (!t.phone_proxy_risk || t.phone_proxy_risk === 'none')) return false;
-    if (filterBy === 'drowsy' && (!t.drowsy_risk_level || t.drowsy_risk_level === 'none')) return false;
-    if (filterBy === 'perfect_eco' && (t.fuel_band_score ?? 0) < 80) return false;
-    if (filterBy === 'tag_work' && t.tag !== 'work') return false;
-    if (filterBy === 'tag_personal' && t.tag !== 'personal') return false;
-    if (filterBy === 'tag_errands' && t.tag !== 'errands') return false;
+  const filtered = completed.filter((trip) => {
+    if (!matchesQuickFilter(trip, filterBy)) return false;
+    if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
     if (search) {
-      const q = search.toLowerCase();
-      const matchAddr = (t.start_address || '').toLowerCase().includes(q) || (t.end_address || '').toLowerCase().includes(q);
-      const matchDate = new Date(t.start_time).toLocaleDateString().includes(q);
-      if (!matchAddr && !matchDate) return false;
+      const vehicle = vehicleById.get(String(trip.vehicle_id));
+      if (!buildTripSearchText(trip, vehicle).includes(search.toLowerCase())) return false;
     }
     return true;
   });
@@ -152,35 +148,50 @@ export default function TripHistory() {
     }
   });
 
+  const clearFilters = () => {
+    setSearch('');
+    setFilterBy('all');
+    setSelectedTag('all');
+    setSortBy('date_desc');
+  };
+
   return (
     <div className="space-y-5 pb-4">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
-        <p className="text-muted-foreground text-sm mt-1">{dateScoped.length} of {completed.length} completed trips shown by date</p>
+        <p className="text-muted-foreground text-sm mt-1">{sorted.length} of {completed.length} completed trips</p>
       </motion.div>
 
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <input
           type="text"
-          placeholder="Search trips..."
+          placeholder="Search location, vehicle, tag, note, score, or date"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={event => setSearch(event.target.value)}
           className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary transition-colors"
         />
       </div>
+
+      {improvement && (
+        <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <TrendingUp className="h-4 w-4" />
+          <span className="font-semibold">{improvement.message}</span>
+        </div>
+      )}
 
       {sparklineData.length > 1 && (
         <div className="grid grid-cols-2 gap-2">
           {SCORE_SPARKLINES.map((score, index) => {
             const latest = sparklineData[sparklineData.length - 1]?.[score.key] || 0;
-            const color = getScoreColor(latest).color.includes('green')
+            const scoreColor = getScoreColor(latest).color;
+            const color = scoreColor.includes('green')
               ? '#22c55e'
-              : getScoreColor(latest).color.includes('blue')
+              : scoreColor.includes('blue')
                 ? '#3b82f6'
-                : getScoreColor(latest).color.includes('yellow')
+                : scoreColor.includes('yellow')
                   ? '#eab308'
-                  : getScoreColor(latest).color.includes('orange')
+                  : scoreColor.includes('orange')
                     ? '#f97316'
                     : '#ef4444';
             return (
@@ -220,39 +231,59 @@ export default function TripHistory() {
         </button>
 
         <select
-          value={dateFilter}
-          onChange={e => setDateFilter(e.target.value)}
-          className="flex-shrink-0 bg-card border border-border rounded-xl text-xs font-medium px-3 py-2 text-muted-foreground outline-none"
-        >
-          {DATE_FILTERS.map(o => (
-            <option key={o.id} value={o.id}>{o.label}</option>
-          ))}
-        </select>
-
-        <select
           value={sortBy}
-          onChange={e => setSortBy(e.target.value)}
+          onChange={event => setSortBy(event.target.value)}
           className="flex-shrink-0 bg-card border border-border rounded-xl text-xs font-medium px-3 py-2 text-muted-foreground outline-none"
         >
-          {SORT_OPTIONS.map(o => (
-            <option key={o.id} value={o.id}>{o.label}</option>
+          {SORT_OPTIONS.map(option => (
+            <option key={option.id} value={option.id}>{option.label}</option>
           ))}
         </select>
 
-        {FILTER_OPTIONS.map(opt => (
+        {QUICK_FILTERS.map(option => (
           <button
-            key={opt.id}
-            onClick={() => setFilterBy(opt.id)}
+            key={option.id}
+            onClick={() => setFilterBy(option.id)}
             className={`flex-shrink-0 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
-              filterBy === opt.id
+              filterBy === option.id
                 ? 'bg-primary text-primary-foreground border-primary'
                 : 'bg-card text-muted-foreground border-border hover:border-primary/50'
             }`}
           >
-            {opt.label}
+            {option.label}
           </button>
         ))}
       </div>
+
+      {showFilters && (
+        <div className="rounded-2xl border border-border bg-card p-3">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+            <Tag className="h-3.5 w-3.5" />
+            Tags
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setSelectedTag('all')}
+              className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
+              }`}
+            >
+              All tags
+            </button>
+            {TRIP_TAG_OPTIONS.map(option => (
+              <button
+                key={option.id}
+                onClick={() => setSelectedTag(option.id)}
+                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isLoading && (
         <div className="space-y-3">
@@ -262,56 +293,49 @@ export default function TripHistory() {
         </div>
       )}
 
-      {!isLoading && sorted.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+      {!isLoading && completed.length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 text-center">
           <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
             <Car className="w-8 h-8 text-muted-foreground" />
           </div>
-          <div className="font-semibold mb-1">No trips found</div>
-          <div className="text-muted-foreground text-sm">Try adjusting your month, search, or filters</div>
+          <div className="font-semibold mb-1">No trips yet</div>
+          <div className="max-w-xs text-muted-foreground text-sm">Start tracking a drive from the Dashboard. Your saved routes, notes, tags, and favorites will appear here.</div>
         </div>
       )}
 
-      {!isLoading && (
+      {!isLoading && completed.length > 0 && sorted.length === 0 && (
+        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 text-center">
+          <CalendarDays className="w-10 h-10 text-muted-foreground mb-3" />
+          <div className="font-semibold mb-1">No matching trips</div>
+          <div className="max-w-xs text-muted-foreground text-sm">Try a different search, score range, tag, or quick filter.</div>
+          <button onClick={clearFilters} className="mt-4 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
+            Clear filters
+          </button>
+        </div>
+      )}
+
+      {!isLoading && sorted.length > 0 && (
         <div className="space-y-3">
-          {sorted.map((trip, i) => (
-            <div key={trip.id}>
-              <TripCard trip={trip} units={units} index={i} scoreDelta={scoreDeltaForTrip(trip)} />
-              <div className="flex items-center gap-2 mt-1.5 px-1">
-                {trip.tag ? (
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
-                    TAG_OPTIONS.find(t => t.id === trip.tag)?.color || 'bg-secondary text-muted-foreground border-border'
-                  }`}>
-                    {TAG_OPTIONS.find(t => t.id === trip.tag)?.label}
-                  </span>
-                ) : null}
-                {taggingId === trip.id ? (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {TAG_OPTIONS.map(opt => (
-                      <button key={opt.id}
-                        onClick={() => tagMut.mutate({ id: trip.id, tag: opt.id })}
-                        className={`text-xs px-2 py-0.5 rounded-full border font-medium transition-all hover:opacity-80 ${opt.color}`}>
-                        {opt.label}
-                      </button>
-                    ))}
-                    {trip.tag && (
-                      <button onClick={() => tagMut.mutate({ id: trip.id, tag: null })}
-                        className="text-xs px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:bg-secondary">
-                        Remove tag
-                      </button>
-                    )}
-                    <button onClick={() => setTaggingId(null)} className="text-xs text-muted-foreground hover:underline">cancel</button>
-                  </div>
-                ) : (
-                  <button onClick={() => setTaggingId(trip.id)}
-                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors">
-                    <Tag className="w-3 h-3" />
-                    {trip.tag ? 'Change tag' : 'Add tag'}
-                  </button>
-                )}
-              </div>
-            </div>
+          {sorted.map((trip, index) => (
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              units={units}
+              index={index}
+              scoreDelta={scoreDeltaForTrip(trip)}
+              onToggleFavorite={(target) => updateTripMut.mutate({
+                id: target.id,
+                patch: { is_favorite: target.is_favorite !== true },
+              })}
+            />
           ))}
+        </div>
+      )}
+
+      {completed.some((trip) => trip.is_favorite) && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Star className="h-3.5 w-3.5 text-amber-500" />
+          Favorited trips stay searchable and can be filtered for repeat-route comparisons.
         </div>
       )}
     </div>

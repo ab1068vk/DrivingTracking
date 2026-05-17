@@ -68,6 +68,14 @@ export default function Achievements() {
             <div key={item} className="h-28 rounded-2xl bg-secondary/60 animate-pulse" />
           ))}
         </div>
+      ) : completed.length === 0 ? (
+        <div className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card py-16 px-4 text-center">
+          <Trophy className="w-12 h-12 text-muted-foreground mb-3" />
+          <div className="font-semibold">No achievements unlocked yet</div>
+          <div className="mt-1 max-w-xs text-sm text-muted-foreground">
+            Finish your first tracked trip to start earning safe-driving, distance, consistency, and improvement badges.
+          </div>
+        </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-3">
           {badges.map((badge, index) => {

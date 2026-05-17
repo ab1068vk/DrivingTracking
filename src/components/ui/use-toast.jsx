@@ -54,7 +54,7 @@ const _clearFromRemoveQueue = (toastId) => {
   }
 };
 
-const scheduleAutoDismiss = (toastId, duration = DEFAULT_TOAST_DURATION) => {
+const scheduleAutoDismiss = (toastId, /** @type {any} */ duration = DEFAULT_TOAST_DURATION) => {
   clearAutoDismiss(toastId);
   if (duration === Infinity || duration === false || duration === null) return;
   const ms = Number(duration);

@@ -148,7 +148,7 @@ export function buildParkingTimeline(trip = {}) {
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
-export function buildTrackingHealth({ permissionStatus = {}, nativeStatus = {}, batteryStatus = {}, latestTrip = null } = {}) {
+export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, nativeStatus = {}, batteryStatus = {}, latestTrip = null } = {}) {
   const checks = [
     {
       id: 'native',

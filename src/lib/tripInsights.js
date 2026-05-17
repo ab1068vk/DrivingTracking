@@ -387,22 +387,31 @@ export function suggestTripTag(trip = {}) {
   const weekend = dow === 0 || dow === 6;
   const rushHour = (hour >= 6 && hour <= 9) || (hour >= 16 && hour <= 19);
 
+  if (trip.night_driving || hour >= 21 || hour <= 5) {
+    return { auto_tag: 'night', auto_tag_confidence: trip.night_driving ? 'high' : 'medium' };
+  }
+  if (trip.slippery_proxy === 'likely_wet' || trip.slippery_proxy === 'possible_wet') {
+    return { auto_tag: 'rain', auto_tag_confidence: 'medium' };
+  }
+  if (trip.dominant_road_type === 'highway' || trip.road_type === 'highway') {
+    return { auto_tag: 'highway', auto_tag_confidence: 'medium' };
+  }
   if (weekday && rushHour && durationMin >= 10 && durationMin <= 90 && distanceKm >= 5 && distanceKm <= 80) {
-    return { auto_tag: 'work', auto_tag_confidence: 'high' };
+    return { auto_tag: 'commute', auto_tag_confidence: 'high' };
   }
   if (weekday && hour >= 6 && hour <= 18 && durationMin >= 15) {
-    return { auto_tag: 'work', auto_tag_confidence: 'medium' };
+    return { auto_tag: 'commute', auto_tag_confidence: 'medium' };
   }
   if (durationMin < 20 && distanceKm < 10) {
-    return { auto_tag: 'errands', auto_tag_confidence: 'medium' };
+    return { auto_tag: 'errand', auto_tag_confidence: 'medium' };
   }
   if (weekend && hour >= 9 && hour <= 17 && distanceKm < 20) {
-    return { auto_tag: 'errands', auto_tag_confidence: 'medium' };
+    return { auto_tag: 'errand', auto_tag_confidence: 'medium' };
   }
-  if ((hour >= 20 || hour <= 1) && dow >= 4 && dow <= 6) {
-    return { auto_tag: 'personal', auto_tag_confidence: 'medium' };
+  if (distanceKm < 8 && durationMin >= 10) {
+    return { auto_tag: 'practice', auto_tag_confidence: 'low' };
   }
-  return { auto_tag: 'personal', auto_tag_confidence: 'low' };
+  return { auto_tag: 'city', auto_tag_confidence: 'low' };
 }
 
 export function buildScoreTips(trips = []) {

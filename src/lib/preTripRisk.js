@@ -52,7 +52,10 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const timeBucket = timeData.find((bucket) => bucket.label === currentBucketLabel(now.getHours()));
   const dayEntry = dayData[now.getDay()];
   const baseline = computePersonalBaseline(recent);
-  const sorted = [...completed].sort((a, b) => new Date(b.end_time || b.start_time || 0) - new Date(a.end_time || a.start_time || 0));
+  const sorted = [...completed].sort((a, b) => (
+    new Date(b.end_time || b.start_time || 0).getTime() -
+    new Date(a.end_time || a.start_time || 0).getTime()
+  ));
   const lastTrip = sorted[0] || null;
 
   const signals = {

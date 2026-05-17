@@ -1,14 +1,25 @@
 import { motion } from 'framer-motion';
-import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone } from 'lucide-react';
+import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone, Star, StickyNote } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
+import {
+  buildScoreExplanation,
+  getTripDisplayName,
+  getTripTagOption,
+  normalizeTripTags,
+} from '@/lib/tripMetadata';
 import { useNavigate } from 'react-router-dom';
 
-export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta = null }) {
+export default function TripCard({
+  trip,
+  units = 'metric',
+  index = 0,
+  scoreDelta = null,
+  onToggleFavorite = null,
+}) {
   const navigate = useNavigate();
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
-
-  const startPt = trip.route_points?.[0];
-  const endPt = trip.route_points?.[trip.route_points.length - 1];
+  const tags = normalizeTripTags(trip);
+  const title = getTripDisplayName(trip);
 
   return (
     <motion.div
@@ -19,24 +30,32 @@ export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta
       className="bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group"
     >
       <div className="flex items-start justify-between gap-3">
-        {/* Left: info */}
         <div className="flex-1 min-w-0">
-          {/* Date/time row */}
-          <div className="flex items-center gap-2 mb-2">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{formatDate(trip.start_time)}</span>
-              <span>·</span>
-              <span>{formatTime(trip.start_time)}</span>
+          <div className="mb-2 flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold">{title}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{formatDate(trip.start_time)}</span>
+                <span>-</span>
+                <span>{formatTime(trip.start_time)}</span>
+              </div>
             </div>
-            {trip.night_driving && (
-              <span className="text-xs bg-purple-50 dark:bg-purple-950/30 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/50 px-1.5 py-0.5 rounded-full">
-                🌙 Night
-              </span>
-            )}
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleFavorite?.(trip);
+              }}
+              title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
+              className={`rounded-lg p-1.5 transition-colors ${
+                trip.is_favorite ? 'text-amber-500' : 'text-muted-foreground hover:bg-secondary'
+              }`}
+            >
+              <Star className={`h-4 w-4 ${trip.is_favorite ? 'fill-current' : ''}`} />
+            </button>
           </div>
 
-          {/* Route */}
           {(trip.start_address || trip.end_address) && (
             <div className="flex items-center gap-1.5 mb-2 text-sm">
               <div className="flex flex-col gap-0.5 min-w-0">
@@ -52,7 +71,6 @@ export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta
             </div>
           )}
 
-          {/* Stats row */}
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Navigation className="w-3.5 h-3.5" />
@@ -64,31 +82,49 @@ export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta
             </div>
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Gauge className="w-3.5 h-3.5" />
-              <span>{formatSpeed(trip.avg_speed_kmh || 0, units)}</span>
+              <span>{formatSpeed(trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0, units)}</span>
             </div>
+            {trip.notes && (
+              <div className="flex items-center gap-1 text-sm text-muted-foreground" title={trip.notes}>
+                <StickyNote className="w-3.5 h-3.5" />
+                <span>Note</span>
+              </div>
+            )}
           </div>
 
-          {/* Events row */}
+          {tags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {tags.map((tagId) => {
+                const option = getTripTagOption(tagId);
+                return (
+                  <span key={tagId} className={`rounded-full border px-2 py-0.5 text-xs font-medium ${option?.className || 'bg-secondary text-muted-foreground border-border'}`}>
+                    {option?.label || tagId}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
           {(trip.harsh_brakes_count > 0 || trip.rapid_accel_count > 0 || trip.sharp_turns_count > 0 || trip.speeding_events_count > 0) && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {trip.harsh_brakes_count > 0 && (
                 <span className="text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
-                  🛑 {trip.harsh_brakes_count} brake{trip.harsh_brakes_count > 1 ? 's' : ''}
+                  {trip.harsh_brakes_count} brake{trip.harsh_brakes_count > 1 ? 's' : ''}
                 </span>
               )}
               {trip.rapid_accel_count > 0 && (
                 <span className="text-xs bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800/40 px-1.5 py-0.5 rounded-md">
-                  ⚡ {trip.rapid_accel_count} accel
+                  {trip.rapid_accel_count} accel
                 </span>
               )}
               {trip.sharp_turns_count > 0 && (
                 <span className="text-xs bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 px-1.5 py-0.5 rounded-md">
-                  ↰ {trip.sharp_turns_count} turn{trip.sharp_turns_count > 1 ? 's' : ''}
+                  {trip.sharp_turns_count} turn{trip.sharp_turns_count > 1 ? 's' : ''}
                 </span>
               )}
               {trip.speeding_events_count > 0 && (
                 <span className="text-xs bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800/40 px-1.5 py-0.5 rounded-md">
-                  🚀 {trip.speeding_events_count} speed
+                  {trip.speeding_events_count} speed
                 </span>
               )}
             </div>
@@ -115,11 +151,13 @@ export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta
           )}
         </div>
 
-        {/* Right: Score */}
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <div className={`w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}>
+          <div
+            className={`w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}
+            title={buildScoreExplanation(trip, 'score_overall')}
+          >
             <span className={`font-grotesk font-bold text-lg ${color}`}>
-              {trip.score_overall ?? '—'}
+              {trip.score_overall ?? '-'}
             </span>
           </div>
           {scoreDelta && (
@@ -130,14 +168,13 @@ export default function TripCard({ trip, units = 'metric', index = 0, scoreDelta
                   ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
                   : 'bg-secondary text-muted-foreground'
             }`}>
-              {scoreDelta.direction === 'up' ? '▲' : scoreDelta.direction === 'down' ? '▼' : '—'} vs last 5
+              {scoreDelta.direction === 'up' ? 'Up' : scoreDelta.direction === 'down' ? 'Down' : 'Flat'} vs last 5
             </span>
           )}
           <span className={`text-xs font-medium ${color}`}>{scoreLabel}</span>
         </div>
       </div>
 
-      {/* Chevron */}
       <div className="flex justify-end mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <ChevronRight className="w-4 h-4 text-muted-foreground" />
       </div>

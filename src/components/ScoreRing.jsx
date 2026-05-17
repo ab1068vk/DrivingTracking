@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
  * Circular score display with animated ring.
  * Uses SVG for the ring and color-codes based on score.
  */
-export default function ScoreRing({ score = 0, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true }) {
+export default function ScoreRing({ score = 0, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '' }) {
   const radius = (size - strokeWidth * 2) / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = Math.max(0, Math.min(100, score));
@@ -16,7 +16,7 @@ export default function ScoreRing({ score = 0, size = 120, strokeWidth = 8, labe
   const strokeColor = score >= 85 ? '#22c55e' : score >= 70 ? '#3b82f6' : score >= 55 ? '#eab308' : score >= 40 ? '#f97316' : '#ef4444';
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-2" title={title || undefined}>
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="rotate-[-90deg]">
           {/* Background track */}
