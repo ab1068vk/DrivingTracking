@@ -9,7 +9,7 @@ import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
-import { loadDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
+import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
 
@@ -124,11 +124,8 @@ export default function MapScreen() {
         return;
       }
 
-      let zones = await loadDangerZones();
-      if (!zones.length) {
-        zones = buildRiskHotspots(allCompleted);
-        await saveDangerZones(zones);
-      }
+      const zones = buildRiskHotspots(allCompleted);
+      await saveDangerZones(zones);
       let index = await loadRouteRiskIndex();
       if (!index || index.size === 0) {
         index = buildRouteRiskIndex(allCompleted);
@@ -305,20 +302,25 @@ export default function MapScreen() {
         )}
       </div>
 
-      {dangerZones.length > 0 && (
-        <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-base">Risk Hotspots</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Places where harsh braking, speeding, or sharp turns repeat</p>
-            </div>
-            <button
-              onClick={() => setShowDangerZones(true)}
-              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
-            >
-              Show on map
-            </button>
+      <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-base">Risk Hotspots</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Places where harsh braking, speeding, or sharp turns repeat</p>
           </div>
+          <button
+            onClick={() => setShowDangerZones(true)}
+            disabled={dangerZones.length === 0}
+            className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+          >
+            Show on map
+          </button>
+        </div>
+        {dangerZones.length === 0 ? (
+          <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
+            No risk hotspots yet. The app will highlight a place here after the same area has repeated harsh brakes, speeding, or sharp turns.
+          </div>
+        ) : (
           <div className="grid gap-2 md:grid-cols-3">
             {dangerZones.slice(0, 6).map((zone) => (
               <div key={zone.id} className="rounded-2xl bg-secondary/50 p-3 text-sm">
@@ -335,11 +337,14 @@ export default function MapScreen() {
                 <div className="mt-1 text-xs text-muted-foreground">
                   {zone.eventCount} repeated event{zone.eventCount === 1 ? '' : 's'} near {Number(zone.lat).toFixed(4)}, {Number(zone.lng).toFixed(4)}
                 </div>
+                {zone.lastSeen && (
+                  <div className="mt-1 text-[11px] text-muted-foreground">Last seen {relativeTime(zone.lastSeen)}</div>
+                )}
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div>
         <div className="flex items-center justify-between mb-3 gap-3">
@@ -361,7 +366,7 @@ export default function MapScreen() {
                   showDangerZones ? 'bg-red-500 text-white border-red-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                 }`}
               >
-                Danger Zones
+                Risk hotspots
               </button>
               <button
                 onClick={() => setShowRouteRisk(value => !value)}

@@ -14,12 +14,20 @@ const startOfWeek = (value = new Date()) => {
   return date;
 };
 
-const routeCell = (point) => `${Math.round(Number(point.lat) * 200) / 200},${Math.round(Number(point.lng) * 200) / 200}`;
+const routeCell = (point) => {
+  const lat = Number(point?.lat);
+  const lng = Number(point?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return `${Math.round(lat * 200) / 200},${Math.round(lng * 200) / 200}`;
+};
 
 export function routeKeyForTrip(trip = {}) {
   const points = Array.isArray(trip.route_points) ? trip.route_points : [];
   if (points.length < 2) return null;
-  return `${routeCell(points[0])}|${routeCell(points[points.length - 1])}`;
+  const start = routeCell(points[0]);
+  const end = routeCell(points[points.length - 1]);
+  if (!start || !end) return null;
+  return `${start}|${end}`;
 }
 
 const average = (values) => values.length
@@ -106,6 +114,29 @@ export function buildRouteComparisons(trips = []) {
     .sort((a, b) => b.trip_count - a.trip_count || b.avg_score - a.avg_score);
 }
 
+export function buildCommuteDetections(trips = []) {
+  return buildRouteComparisons(trips)
+    .filter((route) => (
+      route.label === 'Morning commute' ||
+      route.label === 'Evening commute' ||
+      route.label === 'Gym route'
+    ))
+    .map((route) => ({
+      id: route.route_key,
+      label: route.label,
+      trip_count: route.trip_count,
+      avg_score: route.avg_score,
+      avg_distance_km: route.avg_distance_km,
+      usual_time: route.safest_time,
+      safest_time_score: route.safest_time_score,
+      trend: route.trend,
+      last_trip_id: route.last_trip_id,
+      explanation: route.label === 'Gym route'
+        ? 'Repeated short evening route detected from timing and distance.'
+        : 'Repeated weekday route detected from similar start and end areas.',
+    }));
+}
+
 export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
   const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
   const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
@@ -143,13 +174,16 @@ export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
     }
   });
 
+  const bestDay = [...driveDays].sort((a, b) => (b.avg_score || 0) - (a.avg_score || 0))[0] || null;
+  const worstDay = [...driveDays].sort((a, b) => (a.avg_score || 100) - (b.avg_score || 100))[0] || null;
+
   return {
     label: monthStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
     days,
     drive_days: driveDays.length,
     total_distance_km: Math.round(driveDays.reduce((sum, day) => sum + day.distance_km, 0) * 10) / 10,
-    best_day: driveDays.sort((a, b) => (b.avg_score || 0) - (a.avg_score || 0))[0] || null,
-    worst_day: driveDays.sort((a, b) => (a.avg_score || 100) - (b.avg_score || 100))[0] || null,
+    best_day: bestDay,
+    worst_day: worstDay,
     best_streak_days: bestStreak,
   };
 }
@@ -186,7 +220,7 @@ export function buildWeeklyDriverSummary(trips = [], settings = {}) {
   };
   const mainIssue = Object.entries(issueCounts).sort((a, b) => b[1] - a[1])[0];
   const avgFor = (items, field) => average(items.map((trip) => Number(trip[field])).filter(Number.isFinite));
-  const improvements = [
+  const improvements = previous.length === 0 ? [] : [
     { label: 'smoother turns', delta: (avgFor(completed, 'cornering_consistency_score') ?? 0) - (avgFor(previous, 'cornering_consistency_score') ?? 0) },
     { label: 'better braking', delta: (avgFor(completed, 'braking_efficiency_score') ?? 0) - (avgFor(previous, 'braking_efficiency_score') ?? 0) },
     { label: 'steadier speed', delta: (avgFor(completed, 'svi_score') ?? 0) - (avgFor(previous, 'svi_score') ?? 0) },
@@ -329,9 +363,10 @@ export function buildVehicleCostSummary(vehicle = {}, trips = []) {
 }
 
 export function buildMaintenanceReminders(vehicle = {}, trips = []) {
-  const odometer = Number(vehicle.odometer_km) + trips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const completed = trips.filter((trip) => trip.status === 'completed');
+  const odometer = (Number(vehicle.odometer_km) || 0) + completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const items = Array.isArray(vehicle.maintenance_items) ? vehicle.maintenance_items : [];
-  const distanceReminders = items.map((item) => {
+  const distanceReminders = items.filter((item) => Number(item.interval_km) > 0).map((item) => {
     const interval = Number(item.interval_km) || 0;
     const last = Number(item.last_service_km) || 0;
     const remaining = last + interval - odometer;
