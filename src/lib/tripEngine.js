@@ -58,7 +58,7 @@ export const DEFAULT_THRESHOLDS = {
   FOLLOWING_GAP_MIN_SPEED_KMH: 55,
   FOLLOWING_GAP_CRUISE_SECONDS: 4,
   FOLLOWING_GAP_SPEED_DROP_KMH: 10,
-  LANE_CHANGE_MIN_SPEED_KMH: 35,
+  LANE_CHANGE_MIN_SPEED_KMH: 45,
   LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH: 80,
   LANE_CHANGE_MIN_TURN_RATE_DEG_S: 2,
   LANE_CHANGE_MAX_TURN_RATE_DEG_S: 20,
@@ -1102,23 +1102,25 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
     const netHeadingChange = Math.abs(signedHeadingDelta(startHeading, endHeading));
     const peakExcursion = headings.reduce((peak, heading) => Math.max(peak, Math.abs(signedHeadingDelta(startHeading, heading))), 0);
     const windowSpeeds = windowPoints.map((_, offset) => reliablePointSpeed(points, windowStart + offset, thresholds) ?? finiteSpeed(points[windowStart + offset]));
-    const stableSpeed = speedStdDev(windowSpeeds) <= (speed >= highwaySpeed ? 16 : 12);
+    const stableSpeed = speedStdDev(windowSpeeds) <= (speed >= highwaySpeed ? 12 : 8);
     const sCurveLaneChange = hasCounterSteer &&
-      peakExcursion >= 4 &&
-      peakExcursion <= 22 &&
-      netHeadingChange <= 9 &&
-      totalAbsChange >= 7 &&
-      totalAbsChange <= 45 &&
+      peakExcursion >= 5 &&
+      peakExcursion <= 18 &&
+      netHeadingChange <= 6 &&
+      totalAbsChange >= 10 &&
+      totalAbsChange <= 32 &&
       stableSpeed;
     const highwayLaneShift = speed >= highwaySpeed &&
-      peakExcursion >= 3.5 &&
-      netHeadingChange <= 10 &&
-      totalAbsChange >= 5 &&
-      totalAbsChange <= 40 &&
+      hasCounterSteer &&
+      peakExcursion >= 4.5 &&
+      peakExcursion <= 18 &&
+      netHeadingChange <= 7 &&
+      totalAbsChange >= 9 &&
+      totalAbsChange <= 32 &&
       stableSpeed;
     const pointRateFits = turnRate >= minRate && turnRate <= maxRate;
 
-    if ((pointRateFits && (speed >= highwaySpeed || hasCounterSteer)) || sCurveLaneChange || highwayLaneShift) {
+    if ((pointRateFits && hasCounterSteer && stableSpeed) || sCurveLaneChange || highwayLaneShift) {
       candidates.push({ point: curr, turnRate: Math.max(turnRate, totalAbsChange / windowDurationS), speed, pointIndex: i });
     }
   }

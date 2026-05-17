@@ -257,9 +257,9 @@ export default function Dashboard() {
           lastMovingSpeedKmh: lastMovingSpeedRef.current,
         });
         const gpsParked = speed < 2 && (
-          (stillSeconds >= 180 && gpsPositionDriftM < 5) ||
-          (stillSeconds >= 300 && gpsPositionDriftM < 20) ||
-          stillSeconds >= 600
+          (stillSeconds >= 90 && gpsPositionDriftM < 5) ||
+          (stillSeconds >= 180 && gpsPositionDriftM < 20) ||
+          stillSeconds >= 300
         );
 
         if (activityParked || gpsParked) {
@@ -526,7 +526,7 @@ export default function Dashboard() {
         : 0;
       const activity = latestActivityRef.current;
       const activitySaysDrive = shouldAutoStartTracking({ activity, currentSpeedKmh: speed, recentMovingSeconds });
-      const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= 10;
+      const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= 5;
 
       if (activitySaysDrive || speedOnlyDrive) {
         recordTrackingDiagnostic({

@@ -253,7 +253,7 @@ describe('tripEngine', () => {
   it('classifies road type and calculates advanced smoothness fields', () => {
     const highwayPoints = Array.from({ length: 8 }, (_, index) => ({
       ...point(43.6532 + index * 0.001, -79.3832, index * 5, 90),
-      heading: index < 4 ? 0 : 15,
+      heading: [0, 3, 7, 10, 7, 3, 0, 0][index],
     }));
 
     expect(classifyRoadType(highwayPoints).road_type).toBe('highway');
@@ -428,11 +428,11 @@ describe('tripEngine', () => {
 
   it('detects gentler lane switches without counting sustained road curves', () => {
     const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({
-      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 42),
+      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 50),
       heading,
     }));
     const roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({
-      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 42),
+      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 50),
       heading,
     }));
 
@@ -517,14 +517,20 @@ describe('auto tracking decision logic', () => {
   it('starts only when activity and speed strongly suggest driving', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 82 },
-      currentSpeedKmh: 8,
-      recentMovingSeconds: 10,
+      currentSpeedKmh: 5,
+      recentMovingSeconds: 5,
     })).toBe(true);
 
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 90 },
       currentSpeedKmh: 0,
       recentMovingSeconds: 60,
+    })).toBe(false);
+
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 90 },
+      currentSpeedKmh: 4,
+      recentMovingSeconds: 20,
     })).toBe(false);
 
     expect(shouldAutoStartTracking({

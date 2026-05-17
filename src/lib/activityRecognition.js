@@ -125,7 +125,7 @@ export async function clearNativeCompletedTrips() {
 
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
-  return vehicleConfidence >= 70 && currentSpeedKmh >= 8 && recentMovingSeconds >= 10;
+  return vehicleConfidence >= 70 && currentSpeedKmh >= 5 && recentMovingSeconds >= 5;
 }
 
 export function computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = []) {
@@ -162,7 +162,7 @@ export function shouldAutoStopTracking({
     ACTIVITY_TYPES.RUNNING,
     ACTIVITY_TYPES.ON_BICYCLE,
   ].includes(type) && confidence >= 75;
-  if (onFoot && speed < 15 && secondsStopped >= 15) return true;
+  if (onFoot && speed < 15 && secondsStopped >= 10) return true;
 
   const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
   if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;
@@ -170,15 +170,15 @@ export function shouldAutoStopTracking({
   if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;
 
   const inVehicle = type === ACTIVITY_TYPES.IN_VEHICLE;
-  if (inVehicle && speed < 2 && secondsStopped >= 180 && driftM < VERY_STABLE_PARKED_DRIFT_M) return true;
+  if (inVehicle && speed < 2 && secondsStopped >= 90 && driftM < VERY_STABLE_PARKED_DRIFT_M) return true;
   if (inVehicle && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return true;
-  if (inVehicle && speed < 5 && secondsStopped >= 240) {
+  if (inVehicle && speed < 5 && secondsStopped >= 120) {
     if (driftM < 5) return true;
     // FIX: Preserve the fast in-vehicle parked path for very stable GPS drift.
-    if (secondsStopped >= 360 && driftM < 20) return true;
+    if (secondsStopped >= 300 && driftM < 20) return true;
     // FIX: Add the in_vehicle_extended_stop fallback for realistic urban parked GPS drift.
-    if (secondsStopped >= 420 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return true;
-    if (secondsStopped >= 600 && speed < 2 && lastMovingSpeed < 5) return true;
+    if (secondsStopped >= 300 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return true;
+    if (secondsStopped >= 420 && speed < 2 && lastMovingSpeed < 5) return true;
     // FIX: Add the prolonged_zero_speed safety net so trips cannot run forever on GPS drift alone.
   }
 

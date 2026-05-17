@@ -55,29 +55,26 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final int MIN_POINTS_TO_SAVE = 2;
     private static final long MIN_TRIP_MS = 30_000L;
     private static final double MIN_TRIP_KM = 0.1d;
-    private static final long AUTO_STOP_FOOT_MS = 15_000L;
+    private static final long AUTO_STOP_FOOT_MS = 10_000L;
     private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
     private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
-    private static final long AUTO_STOP_PARKED_GPS_STABLE_MS = 180_000L;
+    private static final long AUTO_STOP_PARKED_GPS_STABLE_MS = 90_000L;
     private static final long AUTO_STOP_PARKED_GPS_RELAXED_MS = 300_000L;
-    private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
-    private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
-    // FIX: Add a relaxed six-minute in-vehicle auto-stop timer for urban GPS drift.
+    private static final long AUTO_STOP_IN_VEHICLE_MS = 120_000L;
+    private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 300_000L;
     private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
-    // FIX: Add an eight-minute speed-only safety net for prolonged parked trips.
-    private static final long AUTO_STOP_NO_ACTIVITY_MS = 300_000L;
+    private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
     private static final long STALE_LOCATION_STOP_MS = 30_000L;
     private static final double GPS_STILL_DRIFT_M = 8.0d;
     private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
     private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
-    // FIX: Allow the extended in-vehicle path to tolerate common 8-20 m city GPS drift.
     private static final float MAX_ACCURACY_M = 75f;
     private static final double MIN_POINT_DISTANCE_M = 8d;
     private static final double STATIONARY_SPEED_KMH = 5d;
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
-    private static final double AUTO_START_SPEED_KMH = 8d;
-    private static final long AUTO_START_MOVING_MS = 8_000L;
+    private static final double AUTO_START_SPEED_KMH = 5d;
+    private static final long AUTO_START_MOVING_MS = 5_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
@@ -396,8 +393,8 @@ public class DriveSenseAutoTrackingService extends Service {
 
         stopLocationUpdates();
         LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 15_000L)
-            .setMinUpdateIntervalMillis(8_000L)
-            .setMinUpdateDistanceMeters(20f)
+            .setMinUpdateIntervalMillis(5_000L)
+            .setMinUpdateDistanceMeters(8f)
             .build();
 
         locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
