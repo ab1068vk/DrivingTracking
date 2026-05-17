@@ -96,6 +96,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private PendingIntent activityIntent;
     private LocationCallback locationCallback;
     private JSONArray activePoints;
+    private JSONArray activeTimeline;
     private long activeStartMs = 0L;
     private long stillSinceMs = 0L;
     private long nonVehicleSinceMs = 0L;
@@ -112,6 +113,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private long lastPhoneUseNotifyMs = 0L;
     private long lastNativePhoneWindowMs = 0L;
     private long lastLiveNotificationMs = 0L;
+    private String nativeAutoStartReason = "";
+    private String lastNativeAutoStopReason = "";
 
     @Override
     public void onCreate() {
@@ -151,6 +154,9 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         DriveSenseNativeTripStore.setServiceEnabled(this, true);
+        if (ACTION_START.equals(action) || action == null) {
+            recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "service_start", 0d, 0L, 0d);
+        }
         requestActivityUpdates();
         if (!isTripActive()) startArmedLocationUpdates();
 
@@ -166,7 +172,7 @@ public class DriveSenseAutoTrackingService extends Service {
 
     @Override
     public void onDestroy() {
-        finishTrip(false);
+        finishTrip("service_destroyed", false);
         removeActivityUpdates();
         stopLocationUpdates();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
@@ -233,7 +239,7 @@ public class DriveSenseAutoTrackingService extends Service {
         boolean gpsParkedRelaxed = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_RELAXED_M && !Double.isNaN(stoppedAnchorLat);
 
         if (!isTripActive()) {
-            if (inVehicle) startTripIfNeeded();
+            if (inVehicle) startTripIfNeeded("activity_in_vehicle");
             return;
         }
 
@@ -250,14 +256,14 @@ public class DriveSenseAutoTrackingService extends Service {
         if (speedKmh < 2.0d &&
             ((stoppedElapsed >= AUTO_STOP_PARKED_GPS_STABLE_MS && gpsParkedStable) ||
                 (stoppedElapsed >= AUTO_STOP_PARKED_GPS_RELAXED_MS && gpsParkedRelaxed))) {
-            finishTrip();
+            finishTrip("parked_gps_stable", true);
             return;
         }
 
         if (leftVehicle) {
             if (nonVehicleSinceMs == 0L) nonVehicleSinceMs = now;
             if (now - nonVehicleSinceMs >= AUTO_STOP_FOOT_MS) {
-                finishTrip();
+                finishTrip("left_vehicle_on_foot", true);
                 return;
             }
             return;
@@ -268,7 +274,7 @@ public class DriveSenseAutoTrackingService extends Service {
             long elapsed = now - stillSinceMs;
             long threshold = gpsStable ? AUTO_STOP_STILL_STABLE_MS : AUTO_STOP_STILL_DRIFT_MS;
             if (elapsed >= threshold) {
-                finishTrip();
+                finishTrip(gpsStable ? "still_activity_stable_gps" : "still_activity_timeout", true);
                 return;
             }
             return;
@@ -278,19 +284,19 @@ public class DriveSenseAutoTrackingService extends Service {
             if (stillSinceMs == 0L) stillSinceMs = now;
             long elapsed = now - stillSinceMs;
             if (elapsed >= AUTO_STOP_IN_VEHICLE_MS && gpsVeryStable) {
-                finishTrip();
+                finishTrip("in_vehicle_parked_stable", true);
                 // FIX: Keep the original four-minute fast path for very stable parked GPS.
                 return;
             }
             if (elapsed >= AUTO_STOP_IN_VEHICLE_EXTENDED_MS &&
                 maxDriftSinceStopM < GPS_VEHICLE_DRIFT_RELAXED_M &&
                 !Double.isNaN(stoppedAnchorLat)) {
-                finishTrip();
+                finishTrip("in_vehicle_parked_relaxed_drift", true);
                 // FIX: Finish after six minutes when GPS drift is relaxed but still parked-like.
                 return;
             }
             if (elapsed >= AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS && lastKnownSpeedKmh < 2.0d) {
-                finishTrip();
+                finishTrip("in_vehicle_zero_speed_timeout", true);
                 // FIX: Finish after eight minutes at near-zero speed even if GPS drift is noisy.
                 return;
             }
@@ -301,7 +307,7 @@ public class DriveSenseAutoTrackingService extends Service {
             if (stillSinceMs == 0L) stillSinceMs = now;
             long elapsed = now - stillSinceMs;
             if (elapsed >= AUTO_STOP_NO_ACTIVITY_MS && gpsStable) {
-                finishTrip();
+                finishTrip("unknown_activity_stable_gps", true);
                 return;
             }
             return;
@@ -327,9 +333,14 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void startTripIfNeeded() {
+        startTripIfNeeded("activity_in_vehicle");
+    }
+
+    private void startTripIfNeeded(String reason) {
         if (isTripActive()) return;
         activeStartMs = System.currentTimeMillis();
         activePoints = new JSONArray();
+        activeTimeline = new JSONArray();
         previousLocation = null;
         armedPreviousLocation = null;
         armedMovingSinceMs = 0L;
@@ -343,7 +354,11 @@ public class DriveSenseAutoTrackingService extends Service {
         nativeMicroSteerCount = 0;
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
+        nativeAutoStartReason = reason;
+        lastNativeAutoStopReason = "";
         recentHeadings.clear();
+        recordTimeline("auto_start", "Native trip started.", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
+        recordDiagnostic("auto_start", "Native trip started.", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
         updateLiveTripNotification(true);
         startTripLocationUpdates();
     }
@@ -365,6 +380,7 @@ public class DriveSenseAutoTrackingService extends Service {
             .build();
 
         locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
+        recordDiagnostic("armed_location_watch", "Waiting for movement after a parked or ended trip.", "armed_gps_backup", lastKnownSpeedKmh, 0L, 0d);
     }
 
     private void startArmedLocationUpdates() {
@@ -461,7 +477,7 @@ public class DriveSenseAutoTrackingService extends Service {
         if (speedKmh >= AUTO_START_SPEED_KMH) {
             if (armedMovingSinceMs == 0L) armedMovingSinceMs = now;
             if (now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
-                startTripIfNeeded();
+                startTripIfNeeded("armed_gps_movement");
                 recordLocation(location);
                 return;
             }
@@ -490,16 +506,26 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void finishTrip() {
-        finishTrip(true);
+        finishTrip("service_finish", true);
     }
 
     private void finishTrip(boolean keepArmed) {
+        finishTrip("service_finish", keepArmed);
+    }
+
+    private void finishTrip(String reason, boolean keepArmed) {
         if (!isTripActive()) return;
 
         long endMs = System.currentTimeMillis();
         JSONArray points = activePoints;
+        JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
         long startMs = activeStartMs;
+        long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;
+        lastNativeAutoStopReason = reason;
+        recordTimeline("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        recordDiagnostic("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         activePoints = null;
+        activeTimeline = null;
         activeStartMs = 0L;
         previousLocation = null;
         armedPreviousLocation = null;
@@ -521,6 +547,7 @@ public class DriveSenseAutoTrackingService extends Service {
 
         TripStats stats = calculateStats(points, startMs, endMs);
         if (points.length() < MIN_POINTS_TO_SAVE || stats.durationSeconds < MIN_TRIP_MS / 1000L || stats.distanceKm < MIN_TRIP_KM) {
+            recordDiagnostic("trip_discarded", "Native trip was too short to save.", reason, 0d, stoppedSeconds, 0d);
             return;
         }
 
@@ -550,6 +577,9 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("status", "completed");
             trip.put("background_tracking", true);
             trip.put("start_source", "native_auto");
+            trip.put("native_auto_start_reason", nativeAutoStartReason);
+            trip.put("native_auto_stop_reason", lastNativeAutoStopReason);
+            trip.put("native_tracking_timeline", timeline);
             trip.put("native_phone_proxy_count", nativeMicroSteerCount);
             trip.put("native_phone_usage_access_granted", phoneUsage.optBoolean("usage_access_granted", false));
             trip.put("native_phone_usage_events", phoneUsage.optJSONArray("events") != null ? phoneUsage.optJSONArray("events") : new JSONArray());
@@ -806,7 +836,7 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void stopEverything() {
-        finishTrip(false);
+        finishTrip("service_stopped_by_user", false);
         removeActivityUpdates();
         stopLocationUpdates();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
@@ -883,6 +913,31 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         return base + " - recording";
+    }
+
+    private void recordTimeline(String type, String title, String reason, double speedKmh, long stoppedSeconds, double driftM) {
+        if (activeTimeline == null) return;
+        activeTimeline.put(diagnosticEvent(type, title, reason, speedKmh, stoppedSeconds, driftM));
+    }
+
+    private void recordDiagnostic(String type, String title, String reason, double speedKmh, long stoppedSeconds, double driftM) {
+        DriveSenseNativeTripStore.addDiagnosticEvent(this, diagnosticEvent(type, title, reason, speedKmh, stoppedSeconds, driftM));
+    }
+
+    private JSONObject diagnosticEvent(String type, String title, String reason, double speedKmh, long stoppedSeconds, double driftM) {
+        JSONObject event = new JSONObject();
+        try {
+            event.put("id", "native_" + System.currentTimeMillis() + "_" + Math.abs(type.hashCode()));
+            event.put("timestamp", iso(System.currentTimeMillis()));
+            event.put("type", type);
+            event.put("title", title);
+            event.put("reason", reason);
+            event.put("detail", reason == null ? "" : reason.replace('_', ' '));
+            event.put("speed_kmh", Math.round(speedKmh));
+            event.put("stopped_seconds", stoppedSeconds);
+            event.put("drift_m", Math.round(driftM));
+        } catch (JSONException ignored) {}
+        return event;
     }
 
     private void ensureChannel() {

@@ -250,7 +250,22 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         JSObject payload = new JSObject();
         payload.put("enabled", DriveSenseNativeTripStore.isServiceEnabled(getContext()));
         payload.put("completedTripsCount", DriveSenseNativeTripStore.getCompletedTrips(getContext()).length());
+        payload.put("diagnosticEventsCount", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()).length());
         call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void getNativeDiagnostics(PluginCall call) {
+        JSObject payload = new JSObject();
+        payload.put("enabled", DriveSenseNativeTripStore.isServiceEnabled(getContext()));
+        payload.put("events", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()));
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void clearNativeDiagnostics(PluginCall call) {
+        DriveSenseNativeTripStore.clearDiagnosticEvents(getContext());
+        call.resolve();
     }
 
     @PluginMethod

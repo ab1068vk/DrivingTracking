@@ -13,6 +13,8 @@ class DriveSenseNativeTripStore {
     private static final String PREFS = "drivesense_native_tracking";
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
+    private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
+    private static final int MAX_DIAGNOSTIC_EVENTS = 120;
 
     static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -43,6 +45,30 @@ class DriveSenseNativeTripStore {
 
     static void clearCompletedTrips(Context context) {
         prefs(context).edit().putString(KEY_COMPLETED_TRIPS, "[]").apply();
+    }
+
+    static JSONArray getDiagnosticEvents(Context context) {
+        String raw = prefs(context).getString(KEY_DIAGNOSTIC_EVENTS, "[]");
+        try {
+            return new JSONArray(raw);
+        } catch (JSONException e) {
+            return new JSONArray();
+        }
+    }
+
+    static void addDiagnosticEvent(Context context, JSONObject event) {
+        JSONArray current = getDiagnosticEvents(context);
+        JSONArray next = new JSONArray();
+        next.put(event);
+        for (int i = 0; i < current.length() && next.length() < MAX_DIAGNOSTIC_EVENTS; i++) {
+            JSONObject item = current.optJSONObject(i);
+            if (item != null) next.put(item);
+        }
+        prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, next.toString()).apply();
+    }
+
+    static void clearDiagnosticEvents(Context context) {
+        prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, "[]").apply();
     }
 
     static String newTripId() {

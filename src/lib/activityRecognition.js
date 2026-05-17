@@ -58,6 +58,20 @@ export async function getNativeAutoTrackingStatus() {
   return ActivityRecognition.nativeAutoTrackingStatus();
 }
 
+export async function getNativeDiagnostics() {
+  if (!isAndroid()) return { enabled: false, events: [] };
+  const result = await ActivityRecognition.getNativeDiagnostics();
+  return {
+    enabled: result?.enabled === true,
+    events: Array.isArray(result?.events) ? result.events : [],
+  };
+}
+
+export async function clearNativeDiagnostics() {
+  if (!isAndroid()) return;
+  await ActivityRecognition.clearNativeDiagnostics();
+}
+
 export async function openAndroidLocationSettings() {
   if (!isAndroid()) return false;
   await ActivityRecognition.openAppLocationSettings();

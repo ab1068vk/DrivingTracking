@@ -65,6 +65,7 @@ import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } 
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { computePreTripRisk } from '@/lib/preTripRisk';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { recordTrackingDiagnostic } from '@/lib/trackingDiagnostics';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -262,6 +263,14 @@ export default function Dashboard() {
         );
 
         if (activityParked || gpsParked) {
+          recordTrackingDiagnostic({
+            type: 'auto_stop',
+            title: 'In-app trip auto-ended',
+            reason: activityParked ? 'activity_parked' : 'gps_parked',
+            speed_kmh: Math.round(speed),
+            stopped_seconds: Math.round(stillSeconds),
+            drift_m: Math.round(gpsPositionDriftM),
+          });
           autoEndingTripRef.current = true;
           endTripRef.current?.();
         }
@@ -324,6 +333,12 @@ export default function Dashboard() {
     };
 
     activeTripStore.set(tripData);
+    recordTrackingDiagnostic({
+      type: 'trip_started',
+      title: autoStarted ? 'In-app auto trip started' : 'Manual trip started',
+      reason: autoStarted ? 'auto_detection' : 'manual_button',
+      background_tracking: useBackground,
+    });
     activeTripRef.current = tripData;
     trackingRef.current = true;
     setActiveTrip(tripData);
@@ -359,6 +374,13 @@ export default function Dashboard() {
         stats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
 
     if (shouldDiscard) {
+      recordTrackingDiagnostic({
+        type: 'trip_discarded',
+        title: 'Trip discarded',
+        reason: isManualTrip ? 'manual_too_short' : 'auto_too_short',
+        duration_seconds: Math.round(stats.duration_seconds || 0),
+        distance_km: stats.distance_km || 0,
+      });
       activeTripStore.clear();
       activeTripRef.current = null;
       trackingRef.current = false;
@@ -410,6 +432,15 @@ export default function Dashboard() {
     };
 
     const savedTrip = await tripService.create(completedTrip);
+    recordTrackingDiagnostic({
+      type: 'trip_ended',
+      title: 'Trip saved',
+      reason: completedTrip.parking_stop_detected ? 'ended_parked' : 'ended_manual_or_moving',
+      tripId: savedTrip?.id || completedTrip.id,
+      duration_seconds: Math.round(completedTrip.duration_seconds || 0),
+      distance_km: completedTrip.distance_km || 0,
+      parking_stop_duration_seconds: completedTrip.parking_stop_duration_seconds || 0,
+    });
     await invalidateDangerZoneCache();
     await invalidateRouteRiskIndex();
     const parkedPoint = pts[pts.length - 1];
@@ -498,6 +529,13 @@ export default function Dashboard() {
       const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= 10;
 
       if (activitySaysDrive || speedOnlyDrive) {
+        recordTrackingDiagnostic({
+          type: 'auto_start',
+          title: 'In-app auto-start triggered',
+          reason: activitySaysDrive ? 'activity_in_vehicle' : 'speed_only_drive',
+          speed_kmh: Math.round(speed),
+          recent_moving_seconds: Math.round(recentMovingSeconds),
+        });
         await stopAutoWatchers();
         await handleStartTrip({ autoStarted: true });
       } else if (shouldAutoStopTracking({ activity, currentSpeedKmh: speed, stillSeconds })) {
