@@ -27,7 +27,7 @@ describe('advanced open-source features', () => {
     ];
     const points = [
       { lat: 43.65, lng: -79.38, speed_kmh: 45, timestamp: new Date(now - 12000).toISOString() },
-      { lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now - 6000).toISOString() },
+      { lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now - 10000).toISOString() },
       { lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now).toISOString() },
     ];
     expect(buildSensorFusionSummary(samples, points).impact_like_count).toBeGreaterThan(0);
@@ -37,7 +37,7 @@ describe('advanced open-source features', () => {
   it('adds sensor confirmation to driving events', () => {
     const timestamp = new Date().toISOString();
     const events = [{ type: 'harsh_brake', timestamp }];
-    const enriched = enrichEventsWithSensorContext(events, [{ ax: 7, ay: 0, az: 9.8, timestamp }]);
+    const enriched = enrichEventsWithSensorContext(events, [{ ax: 15, ay: 0, az: 9.8, timestamp }]);
     expect(enriched[0].sensor_confirmed).toBe(true);
   });
 

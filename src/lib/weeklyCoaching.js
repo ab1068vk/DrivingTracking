@@ -5,7 +5,7 @@ const eventTotal = (trips, key) => trips.reduce((sum, trip) => sum + (Number(tri
 export function buildWeeklyCoachSummary(trips = []) {
   const completed = (trips || [])
     .filter((trip) => trip.status === 'completed')
-    .sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0));
+    .sort((a, b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
   if (completed.length < 3) {
     return {
       headline: 'Complete a few more trips to unlock weekly coaching.',

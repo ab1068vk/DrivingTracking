@@ -105,7 +105,8 @@ export function enrichEventsWithSensorContext(events = [], samples = []) {
 }
 
 export function detectCrashIncident({ routePoints = [], motionSamples = [], activity = null, settings = {} } = {}) {
-  if (settings.crash_detection_enabled === false) return null;
+  const cfg = /** @type {any} */ (settings);
+  if (cfg.crash_detection_enabled === false) return null;
   const points = routePoints || [];
   const samples = (motionSamples || []).map(normalizeMotionSample);
   if (points.length < 2 || samples.length < 3) return null;
@@ -163,7 +164,7 @@ export function createMotionSensorFusion({ maxSamples = 5000, onIncidentSample =
   return {
     async start() {
       if (listening || typeof window === 'undefined') return false;
-      const permissionApi = window.DeviceMotionEvent?.requestPermission;
+      const permissionApi = /** @type {any} */ (window.DeviceMotionEvent)?.requestPermission;
       if (typeof permissionApi === 'function') {
         const result = await permissionApi.call(window.DeviceMotionEvent).catch(() => 'denied');
         if (result !== 'granted') return false;

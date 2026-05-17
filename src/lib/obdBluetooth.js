@@ -26,7 +26,8 @@ export function parseObdPidResponse(raw = '') {
 }
 
 export function getObdBluetoothSupport() {
-  const supported = typeof navigator !== 'undefined' && Boolean(navigator.bluetooth);
+  const nav = /** @type {any} */ (typeof navigator !== 'undefined' ? navigator : {});
+  const supported = Boolean(nav.bluetooth);
   return {
     supported,
     transport: supported ? 'web_bluetooth_ble' : 'unavailable',
@@ -37,8 +38,9 @@ export function getObdBluetoothSupport() {
 }
 
 export async function connectObdBleAdapter() {
-  if (!navigator.bluetooth) throw new Error('Web Bluetooth is not available on this device.');
-  const device = await navigator.bluetooth.requestDevice({
+  const nav = /** @type {any} */ (navigator);
+  if (!nav.bluetooth) throw new Error('Web Bluetooth is not available on this device.');
+  const device = await nav.bluetooth.requestDevice({
     acceptAllDevices: true,
     optionalServices: [
       '0000fff0-0000-1000-8000-00805f9b34fb',
