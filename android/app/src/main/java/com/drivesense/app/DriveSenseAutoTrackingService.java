@@ -239,7 +239,12 @@ public class DriveSenseAutoTrackingService extends Service {
         boolean gpsParkedRelaxed = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_RELAXED_M && !Double.isNaN(stoppedAnchorLat);
 
         if (!isTripActive()) {
-            if (inVehicle) startTripIfNeeded("activity_in_vehicle");
+            if (inVehicle &&
+                lastKnownSpeedKmh >= AUTO_START_SPEED_KMH &&
+                armedMovingSinceMs > 0L &&
+                now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
+                startTripIfNeeded("activity_in_vehicle_moving");
+            }
             return;
         }
 

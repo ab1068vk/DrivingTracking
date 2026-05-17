@@ -503,9 +503,15 @@ describe('auto tracking decision logic', () => {
   it('starts only when activity and speed strongly suggest driving', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 82 },
-      currentSpeedKmh: 5,
+      currentSpeedKmh: 8,
       recentMovingSeconds: 10,
     })).toBe(true);
+
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 90 },
+      currentSpeedKmh: 0,
+      recentMovingSeconds: 60,
+    })).toBe(false);
 
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.WALKING, confidence: 95 },
