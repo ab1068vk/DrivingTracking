@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets
 } from 'lucide-react';
 import {
   Dialog,
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { applyThemeMode, localSettings } from '@/lib/trackingStore';
+import { applyThemeMode, getLastParkedLocation, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
@@ -43,6 +43,8 @@ import {
   loadCalibrationProfile,
   saveCalibrationProfile,
 } from '@/lib/thresholdCalibration';
+import { getCurrentLocation } from '@/lib/trackingService';
+import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -144,6 +146,8 @@ export default function Settings() {
   const [patternGuideOpen, setPatternGuideOpen] = useState(false);
   const [calibProfile, setCalibProfile] = useState(null);
   const [calibLoading, setCalibLoading] = useState(false);
+  const [parkedLocation, setParkedLocation] = useState(null);
+  const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: 180 });
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -338,7 +342,42 @@ export default function Settings() {
   useEffect(() => {
     refreshPermissions();
     loadCalibrationProfile().then(setCalibProfile);
+    getLastParkedLocation().then(setParkedLocation);
   }, []);
+
+  const privacyZones = getPrivacyZones(cfg);
+
+  const savePrivacyZone = (location, sourceLabel) => {
+    if (!location?.lat || !location?.lng) {
+      alert('No location is available for that privacy zone yet.');
+      return;
+    }
+    const updated = upsertPrivacyZone({
+      label: privacyDraft.label || sourceLabel,
+      radius_m: privacyDraft.radius_m,
+      lat: location.lat,
+      lng: location.lng,
+    }, cfg);
+    setCfg(updated);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+
+  const addCurrentPrivacyZone = async () => {
+    try {
+      const location = await getCurrentLocation();
+      savePrivacyZone(location, 'Current location');
+    } catch (error) {
+      alert(error.message || 'Could not get current location.');
+    }
+  };
+
+  const deletePrivacyZone = (id) => {
+    const updated = removePrivacyZone(id, cfg);
+    setCfg(updated);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
 
   useEffect(() => {
     if (!isAndroid()) return undefined;
@@ -1078,6 +1117,26 @@ export default function Settings() {
             onChange={v => updateCfg({ speed_warning_enabled: v })}
           />
         </SettingRow>
+        <SettingRow
+          icon={Gauge}
+          label="OpenStreetMap speed limits"
+          sublabel="Use Overpass maxspeed tags after trips; fallback thresholds fill gaps"
+        >
+          <Toggle
+            value={cfg.speed_limit_lookup_enabled !== false}
+            onChange={v => updateCfg({ speed_limit_lookup_enabled: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          icon={Droplets}
+          label="Weather-aware scoring"
+          sublabel="Use Open-Meteo rain, snow, fog, and temperature context"
+        >
+          <Toggle
+            value={cfg.weather_context_enabled !== false}
+            onChange={v => updateCfg({ weather_context_enabled: v })}
+          />
+        </SettingRow>
         <div className="px-1">
           <div className="flex justify-between text-xs mb-1.5">
             <span className="font-medium">Warn when over limit by</span>
@@ -1107,6 +1166,75 @@ export default function Settings() {
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
+          <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <MapPin className="h-4 w-4 text-primary" />
+                  Privacy Zones
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">Mask sensitive places from maps, CSV exports, and backups.</div>
+              </div>
+              <span className="rounded-full bg-card px-2 py-1 text-xs font-semibold">{privacyZones.length}</span>
+            </div>
+            <div className="grid grid-cols-[1fr_92px] gap-2">
+              <input
+                value={privacyDraft.label}
+                onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, label: event.target.value }))}
+                className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
+                placeholder="Home, work, school"
+              />
+              <input
+                type="number"
+                min="50"
+                max="1000"
+                step="10"
+                value={privacyDraft.radius_m}
+                onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, radius_m: Number(event.target.value) || 180 }))}
+                className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
+                aria-label="Privacy zone radius in meters"
+              />
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={addCurrentPrivacyZone}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+              >
+                <LocateFixed className="h-3.5 w-3.5" />
+                Add Current
+              </button>
+              <button
+                type="button"
+                onClick={() => savePrivacyZone(parkedLocation, 'Parked location')}
+                disabled={!parkedLocation}
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add Parked
+              </button>
+            </div>
+            {privacyZones.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {privacyZones.map((zone) => (
+                  <div key={zone.id} className="flex items-center justify-between gap-2 rounded-xl bg-card px-3 py-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold">{zone.label}</div>
+                      <div className="text-muted-foreground">{Math.round(zone.radius_m)} m mask radius</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => deletePrivacyZone(zone.id)}
+                      className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-red-500"
+                      aria-label={`Delete ${zone.label} privacy zone`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <SettingRow
             icon={Download}
             label="Export All Trips"

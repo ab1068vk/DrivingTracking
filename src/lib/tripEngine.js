@@ -1,5 +1,6 @@
 import { saveExportToDownloads } from './nativeDownloads';
 import { detectTripStops, estimateTripEconomics } from './tripInsights';
+import { maskTripForPrivacy } from './privacyZones';
 
 /**
  * DriveSense Trip Engine
@@ -2265,6 +2266,16 @@ function complianceFallbackLimit(roadType, thresholds = DEFAULT_THRESHOLDS) {
   return 60;
 }
 
+function actualSpeedLimitKmhForIndex(points = [], index) {
+  const candidates = [
+    points[index]?.speed_limit_kmh,
+    points[index - 1]?.speed_limit_kmh,
+    points[index + 1]?.speed_limit_kmh,
+  ];
+  const limit = candidates.map(Number).find((value) => Number.isFinite(value) && value > 0);
+  return limit || null;
+}
+
 /**
  * Calculate speed-limit compliance breakdown by inferred road type.
  * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number}>} routePoints - Ordered GPS route points.
@@ -2279,9 +2290,9 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const roadTypes = classifyRoadTypesByPoint(points);
   const zones = Array.isArray(stats.speed_zones) ? stats.speed_zones : inferSpeedZones(points, thresholds);
   const byType = {
-    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0 },
-    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0 },
-    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0 },
+    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0 },
+    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0 },
+    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0 },
   };
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
 
@@ -2291,10 +2302,12 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     if (speed <= (thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH)) return;
     const roadType = roadTypes[index] || 'urban';
     const zone = zones.find((item) => index >= item.startIndex && index <= item.endIndex);
-    const limit = zone?.inferredZoneKmh ?? complianceFallbackLimit(roadType, thresholds);
+    const actualLimit = actualSpeedLimitKmhForIndex(points, index);
+    const limit = actualLimit ?? zone?.inferredZoneKmh ?? complianceFallbackLimit(roadType, thresholds);
     const bucket = byType[roadType];
     bucket.totalPoints++;
     bucket.limitTotal += limit;
+    if (actualLimit) bucket.actualLimitPoints++;
     bucket.maxSpeed = Math.max(bucket.maxSpeed, speed);
     if (speed > limit + speedOver) bucket.overLimitPoints++;
   });
@@ -2309,6 +2322,8 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
       rate: round2(rate),
       max_excess_kmh: round1(maxExcessKmh),
       inferred_limit_kmh: inferredLimit,
+      limit_source: bucket.actualLimitPoints > bucket.totalPoints / 2 ? 'openstreetmap' : 'inferred',
+      actual_limit_coverage: round2(bucket.actualLimitPoints / bucket.totalPoints),
       point_count: bucket.totalPoints,
     };
   };
@@ -2857,8 +2872,10 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     return true;
   };
 
-  const speedingSeverity = (speed) => (
-    speed > 160 ? 'high' : speed > 140 ? 'medium' : 'low'
+  const speedingSeverity = (speed, limit = null) => (
+    limit
+      ? speed > limit + 30 ? 'high' : speed > limit + 20 ? 'medium' : 'low'
+      : speed > 160 ? 'high' : speed > 140 ? 'medium' : 'low'
   );
 
   const flushSpeedingWindow = () => {
@@ -2866,12 +2883,14 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       const eventPoint = speedingPeakPoint || speedingStart;
       pushEvent({
         type: EVENT_TYPES.SPEEDING,
-        severity: speedingSeverity(speedingPeakSpeed),
+        severity: speedingSeverity(speedingPeakSpeed, speedingZone?.actualLimitKmh ?? speedingZone?.inferredZoneKmh ?? null),
         lat: eventPoint.lat,
         lng: eventPoint.lng,
         timestamp: speedingStart.timestamp,
         value: Math.round(speedingPeakSpeed),
         speed_kmh: Math.round(speedingPeakSpeed),
+        speed_limit_kmh: speedingZone?.actualLimitKmh ?? null,
+        speed_limit_source: speedingZone?.actualLimitKmh ? 'openstreetmap' : 'inferred',
         inferred_zone_kmh: speedingZone?.inferredZoneKmh ?? null,
         zone_confidence: speedingZone?.confidence ?? null,
       });
@@ -2998,20 +3017,26 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       }
     }
 
-    const segmentZone = zoneForIndex(i);
+    const actualLimitKmh = actualSpeedLimitKmhForIndex(points, i);
+    const segmentZone = {
+      ...(zoneForIndex(i) || {}),
+      actualLimitKmh,
+    };
     const contextualSpeedingThreshold = Math.min(
       configuredSpeedThreshold,
-      segmentZone?.threshold_kmh ?? configuredSpeedThreshold
+      actualLimitKmh
+        ? actualLimitKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH)
+        : segmentZone?.threshold_kmh ?? configuredSpeedThreshold
     );
 
     if (speed2 > contextualSpeedingThreshold) {
       if (!speedingStart) speedingStart = curr;
       speedingAccumSeconds += dt;
-      speedingZone = segmentZone || speedingZone;
+      speedingZone = segmentZone;
       if (speed2 > speedingPeakSpeed) {
         speedingPeakSpeed = speed2;
         speedingPeakPoint = curr;
-        speedingZone = segmentZone || speedingZone;
+        speedingZone = segmentZone;
       }
     } else {
       flushSpeedingWindow();
@@ -3934,7 +3959,9 @@ export function tripsToCSV(trips) {
     'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];
 
-  const rows = trips.map(t => [
+  const rows = trips.map((rawTrip) => {
+    const t = /** @type {any} */ (maskTripForPrivacy(rawTrip));
+    return [
     t.id,
     t.start_time,
     t.end_time,
@@ -4006,7 +4033,8 @@ export function tripsToCSV(trips) {
     t.route_points?.length || 0,
     JSON.stringify(t.route_points || []),
     JSON.stringify(t.driving_events || []),
-  ]);
+    ];
+  });
 
   const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   return [headers, ...rows].map(r => r.map(escape).join(',')).join('\n');

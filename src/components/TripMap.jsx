@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, headingDiff } from '@/lib/tripEngine';
+import { localSettings } from '@/lib/trackingStore';
+import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -71,7 +73,7 @@ function loadLeaflet() {
   if (leafletLoaded) return Promise.resolve();
   if (loadPromise) return loadPromise;
 
-  loadPromise = new Promise((resolve) => {
+  loadPromise = new Promise((resolve, reject) => {
     if (window.L) {
       leafletLoaded = true;
       resolve();
@@ -89,6 +91,7 @@ function loadLeaflet() {
       leafletLoaded = true;
       resolve();
     };
+    script.onerror = () => reject(new Error('Leaflet could not be loaded'));
     document.head.appendChild(script);
   });
 
@@ -114,6 +117,7 @@ export default function TripMap({
   const leafletMapRef = useRef(null);
   const layersRef = useRef(null);
   const [ready, setReady] = useState(false);
+  const [mapFailed, setMapFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +141,8 @@ export default function TripMap({
       map.setView(TORONTO_CENTER, 12);
       setReady(true);
       setTimeout(() => map.invalidateSize(), 0);
+    }).catch(() => {
+      if (!cancelled) setMapFailed(true);
     });
 
     return () => {
@@ -156,6 +162,7 @@ export default function TripMap({
 
     layers.clearLayers();
 
+    const privacySettings = localSettings.get();
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
@@ -164,9 +171,10 @@ export default function TripMap({
         ...route,
         color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
         opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-        route_points: (route.route_points || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+        route_points: maskRoutePointsForPrivacy(route.route_points || [], privacySettings).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
       }))
       .filter((route) => route.route_points.length > 1);
+    const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
 
     if (validRoutes.length > 0) {
       const bounds = window.L.latLngBounds([]);
@@ -264,8 +272,8 @@ export default function TripMap({
       map.setView(TORONTO_CENTER, 12);
     }
 
-    if (events && events.length > 0) {
-      events.forEach(evt => {
+    if (mapEvents && mapEvents.length > 0) {
+      mapEvents.forEach(evt => {
         if (!evt.lat || !evt.lng) return;
         const isPhoneUse = evt.type === 'phone_use';
         const color = isPhoneUse ? phoneUseColor(evt) : (EVENT_COLORS[evt.type] || '#6b7280');
@@ -351,11 +359,81 @@ export default function TripMap({
     leafletMapRef.current.setView([parkedLocation.lat, parkedLocation.lng], 17);
   }, [parkedLocation]);
 
+  if (mapFailed) {
+    return (
+      <OfflineRoutePreview
+        routePoints={routePoints}
+        routes={routes}
+        events={events}
+        height={height}
+        className={className}
+      />
+    );
+  }
+
   return (
     <div
       ref={mapRef}
       className={`map-container ${className}`}
       style={{ height, width: '100%', zIndex: 0 }}
     />
+  );
+}
+
+function OfflineRoutePreview({ routePoints = [], routes = null, events = [], height = '350px', className = '' }) {
+  const settings = localSettings.get();
+  const routeSets = Array.isArray(routes)
+    ? routes
+    : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+  const maskedRoutes = routeSets.map((route) => ({
+    ...route,
+    route_points: maskRoutePointsForPrivacy(route.route_points || [], settings)
+      .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+  })).filter((route) => route.route_points.length > 1);
+  const allPoints = maskedRoutes.flatMap((route) => route.route_points);
+  const minLat = Math.min(...allPoints.map((point) => point.lat));
+  const maxLat = Math.max(...allPoints.map((point) => point.lat));
+  const minLng = Math.min(...allPoints.map((point) => point.lng));
+  const maxLng = Math.max(...allPoints.map((point) => point.lng));
+  const scale = (point) => {
+    const x = ((point.lng - minLng) / Math.max(0.00001, maxLng - minLng)) * 92 + 4;
+    const y = 96 - (((point.lat - minLat) / Math.max(0.00001, maxLat - minLat)) * 92 + 4);
+    return `${x},${y}`;
+  };
+  const safeEvents = maskEventsForPrivacy(events, settings)
+    .filter((event) => Number.isFinite(event.lat) && Number.isFinite(event.lng));
+
+  if (!allPoints.length) {
+    return (
+      <div className={`map-container flex items-center justify-center bg-secondary/40 text-sm text-muted-foreground ${className}`} style={{ height }}>
+        Offline route preview unavailable.
+      </div>
+    );
+  }
+
+  return (
+    <div className={`map-container bg-secondary/40 ${className}`} style={{ height }}>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
+        <rect width="100" height="100" fill="hsl(var(--secondary))" opacity="0.45" />
+        {maskedRoutes.map((route) => (
+          <polyline
+            key={route.id || route.label || route.color}
+            points={route.route_points.map(scale).join(' ')}
+            fill="none"
+            stroke={route.color || (route.selected ? '#3b82f6' : '#64748b')}
+            strokeWidth={route.selected ? 1.8 : 1.1}
+            opacity={route.opacity ?? 0.9}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        {safeEvents.slice(0, 40).map((event, index) => {
+          const [cx, cy] = scale(event).split(',').map(Number);
+          return <circle key={`${event.timestamp}-${index}`} cx={cx} cy={cy} r="1.4" fill={EVENT_COLORS[event.type] || '#ef4444'} vectorEffect="non-scaling-stroke" />;
+        })}
+      </svg>
+      <div className="pointer-events-none absolute inset-x-3 bottom-3 rounded-xl bg-background/85 px-3 py-2 text-xs font-medium text-muted-foreground shadow-sm">
+        Offline route preview
+      </div>
+    </div>
   );
 }

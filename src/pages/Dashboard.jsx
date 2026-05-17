@@ -68,6 +68,8 @@ import { computePreTripRisk } from '@/lib/preTripRisk';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { recordTrackingDiagnostic } from '@/lib/trackingDiagnostics';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
+import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
+import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 
@@ -369,24 +371,25 @@ export default function Dashboard() {
     const cfg = localSettings.get();
     const thresholds = buildDrivingThresholds(cfg);
     const rawPoints = tripToEnd.route_points || [];
-    const pts = cleanRoutePoints(rawPoints, thresholds);
-    const stats = calculateTripStats(rawPoints, tripToEnd.start_time, endTime, thresholds);
+    const cleanedPoints = cleanRoutePoints(rawPoints, thresholds);
+    let pts = cleanedPoints;
+    const preliminaryStats = calculateTripStats(cleanedPoints, tripToEnd.start_time, endTime, thresholds);
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
     const shouldDiscard = isManualTrip
       ? pts.length < 2 ||
-        stats.duration_seconds < MIN_MANUAL_SAVE_SECONDS ||
-        stats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM
-      : stats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
-        stats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
+        preliminaryStats.duration_seconds < MIN_MANUAL_SAVE_SECONDS ||
+        preliminaryStats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM
+      : preliminaryStats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
+        preliminaryStats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
 
     if (shouldDiscard) {
       recordTrackingDiagnostic({
         type: 'trip_discarded',
         title: 'Trip discarded',
         reason: isManualTrip ? 'manual_too_short' : 'auto_too_short',
-        duration_seconds: Math.round(stats.duration_seconds || 0),
-        distance_km: stats.distance_km || 0,
+        duration_seconds: Math.round(preliminaryStats.duration_seconds || 0),
+        distance_km: preliminaryStats.distance_km || 0,
       });
       activeTripStore.clear();
       activeTripRef.current = null;
@@ -402,6 +405,18 @@ export default function Dashboard() {
       return;
     }
 
+    const speedLimitContext = await annotateRouteSpeedLimits(cleanedPoints, cfg);
+    pts = speedLimitContext.routePoints || cleanedPoints;
+    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds);
+    const weatherContext = await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
+      provider: 'open-meteo',
+      status: 'unavailable',
+      riskLevel: 'low',
+      riskScore: 0,
+      riskMultiplier: 1,
+      error: error?.message || 'Weather lookup unavailable',
+    }));
+
     const detection = detectDrivingEvents(pts, thresholds, endTime);
     const events = Reflect.get(detection, 'events') ?? detection;
     const gpsPhoneUse = Reflect.get(detection, 'phoneUse') ?? {};
@@ -413,7 +428,8 @@ export default function Dashboard() {
     }
     const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativePhoneUsageSummary || {}, pts, stats.duration_seconds);
     const phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
-    const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime });
+    let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime });
+    scores = applyWeatherRiskToScores(scores, weatherContext);
     const tripEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
     const simplifiedPoints = simplifyRoute(pts, 10, tripEvents);
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
@@ -428,6 +444,12 @@ export default function Dashboard() {
       route_points_raw_count: pts.length,
       ...scores,
       driving_events: tripEvents,
+      speed_limit_context: {
+        provider: 'openstreetmap_overpass',
+        status: speedLimitContext.status,
+        coverage: speedLimitContext.coverage,
+      },
+      weather_context: weatherContext,
       co2_saved_kg: economics.co2_saved_kg,
       status: 'completed',
       background_tracking: tripToEnd.background_tracking,

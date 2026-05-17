@@ -40,4 +40,16 @@ describe('speed-limit compliance', () => {
       calculateSpeedLimitCompliance(doubled, {}, DEFAULT_THRESHOLDS).overall_compliance_score
     )).toBeLessThanOrEqual(5);
   });
+
+  it('uses actual point speed limits when available', () => {
+    const points = Array.from({ length: 20 }, (_, index) => ({
+      ...p(index, 72),
+      speed_limit_kmh: 60,
+      speed_limit_source: 'openstreetmap',
+    }));
+    const result = calculateSpeedLimitCompliance(points, {}, DEFAULT_THRESHOLDS);
+    const buckets = [result.highway_compliance, result.urban_compliance, result.residential_compliance].filter(Boolean);
+    expect(buckets.some((bucket) => bucket.limit_source === 'openstreetmap')).toBe(true);
+    expect(result.overall_compliance_score).toBeLessThan(100);
+  });
 });

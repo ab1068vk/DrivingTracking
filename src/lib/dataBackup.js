@@ -2,23 +2,36 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings } from '@/lib/trackingStore';
+import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 
 const BACKUP_VERSION = 4;
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 
 export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = localSettings.get() } = {}) {
+  const exportSettings = {
+    ...settings,
+    privacy_zones: getPrivacyZones(settings).map((zone) => ({
+      id: zone.id,
+      label: zone.label,
+      radius_m: zone.radius_m,
+      masked_for_privacy: true,
+    })),
+  };
   return {
     app: 'DriveSense',
     version: BACKUP_VERSION,
     exported_at: new Date().toISOString(),
-    settings,
+    settings: exportSettings,
     vehicles,
-    trips: trips.map((trip) => ({
-      ...trip,
-      route_points: Array.isArray(trip.route_points) ? trip.route_points : [],
-      driving_events: Array.isArray(trip.driving_events) ? trip.driving_events : [],
-    })),
+    trips: trips.map((trip) => {
+      const masked = maskTripForPrivacy(trip, settings);
+      return {
+        ...masked,
+        route_points: Array.isArray(masked.route_points) ? masked.route_points : [],
+        driving_events: Array.isArray(masked.driving_events) ? masked.driving_events : [],
+      };
+    }),
   };
 }
 

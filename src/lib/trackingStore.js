@@ -59,6 +59,8 @@ export const DEFAULT_SETTINGS = {
   threshold_overtake_accel_ms2: 3.0,
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
+  speed_limit_lookup_enabled: true,
+  weather_context_enabled: true,
   min_speed_rapid_accel_kmh: 5,
   min_speed_harsh_brake_kmh: 25,
   weekly_goal_harsh_brakes: 5,
@@ -92,6 +94,7 @@ export const DEFAULT_SETTINGS = {
   notif_min_score_for_post_trip: 0,
   danger_zone_alerts_enabled: true,
   calibration_profile_key: null,
+  privacy_zones: [],
 };
 
 export async function getLastParkedLocation() {

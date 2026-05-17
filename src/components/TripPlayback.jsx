@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, Gauge } from 'lucide-react';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { formatSpeed } from '@/lib/tripEngine';
+import { localSettings } from '@/lib/trackingStore';
+import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -47,9 +49,12 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const [speedIdx, setSpeedIdx] = useState(0);
   const [currentEvent, setCurrentEvent] = useState(null);
 
-  const points = trip?.route_points || [];
-  const secondaryPoints = secondaryTrip?.route_points || [];
-  const events = trip?.driving_events || [];
+  const privacySettings = localSettings.get();
+  const points = maskRoutePointsForPrivacy(trip?.route_points || [], privacySettings)
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  const secondaryPoints = maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], privacySettings)
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  const events = maskEventsForPrivacy(trip?.driving_events || [], privacySettings);
   const totalPoints = points.length;
   const speedSegments = useMemo(() => buildSpeedSegments(points), [points]);
   const secondarySegments = useMemo(() => buildSpeedSegments(secondaryPoints), [secondaryPoints]);

@@ -263,6 +263,8 @@ export default function TripDetail() {
     appears_dry: 'Dry',
     insufficient_data: 'Not Enough Data',
   }[trip.slippery_proxy] || null;
+  const weatherContext = trip.weather_context || null;
+  const speedLimitContext = trip.speed_limit_context || null;
   const phoneUseEvents = (trip.driving_events || []).filter((event) => event.type === 'phone_use');
   const phoneUseWindows = phoneUseEvents.length ? phoneUseEvents : (trip.phone_use_events || []);
   const phoneUseRisk = trip.phone_use_risk || 'none';
@@ -436,6 +438,50 @@ export default function TripDetail() {
             <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
               +{trip.safety_condition_bonus} safety context
             </span>
+          )}
+        </div>
+      )}
+
+      {(weatherContext || speedLimitContext) && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {weatherContext && (
+            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Droplets className="h-4 w-4 text-sky-500" />
+                  Weather context
+                </div>
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                  {weatherContext.riskLevel || 'low'} risk
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground capitalize">
+                {String(weatherContext.condition || 'unknown').replace(/_/g, ' ')}
+                {weatherContext.avg_temp_c != null ? ` · ${weatherContext.avg_temp_c}°C` : ''}
+                {weatherContext.precipitation_mm ? ` · ${weatherContext.precipitation_mm} mm precip` : ''}
+              </div>
+              {trip.weather_score_adjustment < 0 && (
+                <div className="mt-2 text-xs font-semibold text-orange-600 dark:text-orange-300">
+                  Score adjusted {trip.weather_score_adjustment} for harsh events in poor conditions.
+                </div>
+              )}
+            </div>
+          )}
+          {speedLimitContext && (
+            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Gauge className="h-4 w-4 text-emerald-500" />
+                  Speed limits
+                </div>
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                  {speedLimitContext.status?.replace(/_/g, ' ') || 'unknown'}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                OpenStreetMap/Overpass coverage: {speedLimitContext.coverage ?? 0}% of route points. Fallback inferred zones fill any gaps.
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -879,7 +925,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  Limit {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}
+                  {data.limit_source === 'openstreetmap' ? 'OSM limit' : 'Inferred limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}
                 </div>
               </div>
             ))}
