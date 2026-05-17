@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp } from 'lucide-react';
+import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const navItems = [
@@ -15,6 +15,15 @@ const navItems = [
   { path: '/vehicles', label: 'Vehicles', icon: Car },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
+
+function BrandMark({ className = '' }) {
+  return (
+    <div className={`relative grid place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-teal-500 via-cyan-500 to-slate-900 shadow-lg ${className}`}>
+      <Route className="h-4 w-4 text-white" />
+      <span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-lime-300" />
+    </div>
+  );
+}
 
 export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -43,10 +52,8 @@ export default function Layout() {
       {/* Top Header */}
       <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-            <Car className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-grotesk font-bold text-lg tracking-tight">DriveSense</span>
+          <BrandMark className="h-8 w-8" />
+          <span className="font-grotesk font-bold text-lg tracking-tight">Road Sage</span>
           {trackingActive && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}

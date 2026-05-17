@@ -443,7 +443,7 @@ export function buildScoreTips(trips = []) {
 
   const nightTrips = completed.filter((trip) => trip.night_driving).length;
   if (nightTrips / completed.length >= 0.35) {
-    tips.push('A large share of trips happen at night, where DriveSense applies extra safety risk. Keep routes familiar and take breaks on longer drives.');
+    tips.push('A large share of trips happen at night, where Road Sage applies extra safety risk. Keep routes familiar and take breaks on longer drives.');
   }
 
   const avgScore = completed.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / completed.length;

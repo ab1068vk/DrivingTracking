@@ -23,7 +23,7 @@ const PHONE_DISPLAY_MS = 15000;
 const plainText = (message) => {
   if (typeof message === 'string') return message;
   if (typeof message?.props?.children === 'string') return message.props.children;
-  return 'DriveSense safety alert';
+  return 'Road Sage safety alert';
 };
 
 function speakAlert(text, settings) {

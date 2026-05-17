@@ -9,7 +9,7 @@ export function buildWeeklyCoachSummary(trips = []) {
   if (completed.length < 3) {
     return {
       headline: 'Complete a few more trips to unlock weekly coaching.',
-      insight: 'DriveSense needs at least three completed trips for a reliable local summary.',
+      insight: 'Road Sage needs at least three completed trips for a reliable local summary.',
       actions: ['Record normal trips this week.'],
       confidence: 'low',
     };

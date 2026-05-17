@@ -795,7 +795,7 @@ public class DriveSenseAutoTrackingService extends Service {
             Locale.US,
             isParkedStopReason(lastNativeAutoStopReason)
                 ? "%.1f km recorded in %d min. Trip ended parked."
-                : "%.1f km recorded in %d min. Open DriveSense to review events and score.",
+                : "%.1f km recorded in %d min. Open Road Sage to review events and score.",
             stats.distanceKm,
             Math.max(1L, stats.durationSeconds / 60L)
         );
@@ -853,7 +853,7 @@ public class DriveSenseAutoTrackingService extends Service {
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag());
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
-            .setContentTitle("DriveSense ready")
+            .setContentTitle("Road Sage ready")
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(contentIntent)
@@ -869,7 +869,7 @@ public class DriveSenseAutoTrackingService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
             );
             builder
-                .setContentTitle("DriveSense trip live")
+                .setContentTitle("Road Sage trip live")
                 .setUsesChronometer(true)
                 .setWhen(activeStartMs > 0L ? activeStartMs : System.currentTimeMillis())
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
@@ -956,7 +956,7 @@ public class DriveSenseAutoTrackingService extends Service {
             "Native Auto Tracking",
             NotificationManager.IMPORTANCE_LOW
         );
-        channel.setDescription("Keeps DriveSense ready to detect and record driving trips.");
+        channel.setDescription("Keeps Road Sage ready to detect and record driving trips.");
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         manager.createNotificationChannel(channel);
     }

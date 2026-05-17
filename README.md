@@ -1,6 +1,6 @@
-# DriveSense
+# Road Sage
 
-DriveSense is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, and stores trip history on the device.
+Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, and stores trip history on the device.
 
 For full app documentation, see [APP_DOCUMENTATION.md](APP_DOCUMENTATION.md).
 
@@ -48,7 +48,7 @@ For trip tracking to work properly on Android, allow:
 - Physical Activity
 - Notifications
 
-For reliable background tracking, also disable battery optimization for DriveSense in Android app settings.
+For reliable background tracking, also disable battery optimization for Road Sage in Android app settings.
 
 ## Tracking Modes
 
@@ -56,7 +56,7 @@ For reliable background tracking, also disable battery optimization for DriveSen
 - Auto Detect: detects driving while the app is open.
 - Background Auto: starts a native Android foreground service that can detect driving and record trips while the React app is asleep.
 
-Background Auto still will not run after Android force-stops the app. Open DriveSense again to restart the service.
+Background Auto still will not run after Android force-stops the app. Open Road Sage again to restart the service.
 
 ## Native Background Tracking
 

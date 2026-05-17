@@ -1,5 +1,5 @@
 /**
- * DriveSense Tracking Store
+ * Road Sage Tracking Store
  * Manages active trip state in memory and persists to sessionStorage for crash recovery.
  * This is a singleton store used by the tracking service.
  */

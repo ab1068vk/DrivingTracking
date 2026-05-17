@@ -55,11 +55,11 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   const doc = new jsPDF();
   const summary = generateReportSummary(tripList);
   const now = new Date();
-  const filename = `drivesense-monthly-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
+  const filename = `road-sage-monthly-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(24);
-  doc.text('DriveSense', 14, 24);
+  doc.text('Road Sage', 14, 24);
   doc.setFontSize(16);
   doc.text(`${periodLabel(period)} Driving Report`, 14, 36);
   doc.setFont('helvetica', 'normal');
@@ -163,14 +163,14 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
 export async function exportUBIReportPDF(ubiReport, settings = {}) {
   const doc = new jsPDF();
   const now = new Date(ubiReport.generatedAt || Date.now());
-  const filename = `drivesense-driver-score-card-${now.toISOString().slice(0, 10)}.pdf`;
+  const filename = `road-sage-driver-score-card-${now.toISOString().slice(0, 10)}.pdf`;
   const period = ubiReport.periodStart && ubiReport.periodEnd
     ? `${formatDate(ubiReport.periodStart)} to ${formatDate(ubiReport.periodEnd)}`
     : 'No completed trips';
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
-  doc.text('DriveSense · Driver Score Card', 14, 22);
+  doc.text('Road Sage - Driver Score Card', 14, 22);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.text(`Generated: ${now.toLocaleDateString()}`, 14, 32);
@@ -212,7 +212,7 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.setTextColor(120);
   doc.setFontSize(8);
   doc.text(ubiReport.disclaimer || '', 14, 270, { maxWidth: 180 });
-  doc.text('Powered by DriveSense - private, local-only data', 14, 280);
+  doc.text('Powered by Road Sage - private, local-only data', 14, 280);
   doc.setTextColor(0);
 
   if (isNativePlatform()) {

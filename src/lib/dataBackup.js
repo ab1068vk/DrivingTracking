@@ -19,7 +19,7 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
     })),
   };
   return {
-    app: 'DriveSense',
+    app: 'Road Sage',
     version: BACKUP_VERSION,
     exported_at: new Date().toISOString(),
     settings: exportSettings,
@@ -40,7 +40,7 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
  */
 export async function exportDriveSenseBackup({ trips, vehicles, settings, filename } = {}) {
   const backup = buildDriveSenseBackup({ trips, vehicles, settings });
-  const outputName = safeFilename(filename || `drivesense-full-backup-${new Date().toISOString().split('T')[0]}.json`);
+  const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
   const content = JSON.stringify(backup, null, 2);
 
   try {
@@ -72,8 +72,8 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
 
 export function parseDriveSenseBackup(text) {
   const parsed = JSON.parse(text);
-  if (!parsed || parsed.app !== 'DriveSense' || !Array.isArray(parsed.trips)) {
-    throw new Error('This is not a valid DriveSense backup file.');
+  if (!parsed || !['Road Sage', 'DriveSense'].includes(parsed.app) || !Array.isArray(parsed.trips)) {
+    throw new Error('This is not a valid Road Sage backup file.');
   }
 
   return {

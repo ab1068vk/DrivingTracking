@@ -48,7 +48,7 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
         cornering: category(0, 'Cornering', '0.0/100 km'),
         speedCompliance: category(0, 'Speed compliance', '0.0/100 km'),
       },
-      disclaimer: 'This score is estimated from GPS data collected by DriveSense. It is not an official insurance rating.',
+      disclaimer: 'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.',
     };
   }
 
@@ -99,6 +99,6 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
       cornering: category(corneringScore, 'Cornering', `${turnsPer100Km.toFixed(1)}/100 km`),
       speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)}/100 km`),
     },
-    disclaimer: 'This score is estimated from GPS data collected by DriveSense. It is not an official insurance rating.',
+    disclaimer: 'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.',
   };
 }

@@ -65,7 +65,7 @@ const SAFE_DRIVING_TIPS = [
   'Ease into acceleration for the first few seconds after every stop.',
   'Scan two intersections ahead so turns and stops never feel sudden.',
   'On longer drives, take a short break before fatigue shows up in your score.',
-  'Keep your phone mounted and let DriveSense record without handling it.',
+  'Keep your phone mounted and let Road Sage record without handling it.',
   'Rain, snow, and night driving need slower inputs and a larger following gap.',
   'A steady speed usually beats hard acceleration followed by hard braking.',
 ];
@@ -161,7 +161,7 @@ export async function configureNotificationChannels() {
   await LocalNotifications.createChannel({
     id: TRACKING_CHANNEL_ID,
     name: 'Trip Tracking',
-    description: 'Shown while DriveSense is actively tracking a trip.',
+    description: 'Shown while Road Sage is actively tracking a trip.',
     importance: 2,
     visibility: 1,
     vibration: false,
@@ -225,7 +225,7 @@ export async function scheduleLongTripReminder(startTime) {
   await LocalNotifications.schedule({
     notifications: [{
       id: LONG_TRIP_REMINDER_ID,
-      title: 'DriveSense is still tracking',
+      title: 'Road Sage is still tracking',
       body: 'Your trip has been active for a while. Stop tracking when you are done driving.',
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { at: new Date(new Date(startTime).getTime() + 2 * 60 * 60 * 1000), allowWhileIdle: true },
@@ -248,7 +248,7 @@ export async function notifyTripStarted() {
     notifications: [{
       id: TRIP_STARTED_ID,
       title: 'Trip started',
-      body: 'DriveSense is recording your route.',
+      body: 'Road Sage is recording your route.',
       channelId: SUMMARY_CHANNEL_ID,
     }],
   });
@@ -440,7 +440,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
     notification = {
       id: NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY,
       title: 'Near Miss Events Detected',
-      body: `${nearMissCount} near-miss events on your last trip. Review the route in DriveSense.`,
+      body: `${nearMissCount} near-miss events on your last trip. Review the route in Road Sage.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
       extra: { tripId: trip.id, type: 'near_miss_summary' },
@@ -450,7 +450,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
     notification = {
       id: NOTIFICATION_IDS.TRIP_PHONE_USE_HIGH,
       title: 'High Phone Use Detected',
-      body: `Approx. ${minutes} min of suspected phone use on your last trip. See details in DriveSense.`,
+      body: `Approx. ${minutes} min of suspected phone use on your last trip. See details in Road Sage.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
       extra: { tripId: trip.id, type: 'phone_use_high' },
@@ -529,7 +529,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       notification = {
         id: NOTIFICATION_IDS.TRIP_SCORE_DECLINE,
         title: 'Score Dip',
-        body: `Score ${currentScore} - below your recent average. Open DriveSense to see what happened.`,
+        body: `Score ${currentScore} - below your recent average. Open Road Sage to see what happened.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },
@@ -639,7 +639,7 @@ export async function scheduleInactiveDriverNudge(daysSinceLastTrip = 0, setting
   return scheduleNotification({
     id: NOTIFICATION_IDS.INACTIVE_DRIVER_NUDGE,
     title: 'Ready when you are',
-    body: `It's been ${Math.round(daysSinceLastTrip)} days since your last trip. DriveSense is ready when you are.`,
+    body: `It's been ${Math.round(daysSinceLastTrip)} days since your last trip. Road Sage is ready when you are.`,
     channelId: VEHICLE_CHANNEL_ID,
     schedule: { at: new Date(Date.now() + 60000), allowWhileIdle: true },
     extra: { type: 'inactive_nudge' },
@@ -673,7 +673,7 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
     notifications.push({
       id: WEEKLY_REPORT_ID,
       title: 'Weekly driving report',
-      body: 'Your weekly DriveSense report is ready. Review distance, score, and risky events.',
+      body: 'Your weekly Road Sage report is ready. Review distance, score, and risky events.',
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { on: { weekday: 2, hour: 9, minute: 0 }, allowWhileIdle: true },
     });

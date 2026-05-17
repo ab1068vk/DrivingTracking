@@ -12,6 +12,7 @@ import { configureNotificationChannels, syncReminderNotifications } from '@/lib/
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
+import { Route as RouteIcon } from 'lucide-react';
 
 // Page imports
 import Layout from '@/components/Layout';
@@ -70,12 +71,10 @@ const AuthenticatedApp = () => {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 gradient-primary rounded-2xl flex items-center justify-center shadow-lg animate-pulse">
-            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-500 via-cyan-500 to-slate-900 flex items-center justify-center shadow-lg animate-pulse">
+            <RouteIcon className="h-6 w-6 text-white" />
           </div>
-          <div className="text-muted-foreground text-sm">Loading DriveSense...</div>
+          <div className="text-muted-foreground text-sm">Loading Road Sage...</div>
         </div>
       </div>
     );

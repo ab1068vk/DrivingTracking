@@ -17,7 +17,7 @@ export function getMotionSensorSupport() {
     status: !supported ? 'unavailable' : permissionRequired ? 'not_requested' : 'granted',
     note: supported
       ? permissionRequired
-        ? 'This device asks before DriveSense can use motion and gyroscope samples.'
+        ? 'This device asks before Road Sage can use motion and gyroscope samples.'
         : 'Motion and gyroscope samples are available without a separate Android prompt.'
       : 'Device motion events are not available in this browser or WebView.',
   };

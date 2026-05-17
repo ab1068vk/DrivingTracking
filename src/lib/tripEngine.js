@@ -3,7 +3,7 @@ import { detectTripStops, estimateTripEconomics } from './tripInsights';
 import { maskTripForPrivacy } from './privacyZones';
 
 /**
- * DriveSense Trip Engine
+ * Road Sage Trip Engine
  * Core logic for trip tracking, event detection, and scoring.
  * All thresholds are configurable via the THRESHOLDS object.
  */

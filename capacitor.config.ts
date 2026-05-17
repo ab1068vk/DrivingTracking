@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.drivesense.app',
-  appName: 'DriveSense',
+  appName: 'Road Sage',
   webDir: 'dist',
   android: {
     useLegacyBridge: true,
@@ -10,11 +10,11 @@ const config: CapacitorConfig = {
   plugins: {
     LocalNotifications: {
       smallIcon: 'ic_stat_drivesense',
-      iconColor: '#2563EB',
+      iconColor: '#0F766E',
     },
     SplashScreen: {
       launchShowDuration: 1200,
-      backgroundColor: '#2563EB',
+      backgroundColor: '#0F172A',
       androidSplashResourceName: 'splash',
       showSpinner: false,
     },

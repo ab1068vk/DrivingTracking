@@ -333,7 +333,7 @@ export default function TripDetail() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Split into separate trips?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    DriveSense found {parkStops.length} parked stop{parkStops.length === 1 ? '' : 's'} of 5 minutes or longer. The original trip will be replaced by these segments.
+                    Road Sage found {parkStops.length} parked stop{parkStops.length === 1 ? '' : 's'} of 5 minutes or longer. The original trip will be replaced by these segments.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <div className="space-y-2">

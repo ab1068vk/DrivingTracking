@@ -78,8 +78,8 @@ export function createDrivingTrackingService({ background = false } = {}) {
         if (background && isNativePlatform()) {
           watcherId = await BackgroundGeolocation.addWatcher(
             {
-              backgroundTitle: 'DriveSense tracking active',
-              backgroundMessage: 'DriveSense is recording your driving route. Tap Stop Tracking in the app when done.',
+              backgroundTitle: 'Road Sage tracking active',
+              backgroundMessage: 'Road Sage is recording your driving route. Tap Stop Tracking in the app when done.',
               requestPermissions: false,
               stale: false,
               distanceFilter: 10,

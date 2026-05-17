@@ -8,7 +8,7 @@ const ANDROID_CODE = [
     id: 'readme',
     title: '📋 Setup Instructions',
     language: 'markdown',
-    content: `# DriveSense Android — Setup Instructions
+    content: `# Road Sage Android — Setup Instructions
 
 ## Prerequisites
 - Android Studio Hedgehog (2023.1.1) or newer
@@ -78,11 +78,11 @@ Always request foreground location first, then background separately.
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
-        android:name=".DriveSenseApp"
+        android:name=".RoadSageApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.DriveSense"
+        android:theme="@style/Theme.RoadSage"
         android:supportsRtl="true">
 
         <activity
@@ -319,7 +319,7 @@ import javax.inject.Inject
  * - Always show user exactly what you're doing via persistent notification
  *
  * This service runs as a foreground service with a persistent notification.
- * The notification tells the user "DriveSense is tracking your trip."
+ * The notification tells the user "Road Sage is tracking your trip."
  * The user can tap the notification to open the app or end the trip.
  */
 @AndroidEntryPoint
@@ -434,7 +434,7 @@ class TripTrackingService : Service() {
             CHANNEL_ID, "Trip Tracking",
             NotificationManager.IMPORTANCE_LOW   // Low = no sound, but persistent
         ).apply {
-            description = "Shows while DriveSense is recording a trip"
+            description = "Shows while Road Sage is recording a trip"
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -447,7 +447,7 @@ class TripTrackingService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("DriveSense — Recording Trip")
+            .setContentTitle("Road Sage — Recording Trip")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_car_notification)
             .setContentIntent(pendingIntent)

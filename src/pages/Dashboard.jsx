@@ -282,8 +282,8 @@ export default function Dashboard() {
             id: 4011,
             title: 'Possible Incident Detected',
             body: emergencyWorkflow
-              ? 'Impact-like motion and little movement detected. Open DriveSense to check in.'
-              : 'DriveSense detected impact-like motion followed by little movement.',
+              ? 'Impact-like motion and little movement detected. Open Road Sage to check in.'
+              : 'Road Sage detected impact-like motion followed by little movement.',
             extra: { type: 'possible_crash', severity: incident.severity, emergencyWorkflow },
           }).catch(() => {});
           setActiveTrip(prev => {
@@ -469,7 +469,7 @@ export default function Dashboard() {
       setElapsed(0);
       if (tripToEnd.resume_native_auto) await startNativeAutoTracking().catch(() => {});
       setLocationError(isManualTrip
-        ? 'Trip was not saved because DriveSense did not detect real movement. Start again when you begin driving.'
+        ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
       return;
     }

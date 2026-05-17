@@ -151,12 +151,12 @@ export async function requestBackgroundLocationPermission() {
 
 export function getPermissionExplanation(kind) {
   const copy = {
-    foregroundLocation: 'DriveSense needs precise location while you start a trip so it can record your route, speed, distance, driving events, parking location, route comparison, road type breakdowns, and risk hotspots.',
+    foregroundLocation: 'Road Sage needs precise location while you start a trip so it can record your route, speed, distance, driving events, parking location, route comparison, road type breakdowns, and risk hotspots.',
     backgroundLocation: 'Background location is only used after you start tracking or enable background auto-tracking. Android requires a persistent notification while this is active.',
-    activityRecognition: 'Physical activity helps DriveSense tell driving apart from walking, cycling, and still time before auto-tracking starts.',
+    activityRecognition: 'Physical activity helps Road Sage tell driving apart from walking, cycling, and still time before auto-tracking starts.',
     notifications: 'Notifications are used for the persistent tracking notice, long-trip reminders, completed-trip summaries, weekly summaries, achievements, and maintenance reminders.',
-    phoneUsageAccess: 'Optional Android Usage Access lets DriveSense detect foreground app use during a trip, so phone-use scoring is based on real phone activity instead of GPS behaviour only.',
-    motionSensors: 'Motion and gyroscope access lets DriveSense confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.',
+    phoneUsageAccess: 'Optional Android Usage Access lets Road Sage detect foreground app use during a trip, so phone-use scoring is based on real phone activity instead of GPS behaviour only.',
+    motionSensors: 'Motion and gyroscope access lets Road Sage confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.',
     bluetooth: 'OBD-II Bluetooth is optional and only used when you connect a compatible adapter. Android may ask for Nearby Devices/Bluetooth access before pairing.',
   };
   return copy[kind] || '';

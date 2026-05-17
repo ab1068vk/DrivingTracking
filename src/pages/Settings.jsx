@@ -259,7 +259,7 @@ export default function Settings() {
   };
 
   const showPrivacyPolicy = () => {
-    alert('DriveSense stores trip, route, score, vehicle, and settings data locally on this device. The app does not upload trips to a cloud service, does not sell data, and does not use ads or analytics. Deleting trips in Settings removes local trip history from this device.');
+    alert('Road Sage stores trip, route, score, vehicle, and settings data locally on this device. The app does not upload trips to a cloud service, does not sell data, and does not use ads or analytics. Deleting trips in Settings removes local trip history from this device.');
   };
 
   const updateTrackingPaused = async (paused) => {
@@ -318,7 +318,7 @@ export default function Settings() {
     if (mode === 'background_auto') {
       const backgroundGranted = await requestBackgroundLocationPermission();
       if (!backgroundGranted) {
-        alert('Android requires Location permission set to "Allow all the time" for background auto tracking. In the app settings screen that opened, tap Permissions > Location > Allow all the time, then return to DriveSense and turn Background Tracking on again.');
+        alert('Android requires Location permission set to "Allow all the time" for background auto tracking. In the app settings screen that opened, tap Permissions > Location > Allow all the time, then return to Road Sage and turn Background Tracking on again.');
         await refreshPermissions();
         return;
       }
@@ -428,7 +428,7 @@ export default function Settings() {
       await openAndroidBatteryOptimizationSettings();
       await refreshPermissions();
     } catch {
-      alert('Could not open the Android battery optimization screen. Open Android Settings > Apps > DriveSense > Battery and choose Unrestricted.');
+      alert('Could not open the Android battery optimization screen. Open Android Settings > Apps > Road Sage > Battery and choose Unrestricted.');
     }
   };
 
@@ -465,7 +465,7 @@ export default function Settings() {
   const handleExportAll = async () => {
     const completed = allTrips.filter(t => t.status === 'completed');
     const csv = tripsToCSV(completed);
-    const result = await downloadCSV(csv, `drivesense-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
+    const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
     if (result?.native) alert(`Export saved to Downloads as ${result.filename}.`);
   };
 
@@ -482,7 +482,7 @@ export default function Settings() {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (!confirm('Import this DriveSense backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
+    if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
 
     try {
       const result = await importDriveSenseBackup(file);
@@ -507,7 +507,7 @@ export default function Settings() {
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-grotesk font-bold">Settings</h1>
-          <p className="text-muted-foreground text-sm mt-1">Customize your DriveSense experience</p>
+          <p className="text-muted-foreground text-sm mt-1">Customize your Road Sage experience</p>
         </div>
         {saved && (
           <motion.div
@@ -632,7 +632,7 @@ export default function Settings() {
           <SettingRow
             icon={AlertTriangle}
             label="Battery Optimization"
-            sublabel={batteryStatus?.batteryOptimizationIgnored ? 'Battery optimization is already unrestricted for DriveSense' : 'Open Android battery settings and allow unrestricted background activity'}
+            sublabel={batteryStatus?.batteryOptimizationIgnored ? 'Battery optimization is already unrestricted for Road Sage' : 'Open Android battery settings and allow unrestricted background activity'}
             onClick={handleBatteryOptimization}
           >
             <div className="flex items-center gap-2">
@@ -979,7 +979,7 @@ export default function Settings() {
             <div className="space-y-3">
               <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
                 <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, DriveSense falls back to the custom window.
+                Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, Road Sage falls back to the custom window.
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
@@ -1143,11 +1143,11 @@ export default function Settings() {
             </SettingRow>
             <div className="space-y-4">
               {[
-                { key: 'threshold_near_miss_brake_ms2', label: 'Near-Miss Brake Threshold', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'How much braking force is needed before DriveSense considers a combined brake-and-turn a near miss.' },
+                { key: 'threshold_near_miss_brake_ms2', label: 'Near-Miss Brake Threshold', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'How much braking force is needed before Road Sage considers a combined brake-and-turn a near miss.' },
                 { key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as a near-miss manoeuvre.' },
                 { key: 'threshold_drowsy_heading_std', label: 'Drowsy Heading Drift', unit: 'degrees', min: 5, max: 15, step: 1, help: 'How much highway heading drift is allowed before a fatigue warning can trigger.' },
                 { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are needed before distraction risk is flagged.' },
-                { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before DriveSense logs speed creep.' },
+                { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
                 { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity', unit: 'm/s²', min: 2.0, max: 5.0, step: 0.5, help: 'How hard acceleration must be to start the aggressive-overtake signature.' },
               ].map(({ key, label, unit, min, max, step, help }) => (
                 <div key={key} className={`px-1 ${cfg.advanced_safety_detection_enabled === false ? 'opacity-60' : ''}`}>
@@ -1362,7 +1362,7 @@ export default function Settings() {
             </SettingRow>
             <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              For real phone activity detection on Android, enable Phone Usage Access above. Without it, DriveSense falls back to GPS behaviour patterns only.
+              For real phone activity detection on Android, enable Phone Usage Access above. Without it, Road Sage falls back to GPS behaviour patterns only.
             </div>
             <div className="mt-3 rounded-2xl border border-border bg-card p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -1554,7 +1554,7 @@ export default function Settings() {
           <SettingRow
             icon={Upload}
             label="Import Backup"
-            sublabel="Restore a DriveSense JSON backup into local storage"
+            sublabel="Restore a Road Sage JSON backup into local storage"
             onClick={() => importInputRef.current?.click()}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -1615,7 +1615,7 @@ export default function Settings() {
 
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">
-        <div className="font-semibold text-foreground text-sm">DriveSense</div>
+        <div className="font-semibold text-foreground text-sm">Road Sage</div>
         <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
         <div>Data: Stored locally · No cloud sync · No ads · No analytics</div>

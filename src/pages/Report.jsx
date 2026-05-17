@@ -188,7 +188,7 @@ export default function Reports() {
 
   const handleExport = async () => {
     const csv = tripsToCSV(trips);
-    const result = await downloadCSV(csv, `drivesense-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
+    const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     toast({
       title: 'Export saved',
       description: result?.native
