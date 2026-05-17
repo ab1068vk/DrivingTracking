@@ -6,6 +6,7 @@ import { haversineDistance } from '@/lib/tripEngine';
 const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
+const VERY_STABLE_PARKED_DRIFT_M = 5;
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -74,6 +75,29 @@ export async function getAndroidBatteryOptimizationStatus() {
   return ActivityRecognition.batteryOptimizationStatus();
 }
 
+export async function getAndroidUsageAccessStatus() {
+  if (!isAndroid()) return { usageAccessGranted: false };
+  return ActivityRecognition.usageAccessStatus();
+}
+
+export async function openAndroidUsageAccessSettings() {
+  if (!isAndroid()) return false;
+  await ActivityRecognition.openUsageAccessSettings();
+  return true;
+}
+
+export async function getAndroidPhoneUsageSummary(startMs, endMs) {
+  if (!isAndroid()) {
+    return {
+      usage_access_granted: false,
+      events: [],
+      event_count: 0,
+      total_seconds: 0,
+    };
+  }
+  return ActivityRecognition.getPhoneUsageSummary({ startMs, endMs });
+}
+
 export async function getNativeCompletedTrips() {
   if (!isAndroid()) return [];
   const result = await ActivityRecognition.getNativeCompletedTrips();
@@ -124,7 +148,7 @@ export function shouldAutoStopTracking({
     ACTIVITY_TYPES.RUNNING,
     ACTIVITY_TYPES.ON_BICYCLE,
   ].includes(type) && confidence >= 75;
-  if (onFoot && speed < 5 && secondsStopped >= 15) return true;
+  if (onFoot && speed < 15 && secondsStopped >= 15) return true;
 
   const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
   if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;
@@ -132,6 +156,8 @@ export function shouldAutoStopTracking({
   if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;
 
   const inVehicle = type === ACTIVITY_TYPES.IN_VEHICLE;
+  if (inVehicle && speed < 2 && secondsStopped >= 180 && driftM < VERY_STABLE_PARKED_DRIFT_M) return true;
+  if (inVehicle && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return true;
   if (inVehicle && speed < 5 && secondsStopped >= 240) {
     if (driftM < 5) return true;
     // FIX: Preserve the fast in-vehicle parked path for very stable GPS drift.

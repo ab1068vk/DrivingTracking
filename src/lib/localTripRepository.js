@@ -6,13 +6,18 @@ import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import {
+  buildPhoneUseFromAndroidUsage,
+  mergePhoneUseEventsIntoDrivingEvents,
+  mergePhoneUseSignals,
+} from '@/lib/phoneUsageAccess';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 5;
+export const TRIP_SCHEMA_VERSION = 6;
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
@@ -28,6 +33,11 @@ export const TRIP_SCHEMA_VERSION = 5;
  * - phone use detection: phone_use_events, phone_use_window_count, phone_use_total_seconds,
  *   phone_use_risk, phone_use_score, phone_use_pct_of_trip, phone_use_high_confidence_count
  * - native cross-check: native_phone_proxy_count
+ *
+ * Completed trip record schema additions in version 6:
+ * - Android Usage Access phone-use evidence: native_phone_usage_events,
+ *   native_phone_usage_event_count, native_phone_usage_total_seconds,
+ *   native_phone_usage_access_granted
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -97,23 +107,36 @@ const invalidateTripDerivedCaches = async () => {
 
 let importingNativeTrips = false;
 
+const nativeUsageSummaryFromTrip = (trip = {}) => ({
+  usage_access_granted: trip.native_phone_usage_access_granted === true,
+  events: Array.isArray(trip.native_phone_usage_events) ? trip.native_phone_usage_events : [],
+  event_count: Number(trip.native_phone_usage_event_count) || 0,
+  total_seconds: Number(trip.native_phone_usage_total_seconds) || 0,
+});
+
+const mergedPhoneUseForTrip = (trip, routePoints, stats, detectionPhoneUse) => {
+  const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativeUsageSummaryFromTrip(trip), routePoints, stats.duration_seconds);
+  return mergePhoneUseSignals(detectionPhoneUse, usagePhoneUse, stats.duration_seconds);
+};
+
 const rescoreTrip = (trip) => {
   if (!trip || trip.status !== 'completed') return trip;
   const routePoints = trip.route_points || [];
   const settings = localSettings.get();
   const thresholds = buildDrivingThresholds(settings);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-  const detection = detectDrivingEvents(routePoints, thresholds);
+  const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const events = Reflect.get(detection, 'events') ?? detection;
-  const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
-  const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse);
+  const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, Reflect.get(detection, 'phoneUse') ?? {});
+  const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
+  const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
   return {
     ...trip,
     ...stats,
     ...scores,
     co2_saved_kg: economics.co2_saved_kg,
-    driving_events: scores.driving_events || events,
+    driving_events: drivingEvents,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),
@@ -162,12 +185,13 @@ const importNativeCompletedTrips = async () => {
       const settings = localSettings.get();
       const thresholds = buildDrivingThresholds(settings);
       const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-      const detection = detectDrivingEvents(routePoints, thresholds);
+      const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
       const events = Reflect.get(detection, 'events') ?? detection;
-      const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
-      const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse);
+      const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, Reflect.get(detection, 'phoneUse') ?? {});
+      const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
-      const simplifiedRoutePoints = simplifyRoute(routePoints, 10, events);
+      const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
+      const simplifiedRoutePoints = simplifyRoute(routePoints, 10, drivingEvents);
 
       const importedTrip = {
         ...trip,
@@ -176,7 +200,7 @@ const importNativeCompletedTrips = async () => {
         co2_saved_kg: economics.co2_saved_kg,
         route_points: simplifiedRoutePoints,
         route_points_raw_count: routePoints.length,
-        driving_events: scores.driving_events || events,
+        driving_events: drivingEvents,
         imported_from_native: true,
         schema_version: TRIP_SCHEMA_VERSION,
         updated_at: trip.updated_at || new Date().toISOString(),

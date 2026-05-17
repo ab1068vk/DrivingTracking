@@ -14,6 +14,7 @@ export async function getPermissionStatus() {
     backgroundLocation: 'unknown',
     activityRecognition: 'unknown',
     notifications: 'unknown',
+    phoneUsageAccess: 'unknown',
   };
 
   try {
@@ -40,6 +41,10 @@ export async function getPermissionStatus() {
       const activity = await ActivityRecognition.checkPermissions();
       status.activityRecognition = asState(activity.activityRecognition);
       status.backgroundLocation = asState(activity.backgroundLocation);
+      try {
+        const usage = await ActivityRecognition.usageAccessStatus();
+        status.phoneUsageAccess = usage.usageAccessGranted ? 'granted' : 'not_requested';
+      } catch {}
     }
   } catch {}
 
@@ -141,6 +146,7 @@ export function getPermissionExplanation(kind) {
     backgroundLocation: 'Background location is only used after you start tracking or enable background auto-tracking. Android requires a persistent notification while this is active.',
     activityRecognition: 'Physical activity helps DriveSense tell driving apart from walking, cycling, and still time before auto-tracking starts.',
     notifications: 'Notifications are used for the persistent tracking notice, long-trip reminders, and completed-trip summaries.',
+    phoneUsageAccess: 'Optional Android Usage Access lets DriveSense detect foreground app use during a trip, so phone-use scoring is based on real phone activity instead of GPS behaviour only.',
   };
   return copy[kind] || '';
 }

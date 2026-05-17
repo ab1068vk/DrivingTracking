@@ -37,8 +37,14 @@ import {
   computeGpsPositionDrift,
   shouldAutoStartTracking,
   shouldAutoStopTracking,
+  getAndroidPhoneUsageSummary,
 } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import {
+  buildPhoneUseFromAndroidUsage,
+  mergePhoneUseEventsIntoDrivingEvents,
+  mergePhoneUseSignals,
+} from '@/lib/phoneUsageAccess';
 import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
@@ -220,11 +226,14 @@ export default function Dashboard() {
         if (!trip || !trackingRef.current || autoEndingTripRef.current) return;
 
         const nowMs = Date.now();
-        if (speed >= 5) {
+        if (speed >= 15) {
           lastMovingSpeedRef.current = speed;
           stillSinceRef.current = null;
           stoppedAnchorRef.current = null;
           return;
+        }
+        if (speed >= 5) {
+          lastMovingSpeedRef.current = speed;
         }
 
         stillSinceRef.current ??= nowMs;
@@ -247,6 +256,7 @@ export default function Dashboard() {
           lastMovingSpeedKmh: lastMovingSpeedRef.current,
         });
         const gpsParked = speed < 2 && (
+          (stillSeconds >= 180 && gpsPositionDriftM < 5) ||
           (stillSeconds >= 300 && gpsPositionDriftM < 20) ||
           stillSeconds >= 600
         );
@@ -262,6 +272,7 @@ export default function Dashboard() {
 
   const handleStartTrip = useCallback(async ({ autoStarted = false, bypassFatigueWarning = false } = {}) => {
     if (trackingRef.current) return;
+    autoEndingTripRef.current = false;
 
     const cfg = localSettings.get();
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
@@ -351,6 +362,7 @@ export default function Dashboard() {
       activeTripStore.clear();
       activeTripRef.current = null;
       trackingRef.current = false;
+      autoEndingTripRef.current = false;
       setActiveTrip(null);
       setTracking(false);
       setElapsed(0);
@@ -361,11 +373,19 @@ export default function Dashboard() {
       return;
     }
 
-    const detection = detectDrivingEvents(pts, thresholds);
+    const detection = detectDrivingEvents(pts, thresholds, endTime);
     const events = Reflect.get(detection, 'events') ?? detection;
-    const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
-    const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse);
-    const tripEvents = scores.driving_events || events;
+    const gpsPhoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+    const startMs = new Date(tripToEnd.start_time).getTime();
+    const endMs = new Date(endTime).getTime();
+    let nativePhoneUsageSummary = null;
+    if (isAndroid() && Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      nativePhoneUsageSummary = await getAndroidPhoneUsageSummary(startMs, endMs).catch(() => null);
+    }
+    const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativePhoneUsageSummary || {}, pts, stats.duration_seconds);
+    const phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
+    const scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime });
+    const tripEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
     const simplifiedPoints = simplifyRoute(pts, 10, tripEvents);
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
     const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
@@ -377,12 +397,16 @@ export default function Dashboard() {
       vehicle_id: completedVehicle?.id || null,
       route_points: simplifiedPoints,
       route_points_raw_count: pts.length,
-      driving_events: tripEvents,
       ...scores,
+      driving_events: tripEvents,
       co2_saved_kg: economics.co2_saved_kg,
       status: 'completed',
       background_tracking: tripToEnd.background_tracking,
       start_source: tripToEnd.start_source || 'manual',
+      native_phone_usage_access_granted: nativePhoneUsageSummary?.usage_access_granted === true,
+      native_phone_usage_events: nativePhoneUsageSummary?.events || [],
+      native_phone_usage_event_count: nativePhoneUsageSummary?.event_count || 0,
+      native_phone_usage_total_seconds: nativePhoneUsageSummary?.total_seconds || 0,
     };
 
     const savedTrip = await tripService.create(completedTrip);
@@ -412,6 +436,7 @@ export default function Dashboard() {
     activeTripStore.clear();
     activeTripRef.current = null;
     trackingRef.current = false;
+    autoEndingTripRef.current = false;
     setActiveTrip(null);
     setTracking(false);
     setElapsed(0);

@@ -34,6 +34,15 @@ describe('activityRecognition auto-stop logic', () => {
     })).toBe(true);
   });
 
+  it('stops after parking when walking GPS speed is above the idle cutoff', () => {
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 82 },
+      currentSpeedKmh: 6,
+      stillSeconds: 20,
+      gpsPositionDriftM: 18,
+    })).toBe(true);
+  });
+
   it('does not stop while in a crawling traffic jam', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 80 },
@@ -52,11 +61,21 @@ describe('activityRecognition auto-stop logic', () => {
     })).toBe(true);
   });
 
+  it('ends a parked in-vehicle stop sooner when GPS is very stable', () => {
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 80 },
+      currentSpeedKmh: 0,
+      stillSeconds: 180,
+      gpsPositionDriftM: 3,
+      lastMovingSpeedKmh: 45,
+    })).toBe(true);
+  });
+
   it('ends a long parked in-vehicle stop without waiting forever on moderate GPS drift', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 80 },
       currentSpeedKmh: 0,
-      stillSeconds: 420,
+      stillSeconds: 300,
       gpsPositionDriftM: 12,
       lastMovingSpeedKmh: 0,
     })).toBe(true);

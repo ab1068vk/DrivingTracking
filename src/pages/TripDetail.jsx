@@ -236,6 +236,14 @@ export default function TripDetail() {
   // FIX: Use moving average speed as the primary Avg Speed metric.
   const showOverallAvgSpeed = (trip.idle_time_seconds || 0) > 60;
   // FIX: Show overall average only when there was meaningful stopped time.
+  const trafficIdleSeconds = trip.traffic_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - (trip.sustained_idle_seconds || 0));
+  const parkedIdleSeconds = trip.sustained_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - trafficIdleSeconds);
+  const terminalParkedSeconds = trip.parking_stop_duration_seconds || 0;
+  const tripEndState = trip.parking_stop_detected
+    ? 'Parked'
+    : terminalParkedSeconds > 0
+      ? 'Stopped'
+      : 'Driving';
 
   return (
     <div className="space-y-5 pb-4">
@@ -374,7 +382,7 @@ export default function TripDetail() {
             <div>
               <h2 className="font-semibold">Phone Use Analysis</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                GPS-behaviour proxy. DriveSense cannot read actual phone activity.
+                Android Usage Access when enabled, with GPS behaviour fallback.
               </p>
             </div>
             <span className={`rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${phoneUseRiskClass}`}>
@@ -429,6 +437,7 @@ export default function TripDetail() {
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         Signals: {(event.signals_triggered || []).join(', ') || 'combined GPS behaviour'}
+                        {event.source === 'android_usage_access' ? ' - real foreground app activity' : ''}
                       </div>
                       <button
                         type="button"
@@ -607,6 +616,9 @@ export default function TripDetail() {
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
             { icon: Leaf, label: 'CO2 Saved vs Average', value: `${trip.co2_saved_kg ?? economics.co2_saved_kg ?? 0} kg` },
             { icon: ParkingSquare, label: 'Parking', value: `${trip.parking_approach_score ?? 100}` },
+            { icon: TimerReset, label: 'Traffic Stops', value: formatDuration(trafficIdleSeconds) },
+            { icon: ParkingSquare, label: 'Parked Idle', value: formatDuration(parkedIdleSeconds) },
+            { icon: MapPin, label: 'Trip End', value: tripEndState, subValue: terminalParkedSeconds > 0 ? `${formatDuration(terminalParkedSeconds)} at final stop` : null },
           ].map(({ icon: Icon, label, value, subValue }) => (
             <div key={label} className="flex items-start gap-3 p-3 bg-secondary/50 rounded-xl">
               <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />

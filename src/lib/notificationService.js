@@ -30,6 +30,9 @@ export const NOTIFICATION_IDS = {
   TRIP_FUEL_SAVING: 4014,
   TRIP_CONDITION_ADJUSTED: 4015,
   TRIP_NEAR_MISS_SUMMARY: 4016,
+  TRIP_FOLLOWING_GAP_SUMMARY: 4017,
+  TRIP_MERGE_SUMMARY: 4018,
+  TRIP_ACCEL_SUMMARY: 4019,
   HARSH_BRAKE_STREAK: 4020,
   CLEAN_TRIP_STREAK: 4021,
   SCORE_7_DAY_TREND: 4022,
@@ -421,9 +424,15 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   const nearMissCount = trip.driving_events?.filter((event) => event.type === 'near_miss').length ?? (trip.near_miss_count || 0);
   const phoneUseHigh = trip.phone_use_risk === 'high';
   const nearMissHigh = nearMissCount >= 2;
+  const followingGapCount = Number(trip.tailgate_cycle_count) || trip.driving_events?.filter((event) => event.type === 'tailgate_cycle').length || 0;
+  const followingGapRisk = followingGapCount >= 2 || Number(trip.following_distance_score) < 70;
+  const mergeIssueCount = (Number(trip.poor_merge_count) || 0) + (Number(trip.harsh_merge_count) || 0);
+  const mergeRisk = mergeIssueCount > 0 && Number(trip.merge_event_count || mergeIssueCount) > 0;
+  const rapidAccelCount = Number(trip.rapid_accel_count) || trip.driving_events?.filter((event) => event.type === 'rapid_acceleration').length || 0;
+  const rapidAccelRisk = rapidAccelCount >= 3;
   if (settings.notifications_enabled === false || settings.notif_post_trip_summary_enabled === false) return null;
   if (isQuietHours(settings)) return null;
-  if (scoreOf(trip) < (settings.notif_min_score_for_post_trip ?? 0) && !nearMissHigh && !phoneUseHigh) return null;
+  if (scoreOf(trip) < (settings.notif_min_score_for_post_trip ?? 0) && !nearMissHigh && !phoneUseHigh && !followingGapRisk && !mergeRisk && !rapidAccelRisk) return null;
 
   const later = () => ({ at: new Date(Date.now() + 3000) });
   let notification = null;
@@ -445,6 +454,33 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
       extra: { tripId: trip.id, type: 'phone_use_high' },
+    };
+  } else if (followingGapRisk) {
+    notification = {
+      id: NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY,
+      title: 'Following Gap Review',
+      body: `${followingGapCount || 'Multiple'} close-following pattern${followingGapCount === 1 ? '' : 's'} detected. Leave more room before traffic slows.`,
+      channelId: SUMMARY_CHANNEL_ID,
+      schedule: later(),
+      extra: { tripId: trip.id, type: 'following_gap_summary' },
+    };
+  } else if (mergeRisk) {
+    notification = {
+      id: NOTIFICATION_IDS.TRIP_MERGE_SUMMARY,
+      title: 'Merge Pattern Detected',
+      body: `${mergeIssueCount} merge issue${mergeIssueCount === 1 ? '' : 's'} found. Aim for smoother ramp acceleration and earlier gaps.`,
+      channelId: SUMMARY_CHANNEL_ID,
+      schedule: later(),
+      extra: { tripId: trip.id, type: 'merge_summary' },
+    };
+  } else if (rapidAccelRisk) {
+    notification = {
+      id: NOTIFICATION_IDS.TRIP_ACCEL_SUMMARY,
+      title: 'Rapid Acceleration Review',
+      body: `${rapidAccelCount} rapid acceleration event${rapidAccelCount === 1 ? '' : 's'} on your last trip. Ease into throttle from stops.`,
+      channelId: SUMMARY_CHANNEL_ID,
+      schedule: later(),
+      extra: { tripId: trip.id, type: 'rapid_accel_summary' },
     };
   } else {
     const scores = recentTrips.map(scoreOf).filter(Boolean);

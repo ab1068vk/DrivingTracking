@@ -15,8 +15,10 @@ import {
   computeSmoothedAccelerations,
   detectDrivingEvents,
   detectSpeedCreep,
+  detectHighwayMergeBehavior,
   inferSpeedZones,
   detectLaneChanges,
+  detectTailgateCycles,
   DEFAULT_THRESHOLDS,
   EVENT_TYPES,
   haversineDistance,
@@ -386,6 +388,42 @@ describe('tripEngine', () => {
     ];
 
     expect(detectDrivingEvents(points).some((event) => event.type === EVENT_TYPES.IDLE)).toBe(false);
+  });
+
+  it('counts terminal parked time in stats and idle events', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 35),
+      point(43.6534, -79.3832, 20, 35),
+      point(43.6536, -79.3832, 40, 0),
+    ];
+    const endTime = new Date(Date.UTC(2026, 0, 1, 12, 2, 20)).toISOString();
+
+    const stats = calculateTripStats(points, points[0].timestamp, endTime);
+    const events = detectDrivingEvents(points, DEFAULT_THRESHOLDS, endTime);
+    const scores = calculateTripScores(events, stats, points, DEFAULT_THRESHOLDS, stats.duration_seconds, Reflect.get(events, 'phoneUse') ?? {}, { endTime });
+
+    expect(stats.idle_time_seconds).toBe(120);
+    expect(stats.parking_stop_detected).toBe(true);
+    expect(stats.parking_stop_duration_seconds).toBe(100);
+    expect(scores.parking_stop_duration_seconds).toBe(100);
+    expect(events.find((event) => event.type === EVENT_TYPES.IDLE)?.value).toBe(120);
+  });
+
+  it('tracks urban lane changes, following-gap cycles, and merge quality proxies', () => {
+    const lanePoints = [0, 5, 10, 5, 0].map((heading, index) => ({
+      ...point(43.6532 + index * 0.0003, -79.3832, index * 2, 60),
+      heading,
+    }));
+    const followingPoints = [65, 66, 65, 45, 42].map((speed, index) => (
+      point(43.6532 + index * 0.00035, -79.3832, index * 2, speed)
+    ));
+    const mergePoints = [45, 58, 72, 88].map((speed, index) => (
+      point(43.6532 + index * 0.00045, -79.3832, index * 5, speed)
+    ));
+
+    expect(detectLaneChanges(lanePoints).length).toBeGreaterThan(0);
+    expect(detectTailgateCycles(followingPoints).length).toBeGreaterThan(0);
+    expect(detectHighwayMergeBehavior(mergePoints).merge_event_count).toBe(1);
   });
 
   it('simplifies straight route points while preserving corners', () => {

@@ -245,14 +245,18 @@ export default function TripMap({
         .bindPopup('<b>Start</b>')
         .addTo(layers);
 
+      const endPoint = primaryRoute.route_points[primaryRoute.route_points.length - 1];
+      const endedStopped = Number(endPoint?.speed_kmh || 0) < 5;
       const endIcon = window.L.divIcon({
-        html: '<div style="width:14px;height:14px;background:#ef4444;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>',
+        html: endedStopped
+          ? '<div style="width:22px;height:22px;background:#f97316;border:3px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.28);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:700">P</div>'
+          : '<div style="width:14px;height:14px;background:#ef4444;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>',
         className: '',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
+        iconSize: endedStopped ? [22, 22] : [14, 14],
+        iconAnchor: endedStopped ? [11, 11] : [7, 7],
       });
       window.L.marker(latLngs[latLngs.length - 1], { icon: endIcon })
-        .bindPopup('<b>End</b>')
+        .bindPopup(endedStopped ? '<b>Parked / trip ended</b>' : '<b>End</b>')
         .addTo(layers);
     } else if (currentLocation) {
       map.setView([currentLocation.lat, currentLocation.lng], 15);

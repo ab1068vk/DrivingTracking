@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS = {
   threshold_overtake_accel_ms2: 3.0,
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
-  min_speed_rapid_accel_kmh: 15,
+  min_speed_rapid_accel_kmh: 5,
   min_speed_harsh_brake_kmh: 25,
   weekly_goal_harsh_brakes: 5,
   weekly_goal_speeding_events: 3,

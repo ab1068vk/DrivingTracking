@@ -32,6 +32,23 @@ describe('phone use detection', () => {
     expect(result.phone_use_risk).toBe('none');
   });
 
+  it('does not treat a normal sustained turn as phone use', () => {
+    const points = Array.from({ length: 12 }, (_, index) => ({
+      lat: 43.65 + index * 0.00008,
+      lng: -79.38 + index * index * 0.000008,
+      speed_kmh: 45,
+      heading: index * 5,
+      timestamp: new Date(baseTime + index * 1000).toISOString(),
+    }));
+    const result = detectPhoneUseWindows(points, {
+      ...DEFAULT_THRESHOLDS,
+      PHONE_LANE_DRIFT_DEG: 6,
+      PHONE_CONFIDENCE_THRESHOLD: 0.05,
+    });
+
+    expect(result.phone_use_events).toEqual([]);
+  });
+
   it('detects injected micro-steer oscillations', () => {
     const result = detectPhoneUseWindows(oscillationBlock(0), {
       ...DEFAULT_THRESHOLDS,
@@ -41,6 +58,7 @@ describe('phone use detection', () => {
     expect(result.phone_use_window_count).toBeGreaterThanOrEqual(1);
     expect(result.phone_use_events[0].confidence).toBeGreaterThanOrEqual(0.55);
     expect(result.phone_use_events[0].signals_triggered).toContain('micro_steer');
+    expect(result.phone_use_events[0].point_index).toBeGreaterThanOrEqual(0);
   });
 
   it('merges two windows separated by a brief gap', () => {

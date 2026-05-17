@@ -121,4 +121,22 @@ describe('advanced notifications', () => {
     expect(condition.id).toBe(NOTIFICATION_IDS.TRIP_CONDITION_ADJUSTED);
     expect(decline.id).toBe(NOTIFICATION_IDS.TRIP_SCORE_DECLINE);
   });
+
+  it('summarizes following gap, merge, and rapid acceleration risks after higher-priority alerts', async () => {
+    const following = await dispatchPostTripNotification(trip({
+      tailgate_cycle_count: 2,
+      following_distance_score: 60,
+    }), [{ score_overall: 82 }], settings);
+    const merge = await dispatchPostTripNotification(trip({
+      merge_event_count: 1,
+      poor_merge_count: 1,
+    }), [{ score_overall: 82 }], settings);
+    const accel = await dispatchPostTripNotification(trip({
+      rapid_accel_count: 3,
+    }), [{ score_overall: 82 }], settings);
+
+    expect(following.id).toBe(NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY);
+    expect(merge.id).toBe(NOTIFICATION_IDS.TRIP_MERGE_SUMMARY);
+    expect(accel.id).toBe(NOTIFICATION_IDS.TRIP_ACCEL_SUMMARY);
+  });
 });

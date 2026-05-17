@@ -29,6 +29,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
   const previousCountsRef = useRef({
     [EVENT_TYPES.HARSH_BRAKE]: currentEvents.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length,
     [EVENT_TYPES.RAPID_ACCELERATION]: currentEvents.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length,
+    [EVENT_TYPES.TAILGATE_CYCLE]: currentEvents.filter((event) => event.type === EVENT_TYPES.TAILGATE_CYCLE).length,
   });
 
   const showNext = () => {
@@ -49,6 +50,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     previousCountsRef.current = {
       [EVENT_TYPES.HARSH_BRAKE]: 0,
       [EVENT_TYPES.RAPID_ACCELERATION]: 0,
+      [EVENT_TYPES.TAILGATE_CYCLE]: 0,
     };
     lastCoachCheckRef.current = new Date(tripStartTime).getTime() || Date.now();
   }, [tripStartTime]);
@@ -61,8 +63,9 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       if (settings.live_coaching_enabled === false) return;
 
       const thresholds = buildDrivingThresholds(settings);
-      const stats = calculateTripStats(currentRoutePoints, tripStartTime, new Date().toISOString(), thresholds);
-      const detection = detectDrivingEvents(currentRoutePoints, thresholds);
+      const currentTime = new Date().toISOString();
+      const stats = calculateTripStats(currentRoutePoints, tripStartTime, currentTime, thresholds);
+      const detection = detectDrivingEvents(currentRoutePoints, thresholds, currentTime);
       const events = Reflect.get(detection, 'events') ?? detection;
       const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
       const now = Date.now();
@@ -77,6 +80,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       ));
       const harshBrakeCount = events.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length;
       const rapidAccelCount = events.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length;
+      const tailgateCount = events.filter((event) => event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
       const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
@@ -102,6 +106,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         }
       } else if (recentNearMiss) nextMessage = 'Near miss detected - increase following distance';
       else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) nextMessage = 'Brake earlier and more gradually';
+      else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) nextMessage = 'Open your following gap';
       else if (latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 130)) nextMessage = "You're above the speed threshold";
       else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) nextMessage = 'Accelerate more smoothly';
       else if ((stats.idle_time_seconds || 0) > 300) nextMessage = 'Extended idling detected';
@@ -132,6 +137,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       previousCountsRef.current = {
         [EVENT_TYPES.HARSH_BRAKE]: harshBrakeCount,
         [EVENT_TYPES.RAPID_ACCELERATION]: rapidAccelCount,
+        [EVENT_TYPES.TAILGATE_CYCLE]: tailgateCount,
       };
       lastCoachCheckRef.current = now;
 

@@ -30,6 +30,8 @@ import com.google.android.gms.location.DetectedActivity;
 
 import androidx.core.content.ContextCompat;
 
+import org.json.JSONException;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -186,6 +188,53 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             } catch (Exception fallbackError) {
                 call.reject(fallbackError.getMessage());
             }
+        }
+    }
+
+    @PluginMethod
+    public void usageAccessStatus(PluginCall call) {
+        JSObject payload = new JSObject();
+        payload.put("usageAccessGranted", DriveSensePhoneUsageTracker.hasUsageAccess(getContext()));
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void openUsageAccessSettings(PluginCall call) {
+        Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(intent);
+            JSObject payload = new JSObject();
+            payload.put("usageAccessGranted", DriveSensePhoneUsageTracker.hasUsageAccess(getContext()));
+            call.resolve(payload);
+        } catch (ActivityNotFoundException error) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_SETTINGS);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(fallback);
+                call.resolve();
+            } catch (Exception fallbackError) {
+                call.reject(fallbackError.getMessage());
+            }
+        }
+    }
+
+    @PluginMethod
+    public void getPhoneUsageSummary(PluginCall call) {
+        Double startMsValue = call.getDouble("startMs");
+        Double endMsValue = call.getDouble("endMs");
+        if (startMsValue == null || endMsValue == null) {
+            call.reject("startMs and endMs are required.");
+            return;
+        }
+        try {
+            call.resolve(JSObject.fromJSONObject(DriveSensePhoneUsageTracker.queryTripUsage(
+                getContext(),
+                startMsValue.longValue(),
+                endMsValue.longValue()
+            )));
+        } catch (JSONException error) {
+            call.reject(error.getMessage(), error);
         }
     }
 

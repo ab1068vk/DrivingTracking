@@ -28,6 +28,7 @@ import {
 import { isAndroid } from '@/lib/nativePlatform';
 import {
   getAndroidBatteryOptimizationStatus,
+  openAndroidUsageAccessSettings,
   getNativeAutoTrackingStatus,
   openAndroidBatteryOptimizationSettings,
   startNativeAutoTracking,
@@ -119,7 +120,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Focus score',
-    definition: 'Uses erratic speed and heading oscillations as a proxy for possible distraction. It does not read phone usage directly.',
+    definition: 'Uses Android Usage Access when enabled, plus GPS behaviour signals as a fallback, to estimate distraction during trips.',
   },
   {
     term: 'Intersection score',
@@ -524,6 +525,7 @@ export default function Settings() {
             { key: 'backgroundLocation', label: 'Background Location', sub: getPermissionExplanation('backgroundLocation'), action: requestBackgroundLocationPermission },
             { key: 'activityRecognition', label: 'Physical Activity', sub: getPermissionExplanation('activityRecognition'), action: requestActivityRecognitionPermission },
             { key: 'notifications', label: 'Notifications', sub: getPermissionExplanation('notifications'), action: requestNotificationPermission },
+            ...(isAndroid() ? [{ key: 'phoneUsageAccess', label: 'Phone Usage Access', sub: getPermissionExplanation('phoneUsageAccess'), action: openAndroidUsageAccessSettings }] : []),
           ].map(({ key, label, sub, action }) => (
             <SettingRow key={key} icon={Info} label={label} sublabel={sub}>
               <div className="flex items-center gap-2">
@@ -996,7 +998,7 @@ export default function Settings() {
           <SettingRow
             icon={Focus}
             label="Detect phone use while driving"
-            sublabel="Use five GPS behaviour signals to estimate likely phone use during trips"
+            sublabel="Use Android Usage Access when allowed, with GPS behaviour signals as a fallback"
           >
             <Toggle
               value={cfg.phone_use_detection_enabled !== false}
@@ -1058,7 +1060,7 @@ export default function Settings() {
             </SettingRow>
             <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              Phone use detection is a GPS-based proxy and cannot access your actual phone activity. It looks for driving patterns associated with distraction.
+              For real phone activity detection on Android, enable Phone Usage Access above. Without it, DriveSense falls back to GPS behaviour patterns only.
             </div>
           </div>
         </div>
