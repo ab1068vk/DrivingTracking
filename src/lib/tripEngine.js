@@ -803,6 +803,9 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = 1)
   const distanceKm = typeof distanceKmOrThresholds === 'number'
     ? distanceKmOrThresholds
     : calculateRouteDistanceKm(cleanPoints, distanceKmOrThresholds || DEFAULT_THRESHOLDS);
+  const thresholds = typeof distanceKmOrThresholds === 'number'
+    ? DEFAULT_THRESHOLDS
+    : distanceKmOrThresholds || DEFAULT_THRESHOLDS;
   let totalJerkPenalty = 0;
   let jerkEventCount = 0;
   let jerkAbsTotal = 0;
@@ -815,10 +818,18 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = 1)
     const dt1 = (timestampMs(curr) - timestampMs(prev)) / 1000;
     const dt2 = (timestampMs(next) - timestampMs(curr)) / 1000;
     if (dt1 <= 0 || dt2 <= 0 || dt1 > 60 || dt2 > 60) continue;
+    const prevSegment = calculateSegmentMetrics(prev, curr, thresholds);
+    const nextSegment = calculateSegmentMetrics(curr, next, thresholds);
+    if (prevSegment.isNoise || nextSegment.isNoise) continue;
 
-    const v0 = finiteSpeed(prev) / 3.6;
-    const v1 = finiteSpeed(curr) / 3.6;
-    const v2 = finiteSpeed(next) / 3.6;
+    const s0 = reliablePointSpeed(cleanPoints, i - 1, thresholds) ?? finiteSpeed(prev);
+    const s1 = reliablePointSpeed(cleanPoints, i, thresholds) ?? finiteSpeed(curr);
+    const s2 = reliablePointSpeed(cleanPoints, i + 1, thresholds) ?? finiteSpeed(next);
+    if ((s0 + s1 + s2) / 3 < 8) continue;
+
+    const v0 = s0 / 3.6;
+    const v1 = s1 / 3.6;
+    const v2 = s2 / 3.6;
     const a1 = (v1 - v0) / dt1;
     const a2 = (v2 - v1) / dt2;
     const jerk = (a2 - a1) / ((dt1 + dt2) / 2);
@@ -899,16 +910,16 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
 
     if (isClimb) {
       climbDistanceKm += distanceM / 1000;
-      if (accelMs2 > 2.5) infractionCount++;
+      if (speed >= 15 && accelMs2 > 2.5) infractionCount++;
       descentWindowStart = null;
     } else if (isDescent) {
       descentDistanceKm += distanceM / 1000;
-      if (accelMs2 < -harshBrakeThreshold) infractionCount++;
+      if (speed >= 15 && accelMs2 < -harshBrakeThreshold) infractionCount++;
 
       if (!descentWindowStart || (timestampMs(curr) - timestampMs(descentWindowStart)) / 1000 > 10) {
         descentWindowStart = curr;
         descentWindowSpeed = speed;
-      } else if (speed - descentWindowSpeed > 15) {
+      } else if (speed >= 15 && speed - descentWindowSpeed > 15) {
         infractionCount++;
         descentWindowStart = curr;
         descentWindowSpeed = speed;
@@ -917,6 +928,15 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
       descentWindowStart = null;
     }
     previousReliableSpeed = speed;
+  }
+
+  if (climbDistanceKm + descentDistanceKm < 0.2) {
+    return {
+      climb_distance_km: null,
+      descent_distance_km: null,
+      hill_infraction_count: 0,
+      hill_driving_score: null,
+    };
   }
 
   return {
@@ -2063,15 +2083,18 @@ export function calculateReactionTimeProxy(routePoints, drivingEvents = [], thre
     const eventIndex = nearestPointIndexByTimestamp(points, event);
     if (eventIndex <= 0) continue;
     const eventPoint = points[eventIndex];
-    const eventSpeed = Number.isFinite(event.speed_kmh) ? event.speed_kmh : finiteSpeed(eventPoint);
+    const eventSpeed = Number.isFinite(event.speed_kmh)
+      ? event.speed_kmh
+      : reliablePointSpeed(points, eventIndex, thresholds) ?? finiteSpeed(eventPoint);
+    if (eventSpeed < (thresholds.MIN_SPEED_HARSH_BRAKE_KMH ?? DEFAULT_THRESHOLDS.MIN_SPEED_HARSH_BRAKE_KMH)) continue;
     const eventMs = timestampMs(eventPoint);
     let triggerIndex = -1;
 
     for (let i = eventIndex - 1; i >= 0; i--) {
       const deltaS = (eventMs - timestampMs(points[i])) / 1000;
       if (deltaS > 5) break;
-      const speed = finiteSpeed(points[i]);
-      const nextSpeed = finiteSpeed(points[Math.min(eventIndex, i + 1)]);
+      const speed = reliablePointSpeed(points, i, thresholds) ?? finiteSpeed(points[i]);
+      const nextSpeed = reliablePointSpeed(points, Math.min(eventIndex, i + 1), thresholds) ?? finiteSpeed(points[Math.min(eventIndex, i + 1)]);
       if (speed >= eventSpeed + triggerDelta && nextSpeed <= speed) {
         triggerIndex = i;
       }

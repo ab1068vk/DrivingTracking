@@ -444,12 +444,16 @@ export default function Dashboard() {
     await invalidateDangerZoneCache();
     await invalidateRouteRiskIndex();
     const parkedPoint = pts[pts.length - 1];
-    if (parkedPoint) {
+    const endedStopped = completedTrip.parking_stop_detected ||
+      Number(completedTrip.parking_stop_duration_seconds || 0) > 0 ||
+      Number(parkedPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH);
+    if (parkedPoint && endedStopped) {
       await saveLastParkedLocation({
         lat: parkedPoint.lat,
         lng: parkedPoint.lng,
         timestamp: parkedPoint.timestamp || endTime,
         tripId: savedTrip?.id || completedTrip.id,
+        source: completedTrip.parking_stop_detected ? 'parking_stop' : 'stopped_trip_end',
       });
     }
     if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);

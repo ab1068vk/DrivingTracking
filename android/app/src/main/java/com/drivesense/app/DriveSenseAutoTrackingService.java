@@ -141,7 +141,7 @@ public class DriveSenseAutoTrackingService extends Service {
         String action = intent != null ? intent.getAction() : null;
         startForeground(
             NOTIFICATION_ID,
-            buildNotification(isTripActive() ? buildLiveTripStatus(System.currentTimeMillis()) : "Ready to detect driving")
+            buildNotification(isTripActive() ? buildLiveTripStatus(System.currentTimeMillis()) : "Ready when you start moving")
         );
 
         if (ACTION_STOP.equals(action)) {
@@ -545,7 +545,7 @@ public class DriveSenseAutoTrackingService extends Service {
         if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
             startArmedLocationUpdates();
         }
-        updateNotification("Ready to detect driving");
+        updateNotification(isParkedStopReason(reason) ? "Parked - waiting for movement" : "Ready when you start moving");
 
         TripStats stats = calculateStats(points, startMs, endMs);
         if (points.length() < MIN_POINTS_TO_SAVE || stats.durationSeconds < MIN_TRIP_MS / 1000L || stats.distanceKm < MIN_TRIP_KM) {
@@ -793,7 +793,9 @@ public class DriveSenseAutoTrackingService extends Service {
 
         String body = String.format(
             Locale.US,
-            "%.1f km recorded in %d min. Open DriveSense to review events and score.",
+            isParkedStopReason(lastNativeAutoStopReason)
+                ? "%.1f km recorded in %d min. Trip ended parked."
+                : "%.1f km recorded in %d min. Open DriveSense to review events and score.",
             stats.distanceKm,
             Math.max(1L, stats.durationSeconds / 60L)
         );
@@ -851,7 +853,7 @@ public class DriveSenseAutoTrackingService extends Service {
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag());
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
-            .setContentTitle("DriveSense auto tracking")
+            .setContentTitle("DriveSense ready")
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(contentIntent)
@@ -884,6 +886,11 @@ public class DriveSenseAutoTrackingService extends Service {
     private void updateNotification(String text) {
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         manager.notify(NOTIFICATION_ID, buildNotification(text));
+    }
+
+    private boolean isParkedStopReason(String reason) {
+        if (reason == null) return false;
+        return reason.contains("parked") || reason.contains("still") || reason.contains("on_foot");
     }
 
     private void updateLiveTripNotification(boolean force) {

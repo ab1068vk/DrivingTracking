@@ -209,14 +209,18 @@ const importNativeCompletedTrips = async () => {
       await putTrip(importedTrip);
 
       const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
-      if (finalPoint) {
+      const endedStopped = importedTrip.parking_stop_detected ||
+        Number(importedTrip.parking_stop_duration_seconds || 0) > 0 ||
+        Number(finalPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? 5);
+      if (finalPoint && endedStopped) {
         await saveLastParkedLocation({
           lat: finalPoint.lat,
           lng: finalPoint.lng,
           timestamp: importedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
           tripId: importedTrip.id,
+          source: importedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_stopped_trip_end',
         });
-        // FIX: Native background trips now update the shared last-parked location when imported.
+        // Native background trips update the shared parked location only when they ended stopped.
       }
     }
 

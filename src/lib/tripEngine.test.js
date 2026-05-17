@@ -10,6 +10,7 @@ import {
   calculateTripScores,
   calculateTripStats,
   calculateHillDrivingScore,
+  calculateReactionTimeProxy,
   calculateSpeedLimitCompliance,
   cleanRoutePoints,
   computeSmoothedAccelerations,
@@ -361,6 +362,22 @@ describe('tripEngine', () => {
 
     expect(strict.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(true);
     expect(lenient.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+  });
+
+  it('ignores low-speed parked jitter for jerk, reaction, and hill scoring', () => {
+    const parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({
+      ...point(43.6532 + index * 0.00001, -79.3832, index * 5, speed, 6),
+      altitude: 100 + (index % 2 === 0 ? 0 : 8),
+      altitude_accuracy: 8,
+    }));
+
+    expect(calculateJerkScore(parkedJitter).jerk_event_count).toBe(0);
+    expect(calculateReactionTimeProxy(parkedJitter, [{
+      type: EVENT_TYPES.HARSH_BRAKE,
+      timestamp: parkedJitter[2].timestamp,
+      speed_kmh: 4,
+    }]).reaction_sample_count).toBe(0);
+    expect(calculateHillDrivingScore(parkedJitter).hill_driving_score).toBeNull();
   });
 
   it('detects rapid acceleration and harsh braking in the first valid acceleration window', () => {

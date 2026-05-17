@@ -97,7 +97,7 @@ export async function getLastParkedLocation() {
   return getJson(LAST_PARKED_KEY, null);
 }
 
-export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null }) {
+export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
@@ -108,6 +108,7 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
     timestamp: timestamp || new Date().toISOString(),
     tripId: tripId ?? null,
     address,
+    source,
   };
   await setJson(LAST_PARKED_KEY, parkedLocation);
   return parkedLocation;

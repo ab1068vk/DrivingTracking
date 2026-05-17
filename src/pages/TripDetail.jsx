@@ -243,7 +243,7 @@ export default function TripDetail() {
     ? 'Parked'
     : terminalParkedSeconds > 0
       ? 'Stopped'
-      : 'Driving';
+      : 'Ended while moving';
 
   return (
     <div className="space-y-5 pb-4">
