@@ -1,12 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Crosshair, Layers, Maximize2 } from 'lucide-react';
 import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, headingDiff } from '@/lib/tripEngine';
+import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const TORONTO_CENTER = [43.6532, -79.3832];
+const ROUTE_ARROW_SVG = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 18-7-4-7 4 7-18z"/></svg>');
+
+const TILE_STYLES = {
+  standard: {
+    label: 'Standard',
+    url: TILE_URL,
+    attribution: TILE_ATTRIBUTION,
+    maxZoom: 19,
+  },
+  detail: {
+    label: 'Detail',
+    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+    attribution: `${TILE_ATTRIBUTION}, Tiles style by Humanitarian OpenStreetMap Team`,
+    maxZoom: 19,
+  },
+};
 
 const EVENT_COLORS = {
   harsh_brake: '#ef4444',
@@ -74,6 +91,106 @@ const formatEventTime = (value) => {
     ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null;
 };
+
+const timeMs = (value) => {
+  const ts = new Date(value || 0).getTime();
+  return Number.isFinite(ts) ? ts : null;
+};
+
+const routeTelemetry = (points = []) => {
+  const clean = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (!clean.length) {
+    return { distanceKm: 0, durationSeconds: 0, avgSpeedKmh: 0, maxSpeedKmh: 0, pointCount: 0 };
+  }
+
+  let distanceKm = 0;
+  for (let i = 1; i < clean.length; i++) {
+    distanceKm += haversineDistance(clean[i - 1].lat, clean[i - 1].lng, clean[i].lat, clean[i].lng);
+  }
+
+  const speeds = clean.map((point) => Number(point.speed_kmh)).filter(Number.isFinite);
+  const firstTime = timeMs(clean[0].timestamp);
+  const lastTime = timeMs(clean[clean.length - 1].timestamp);
+  return {
+    distanceKm,
+    durationSeconds: firstTime != null && lastTime != null && lastTime > firstTime ? Math.round((lastTime - firstTime) / 1000) : 0,
+    avgSpeedKmh: speeds.length ? Math.round(speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length) : 0,
+    maxSpeedKmh: speeds.length ? Math.round(Math.max(...speeds)) : 0,
+    pointCount: clean.length,
+  };
+};
+
+const detectStops = (points = []) => {
+  const stops = [];
+  let start = null;
+  let last = null;
+
+  points.forEach((point) => {
+    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return;
+    const speed = Number(point.speed_kmh) || 0;
+    if (speed <= 5) {
+      start ??= point;
+      last = point;
+      return;
+    }
+
+    if (start && last) {
+      const startTs = timeMs(start.timestamp);
+      const lastTs = timeMs(last.timestamp);
+      const durationSeconds = startTs != null && lastTs != null ? Math.round((lastTs - startTs) / 1000) : 0;
+      if (durationSeconds >= 60) stops.push({ ...start, durationSeconds });
+    }
+    start = null;
+    last = null;
+  });
+
+  if (start && last) {
+    const startTs = timeMs(start.timestamp);
+    const lastTs = timeMs(last.timestamp);
+    const durationSeconds = startTs != null && lastTs != null ? Math.round((lastTs - startTs) / 1000) : 0;
+    if (durationSeconds >= 60) stops.push({ ...start, durationSeconds });
+  }
+
+  return stops;
+};
+
+const clusterEvents = (events = []) => {
+  const groups = new Map();
+  events
+    .filter((event) => Number.isFinite(Number(event.lat)) && Number.isFinite(Number(event.lng)))
+    .forEach((event) => {
+      const key = `${Math.round(Number(event.lat) * 1200)},${Math.round(Number(event.lng) * 1200)}`;
+      const group = groups.get(key) || { latSum: 0, lngSum: 0, events: [] };
+      group.latSum += Number(event.lat);
+      group.lngSum += Number(event.lng);
+      group.events.push(event);
+      groups.set(key, group);
+    });
+
+  return [...groups.values()].map((group) => {
+    const dominant = group.events.reduce((best, event) => (
+      group.events.filter((item) => item.type === event.type).length >
+      group.events.filter((item) => item.type === best.type).length ? event : best
+    ), group.events[0]);
+    return {
+      lat: group.latSum / group.events.length,
+      lng: group.lngSum / group.events.length,
+      events: group.events,
+      count: group.events.length,
+      dominant,
+    };
+  });
+};
+
+const clusterPopupHtml = (events = []) => `
+  <div style="min-width:210px">
+    <b>${events.length} nearby events</b>
+    <div style="margin-top:6px;display:grid;gap:5px">
+      ${events.slice(0, 6).map((event) => `<div><span style="color:#64748b">${escapeHtml(formatEventTime(event.timestamp) || '')}</span> ${escapeHtml(titleCase(event.type))}</div>`).join('')}
+      ${events.length > 6 ? `<div style="color:#64748b">+ ${events.length - 6} more</div>` : ''}
+    </div>
+  </div>
+`;
 
 const eventPopupHtml = (event) => {
   const label = titleCase(event.type || 'event');
@@ -154,8 +271,22 @@ export default function TripMap({
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
   const layersRef = useRef(null);
+  const tileLayerRef = useRef(null);
+  const lastBoundsRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
+  const [tileStyle, setTileStyle] = useState('standard');
+  const [showInsights, setShowInsights] = useState(true);
+
+  const selectedRoutePoints = useMemo(() => {
+    const routeSets = Array.isArray(routes)
+      ? routes
+      : [{ id: 'selected', route_points: routePoints, selected: true }];
+    return (routeSets.find((route) => route.selected) || routeSets[0] || {}).route_points || [];
+  }, [routePoints, routes]);
+  const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
+  const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
+  const hasRoute = telemetry.pointCount > 1;
 
   useEffect(() => {
     let cancelled = false;
@@ -170,9 +301,10 @@ export default function TripMap({
 
       leafletMapRef.current = map;
 
-      window.L.tileLayer(TILE_URL, {
-        attribution: TILE_ATTRIBUTION,
-        maxZoom: 19,
+      const tileConfig = TILE_STYLES.standard;
+      tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
+        attribution: tileConfig.attribution,
+        maxZoom: tileConfig.maxZoom,
       }).addTo(map);
 
       layersRef.current = window.L.layerGroup().addTo(map);
@@ -189,9 +321,23 @@ export default function TripMap({
         leafletMapRef.current.remove();
         leafletMapRef.current = null;
         layersRef.current = null;
+        tileLayerRef.current = null;
+        lastBoundsRef.current = null;
       }
     };
   }, []);
+
+  useEffect(() => {
+    const map = leafletMapRef.current;
+    if (!ready || !map || !window.L || !tileLayerRef.current) return;
+
+    const tileConfig = TILE_STYLES[tileStyle] || TILE_STYLES.standard;
+    map.removeLayer(tileLayerRef.current);
+    tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
+      attribution: tileConfig.attribution,
+      maxZoom: tileConfig.maxZoom,
+    }).addTo(map);
+  }, [ready, tileStyle]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -300,10 +446,40 @@ export default function TripMap({
         }
       });
 
+      lastBoundsRef.current = bounds;
       map.fitBounds(bounds, { padding: [20, 20] });
 
       const primaryRoute = validRoutes.find((route) => route.selected) || validRoutes[0];
       const latLngs = primaryRoute.route_points.map(p => [p.lat, p.lng]);
+      const primaryStops = detectStops(primaryRoute.route_points);
+
+      if (primaryRoute.route_points.length > 8) {
+        const arrowEvery = Math.max(4, Math.floor(primaryRoute.route_points.length / 7));
+        for (let i = arrowEvery; i < primaryRoute.route_points.length - 1; i += arrowEvery) {
+          const prev = primaryRoute.route_points[i - 1];
+          const curr = primaryRoute.route_points[i];
+          const bearing = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
+          const arrowIcon = window.L.divIcon({
+            html: `<div style="width:22px;height:22px;border-radius:999px;background:rgba(255,255,255,0.86);border:1px solid rgba(15,23,42,0.18);box-shadow:0 2px 8px rgba(15,23,42,0.22);display:flex;align-items:center;justify-content:center;transform:rotate(${bearing}deg)"><img src="data:image/svg+xml,${ROUTE_ARROW_SVG}" style="width:16px;height:16px" alt="" /></div>`,
+            className: '',
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
+          });
+          window.L.marker([curr.lat, curr.lng], { icon: arrowIcon, interactive: false }).addTo(layers);
+        }
+      }
+
+      primaryStops.slice(0, 12).forEach((stop, index) => {
+        window.L.circleMarker([stop.lat, stop.lng], {
+          radius: 8,
+          color: '#0f172a',
+          fillColor: '#f8fafc',
+          fillOpacity: 0.92,
+          weight: 2,
+        })
+          .bindPopup(`<b>Stop ${index + 1}</b><br>${formatDuration(stop.durationSeconds)}`)
+          .addTo(layers);
+      });
 
       const startIcon = window.L.divIcon({
         html: '<div style="width:14px;height:14px;background:#22c55e;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>',
@@ -335,20 +511,23 @@ export default function TripMap({
     }
 
     if (mapEvents && mapEvents.length > 0) {
-      mapEvents.forEach(evt => {
-        if (!evt.lat || !evt.lng) return;
+      clusterEvents(mapEvents).forEach((cluster) => {
+        const evt = cluster.dominant;
         const isPhoneUse = evt.type === 'phone_use';
         const color = isPhoneUse ? phoneUseColor(evt) : (EVENT_COLORS[evt.type] || '#6b7280');
+        const isCluster = cluster.count > 1;
         const icon = window.L.divIcon({
-          html: isPhoneUse
+          html: isCluster
+            ? `<div style="width:30px;height:30px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 3px 12px rgba(0,0,0,0.28);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">${cluster.count}</div>`
+            : isPhoneUse
             ? phoneUseIconHtml(color)
             : `<div style="width:20px;height:20px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${EVENT_LABELS[evt.type] || '!'}</div>`,
           className: '',
-          iconSize: isPhoneUse ? [28, 28] : [20, 20],
-          iconAnchor: isPhoneUse ? [14, 14] : [10, 10],
+          iconSize: isCluster ? [30, 30] : isPhoneUse ? [28, 28] : [20, 20],
+          iconAnchor: isCluster ? [15, 15] : isPhoneUse ? [14, 14] : [10, 10],
         });
-        window.L.marker([evt.lat, evt.lng], { icon })
-          .bindPopup(eventPopupHtml(evt))
+        window.L.marker([cluster.lat, cluster.lng], { icon })
+          .bindPopup(isCluster ? clusterPopupHtml(cluster.events) : eventPopupHtml(evt))
           .addTo(layers);
       });
     }
@@ -432,12 +611,105 @@ export default function TripMap({
     );
   }
 
+  const handleFitRoute = () => {
+    if (leafletMapRef.current && lastBoundsRef.current) {
+      leafletMapRef.current.fitBounds(lastBoundsRef.current, { padding: [24, 24] });
+    }
+  };
+
+  const handleCenterLive = () => {
+    if (leafletMapRef.current && currentLocation) {
+      leafletMapRef.current.setView([currentLocation.lat, currentLocation.lng], 16);
+    }
+  };
+
   return (
-    <div
-      ref={mapRef}
-      className={`map-container ${className}`}
-      style={{ height, width: '100%', zIndex: 0 }}
-    />
+    <div className={`relative ${className}`} style={{ height, width: '100%' }}>
+      <div
+        ref={mapRef}
+        className="map-container h-full w-full"
+        style={{ height: '100%', width: '100%', zIndex: 0 }}
+      />
+      <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={handleFitRoute}
+          disabled={!hasRoute}
+          title="Fit route"
+          aria-label="Fit route"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card disabled:opacity-45"
+        >
+          <Maximize2 className="h-4 w-4 text-primary" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
+          title={`Map style: ${TILE_STYLES[tileStyle].label}`}
+          aria-label="Toggle map style"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card"
+        >
+          <Layers className="h-4 w-4 text-muted-foreground" />
+        </button>
+        {currentLocation && (
+          <button
+            type="button"
+            onClick={handleCenterLive}
+            title="Center current location"
+            aria-label="Center current location"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card"
+          >
+            <Crosshair className="h-4 w-4 text-blue-500" />
+          </button>
+        )}
+      </div>
+      {showInsights && hasRoute && (
+        <button
+          type="button"
+          onClick={() => setShowInsights(false)}
+          className="absolute bottom-3 left-3 right-3 z-10 rounded-2xl border border-border bg-card/95 p-3 text-left shadow backdrop-blur sm:left-3 sm:right-auto sm:w-[min(360px,calc(100%-1.5rem))]"
+          aria-label="Hide map trip summary"
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Route intelligence</div>
+            <div className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{TILE_STYLES[tileStyle].label}</div>
+          </div>
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div>
+              <div className="font-grotesk text-lg font-bold">{formatDistance(telemetry.distanceKm)}</div>
+              <div className="text-[10px] text-muted-foreground">Distance</div>
+            </div>
+            <div>
+              <div className="font-grotesk text-lg font-bold">{telemetry.maxSpeedKmh}</div>
+              <div className="text-[10px] text-muted-foreground">Max km/h</div>
+            </div>
+            <div>
+              <div className="font-grotesk text-lg font-bold">{events.length}</div>
+              <div className="text-[10px] text-muted-foreground">Events</div>
+            </div>
+            <div>
+              <div className="font-grotesk text-lg font-bold">{stopCount}</div>
+              <div className="text-[10px] text-muted-foreground">Stops</div>
+            </div>
+          </div>
+          {telemetry.durationSeconds > 0 && (
+            <div className="mt-2 flex items-center justify-between rounded-xl bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
+              <span>{formatDuration(telemetry.durationSeconds)}</span>
+              <span>{telemetry.avgSpeedKmh} km/h avg</span>
+              <span>{telemetry.pointCount} GPS</span>
+            </div>
+          )}
+        </button>
+      )}
+      {!showInsights && hasRoute && (
+        <button
+          type="button"
+          onClick={() => setShowInsights(true)}
+          className="absolute bottom-3 left-3 z-10 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-muted-foreground shadow backdrop-blur"
+        >
+          Route intelligence
+        </button>
+      )}
+    </div>
   );
 }
 
