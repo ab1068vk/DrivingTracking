@@ -4552,6 +4552,7 @@ This update adds six local-only safety, readiness, and reporting systems:
 - UBI driver score card: `src/lib/ubiReport.js` computes mileage, time-of-day, braking, acceleration, cornering, and speed-compliance categories. Reports adds an on-screen radar preview and `exportUBIReportPDF`.
 - Pre-trip readiness: `src/lib/preTripRisk.js` combines personal time/day trends, baseline trend, daily fatigue, last-trip outcome, predicted route risk, nearby danger zones, weather risk, and recent recovery time into a dismissible Dashboard readiness card with top contributing factors.
 - Historical route risk: `src/lib/routeRiskIndex.js` builds local risk scores for route segments. `TripMap` can draw route-risk polylines, `MapScreen` has a Route risk toggle, and Trip Detail shows a Route history section.
+- Map and playback intelligence: `src/lib/mapPlaybackInsights.js` builds reusable route segments, timeline events, stop ranges, speed-limit violation spans, timestamp-based playback positions, route comparison notes, and route downsampling. `TripMap` uses it for selected-segment inspection and scalable aggregate rendering, while `TripPlayback` uses it for a richer timeline, smoother replay, segment details, trip story cards, and comparison deltas.
 
 Cache invalidation:
 
@@ -4573,4 +4574,5 @@ New tests cover:
 - Threshold calibration and application.
 - UBI score-card math.
 - Pre-trip readiness signals.
+- Map playback timeline, segment inspection, route comparison, and downsampling.
 - Route-risk segment indexing, storage round trip, and storage trimming.

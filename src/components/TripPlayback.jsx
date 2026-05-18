@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
-import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, formatDistance, formatDuration, formatSpeed, haversineDistance } from '@/lib/tripEngine';
+import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed } from '@/lib/mapPlaybackInsights';
+import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
@@ -87,67 +87,6 @@ function loadLeaflet() {
 const SPEEDS = [1, 2, 4, 8];
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-const pointTime = (point) => {
-  const ts = new Date(point?.timestamp || 0).getTime();
-  return Number.isFinite(ts) ? ts : null;
-};
-
-const routeStats = (points = []) => {
-  let distanceKm = 0;
-  let maxSpeedKmh = 0;
-  const distances = [0];
-
-  for (let i = 1; i < points.length; i++) {
-    const stepKm = haversineDistance(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
-    distanceKm += stepKm;
-    distances.push(distanceKm);
-  }
-
-  points.forEach((point) => {
-    const speed = Number(point.speed_kmh) || 0;
-    if (speed > maxSpeedKmh) maxSpeedKmh = speed;
-  });
-
-  const first = pointTime(points[0]);
-  const last = pointTime(points[points.length - 1]);
-  return {
-    distanceKm,
-    durationSeconds: first != null && last != null && last > first ? Math.round((last - first) / 1000) : 0,
-    maxSpeedKmh: Math.round(maxSpeedKmh),
-    cumulativeDistancesKm: distances,
-  };
-};
-
-const eventIndexForPoint = (event, points = []) => {
-  if (!points.length) return 0;
-  const eventTs = new Date(event.timestamp || event.startTime || 0).getTime();
-  if (Number.isFinite(eventTs)) {
-    let bestIndex = 0;
-    let bestDelta = Infinity;
-    points.forEach((point, index) => {
-      const ts = pointTime(point);
-      if (ts == null) return;
-      const delta = Math.abs(ts - eventTs);
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        bestIndex = index;
-      }
-    });
-    return bestIndex;
-  }
-
-  let bestIndex = 0;
-  let bestDistance = Infinity;
-  points.forEach((point, index) => {
-    const distance = Math.abs(Number(event.lat) - point.lat) + Math.abs(Number(event.lng) - point.lng);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
-};
-
 const carIconHtml = (color, heading, label = '') => `
   <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.94);border:1px solid rgba(15,23,42,0.18);box-shadow:0 4px 16px rgba(15,23,42,0.24);display:flex;align-items:center;justify-content:center">
     <div style="width:20px;height:20px;border-radius:999px;background:${color};color:white;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;transform:rotate(${heading}deg)">${label || '^'}</div>
@@ -167,6 +106,8 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const [speedIdx, setSpeedIdx] = useState(0);
   const [currentEvent, setCurrentEvent] = useState(null);
   const [followVehicle, setFollowVehicle] = useState(true);
+  const [playbackElapsedSeconds, setPlaybackElapsedSeconds] = useState(0);
+  const [selectedSegmentId, setSelectedSegmentId] = useState(null);
 
   const privacySettings = useMemo(() => localSettings.get(), [trip?.id, secondaryTrip?.id]);
   const points = useMemo(() => maskRoutePointsForPrivacy(trip?.route_points || [], privacySettings)
@@ -175,32 +116,31 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)), [privacySettings, secondaryTrip?.route_points]);
   const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
   const totalPoints = points.length;
-  const speedSegments = useMemo(() => buildSpeedSegments(points), [points]);
-  const secondarySegments = useMemo(() => buildSpeedSegments(secondaryPoints), [secondaryPoints]);
-  const stats = useMemo(() => routeStats(points), [points]);
-  const timelineEvents = useMemo(() => events
-    .filter((event) => Number.isFinite(Number(event.lat)) && Number.isFinite(Number(event.lng)))
-    .map((event) => ({
-      ...event,
-      playbackIndex: eventIndexForPoint(event, points),
-    }))
-    .sort((a, b) => a.playbackIndex - b.playbackIndex), [events, points]);
-  const currentPt = points[currentIdx];
+  const timeline = useMemo(() => buildPlaybackTimeline(points, events), [events, points]);
+  const secondaryTimeline = useMemo(() => buildPlaybackTimeline(secondaryPoints, []), [secondaryPoints]);
+  const speedSegments = timeline.segments;
+  const secondarySegments = secondaryTimeline.segments;
+  const stats = timeline.stats;
+  const timelineEvents = timeline.events;
+  const playbackPosition = useMemo(() => playbackPositionAtElapsed(points, playbackElapsedSeconds), [playbackElapsedSeconds, points]);
+  const currentPt = playbackPosition.point || points[currentIdx];
   const previousPt = points[Math.max(0, currentIdx - 1)];
   const currentHeading = currentPt && previousPt && currentIdx > 0
-    ? calculateBearing(previousPt.lat, previousPt.lng, currentPt.lat, currentPt.lng)
+    ? playbackPosition.heading || calculateBearing(previousPt.lat, previousPt.lng, currentPt.lat, currentPt.lng)
     : Number(currentPt?.heading ?? currentPt?.bearing ?? 0) || 0;
-  const currentDistanceKm = stats.cumulativeDistancesKm[currentIdx] || 0;
-  const elapsedSeconds = currentPt && points[0]
-    ? Math.max(0, Math.round(((pointTime(currentPt) || pointTime(points[0]) || 0) - (pointTime(points[0]) || 0)) / 1000))
-    : 0;
+  const currentDistanceKm = timeline.cumulativeDistancesKm[Math.min(currentIdx, timeline.cumulativeDistancesKm.length - 1)] || 0;
+  const elapsedSeconds = Math.round(playbackElapsedSeconds);
   const nextEvent = timelineEvents.find((event) => event.playbackIndex > currentIdx);
+  const selectedSegment = speedSegments.find((segment) => segment.id === selectedSegmentId);
+  const routeComparison = useMemo(() => buildRouteComparison(trip, secondaryTrip), [secondaryTrip, trip]);
 
   useEffect(() => {
     setCurrentIdx(0);
     setPlaying(false);
     setCurrentEvent(null);
     setFollowVehicle(true);
+    setPlaybackElapsedSeconds(0);
+    setSelectedSegmentId(null);
   }, [trip?.id, secondaryTrip?.id]);
 
   useEffect(() => {
@@ -218,17 +158,18 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
             { color: segment.color, weight: 4, opacity: 0.45 }
           )
-            .bindPopup(`${segment.label}: ${Math.round(segment.speed_kmh)} km/h`)
+            .bindPopup(`${segment.band.label}: ${Math.round(segment.speedKmh)} km/h${segment.speedLimitKmh ? `<br>Limit: ${Math.round(segment.speedLimitKmh)} km/h` : ''}`)
+            .on('click', () => setSelectedSegmentId(segment.id))
             .addTo(map);
         });
 
         if (secondaryPoints.length > 1) {
           secondarySegments.forEach((segment) => {
             window.L.polyline(
-              [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-              { color: '#f97316', weight: 4, opacity: 0.35, dashArray: '6 6' }
-            )
-              .bindPopup(`Comparison: ${Math.round(segment.speed_kmh)} km/h`)
+            [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+            { color: '#f97316', weight: 4, opacity: 0.35, dashArray: '6 6' }
+          )
+              .bindPopup(`Comparison: ${Math.round(segment.speedKmh)} km/h`)
               .addTo(map);
           });
           secondaryPoints.forEach((point) => {
@@ -280,16 +221,17 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
 
   useEffect(() => {
     if (!leafletMapRef.current || !points[currentIdx]) return;
-    const pt = points[currentIdx];
+    const pt = currentPt || points[currentIdx];
+    if (!pt) return;
     const latlng = [pt.lat, pt.lng];
     const secondaryIdx = secondaryPoints.length > 1
       ? Math.min(secondaryPoints.length - 1, Math.round((currentIdx / Math.max(1, totalPoints - 1)) * (secondaryPoints.length - 1)))
       : 0;
     const secondaryPt = secondaryPoints[secondaryIdx];
 
-    const heading = currentIdx > 0
+    const heading = playbackPosition.heading || (currentIdx > 0
       ? calculateBearing(points[currentIdx - 1].lat, points[currentIdx - 1].lng, pt.lat, pt.lng)
-      : Number(pt.heading ?? pt.bearing ?? 0) || 0;
+      : Number(pt.heading ?? pt.bearing ?? 0) || 0);
 
     if (markerRef.current) {
       markerRef.current.setLatLng(latlng);
@@ -332,44 +274,59 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
 
     const nearEvt = timelineEvents.find((event) => Math.abs(event.playbackIndex - currentIdx) <= 1);
     setCurrentEvent(nearEvt || null);
-  }, [currentIdx, followVehicle, points, secondaryPoints, secondarySegments, speedSegments, timelineEvents, totalPoints]);
+  }, [currentIdx, currentPt, followVehicle, playbackPosition.heading, points, secondaryPoints, secondarySegments, speedSegments, timelineEvents, totalPoints]);
 
   useEffect(() => {
     if (!playing) { cancelAnimationFrame(animRef.current); return; }
 
     const speed = SPEEDS[speedIdx];
     let last = null;
-    const BASE_INTERVAL = 600;
+    const totalSeconds = stats.durationSeconds || Math.max(1, totalPoints - 1);
 
     const step = (ts) => {
       if (!last) last = ts;
-      const elapsed = ts - last;
-      const msPerPoint = BASE_INTERVAL / speed;
-
-      if (elapsed >= msPerPoint) {
-        last = ts;
-        setCurrentIdx(prev => {
-          if (prev >= totalPoints - 1) { setPlaying(false); return prev; }
-          return prev + 1;
-        });
-      }
+      const elapsedMs = ts - last;
+      last = ts;
+      setPlaybackElapsedSeconds((previous) => {
+        const next = previous + (elapsedMs / 1000) * speed;
+        if (next >= totalSeconds) {
+          setPlaying(false);
+          setCurrentIdx(totalPoints - 1);
+          return totalSeconds;
+        }
+        const position = playbackPositionAtElapsed(points, next);
+        setCurrentIdx(position.index);
+        return next;
+      });
       animRef.current = requestAnimationFrame(step);
     };
     animRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(animRef.current);
-  }, [playing, speedIdx, totalPoints]);
+  }, [playing, points, speedIdx, stats.durationSeconds, totalPoints]);
 
   const handleReset = () => {
     setPlaying(false);
     setCurrentIdx(0);
+    setPlaybackElapsedSeconds(0);
     setCurrentEvent(null);
+  };
+
+  const elapsedForIndex = (index) => (
+    speedSegments.find((segment) => segment.toIndex >= index)?.endOffsetSeconds || index
+  );
+
+  const seekToIndex = (index) => {
+    const safeIndex = clamp(index, 0, totalPoints - 1);
+    setPlaying(false);
+    setCurrentIdx(safeIndex);
+    setPlaybackElapsedSeconds(elapsedForIndex(safeIndex));
   };
 
   const jumpToNextEvent = () => {
     const event = timelineEvents.find((item) => item.playbackIndex > currentIdx);
     if (event) {
       setPlaying(false);
-      setCurrentIdx(clamp(event.playbackIndex, 0, totalPoints - 1));
+      seekToIndex(event.playbackIndex);
     }
   };
 
@@ -377,16 +334,12 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     const event = [...timelineEvents].reverse().find((item) => item.playbackIndex < currentIdx);
     if (event) {
       setPlaying(false);
-      setCurrentIdx(clamp(event.playbackIndex, 0, totalPoints - 1));
+      seekToIndex(event.playbackIndex);
     }
   };
 
   const progress = totalPoints > 1 ? (currentIdx / (totalPoints - 1)) * 100 : 0;
-  const comparisonRows = secondaryTrip ? [
-    { label: 'Overall Score', current: trip.score_overall ?? 0, other: secondaryTrip.score_overall ?? 0, higherWins: true },
-    { label: 'Harsh Brakes', current: trip.harsh_brakes_count ?? 0, other: secondaryTrip.harsh_brakes_count ?? 0, higherWins: false },
-    { label: 'Avg Speed', current: trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0, other: secondaryTrip.avg_running_speed_kmh ?? secondaryTrip.avg_speed_kmh ?? 0, higherWins: null, speed: true },
-  ] : [];
+  const comparisonRows = secondaryTrip ? routeComparison.rows : [];
 
   if (!points.length) {
     return (
@@ -449,9 +402,38 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const pct = (e.clientX - rect.left) / rect.width;
-          setCurrentIdx(Math.round(pct * (totalPoints - 1)));
+          seekToIndex(Math.round(pct * (totalPoints - 1)));
         }}>
-        <div className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all" style={{ width: `${progress}%` }} />
+        {speedSegments.map((segment) => (
+          <button
+            key={segment.id}
+            type="button"
+            aria-label={`Inspect ${segment.band.label} segment`}
+            className="absolute inset-y-0 rounded-full"
+            style={{
+              left: `${segment.progressStart}%`,
+              width: `${Math.max(0.8, segment.progressEnd - segment.progressStart)}%`,
+              backgroundColor: segment.color,
+              opacity: selectedSegmentId === segment.id ? 1 : 0.42,
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedSegmentId(segment.id);
+              seekToIndex(segment.toIndex);
+            }}
+          />
+        ))}
+        {timeline.stops.map((stop) => (
+          <span
+            key={stop.id}
+            className="absolute bottom-0 top-0 rounded-full bg-slate-900/60"
+            style={{
+              left: `${stop.progressStart}%`,
+              width: `${Math.max(1, stop.progressEnd - stop.progressStart)}%`,
+            }}
+          />
+        ))}
+        <div className="pointer-events-none absolute inset-y-0 left-0 rounded-full border-r-2 border-primary bg-primary/25 transition-all" style={{ width: `${progress}%` }} />
         {timelineEvents.map((event, index) => (
           <span
             key={`${event.timestamp || event.type}-${index}`}
@@ -532,6 +514,59 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         </div>
       </div>
 
+      {selectedSegment && (
+        <div className="rounded-2xl border border-border bg-card p-3 text-xs">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="font-semibold">Selected segment</div>
+            <button
+              type="button"
+              onClick={() => setSelectedSegmentId(null)}
+              className="rounded-lg bg-secondary px-2 py-1 text-[11px] font-semibold text-muted-foreground"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div>
+              <div className="text-muted-foreground">Speed</div>
+              <div className="font-semibold">{Math.round(selectedSegment.speedKmh)} km/h</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Limit</div>
+              <div className="font-semibold">{selectedSegment.speedLimitKmh ? `${Math.round(selectedSegment.speedLimitKmh)} km/h` : '-'}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Distance</div>
+              <div className="font-semibold">{formatDistance(selectedSegment.distanceKm)}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Duration</div>
+              <div className="font-semibold">{selectedSegment.durationSeconds ? formatDuration(selectedSegment.durationSeconds) : '-'}</div>
+            </div>
+          </div>
+          {(selectedSegment.roadName || selectedSegment.overLimitKmh > 0) && (
+            <div className="mt-2 rounded-xl bg-secondary/60 px-3 py-2 text-muted-foreground">
+              {selectedSegment.roadName || 'Matched segment'}
+              {selectedSegment.overLimitKmh > 0 ? ` - ${Math.round(selectedSegment.overLimitKmh)} km/h over` : ''}
+            </div>
+          )}
+        </div>
+      )}
+
+      {timeline.story.length > 0 && (
+        <div className="rounded-2xl border border-border bg-card p-3 text-xs">
+          <div className="mb-2 font-semibold">Trip story</div>
+          <div className="grid gap-1.5">
+            {timeline.story.map((item) => (
+              <div key={item} className="flex gap-2 text-muted-foreground">
+                <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary" />
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {secondaryTrip && (
         <div className="rounded-2xl border border-border bg-card p-3">
           <div className="mb-2 flex items-center gap-3 text-xs font-semibold">
@@ -559,6 +594,11 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
               );
             })}
           </div>
+          {routeComparison.notes.length > 0 && (
+            <div className="mt-3 grid gap-1 rounded-xl bg-secondary/50 px-3 py-2 text-xs text-muted-foreground">
+              {routeComparison.notes.map((note) => <div key={note}>{note}</div>)}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
+import { buildPlaybackTimeline, downsampleRoutePoints } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -277,6 +278,7 @@ export default function TripMap({
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
   const [showInsights, setShowInsights] = useState(true);
+  const [selectedSegment, setSelectedSegment] = useState(null);
 
   const selectedRoutePoints = useMemo(() => {
     const routeSets = Array.isArray(routes)
@@ -287,6 +289,10 @@ export default function TripMap({
   const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
   const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
   const hasRoute = telemetry.pointCount > 1;
+
+  useEffect(() => {
+    setSelectedSegment(null);
+  }, [selectedRoutePoints]);
 
   useEffect(() => {
     let cancelled = false;
@@ -355,7 +361,10 @@ export default function TripMap({
         ...route,
         color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
         opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-        route_points: maskRoutePointsForPrivacy(route.route_points || [], privacySettings).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+        route_points: downsampleRoutePoints(
+          maskRoutePointsForPrivacy(route.route_points || [], privacySettings).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+          route.selected ? 2000 : 180
+        ),
       }))
       .filter((route) => route.route_points.length > 1);
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
@@ -367,9 +376,14 @@ export default function TripMap({
         const latLngs = route.route_points.map(p => [p.lat, p.lng]);
         latLngs.forEach((latLng) => bounds.extend(latLng));
 
-        const speedSegments = route.selected || !Array.isArray(routes)
-          ? buildSpeedSegments(route.route_points)
-          : [];
+        const timeline = route.selected || !Array.isArray(routes)
+          ? buildPlaybackTimeline(route.route_points, mapEvents)
+          : null;
+        const speedSegments = timeline?.segments?.length
+          ? timeline.segments
+          : route.selected || !Array.isArray(routes)
+            ? buildSpeedSegments(route.route_points)
+            : [];
 
         if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
           for (let i = 1; i < route.route_points.length - 1; i++) {
@@ -398,16 +412,25 @@ export default function TripMap({
           }
         } else if (speedSegments.length > 0) {
           speedSegments.forEach((segment) => {
+            const from = segment.from;
+            const to = segment.to;
+            const color = segment.color || segment.band?.color;
+            const label = segment.band?.label || segment.label || 'Segment';
+            const speedKmh = segment.speedKmh ?? segment.speed_kmh ?? 0;
+            const limitText = segment.speedLimitKmh ? `<br>Limit: ${Math.round(segment.speedLimitKmh)} km/h` : '';
             window.L.polyline(
-              [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+              [[from.lat, from.lng], [to.lat, to.lng]],
               {
-                color: segment.color,
+                color,
                 weight: route.selected ? 5 : 3,
                 opacity: route.opacity,
                 smoothFactor: 1.5,
               }
             )
-              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${segment.label}: ${Math.round(segment.speed_kmh)} km/h`)
+              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${label}: ${Math.round(speedKmh)} km/h${limitText}`)
+              .on('click', () => {
+                if (segment.band) setSelectedSegment(segment);
+              })
               .addTo(layers);
           });
           if (showSpeedLimits && route.selected) {
@@ -662,6 +685,40 @@ export default function TripMap({
           </button>
         )}
       </div>
+      {selectedSegment && (
+        <div className="absolute left-3 top-3 z-10 w-[min(340px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="font-semibold">Segment inspector</div>
+            <button
+              type="button"
+              onClick={() => setSelectedSegment(null)}
+              className="rounded-lg bg-secondary px-2 py-1 text-[11px] font-semibold text-muted-foreground"
+            >
+              Close
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <div className="text-muted-foreground">Speed</div>
+              <div className="font-semibold">{Math.round(selectedSegment.speedKmh)} km/h</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Limit</div>
+              <div className="font-semibold">{selectedSegment.speedLimitKmh ? `${Math.round(selectedSegment.speedLimitKmh)} km/h` : '-'}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">Length</div>
+              <div className="font-semibold">{formatDistance(selectedSegment.distanceKm)}</div>
+            </div>
+          </div>
+          {(selectedSegment.roadName || selectedSegment.overLimitKmh > 0) && (
+            <div className="mt-2 rounded-xl bg-secondary/60 px-3 py-2 text-muted-foreground">
+              {selectedSegment.roadName || 'Matched route segment'}
+              {selectedSegment.overLimitKmh > 0 ? ` - ${Math.round(selectedSegment.overLimitKmh)} km/h over` : ''}
+            </div>
+          )}
+        </div>
+      )}
       {showInsights && hasRoute && (
         <button
           type="button"

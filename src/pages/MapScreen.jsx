@@ -55,6 +55,7 @@ export default function MapScreen() {
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [showRouteRisk, setShowRouteRisk] = useState(false);
   const [showSpeedLimits, setShowSpeedLimits] = useState(false);
+  const [showLayerPanel, setShowLayerPanel] = useState(true);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
 
@@ -205,6 +206,15 @@ export default function MapScreen() {
           className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
           <Play className="w-3.5 h-3.5" /> Playback
         </button>
+        <button
+          type="button"
+          onClick={() => setShowLayerPanel(value => !value)}
+          className={`px-3 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${
+            showLayerPanel ? 'bg-card border-primary text-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" /> Layers
+        </button>
       </div>
 
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
@@ -326,7 +336,7 @@ export default function MapScreen() {
         )}
       </div>
 
-      {selectedTrip && (
+      {showLayerPanel && (
         <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <Layers className="h-4 w-4 text-primary" />
@@ -356,7 +366,7 @@ export default function MapScreen() {
               }`}
             >
               Route risk
-              <div className="mt-1 font-normal">{selectedRiskSegments.length} matched segments</div>
+              <div className="mt-1 font-normal">{selectedTrip ? `${selectedRiskSegments.length} matched segments` : 'Select a trip first'}</div>
             </button>
             <button
               onClick={() => setShowDangerZones(value => !value)}
@@ -368,7 +378,7 @@ export default function MapScreen() {
               <div className="mt-1 font-normal">{dangerZones.length} local zones</div>
             </button>
           </div>
-          {!selectedHasSpeedLimits && (
+          {selectedTrip && !selectedHasSpeedLimits && (
             <div className="mt-3 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
               <div>{describeOsmSpeedLimitStatus(selectedTrip.speed_limit_context)}</div>
               <button
