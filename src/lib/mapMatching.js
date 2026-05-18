@@ -3,6 +3,7 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 const CACHE_KEY = 'drivesense_map_matching_cache_v1';
 const DEFAULT_OSRM_URL = 'https://router.project-osrm.org';
 const MAX_MATCH_POINTS = 100;
+const OSRM_TIMEOUT_MS = 12000;
 
 const round = (value, places = 5) => Number(value).toFixed(places);
 
@@ -62,7 +63,10 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   try {
     const sampled = samplePoints(valid);
     const endpoint = settings.osrm_map_matching_url || DEFAULT_OSRM_URL;
-    const response = await fetch(osrmMatchUrl(sampled, endpoint));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
+    const response = await fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
+      .finally(() => clearTimeout(timeout));
     if (!response.ok) throw new Error(`OSRM match failed (${response.status})`);
     const data = await response.json();
     const matching = data.matchings?.[0];

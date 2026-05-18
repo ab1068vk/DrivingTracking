@@ -39,6 +39,14 @@ const relativeTime = (value) => {
   return `${Math.round(hours / 24)}d ago`;
 };
 
+const tripPointSummary = (trip) => {
+  const mapPoints = trip?.route_points?.length || 0;
+  const recorded = Number(trip?.route_points_raw_count) || mapPoints;
+  return recorded !== mapPoints
+    ? `${recorded} GPS readings - ${mapPoints} map/playback points`
+    : `${mapPoints} GPS points`;
+};
+
 export default function MapScreen() {
   const qc = useQueryClient();
   const [selectedTripId, setSelectedTripId] = useState(null);
@@ -68,12 +76,13 @@ export default function MapScreen() {
       if (!selectedTrip) throw new Error('Select a trip first.');
       return tripService.update(selectedTrip.id, await buildOpenSourceTripContextPatch(selectedTrip, localSettings.get()));
     },
-    onSuccess: () => {
+    onSuccess: (updatedTrip) => {
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
-      setShowSpeedLimits(true);
+      const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
+      setShowSpeedLimits(hasSpeedLimits);
     },
   });
 
@@ -109,6 +118,7 @@ export default function MapScreen() {
     ? [{
       id: selectedTrip.id,
       route_points: selectedTrip.route_points,
+      rawPointCount: selectedTrip.route_points_raw_count,
       selected: true,
       color: '#3b82f6',
       label: formatDate(selectedTrip.start_time),
@@ -116,6 +126,7 @@ export default function MapScreen() {
     : completed.map((trip, index) => ({
       id: trip.id,
       route_points: trip.route_points,
+      rawPointCount: trip.route_points_raw_count,
       selected: false,
       color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
       label: formatDate(trip.start_time),
@@ -256,6 +267,7 @@ export default function MapScreen() {
               showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
               routeRiskSegments={selectedRiskSegments}
               showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
+              rawPointCount={selectedTrip?.route_points_raw_count}
               height="400px"
             />
             <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
@@ -295,7 +307,7 @@ export default function MapScreen() {
             <div>
               <div className="font-semibold text-sm">{formatDate(selectedTrip.start_time)}</div>
               <div className="text-xs text-muted-foreground mt-1">
-                {formatDistance(selectedTrip.distance_km || 0, units)} - {selectedTrip.route_points?.length || 0} GPS points - {selectedTrip.driving_events?.length || 0} events
+                {formatDistance(selectedTrip.distance_km || 0, units)} - {tripPointSummary(selectedTrip)} - {selectedTrip.driving_events?.length || 0} events
               </div>
             </div>
             <button
@@ -362,16 +374,16 @@ export default function MapScreen() {
             >
               <div className="flex items-center gap-2">
                 <Gauge className="h-4 w-4" />
-                OSM speed limits
+                Speed-limit layer
               </div>
               <div className="mt-1 font-normal">
                 {!selectedTrip
                   ? 'Select a trip first'
                   : selectedHasSpeedLimits
-                    ? `${selectedSpeedLimitCoverage}% route coverage - tap to toggle layer`
+                    ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
                     : contextMutation.isPending
-                      ? 'Fetching OSM speed limits and map matching...'
-                      : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to refresh`}
+                      ? 'Fetching OSM/OSRM context...'
+                      : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to fetch context`}
               </div>
             </button>
             <button
@@ -398,7 +410,7 @@ export default function MapScreen() {
             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
               <div className="font-semibold text-foreground">What the OSM button does</div>
               <div className="mt-1">
-                It fetches OpenStreetMap/Overpass speed limits, runs OSRM map matching when enabled, then redraws the selected trip as green/orange/red speed-limit compliance segments.
+                Fetch context gets OpenStreetMap speed limits and optional OSRM road matching for the selected trip. The layer then colors the route green, orange, or red against the matched/default limit.
               </div>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
@@ -415,7 +427,7 @@ export default function MapScreen() {
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
-                {contextMutation.isPending ? 'Refreshing...' : 'Refresh OSM Context'}
+                {contextMutation.isPending ? 'Fetching OSM context...' : 'Fetch OSM Context'}
               </button>
               {contextMutation.isError && (
                 <div className="mt-2 text-orange-600 dark:text-orange-300">
@@ -503,13 +515,20 @@ export default function MapScreen() {
                 Route risk
               </button>
               <button
-                onClick={() => setShowSpeedLimits(value => !value)}
-                disabled={!selectedTrip || !selectedHasSpeedLimits}
+                onClick={() => {
+                  if (!selectedTrip) return;
+                  if (!selectedHasSpeedLimits) {
+                    contextMutation.mutate();
+                    return;
+                  }
+                  setShowSpeedLimits(value => !value);
+                }}
+                disabled={!selectedTrip || contextMutation.isPending}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
                   showSpeedLimits ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                 }`}
               >
-                OSM speed
+                Speed limits
               </button>
             </div>
           </div>
@@ -550,7 +569,7 @@ export default function MapScreen() {
                     <div>
                       <div className="font-medium">{formatDate(trip.start_time)}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        {formatDistance(trip.distance_km || 0, units)} - {trip.route_points?.length} GPS points - {trip.driving_events?.length || 0} events
+                        {formatDistance(trip.distance_km || 0, units)} - {tripPointSummary(trip)} - {trip.driving_events?.length || 0} events
                       </div>
                     </div>
                     <div className={`font-grotesk font-bold text-xl ${color}`}>

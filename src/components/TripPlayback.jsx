@@ -117,6 +117,10 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)), [privacySettings, secondaryTrip?.route_points]);
   const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
   const totalPoints = points.length;
+  const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
+  const pointCountSummary = rawPointCount !== totalPoints
+    ? `${rawPointCount} GPS readings - ${totalPoints} map/playback points`
+    : `${totalPoints} GPS readings`;
   const timeline = useMemo(() => buildPlaybackTimeline(points, events), [events, points]);
   const secondaryTimeline = useMemo(() => buildPlaybackTimeline(secondaryPoints, []), [secondaryPoints]);
   const speedSegments = timeline.segments;
@@ -497,12 +501,12 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
 
         <div className="ml-auto text-xs text-muted-foreground">
           {currentPt && (
-            <span>{Math.round(currentPt.speed_kmh || 0)} km/h - pt {currentIdx + 1}/{totalPoints}</span>
+            <span>{Math.round(currentPt.speed_kmh || 0)} km/h - sample {currentIdx + 1}/{totalPoints}</span>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 rounded-2xl border border-border bg-card p-3 text-xs">
+      <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-card p-3 text-xs sm:grid-cols-4">
         <div>
           <div className="text-muted-foreground">Route</div>
           <div className="font-semibold">{formatDistance(stats.distanceKm)}</div>
@@ -514,6 +518,10 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         <div>
           <div className="text-muted-foreground">Max speed</div>
           <div className="font-semibold">{stats.maxSpeedKmh} km/h</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Route data</div>
+          <div className="font-semibold">{pointCountSummary}</div>
         </div>
       </div>
 

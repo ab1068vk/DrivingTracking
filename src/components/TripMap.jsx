@@ -264,6 +264,7 @@ export default function TripMap({
   showRouteRisk = false,
   routeRiskSegments = [],
   showSpeedLimits = false,
+  rawPointCount = null,
   height = '350px',
   className = '',
 }) {
@@ -278,13 +279,17 @@ export default function TripMap({
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
 
-  const selectedRoutePoints = useMemo(() => {
+  const selectedRoute = useMemo(() => {
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, selected: true }];
-    return (routeSets.find((route) => route.selected) || routeSets[0] || {}).route_points || [];
+    return routeSets.find((route) => route.selected) || routeSets[0] || {};
   }, [routePoints, routes]);
+  const selectedRoutePoints = selectedRoute.route_points || [];
   const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
+  const recordedPointCount = Number(
+    rawPointCount ?? selectedRoute.rawPointCount ?? selectedRoute.route_points_raw_count
+  ) || selectedRoutePoints.length;
   const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
   const hasRoute = telemetry.pointCount > 1;
 
@@ -729,10 +734,11 @@ export default function TripMap({
             </div>
           </div>
           {telemetry.durationSeconds > 0 && (
-            <div className="mt-2 flex items-center justify-between rounded-xl bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
               <span>{formatDuration(telemetry.durationSeconds)}</span>
               <span>{telemetry.avgSpeedKmh} km/h avg</span>
-              <span>{telemetry.pointCount} GPS</span>
+              <span>{recordedPointCount} GPS</span>
+              {recordedPointCount !== telemetry.pointCount && <span>{telemetry.pointCount} map pts</span>}
             </div>
           )}
         </button>

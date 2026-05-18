@@ -550,7 +550,8 @@ export default function Dashboard() {
       end_time: endTime,
       vehicle_id: completedVehicle?.id || null,
       route_points: pts,
-      route_points_raw_count: pts.length,
+      route_points_raw_count: rawPoints.length,
+      route_points_map_count: pts.length,
       ...scores,
       driving_events: tripEvents,
       speed_limit_context: {
@@ -1025,9 +1026,9 @@ export default function Dashboard() {
 
       {!tracking && completedTrips.length >= 5 && !readinessDismissed && (
         <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-start gap-4">
             <div
-              className="grid h-14 w-14 place-items-center rounded-full text-sm font-bold text-white"
+              className="grid h-14 w-14 flex-shrink-0 place-items-center rounded-full text-sm font-bold text-white"
               style={{
                 background: preTripRisk.readinessScore >= 70
                   ? '#22c55e'
@@ -1040,31 +1041,31 @@ export default function Dashboard() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="font-semibold">Trip readiness</h2>
+                <h2 className="min-w-0 break-words font-semibold">Trip readiness</h2>
                 <button
                   onClick={() => setReadinessDismissed(true)}
-                  className="rounded-lg p-1 text-muted-foreground hover:bg-secondary"
+                  className="flex-shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-secondary"
                   aria-label="Dismiss readiness card"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="text-sm font-medium capitalize">
+              <div className="break-words text-sm font-medium capitalize">
                 {preTripRisk.readinessScore}/100 · {preTripRisk.riskLevel} risk
               </div>
               {preTripRisk.riskLevel !== 'low' && (
                 <>
-                  <div className="mt-1 text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
-                  <div className="mt-1 text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
+                  <div className="mt-1 break-words text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
+                  <div className="mt-1 break-words text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
                 </>
               )}
               {preTripRisk.topSignals?.length > 0 && (
                 <div className="mt-3 space-y-2">
                   {preTripRisk.topSignals.map((signal) => (
-                    <div key={signal.key} className="flex items-center gap-2 text-xs">
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      <span className="min-w-0 flex-1 truncate text-muted-foreground">{signal.label}</span>
-                      <span className="font-semibold">{signal.value}</span>
+                    <div key={signal.key} className="flex items-start gap-2 text-xs">
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
+                      <span className="min-w-0 flex-1 break-words leading-snug text-muted-foreground">{signal.label}</span>
+                      <span className="max-w-[45%] break-words text-right font-semibold leading-snug">{signal.value}</span>
                     </div>
                   ))}
                 </div>
@@ -1072,15 +1073,15 @@ export default function Dashboard() {
               {settings.predictive_route_risk_enabled !== false && (
                 <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">Predictive route risk</span>
-                    <span className={`font-bold capitalize ${
+                    <span className="min-w-0 break-words font-semibold">Predictive route risk</span>
+                    <span className={`flex-shrink-0 font-bold capitalize ${
                       predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
                     }`}>
                       {predictiveRouteRisk.riskScore}/100
                     </span>
                   </div>
-                  <div className="mt-1 text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
-                  <div className="mt-1 text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
+                  <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
+                  <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
                 </div>
               )}
             </div>

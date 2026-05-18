@@ -349,6 +349,11 @@ export default function TripDetail() {
     : terminalParkedSeconds > 0
       ? 'Stopped'
       : 'Ended while moving';
+  const tripMapPointCount = trip.route_points?.length || 0;
+  const tripRawPointCount = Number(trip.route_points_raw_count) || tripMapPointCount;
+  const tripPointSummary = tripRawPointCount !== tripMapPointCount
+    ? `${tripRawPointCount} recorded GPS readings - ${tripMapPointCount} map/playback points`
+    : `${tripMapPointCount} GPS readings`;
 
   return (
     <div className="space-y-5 pb-4">
@@ -690,7 +695,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? 'Refreshing context...' : 'Refresh OSM Context'}
+            {contextMutation.isPending ? 'Fetching OSM context...' : 'Fetch / Refresh OSM Context'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -700,7 +705,7 @@ export default function TripDetail() {
             }`}
           >
             <Gauge className="h-3.5 w-3.5" />
-            OSM Speed Limits
+            {showSpeedLimitsOnMap ? 'Hide Speed-Limit Layer' : 'Show Speed-Limit Layer'}
           </button>
           <button
             onClick={() => setShowCorneringHeatmap((value) => !value)}
@@ -714,9 +719,15 @@ export default function TripDetail() {
         </div>
         {!speedLimitContext && (
           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
+            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
           </div>
         )}
+        <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
+          <div className="font-semibold text-foreground">Map data</div>
+          <div className="mt-1 break-words">
+            {tripPointSummary}. OSM context adds road speed limits and names; the speed-limit layer colors matched/default limits green, orange, or red.
+          </div>
+        </div>
         {contextMutation.isError && (
           <div className="mb-2 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
             {contextMutation.error?.message || 'Could not refresh open-source context.'}
@@ -730,6 +741,7 @@ export default function TripDetail() {
             showSpeedLimits={showSpeedLimitsOnMap}
             showRouteRisk={routeRiskSegments.length > 0}
             routeRiskSegments={routeRiskSegments}
+            rawPointCount={trip.route_points_raw_count}
             height="300px"
           />
         </div>
@@ -1327,7 +1339,7 @@ export default function TripDetail() {
         className="bg-secondary/50 rounded-2xl px-5 py-3 flex items-center justify-between"
       >
         <span className="text-sm text-muted-foreground">Route Points</span>
-        <span className="text-sm font-semibold">{trip.route_points_raw_count || trip.route_points?.length || 0} GPS readings</span>
+        <span className="text-right text-sm font-semibold">{tripPointSummary}</span>
       </motion.div>
     </div>
   );

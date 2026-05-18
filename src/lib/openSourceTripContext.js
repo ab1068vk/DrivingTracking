@@ -14,6 +14,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   if (!trip) throw new Error('Trip not loaded');
 
   const originalPoints = trip.route_points || [];
+  const recordedPointCount = Number(trip.route_points_raw_count) || originalPoints.length;
   if (originalPoints.length < 2) {
     return {
       speed_limit_context: {
@@ -23,6 +24,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
         source: 'openstreetmap_overpass',
         error: 'Trip needs at least two GPS points before OSM speed limits can be matched.',
       },
+      route_points_raw_count: recordedPointCount,
+      route_points_map_count: originalPoints.length,
       needs_rescore: false,
     };
   }
@@ -57,7 +60,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     ...stats,
     ...scores,
     route_points: routePoints,
-    route_points_raw_count: routePoints.length,
+    route_points_raw_count: recordedPointCount,
+    route_points_map_count: routePoints.length,
     driving_events: events,
     speed_limit_context: {
       provider: 'openstreetmap_overpass',
