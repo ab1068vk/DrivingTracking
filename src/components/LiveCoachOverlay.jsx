@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { registerPlugin } from '@capacitor/core';
 import { AlertTriangle, X } from 'lucide-react';
 import {
   buildDrivingThresholds,
@@ -15,15 +14,15 @@ import {
   notifyPhoneUseDetected,
   notifySpeedingAlert,
 } from '@/lib/notificationService';
-import { isAndroid, isNativePlatform } from '@/lib/nativePlatform';
+import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
+import { speakSafetyAlert } from '@/lib/voiceAlerts';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
-const NativeSpeech = registerPlugin('DriveSenseActivityRecognition');
 
 const plainText = (message) => {
   if (typeof message === 'string') return message;
@@ -37,39 +36,13 @@ const plainText = (message) => {
   return 'Road Sage safety alert';
 };
 
-async function speakAlert(text, settings) {
-  if (settings.voice_alerts_enabled === false || typeof window === 'undefined') return false;
-  if (isNativePlatform()) {
-    try {
-      await NativeSpeech.speakText({ text });
-      return true;
-    } catch {
-      // Fall through to browser speech when the native bridge is not available.
-    }
-  }
-  if (!window.speechSynthesis) {
-    return false;
-  }
-  const Utterance = window.SpeechSynthesisUtterance || globalThis.SpeechSynthesisUtterance;
-  if (!Utterance) return false;
-  const utterance = new Utterance(text);
-  utterance.rate = 0.95;
-  utterance.volume = 0.9;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
-  return true;
-}
-
-export function testVoiceAlert(settings = localSettings.get()) {
-  return speakAlert('Road Sage voice alerts are working.', settings);
-}
-
 export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {
   const [message, setMessage] = useState(null);
   const [dismissed, setDismissed] = useState(false);
   const visibleRef = useRef(false);
   const queueRef = useRef([]);
   const lastCoachCheckRef = useRef(0);
+  const lastVoiceAlertRef = useRef({});
   const previousCountsRef = useRef({
     [EVENT_TYPES.HARSH_BRAKE]: currentEvents.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length,
     [EVENT_TYPES.RAPID_ACCELERATION]: currentEvents.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length,
@@ -82,7 +55,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     setMessage(normalized);
-    speakAlert(plainText(normalized.text), localSettings.get()).catch(() => {});
+    speakSafetyAlert(plainText(normalized.text), localSettings.get()).catch(() => {});
     setTimeout(() => {
       visibleRef.current = false;
       setMessage(null);
@@ -110,6 +83,12 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const thresholds = buildDrivingThresholds(settings);
       const currentTime = new Date().toISOString();
       const now = Date.now();
+      const canSpeakTimedAlert = (key, cooldownMs) => {
+        const last = lastVoiceAlertRef.current[key] || 0;
+        if (now - last < cooldownMs) return false;
+        lastVoiceAlertRef.current[key] = now;
+        return true;
+      };
       const stats = calculateTripStats(currentRoutePoints, tripStartTime, currentTime, thresholds);
       const detection = detectDrivingEvents(currentRoutePoints, thresholds, currentTime);
       const events = Reflect.get(detection, 'events') ?? detection;
@@ -169,12 +148,18 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           limitKmh: latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
           durationS: latestSpeeding.duration_seconds ?? 0,
         }, settings).catch(() => {});
+        if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('speeding', 60000)) {
+          nextMessage = `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`;
+        }
       }
       if (stats.drowsy_risk_level === 'high' && settings.notif_drowsy_alert_enabled !== false) {
         notifyDrowsyWarning({
           drowsyRiskLevel: 'high',
           tripDurationMinutes: (stats.duration_seconds || 0) / 60,
         }, settings).catch(() => {});
+        if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('drowsy', 10 * 60 * 1000)) {
+          nextMessage = 'Fatigue warning. Take a break when it is safe.';
+        }
       }
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
       if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
@@ -183,6 +168,9 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           thresholdMinutes: settings.threshold_long_drive_minutes ?? 120,
           tripId: tripStartTime,
         }, settings).catch(() => {});
+        if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('long_drive', 30 * 60 * 1000)) {
+          nextMessage = `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`;
+        }
       }
 
       previousCountsRef.current = {

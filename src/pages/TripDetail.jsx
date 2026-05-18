@@ -73,6 +73,7 @@ export default function TripDetail() {
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
+  const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const metadataSectionRef = useRef(null);
 
   const { data: trip, isLoading } = useQuery({
@@ -140,7 +141,11 @@ export default function TripDetail() {
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
-      return tripService.update(id, await buildOpenSourceTripContextPatch(trip, localSettings.get()));
+      setOsmFetchStatus('Preparing route context');
+      const patch = await buildOpenSourceTripContextPatch(trip, localSettings.get(), {
+        onProgress: setOsmFetchStatus,
+      });
+      return tripService.update(id, patch);
     },
     onSuccess: (updatedTrip) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
@@ -148,6 +153,12 @@ export default function TripDetail() {
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
       qc.invalidateQueries({ queryKey: ['map-trips'] });
+    },
+    onError: (error) => {
+      setOsmFetchStatus(error?.message || 'OSM context failed');
+    },
+    onSettled: () => {
+      setTimeout(() => setOsmFetchStatus(''), 2500);
     },
   });
   const [dismissedTags, setDismissedTags] = useState(() => {
@@ -354,6 +365,11 @@ export default function TripDetail() {
   const tripPointSummary = tripRawPointCount !== tripMapPointCount
     ? `${tripRawPointCount} recorded GPS readings - ${tripMapPointCount} map/playback points`
     : `${tripMapPointCount} GPS readings`;
+  const speedLimitLayerEffect = osmSpeedLimitPoints.length > 0
+    ? 'The speed-limit layer recolors this route: green is within the matched/default limit, orange is over, red is well over.'
+    : speedLimitContext
+      ? 'OSM context was checked, but no matched limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
+      : 'Before fetching OSM context, this map shows GPS speed bands and event markers only.';
 
   return (
     <div className="space-y-5 pb-4">
@@ -695,7 +711,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? 'Fetching OSM context...' : 'Fetch / Refresh OSM Context'}
+            {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM context...' : 'Fetch / Refresh OSM Context'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -726,6 +742,9 @@ export default function TripDetail() {
           <div className="font-semibold text-foreground">Map data</div>
           <div className="mt-1 break-words">
             {tripPointSummary}. OSM context adds road speed limits and names; the speed-limit layer colors matched/default limits green, orange, or red.
+          </div>
+          <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
+            {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM context...' : speedLimitLayerEffect}
           </div>
         </div>
         {contextMutation.isError && (

@@ -299,7 +299,8 @@ export async function notifyExportSaved(/** @type {any} */ { filename, uri, mime
 
 export async function notifyStayAlert(opts = {}) {
   if (!isNativePlatform()) return;
-  if (!notificationsEnabled('safe_driving_reminder')) return;
+  const settings = localSettings.get();
+  if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false) return;
   const granted = await requestNotificationPermission();
   if (!granted) return;
 
@@ -308,7 +309,7 @@ export async function notifyStayAlert(opts = {}) {
       id: opts.id || STAY_ALERT_ID,
       title: opts.title || 'Stay Alert',
       body: opts.body || 'Heading drift detected - take a break if you can.',
-      channelId: opts.channelId || SUMMARY_CHANNEL_ID,
+      channelId: opts.channelId || SAFETY_ALERTS_CHANNEL_ID,
       schedule: opts.schedule,
       extra: opts.extra,
     }],

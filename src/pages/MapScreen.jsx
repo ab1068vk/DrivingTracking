@@ -64,6 +64,7 @@ export default function MapScreen() {
   const [showRouteRisk, setShowRouteRisk] = useState(false);
   const [showSpeedLimits, setShowSpeedLimits] = useState(false);
   const [showLayerPanel, setShowLayerPanel] = useState(true);
+  const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const settings = localSettings.get();
   const units = settings.units || 'metric';
 
@@ -74,15 +75,30 @@ export default function MapScreen() {
   const contextMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTrip) throw new Error('Select a trip first.');
-      return tripService.update(selectedTrip.id, await buildOpenSourceTripContextPatch(selectedTrip, localSettings.get()));
+      setOsmFetchStatus('Preparing route context');
+      const patch = await buildOpenSourceTripContextPatch(selectedTrip, localSettings.get(), {
+        onProgress: setOsmFetchStatus,
+      });
+      return tripService.update(selectedTrip.id, patch);
     },
     onSuccess: (updatedTrip) => {
+      if (updatedTrip) {
+        qc.setQueryData(['map-trips'], (old = []) => (
+          Array.isArray(old) ? old.map((trip) => String(trip.id) === String(updatedTrip.id) ? updatedTrip : trip) : old
+        ));
+      }
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
       setShowSpeedLimits(hasSpeedLimits);
+    },
+    onError: (error) => {
+      setOsmFetchStatus(error?.message || 'OSM context failed');
+    },
+    onSettled: () => {
+      setTimeout(() => setOsmFetchStatus(''), 2500);
     },
   });
 
@@ -101,6 +117,13 @@ export default function MapScreen() {
   const selectedHasSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
   const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
+  const selectedLayerEffect = !selectedTrip
+    ? 'Select a trip to fetch road context.'
+    : selectedHasSpeedLimits
+      ? 'Turning the layer on recolors the selected route: green is within the matched/default limit, orange is over, red is well over.'
+      : selectedSpeedLimitStatus === 'not_fetched'
+        ? 'Before fetching, the map shows only GPS speed bands and event markers. Fetch context to look for road limits.'
+        : 'No speed-limit layer is available for this trip, so the map will not visibly change until OSM returns matched limits.';
   const selectedRiskSegments = useMemo(() => (
     selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
   ), [routeRiskIndex, selectedTrip]);
@@ -382,7 +405,7 @@ export default function MapScreen() {
                   : selectedHasSpeedLimits
                     ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
                     : contextMutation.isPending
-                      ? 'Fetching OSM/OSRM context...'
+                      ? osmFetchStatus || 'Fetching OSM/OSRM context...'
                       : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to fetch context`}
               </div>
             </button>
@@ -412,6 +435,9 @@ export default function MapScreen() {
               <div className="mt-1">
                 Fetch context gets OpenStreetMap speed limits and optional OSRM road matching for the selected trip. The layer then colors the route green, orange, or red against the matched/default limit.
               </div>
+              <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
+                {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM/OSRM context...' : selectedLayerEffect}
+              </div>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
                 <span>Map matching: {selectedMapMatchingStatus.replace(/_/g, ' ')}</span>
@@ -427,7 +453,7 @@ export default function MapScreen() {
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
-                {contextMutation.isPending ? 'Fetching OSM context...' : 'Fetch OSM Context'}
+                {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM context...' : 'Fetch OSM Context'}
               </button>
               {contextMutation.isError && (
                 <div className="mt-2 text-orange-600 dark:text-orange-300">

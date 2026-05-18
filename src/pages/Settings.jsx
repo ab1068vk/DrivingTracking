@@ -47,7 +47,7 @@ import { getCurrentLocation } from '@/lib/trackingService';
 import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
-import { testVoiceAlert } from '@/components/LiveCoachOverlay';
+import { testVoiceAlert } from '@/lib/voiceAlerts';
 
 function SectionTitle({ children }) {
   return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -1265,7 +1265,7 @@ export default function Settings() {
           <SettingRow
             icon={Volume2}
             label="Live voice alerts"
-            sublabel="Speak urgent coaching alerts on device"
+            sublabel="Speaks during active trips for live coaching, phone use, speeding, drowsy, long-drive, danger-zone, and incident alerts"
           >
             <div className="flex items-center gap-2">
               <button

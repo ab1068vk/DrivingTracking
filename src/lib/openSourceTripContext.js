@@ -10,8 +10,18 @@ import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 
-export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get()) {
+const stage = (onProgress, message) => {
+  if (typeof onProgress === 'function') onProgress(message);
+};
+
+const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
+  const id = setTimeout(() => reject(new Error(message)), ms);
+  promise.then(resolve, reject).finally(() => clearTimeout(id));
+});
+
+export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get(), options = {}) {
   if (!trip) throw new Error('Trip not loaded');
+  const { onProgress } = options;
 
   const originalPoints = trip.route_points || [];
   const recordedPointCount = Number(trip.route_points_raw_count) || originalPoints.length;
@@ -31,10 +41,48 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }
 
   const thresholds = buildDrivingThresholds(settings);
-  const mapMatchingContext = await mapMatchRoute(originalPoints, settings);
+  stage(onProgress, 'Checking weather context');
+  const weatherPromise = timeout(
+    fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
+    12000,
+    'Weather lookup timed out'
+  ).catch((error) => ({
+    provider: 'open-meteo',
+    status: 'unavailable',
+    riskLevel: 'low',
+    riskScore: 0,
+    riskMultiplier: 1,
+    error: error?.message || 'Weather lookup unavailable',
+  }));
+
+  stage(onProgress, 'Matching route to roads');
+  const mapMatchingContext = await timeout(
+    mapMatchRoute(originalPoints, settings),
+    16000,
+    'OSRM map matching timed out'
+  ).catch((error) => ({
+    routePoints: originalPoints,
+    status: 'unavailable',
+    provider: 'osrm',
+    error: error?.message || 'Map matching unavailable',
+    confidence: null,
+    snapped_coverage: 0,
+  }));
   let routePoints = mapMatchingContext.routePoints || originalPoints;
-  const speedLimitContext = await annotateRouteSpeedLimits(routePoints, settings);
+  stage(onProgress, 'Fetching OSM speed limits');
+  const speedLimitContext = await timeout(
+    annotateRouteSpeedLimits(routePoints, settings),
+    18000,
+    'OpenStreetMap speed-limit lookup timed out'
+  ).catch((error) => ({
+    routePoints,
+    coverage: 0,
+    status: 'unavailable',
+    source: 'openstreetmap_overpass',
+    error: error?.message || 'Speed limit lookup unavailable',
+  }));
   routePoints = speedLimitContext.routePoints || routePoints;
+  stage(onProgress, 'Recalculating trip scores');
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
   const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const detectedEvents = Reflect.get(detection, 'events') ?? detection;
@@ -44,14 +92,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     stats.duration_seconds,
     Reflect.get(detection, 'phoneUse') ?? {}
   );
-  const weatherContext = await fetchWeatherContextForTrip(routePoints, trip.start_time, trip.end_time, settings).catch((error) => ({
-    provider: 'open-meteo',
-    status: 'unavailable',
-    riskLevel: 'low',
-    riskScore: 0,
-    riskMultiplier: 1,
-    error: error?.message || 'Weather lookup unavailable',
-  }));
+  const weatherContext = await weatherPromise;
   let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   scores = applyWeatherRiskToScores(scores, weatherContext);
   const events = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse);

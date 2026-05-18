@@ -71,6 +71,7 @@ import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { mapMatchRoute } from '@/lib/mapMatching';
+import { speakSafetyAlert } from '@/lib/voiceAlerts';
 import {
   buildSensorFusionSummary,
   createMotionSensorFusion,
@@ -151,6 +152,7 @@ export default function Dashboard() {
       stayAlertSentRef.current = true;
       lastStayAlertAtRef.current = Date.now();
       notifyStayAlert().catch(() => {});
+      speakSafetyAlert('Heading drift detected. Take a break when it is safe.', cfg).catch(() => {});
     }
   }, [activeTrip, tracking]);
 
@@ -249,6 +251,7 @@ export default function Dashboard() {
               body,
               extra: { type: 'danger_zone', zoneId: zone.id },
             }).catch(() => {});
+            speakSafetyAlert(`Danger zone ahead. ${typeLabel} reported nearby.`, latestSettings).catch(() => {});
           }
         }
         activeTripStore.addPoint(point);
@@ -287,6 +290,7 @@ export default function Dashboard() {
               : 'Road Sage detected impact-like motion followed by little movement.',
             extra: { type: 'possible_crash', severity: incident.severity, emergencyWorkflow },
           }).catch(() => {});
+          speakSafetyAlert(workflowBody, latestSettings).catch(() => {});
           setActiveTrip(prev => {
             if (!prev) return prev;
             const updated = {
