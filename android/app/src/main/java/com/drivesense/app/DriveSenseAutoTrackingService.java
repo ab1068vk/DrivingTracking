@@ -73,7 +73,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double STATIONARY_SPEED_KMH = 5d;
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
-    private static final double AUTO_START_SPEED_KMH = 3d;
+    private static final double AUTO_START_SPEED_KMH = 5d;
     private static final long AUTO_START_MOVING_MS = 1_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";

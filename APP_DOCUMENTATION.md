@@ -770,7 +770,7 @@ Foreground auto detection uses:
 Auto-start logic:
 
 - Vehicle activity confidence must be at least 65.
-- Current speed must be at least 3 km/h.
+- Current speed must be at least 5 km/h.
 - Recent moving time must be at least 1 second.
 
 Auto-stop logic:
@@ -781,7 +781,7 @@ Auto-stop logic:
 - STILL activity with stable GPS ends after 90 seconds; noisier stopped GPS waits longer.
 - A GPS-only parked fallback can end a foreground trip after 5 minutes of near-zero speed with parked-like drift, or after 10 minutes at near-zero speed.
 
-On non-Android web, speed-only auto start can trigger when speed is at least 3 km/h for at least 1 second.
+On non-Android web, speed-only auto start can trigger when speed is at least 5 km/h for at least 1 second.
 
 ### 9.3 Android Native Auto Tracking
 
@@ -799,7 +799,7 @@ Native auto tracking behavior:
 3. `DriveSenseAutoTrackingService` starts as a foreground service.
 4. The service requests activity updates every 15 seconds and keeps an armed high-accuracy location watch.
 5. `DriveSenseActivityReceiver` receives activity updates.
-6. In-vehicle activity with confidence at least 65 and movement above 3 km/h for 1 second starts a native trip.
+6. In-vehicle activity with confidence at least 65 and movement above 5 km/h for 1 second starts a native trip.
 7. The service starts high-accuracy location updates every 2 seconds, with a 1 second minimum interval and 5 meter minimum distance.
 8. Native route points are filtered for accuracy, noise, and impossible speed.
 9. Still, walking, unknown, or long in-vehicle stopped states end the trip only after the parked timers and GPS drift checks pass.

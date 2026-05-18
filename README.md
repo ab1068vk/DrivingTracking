@@ -63,7 +63,7 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 ## May 2026 Tracking Stabilization
 
 - GPS capture now requests the first fix immediately and uses faster high-accuracy watch intervals on web, Capacitor, and native Android background auto.
-- In-app and native auto-start trigger after about 1 second above 3 km/h with in-vehicle confidence, reducing missed trip starts after a previous trip was ended.
+- In-app and native auto-start trigger after about 1 second above 5 km/h with in-vehicle confidence, reducing missed trip starts after a previous trip was ended.
 - Lane-change and erratic-speed events use stricter GPS shape, heading, speed stability, and reversal checks to reduce false positives.
 - Overtake quality is only calculated for aggressive overtake events or high-speed lane changes with a real speed-up pattern.
 - Weather context uses historical Open-Meteo data for past trips and samples the trip time more tightly so a nearby rainy hour does not label a sunny drive as rainy.
