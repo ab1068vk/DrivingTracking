@@ -75,8 +75,8 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 - Trip Detail has a **Refresh OSM Context** action that reruns OpenStreetMap speed limits, OSRM map matching, and weather context for existing trips.
 - Map also offers **Refresh OSM Context** for the selected trip when speed limits are missing.
 - Trip Detail and Map can show an **OSM Speed Limits** layer when matched speed-limit tags exist on route points.
-- Speeding is scored from OpenStreetMap `maxspeed` where available, using a +5 km/h warning margin. When OSM speed limits are unavailable, the fallback speed threshold is 100 km/h.
-- Harsh braking defaults to 3.5 m/s2 and speed-creep alerts default to a 5 km/h drift.
+- Speeding is scored from OpenStreetMap `maxspeed` where available, using a +5 km/h warning margin. When OSM speed limits are unavailable, fallback limits are road-context aware: 40 km/h residential, 60 km/h urban, and 100 km/h highway.
+- Harsh braking defaults to 3.5 m/s2, rapid acceleration defaults to 3.0 m/s2, and speed-creep alerts default to a 5 km/h drift.
 - Settings includes a **Test** button for live voice alerts; Android WebView falls back to native TextToSpeech when browser speech output is unavailable.
 - Live coaching checks active trips every 15 seconds and can speak urgent speed, phone, braking, following-gap, fatigue, and near-miss alerts when voice alerts are enabled.
 

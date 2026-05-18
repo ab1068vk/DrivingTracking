@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS = {
   activity_permission_granted: false,
   data_retention_days: 365,
   threshold_harsh_brake_ms2: 3.5,
-  threshold_rapid_accel_ms2: 3.5,
+  threshold_rapid_accel_ms2: 3.0,
   threshold_tailgate_decel_ms2: 2.5,
   threshold_sharp_turn_g_low: 0.30,
   threshold_sharp_turn_g_medium: 0.45,
@@ -137,6 +137,7 @@ export const localSettings = {
         const merged = { ...DEFAULT_SETTINGS, ...parsed };
         if ((parsed.settings_defaults_version || 1) < 2) {
           if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
+          if (parsed.threshold_rapid_accel_ms2 == null || parsed.threshold_rapid_accel_ms2 === 3.5) merged.threshold_rapid_accel_ms2 = 3.0;
           if (parsed.threshold_speeding_kmh == null || parsed.threshold_speeding_kmh === 130) merged.threshold_speeding_kmh = 100;
           if (parsed.threshold_speed_over_kmh == null || parsed.threshold_speed_over_kmh === 10) merged.threshold_speed_over_kmh = 5;
           if (parsed.threshold_speed_creep_kmh == null || parsed.threshold_speed_creep_kmh === 10) merged.threshold_speed_creep_kmh = 5;

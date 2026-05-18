@@ -74,7 +74,7 @@ Default user settings live in `src/lib/trackingStore.js`.
 
 ```js
 threshold_harsh_brake_ms2: 3.5,
-threshold_rapid_accel_ms2: 3.5,
+threshold_rapid_accel_ms2: 3.0,
 threshold_tailgate_decel_ms2: 2.5,
 threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
@@ -403,7 +403,7 @@ if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= minRapidAcc
 }
 ```
 
-Default threshold: `3.5 m/s2`, minimum speed `5 km/h` so hard launches from a stop are counted once the car is actually moving.
+Default threshold: `3.0 m/s2`, minimum speed `5 km/h` so hard launches from a stop are counted once the car is actually moving.
 
 ### Sharp Turn
 
@@ -435,20 +435,26 @@ Defaults:
 
 ### Speeding
 
-Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM limits. Otherwise, it uses the lower of the configured fallback threshold and the inferred zone threshold:
+Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM limits. Otherwise, it uses road-context fallback limits so city/residential roads do not inherit the highway fallback:
 
 ```js
-const contextualSpeedingThreshold = Math.min(
-  thresholds.SPEEDING_FALLBACK_KMH,
-  inferredZoneKmh + thresholds.SPEED_OVER_KMH
-);
+const fallbackLimit =
+  roadType === 'residential' ? 40 :
+  roadType === 'highway' ? thresholds.SPEEDING_FALLBACK_KMH :
+  60;
+const inferredOrRoadLimit = Math.min(inferredZoneKmh ?? fallbackLimit, fallbackLimit);
+const contextualSpeedingThreshold = actualOsmLimit
+  ? actualOsmLimit + thresholds.SPEED_OVER_KMH
+  : inferredOrRoadLimit + thresholds.SPEED_OVER_KMH;
 
 if (speed2 > contextualSpeedingThreshold) {
   speedingAccumSeconds += dt;
 }
 ```
 
-Default fallback threshold: `100 km/h`.
+Default highway fallback threshold: `100 km/h`.
+Default urban fallback limit: `60 km/h`.
+Default residential fallback limit: `40 km/h`.
 Default OSM/inferred-zone buffer: `5 km/h`.
 
 ### Idle

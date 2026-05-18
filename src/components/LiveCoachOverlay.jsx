@@ -37,14 +37,16 @@ const plainText = (message) => {
 
 async function speakAlert(text, settings) {
   if (settings.voice_alerts_enabled === false || typeof window === 'undefined') return false;
-  if (!window.speechSynthesis) {
-    if (!isNativePlatform()) return false;
+  if (isNativePlatform()) {
     try {
       await NativeSpeech.speakText({ text });
       return true;
     } catch {
-      return false;
+      // Fall through to browser speech when the native bridge is not available.
     }
+  }
+  if (!window.speechSynthesis) {
+    return false;
   }
   const Utterance = window.SpeechSynthesisUtterance || globalThis.SpeechSynthesisUtterance;
   if (!Utterance) return false;
@@ -148,7 +150,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       } else if (recentNearMiss) nextMessage = 'Near miss detected - increase following distance';
       else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) nextMessage = 'Brake earlier and more gradually';
       else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) nextMessage = 'Open your following gap';
-      else if (latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100)) nextMessage = "You're above the speed threshold";
+      else if (latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) nextMessage = "You're above the speed threshold";
       else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) nextMessage = 'Accelerate more smoothly';
       else if ((stats.idle_time_seconds || 0) > 300) nextMessage = 'Extended idling detected';
 

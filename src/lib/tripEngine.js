@@ -12,8 +12,8 @@ import { maskTripForPrivacy } from './privacyZones';
 export const DEFAULT_THRESHOLDS = {
   // Harsh braking: deceleration > 3.5 m/s2, a common telematics trigger.
   HARSH_BRAKE_MS2: 3.5,
-  // Rapid acceleration: > 3.5 m/s² (≈ 12.6 km/h per second gain)
-  RAPID_ACCEL_MS2: 3.5,
+  // Rapid acceleration: > 3.0 m/s2, about 10.8 km/h per second gain.
+  RAPID_ACCEL_MS2: 3.0,
   // Sharp turn: heading change > 45° per GPS sample at > 30 km/h
   SHARP_TURN_G_LOW: 0.30,
   SHARP_TURN_G_MEDIUM: 0.45,
@@ -2302,6 +2302,15 @@ function complianceFallbackLimit(roadType, thresholds = DEFAULT_THRESHOLDS) {
   return 60;
 }
 
+function contextualFallbackLimitKmh(points = [], index = 0, zone = null, thresholds = DEFAULT_THRESHOLDS, roadTypes = null) {
+  const roadType = roadTypes?.[index] || normalizeRoadTypeLabel(classifyRoadType(points.slice(Math.max(0, index - 15), index + 16)).road_type, points[index]);
+  const roadLimit = complianceFallbackLimit(roadType, thresholds);
+  if (Number.isFinite(Number(zone?.inferredZoneKmh)) && Number(zone.inferredZoneKmh) > 0) {
+    return Math.min(Number(zone.inferredZoneKmh), roadLimit);
+  }
+  return roadLimit;
+}
+
 function actualSpeedLimitKmhForIndex(points = [], index) {
   const candidates = [
     points[index]?.speed_limit_kmh,
@@ -2896,6 +2905,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   const configuredSpeedThreshold = thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH;
   const inferredZones = inferSpeedZones(points, thresholds);
   const zoneForIndex = (index) => inferredZones.find((zone) => index >= zone.startIndex && index <= zone.endIndex) || null;
+  const roadTypesByPoint = classifyRoadTypesByPoint(points);
 
   let idleStart = null;
   let idleAccum = 0;
@@ -3005,7 +3015,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     }
 
     // ── Rapid Acceleration
-    // Threshold: acceleration > 3.5 m/s² from speed > 5 km/h
+    // Threshold: acceleration > 3.0 m/s2 from speed > 5 km/h
     if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= (thresholds.MIN_SPEED_RAPID_ACCEL_KMH ?? DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH)) {
       pushEvent({
         type: EVENT_TYPES.RAPID_ACCELERATION,
@@ -3073,15 +3083,21 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     }
 
     const actualLimitKmh = actualSpeedLimitKmhForIndex(points, i);
+    const inferredZone = zoneForIndex(i);
+    const fallbackLimitKmh = contextualFallbackLimitKmh(points, i, inferredZone, thresholds, roadTypesByPoint);
+    const speedOverKmh = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
     const segmentZone = {
-      ...(zoneForIndex(i) || {}),
+      ...(inferredZone || {}),
+      inferredZoneKmh: inferredZone?.inferredZoneKmh ?? fallbackLimitKmh,
+      confidence: inferredZone?.confidence ?? 'fallback',
+      road_type: inferredZone?.road_type ?? roadTypesByPoint[i] ?? 'urban',
       actualLimitKmh,
     };
     const contextualSpeedingThreshold = actualLimitKmh
-      ? actualLimitKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH)
+      ? actualLimitKmh + speedOverKmh
       : Math.min(
-        configuredSpeedThreshold,
-        segmentZone?.threshold_kmh ?? configuredSpeedThreshold
+        configuredSpeedThreshold + speedOverKmh,
+        fallbackLimitKmh + speedOverKmh
       );
 
     if (speed2 > contextualSpeedingThreshold) {

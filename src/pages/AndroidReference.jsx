@@ -642,7 +642,7 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
             }
 
             // ── Speeding (fallback — no speed limit data)
-            // When speed limit data is unavailable, flag above threshold (default 130 km/h).
+            // When speed limit data is unavailable, use road-context fallback limits instead of one blanket threshold.
             // TODO: Integrate OpenStreetMap speed limit data for accurate detection.
             if (spd2 > thresholds.speedingFallbackKmh) {
                 events.add(DrivingEventEntity(

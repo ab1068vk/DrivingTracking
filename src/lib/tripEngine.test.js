@@ -383,6 +383,26 @@ describe('tripEngine', () => {
     expect(lenient.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
+  it('uses road-context fallback limits when OSM speed limits are missing', () => {
+    const urbanFast = Array.from({ length: 6 }, (_, index) => ({
+      ...point(43.6532 + index * 0.0002, -79.3832, index * 2, 70),
+      heading: 0,
+    }));
+    const highwayCompliant = Array.from({ length: 6 }, (_, index) => ({
+      ...point(43.6532 + index * 0.001, -79.3832, index * 2, 100),
+      heading: 0,
+    }));
+    const osmTaggedUrbanRoad = urbanFast.map((routePoint) => ({
+      ...routePoint,
+      speed_limit_kmh: 80,
+      speed_limit_source: 'openstreetmap',
+    }));
+
+    expect(detectDrivingEvents(urbanFast).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(true);
+    expect(detectDrivingEvents(highwayCompliant).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+    expect(detectDrivingEvents(osmTaggedUrbanRoad).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+  });
+
   it('ignores low-speed parked jitter for jerk, reaction, and hill scoring', () => {
     const parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({
       ...point(43.6532 + index * 0.00001, -79.3832, index * 5, speed, 6),

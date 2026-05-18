@@ -712,7 +712,7 @@ Important settings:
   auto_tracking_enabled: false,
   data_retention_days: 365,
   threshold_harsh_brake_ms2: 3.5,
-  threshold_rapid_accel_ms2: 3.5,
+  threshold_rapid_accel_ms2: 3.0,
   threshold_sharp_turn_degs: 45,
   threshold_speeding_kmh: 100,
   threshold_idle_seconds: 60,
@@ -845,7 +845,7 @@ The trip engine owns:
 ```js
 {
   HARSH_BRAKE_MS2: 3.5,
-  RAPID_ACCEL_MS2: 3.5,
+  RAPID_ACCEL_MS2: 3.0,
   SHARP_TURN_DEG_PER_S: 45,
   SPEEDING_FALLBACK_KMH: 100,
   IDLE_SPEED_KMH: 5,
@@ -2365,7 +2365,7 @@ Default user settings live in `src/lib/trackingStore.js`.
 
 ```js
 threshold_harsh_brake_ms2: 3.5,
-threshold_rapid_accel_ms2: 3.5,
+threshold_rapid_accel_ms2: 3.0,
 threshold_tailgate_decel_ms2: 2.5,
 threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
@@ -2640,7 +2640,7 @@ if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= minRapidAcc
 }
 ```
 
-Default threshold: `3.5 m/s2`, minimum speed `5 km/h` so hard launches from a stop are counted once the car is actually moving.
+Default threshold: `3.0 m/s2`, minimum speed `5 km/h` so hard launches from a stop are counted once the car is actually moving.
 
 #### Sharp Turn
 
@@ -2672,7 +2672,7 @@ Defaults:
 
 #### Speeding
 
-Speeding uses heuristic speed-zone inference because the app has no external road speed limit database. `inferSpeedZones()` analyzes sliding 60-second route windows, assigns zones from p85 observed speed, and records confidence from speed spread.
+Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM speed limits. If no OSM limit is available, the app uses road-context fallback limits instead of a blanket highway value: 40 km/h residential, 60 km/h urban, and 100 km/h highway, with the configured speed-over margin added.
 
 ```js
 const contextualSpeedingThreshold = Math.min(
@@ -2685,7 +2685,9 @@ if (speed2 > contextualSpeedingThreshold) {
 }
 ```
 
-Default fallback threshold: `130 km/h`.
+Default highway fallback threshold: `100 km/h`.
+Default urban fallback limit: `60 km/h`.
+Default residential fallback limit: `40 km/h`.
 Default inferred-zone buffer: `10 km/h`.
 Speeding events include `inferred_zone_kmh` and `zone_confidence`.
 
@@ -4131,7 +4133,7 @@ auto_tracking_enabled: false,
 activity_permission_granted: false,
 data_retention_days: 365,
 threshold_harsh_brake_ms2: 3.5,
-threshold_rapid_accel_ms2: 3.5,
+threshold_rapid_accel_ms2: 3.0,
 threshold_tailgate_decel_ms2: 2.5,
 threshold_sharp_turn_g_low: 0.30,
 threshold_sharp_turn_g_medium: 0.45,
