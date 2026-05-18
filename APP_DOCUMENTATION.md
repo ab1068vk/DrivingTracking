@@ -4550,7 +4550,7 @@ This update adds six local-only safety, readiness, and reporting systems:
 - Adaptive threshold calibration: `src/lib/thresholdCalibration.js` analyses completed trips and suggests personalized harsh-brake, rapid-accel, and sharp-turn thresholds. Settings includes an analyse/apply/dismiss workflow in Detection Thresholds.
 - Daily fatigue accumulation: `src/lib/dailyFatigueEngine.js` calculates today's cumulative fatigue across trips. Dashboard shows a fatigue card, warns before manual trip start when risk is high, and sends native daily-fatigue warnings after trip completion.
 - UBI driver score card: `src/lib/ubiReport.js` computes mileage, time-of-day, braking, acceleration, cornering, and speed-compliance categories. Reports adds an on-screen radar preview and `exportUBIReportPDF`.
-- Pre-trip readiness: `src/lib/preTripRisk.js` combines personal time/day trends, baseline trend, daily fatigue, and last-trip outcome into a dismissible Dashboard readiness card.
+- Pre-trip readiness: `src/lib/preTripRisk.js` combines personal time/day trends, baseline trend, daily fatigue, last-trip outcome, predicted route risk, nearby danger zones, weather risk, and recent recovery time into a dismissible Dashboard readiness card with top contributing factors.
 - Historical route risk: `src/lib/routeRiskIndex.js` builds local risk scores for route segments. `TripMap` can draw route-risk polylines, `MapScreen` has a Route risk toggle, and Trip Detail shows a Route history section.
 
 Cache invalidation:

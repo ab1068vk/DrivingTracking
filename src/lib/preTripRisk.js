@@ -1,13 +1,15 @@
 import { analyzeDayOfWeek, analyzeTimeOfDay, computePersonalBaseline } from '@/lib/tripInsights';
 
 export const PRE_TRIP_RISK_WEIGHTS = {
-  timeOfDay: 0.16,
-  dayOfWeek: 0.12,
-  recentTrend: 0.20,
-  dailyFatigue: 0.22,
+  timeOfDay: 0.14,
+  dayOfWeek: 0.10,
+  recentTrend: 0.18,
+  dailyFatigue: 0.20,
   lastTripOutcome: 0.12,
-  weather: 0.10,
-  dangerZones: 0.08,
+  weather: 0.08,
+  dangerZones: 0.06,
+  routeForecast: 0.08,
+  recentRest: 0.04,
 };
 
 const SIGNAL_LABELS = {
@@ -18,6 +20,8 @@ const SIGNAL_LABELS = {
   lastTripOutcome: 'Low score on your last trip',
   weather: 'Weather may raise trip risk',
   dangerZones: 'Known danger zones are nearby',
+  routeForecast: 'Predicted route conditions look elevated',
+  recentRest: 'Short recovery since your last trip',
 };
 
 const SIGNAL_TIPS = {
@@ -28,6 +32,8 @@ const SIGNAL_TIPS = {
   lastTripOutcome: 'Ease into this drive and avoid repeating the last trip pattern.',
   weather: 'Increase following distance and brake earlier than usual.',
   dangerZones: 'Start slowly and watch for the familiar risk segment.',
+  routeForecast: 'Consider the calmer window or start with a wider safety margin.',
+  recentRest: 'Pause briefly before driving again, especially after a demanding trip.',
 };
 
 const last90Days = (trips = []) => {
@@ -49,10 +55,34 @@ const fallbackTimeRisk = (hour) => {
   return 20;
 };
 
+const routeRiskFromContext = (context = {}) => {
+  const directScore = Number(context.routeRiskScore ?? context.predictiveRouteRisk?.riskScore);
+  if (Number.isFinite(directScore)) return Math.max(0, Math.min(100, directScore));
+
+  const level = context.routeRiskLevel || context.predictiveRouteRisk?.riskLevel;
+  if (level === 'high') return 75;
+  if (level === 'moderate') return 45;
+  if (level === 'low') return 15;
+  return 0;
+};
+
+const recentRestRisk = (lastTrip, nowMs) => {
+  if (!lastTrip) return 10;
+  const endMs = new Date(lastTrip.end_time || lastTrip.start_time || 0).getTime();
+  if (!Number.isFinite(endMs) || endMs <= 0 || endMs > nowMs) return 10;
+
+  const minutesSinceLastTrip = (nowMs - endMs) / 60000;
+  if (minutesSinceLastTrip < 15) return 80;
+  if (minutesSinceLastTrip < 30) return 60;
+  if (minutesSinceLastTrip < 60) return 35;
+  return 5;
+};
+
 export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState = null, context = {}) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const recent = last90Days(completed);
   const now = new Date();
+  const nowMs = now.getTime();
   const timeData = analyzeTimeOfDay(recent);
   const dayData = analyzeDayOfWeek(recent);
   const timeBucket = timeData.find((bucket) => bucket.label === currentBucketLabel(now.getHours()));
@@ -80,6 +110,8 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     lastTripOutcome: lastTrip ? Math.max(0, 100 - (lastTrip.score_overall ?? lastTrip.overall_score ?? 50)) : 25,
     weather: Number(context.weatherRiskScore) || Number(context.weather_context?.riskScore) || 0,
     dangerZones: Math.min(100, (Number(context.nearbyDangerZoneCount) || 0) * 35),
+    routeForecast: routeRiskFromContext(context),
+    recentRest: recentRestRisk(lastTrip, nowMs),
   };
 
   const compositeRisk = Math.round(
@@ -89,12 +121,24 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     signals.dailyFatigue * PRE_TRIP_RISK_WEIGHTS.dailyFatigue +
     signals.lastTripOutcome * PRE_TRIP_RISK_WEIGHTS.lastTripOutcome +
     signals.weather * PRE_TRIP_RISK_WEIGHTS.weather +
-    signals.dangerZones * PRE_TRIP_RISK_WEIGHTS.dangerZones
+    signals.dangerZones * PRE_TRIP_RISK_WEIGHTS.dangerZones +
+    signals.routeForecast * PRE_TRIP_RISK_WEIGHTS.routeForecast +
+    signals.recentRest * PRE_TRIP_RISK_WEIGHTS.recentRest
   );
   const riskLevel = compositeRisk >= 65 || (signals.dailyFatigue >= 90 && signals.lastTripOutcome >= 70)
     ? 'high'
     : compositeRisk >= 40 ? 'moderate' : 'low';
   const primaryKey = Object.entries(signals).sort((a, b) => b[1] - a[1])[0]?.[0] || 'timeOfDay';
+  const topSignals = Object.entries(signals)
+    .map(([key, value]) => ({
+      key,
+      value: Math.round(value),
+      label: SIGNAL_LABELS[key],
+      tip: SIGNAL_TIPS[key],
+    }))
+    .filter((signal) => signal.value >= 25)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 3);
 
   return {
     compositeRisk,
@@ -102,6 +146,7 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     riskLevel,
     primaryConcern: SIGNAL_LABELS[primaryKey],
     tipText: SIGNAL_TIPS[primaryKey],
+    topSignals,
     signals,
   };
 }

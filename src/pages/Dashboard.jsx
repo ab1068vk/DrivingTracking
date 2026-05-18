@@ -176,6 +176,7 @@ export default function Dashboard() {
   });
   const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue, {
     nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
+    predictiveRouteRisk,
   });
 
   useEffect(() => {
@@ -1057,6 +1058,17 @@ export default function Dashboard() {
                   <div className="mt-1 text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
                   <div className="mt-1 text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
                 </>
+              )}
+              {preTripRisk.topSignals?.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {preTripRisk.topSignals.map((signal) => (
+                    <div key={signal.key} className="flex items-center gap-2 text-xs">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">{signal.label}</span>
+                      <span className="font-semibold">{signal.value}</span>
+                    </div>
+                  ))}
+                </div>
               )}
               {settings.predictive_route_risk_enabled !== false && (
                 <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">

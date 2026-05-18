@@ -44,4 +44,30 @@ describe('preTripRisk', () => {
     const state = computePreTripRisk([trip(95)], {}, { fatigueLevel: 'critical' });
     expect(state.primaryConcern).toBe('High daily fatigue accumulation');
   });
+
+  it('includes predictive route risk in readiness signals', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 12));
+    const state = computePreTripRisk(
+      Array.from({ length: 6 }, (_, i) => trip(90, i + 1)),
+      {},
+      { fatigueLevel: 'low' },
+      { predictiveRouteRisk: { riskScore: 80, riskLevel: 'high' } }
+    );
+
+    expect(state.signals.routeForecast).toBe(80);
+    expect(state.topSignals.some((signal) => signal.key === 'routeForecast')).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('raises readiness concern when the previous trip ended recently', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 13));
+    const recentTrip = trip(92);
+    recentTrip.end_time = new Date(2026, 0, 10, 12, 50).toISOString();
+
+    const state = computePreTripRisk([recentTrip], {}, { fatigueLevel: 'low' });
+
+    expect(state.signals.recentRest).toBe(80);
+    expect(state.topSignals[0].key).toBe('recentRest');
+    vi.useRealTimers();
+  });
 });
