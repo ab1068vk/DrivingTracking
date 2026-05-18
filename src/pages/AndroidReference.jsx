@@ -43,8 +43,7 @@ No API key required for OSM tiles.
 ## Background Location Note
 Android 12+ requires explicit user action to grant background location.
 The app must explain WHY it needs background location BEFORE requesting it.
-Never request ACCESS_BACKGROUND_LOCATION in the initial permission dialog.
-Always request foreground location first, then background separately.
+First launch should request foreground location first, then request background location as a separate step for background auto tracking.
 `,
   },
   {
@@ -330,7 +329,7 @@ class TripTrackingService : Service() {
         const val ACTION_STOP = "STOP_TRACKING"
         const val CHANNEL_ID = "drivesense_tracking"
         const val NOTIFICATION_ID = 1001
-        const val LOCATION_UPDATE_INTERVAL_MS = 3000L     // 3 seconds
+        const val LOCATION_UPDATE_INTERVAL_MS = 2000L     // 2 seconds while trip is live
         const val LOCATION_FASTEST_INTERVAL_MS = 1000L    // 1 second
     }
 
@@ -494,10 +493,10 @@ data class DrivingThresholds(
     val harshBrakeMs2: Float = 4.5f,
     /** Acceleration threshold for rapid acceleration in m/s² */
     val rapidAccelMs2: Float = 3.5f,
-    /** Heading change rate for sharp turns in degrees/second at >30 km/h */
-    val sharpTurnDegPerSec: Float = 45f,
-    /** Speed above which speeding is flagged (fallback, no speed limit data) */
-    val speedingFallbackKmh: Float = 130f,
+    /** Low sharp-turn threshold in lateral g at >=35 km/h */
+    val sharpTurnLowG: Float = 0.35f,
+    /** Speed above which speeding is flagged when road context is unknown */
+    val speedingFallbackKmh: Float = 100f,
     /** Speed below which a vehicle is considered idle */
     val idleSpeedKmh: Float = 5f,
     /** Seconds of continuous idling before flagging idle event */
@@ -618,25 +617,27 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
             }
 
             // ── Sharp Turn
-            // Detect significant heading changes at highway/city speeds.
-            // At low speeds (<30 km/h), turns are normal (intersections, parking).
-            if (spd2 > 30f) {
+            // Detect significant lateral g at city/highway speeds.
+            // Below 35 km/h, most turns are normal intersections or parking movement.
+            if (spd2 >= 35f) {
                 val h1 = if (i >= 2) bearingDeg(points[i-2].lat, points[i-2].lng, prev.lat, prev.lng)
                           else prev.heading ?: 0f
                 val h2 = curr.heading ?: bearingDeg(prev.lat, prev.lng, curr.lat, curr.lng)
-                val turnRate = if (dt > 0f) headingDiff(h1, h2) / dt else 0f
+                val headingChange = headingDiff(h1, h2)
+                val turnRate = if (dt > 0f) headingChange / maxOf(1.5f, dt) else 0f
+                val lateralG = ((spd2 / 3.6f) * Math.toRadians(turnRate.toDouble()).toFloat()) / 9.81f
 
-                if (turnRate > thresholds.sharpTurnDegPerSec) {
+                if (headingChange >= 30f && lateralG >= thresholds.sharpTurnLowG) {
                     events.add(DrivingEventEntity(
                         tripId = tripId,
                         type = "sharp_turn",
                         severity = when {
-                            turnRate > 90f -> "high"
-                            turnRate > 60f -> "medium"
+                            lateralG > 0.60f -> "high"
+                            lateralG > 0.45f -> "medium"
                             else -> "low"
                         },
                         lat = curr.lat, lng = curr.lng, timestamp = curr.timestamp,
-                        value = turnRate,
+                        value = lateralG,
                     ))
                 }
             }

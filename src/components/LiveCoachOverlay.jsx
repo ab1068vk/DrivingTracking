@@ -15,7 +15,9 @@ import {
   notifyPhoneUseDetected,
   notifySpeedingAlert,
 } from '@/lib/notificationService';
-import { isNativePlatform } from '@/lib/nativePlatform';
+import { isAndroid, isNativePlatform } from '@/lib/nativePlatform';
+import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
+import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
@@ -107,11 +109,18 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
 
       const thresholds = buildDrivingThresholds(settings);
       const currentTime = new Date().toISOString();
+      const now = Date.now();
       const stats = calculateTripStats(currentRoutePoints, tripStartTime, currentTime, thresholds);
       const detection = detectDrivingEvents(currentRoutePoints, thresholds, currentTime);
       const events = Reflect.get(detection, 'events') ?? detection;
-      const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
-      const now = Date.now();
+      const gpsPhoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+      let phoneUse = gpsPhoneUse;
+      const tripStartMs = new Date(tripStartTime).getTime();
+      if (isAndroid() && Number.isFinite(tripStartMs)) {
+        const usageSummary = await getAndroidPhoneUsageSummary(tripStartMs, now).catch(() => null);
+        const usagePhoneUse = buildPhoneUseFromAndroidUsage(usageSummary || {}, currentRoutePoints, stats.duration_seconds);
+        phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
+      }
       const lastCoachCheckTime = lastCoachCheckRef.current || (now - CHECK_INTERVAL_MS);
       const newPhoneWindows = (phoneUse.phone_use_events || []).filter((window) => {
         const startMs = new Date(window.startTime || window.timestamp || 0).getTime();
@@ -167,7 +176,6 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           tripDurationMinutes: (stats.duration_seconds || 0) / 60,
         }, settings).catch(() => {});
       }
-      const tripStartMs = new Date(tripStartTime).getTime();
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
       if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
         notifyFatigueBreakReminder({

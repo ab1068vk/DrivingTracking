@@ -50,7 +50,7 @@ For trip tracking to work properly on Android, allow:
 
 For reliable background tracking, also disable battery optimization for Road Sage in Android app settings.
 
-First launch now opens onboarding with a one-tap recommended permission setup. It requests Location, Notifications, Motion/Activity, and Android background tracking permissions, and links to Phone Usage Access for real phone-use detection.
+First launch now opens onboarding and automatically starts the recommended permission setup on Android. It requests Location, Notifications, Motion/Activity, and background tracking permissions, then opens Android Usage Access because Android does not provide an in-app prompt for real phone-use detection.
 
 ## Tracking Modes
 
@@ -63,7 +63,7 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 ## May 2026 Tracking Stabilization
 
 - GPS capture now requests the first fix immediately and uses faster high-accuracy watch intervals on web, Capacitor, and native Android background auto.
-- In-app and native auto-start trigger after 3 seconds above about 3 km/h with in-vehicle confidence, reducing missed trip starts.
+- In-app and native auto-start trigger after about 1 second above 3 km/h with in-vehicle confidence, reducing missed trip starts after a previous trip was ended.
 - Lane-change and erratic-speed events use stricter GPS shape, heading, speed stability, and reversal checks to reduce false positives.
 - Overtake quality is only calculated for aggressive overtake events or high-speed lane changes with a real speed-up pattern.
 - Weather context uses historical Open-Meteo data for past trips and samples the trip time more tightly so a nearby rainy hour does not label a sunny drive as rainy.
@@ -78,7 +78,8 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 - Speeding is scored from OpenStreetMap `maxspeed` where available, using a +5 km/h warning margin. When OSM speed limits are unavailable, fallback limits are road-context aware: 40 km/h residential, 60 km/h urban, and 100 km/h highway.
 - Harsh braking defaults to 3.5 m/s2, rapid acceleration defaults to 3.0 m/s2, and speed-creep alerts default to a 5 km/h drift.
 - Settings includes a **Test** button for live voice alerts; Android WebView falls back to native TextToSpeech when browser speech output is unavailable.
-- Live coaching checks active trips every 15 seconds and can speak urgent speed, phone, braking, following-gap, fatigue, and near-miss alerts when voice alerts are enabled.
+- Live coaching checks active trips every 15 seconds and speaks the selected urgent alert as soon as the toast is shown. Android uses native TextToSpeech first, and phone-use alerts can use Android Usage Access live when that permission is enabled.
+- The emergency workflow now shows an active-trip check-in with "I'm OK" and "Call 911" actions after a possible incident, instead of only storing a Settings toggle.
 
 ## Native Background Tracking
 

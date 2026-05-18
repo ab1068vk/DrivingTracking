@@ -7,12 +7,18 @@ import {
 } from '@/lib/activityRecognition';
 
 describe('activityRecognition auto-stop logic', () => {
-  it('auto-starts after a short confirmed in-vehicle movement window', () => {
+  it('auto-starts after a one-second confirmed in-vehicle movement window', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 66 },
       currentSpeedKmh: 3.5,
-      recentMovingSeconds: 3,
+      recentMovingSeconds: 1,
     })).toBe(true);
+
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 66 },
+      currentSpeedKmh: 3.5,
+      recentMovingSeconds: 0.5,
+    })).toBe(false);
   });
 
   it('does not stop at a red light with still activity and GPS drift', () => {

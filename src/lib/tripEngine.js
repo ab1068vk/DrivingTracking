@@ -15,7 +15,7 @@ export const DEFAULT_THRESHOLDS = {
   // Rapid acceleration: > 3.0 m/s2, about 10.8 km/h per second gain.
   RAPID_ACCEL_MS2: 3.0,
   // Sharp turn: heading change > 45° per GPS sample at > 30 km/h
-  SHARP_TURN_G_LOW: 0.30,
+  SHARP_TURN_G_LOW: 0.35,
   SHARP_TURN_G_MEDIUM: 0.45,
   SHARP_TURN_G_HIGH: 0.60,
   // Speeding fallback: above 100 km/h when no open-source speed limit data is available.
@@ -3030,11 +3030,11 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     }
 
     // ── Sharp Turn
-    // Heading change > 45°/s while above 30 km/h. At lower speeds turns are normal.
-    if (speed2 > 30 && dt <= 8 && currSegment.distanceM >= 10 && i > 1) {
+    // Sharp turns use lateral g, with stricter gates to avoid normal city corners.
+    if (speed2 >= 35 && dt <= 8 && currSegment.distanceM >= 12 && i > 1) {
       const prevPrev = points[i - 2];
       const prevSegment = calculateSegmentMetrics(prevPrev, prev, thresholds);
-      if (prevSegment.dt > 0 && prevSegment.dt <= 8 && !prevSegment.isNoise && prevSegment.distanceM >= 10) {
+      if (prevSegment.dt > 0 && prevSegment.dt <= 8 && !prevSegment.isNoise && prevSegment.distanceM >= 12) {
         const h1 = calculateBearing(prevPrev.lat, prevPrev.lng, prev.lat, prev.lng);
         const h2 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
         const rawHeadingChange = headingDiff(h1, h2);
@@ -3046,7 +3046,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
         const mediumG = thresholds.SHARP_TURN_G_MEDIUM ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM;
         const highG = thresholds.SHARP_TURN_G_HIGH ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH;
 
-        if (rawHeadingChange >= 25 && lateralG >= lowG) {
+        if (rawHeadingChange >= 30 && lateralG >= lowG) {
           pushEvent({
             type: EVENT_TYPES.SHARP_TURN,
             severity: lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low',

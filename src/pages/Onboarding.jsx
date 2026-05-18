@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Car, MapPin, Activity, Bell, Shield, ChevronRight, Check, AlertCircle } from 'lucide-react';
 import { localSettings } from '@/lib/trackingStore';
@@ -88,9 +88,9 @@ const TRACKING_OPTIONS = [
   },
 ];
 
-export default function Onboarding() {
+export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(0);
-  const [trackingMode, setTrackingMode] = useState('manual');
+  const [trackingMode, setTrackingMode] = useState(isAndroid() ? 'background_auto' : 'auto_detect');
   const [locationGranted, setLocationGranted] = useState(false);
   const [motionGranted, setMotionGranted] = useState(getMotionSensorSupport().status === 'granted');
   const [activityGranted, setActivityGranted] = useState(false);
@@ -128,15 +128,15 @@ export default function Onboarding() {
     setRequesting(false);
   };
 
-  const requestTrackingModePermissions = async () => {
+  const requestTrackingModePermissions = async (mode = trackingMode) => {
     await requestForegroundLocationPermission();
     await requestNotificationPermission();
     await requestMotionSensorPermission();
     if (isAndroid()) await requestActivityRecognitionPermission();
-    if (isAndroid() || trackingMode === 'background_auto') {
+    if (mode === 'background_auto') {
       await requestBackgroundLocationPermission();
     }
-    if (trackingMode === 'background_auto') {
+    if (mode === 'background_auto') {
       if (isAndroid()) {
         try {
           await startNativeAutoTracking();
@@ -145,10 +145,12 @@ export default function Onboarding() {
     }
   };
 
-  const handleRecommendedSetup = async () => {
+  const handleRecommendedSetup = async ({ autoOpenUsageAccess = false } = {}) => {
     setRequesting(true);
     setSetupStatus('Requesting location, notifications, motion, activity, and background tracking permissions...');
-    await requestTrackingModePermissions();
+    const recommendedMode = isAndroid() ? 'background_auto' : 'auto_detect';
+    setTrackingMode(recommendedMode);
+    await requestTrackingModePermissions(recommendedMode);
     setLocationGranted(localSettings.get().location_permission_granted === true);
     setNotificationsGranted(localSettings.get().notification_permission_granted === true);
     setMotionGranted(getMotionSensorSupport().status === 'granted');
@@ -157,7 +159,21 @@ export default function Onboarding() {
       ? 'Core prompts complete. Phone Usage Access opens in Android Settings because Android does not allow an in-app prompt.'
       : 'Core prompts complete.');
     setRequesting(false);
+    if (autoOpenUsageAccess && isAndroid()) {
+      await openAndroidUsageAccessSettings().catch(() => {});
+    }
   };
+
+  useEffect(() => {
+    if (localStorage.getItem('drivesense_first_launch_permission_prompted') === 'true') return undefined;
+    localStorage.setItem('drivesense_first_launch_permission_prompted', 'true');
+    const timer = setTimeout(() => {
+      handleRecommendedSetup({ autoOpenUsageAccess: true }).catch(() => {
+        setRequesting(false);
+      });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleNext = async () => {
     if (isLast) {
@@ -169,6 +185,7 @@ export default function Onboarding() {
         auto_tracking_enabled: trackingMode !== 'manual',
         background_tracking_enabled: trackingMode === 'background_auto',
       });
+      onComplete?.();
       navigate('/');
       return;
     }

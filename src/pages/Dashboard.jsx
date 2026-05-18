@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
-  ParkingSquare
+  ParkingSquare, CheckCircle2, PhoneCall
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
@@ -426,6 +426,37 @@ export default function Dashboard() {
     scheduleLongTripReminder(tripData.start_time);
   }, [dailyFatigue.shouldWarnBeforeTrip, startGPS]);
 
+  const acknowledgeEmergencyWorkflow = (action = 'ok') => {
+    const current = activeTripRef.current || activeTrip;
+    if (!current) return;
+    const updated = {
+      ...current,
+      emergency_workflow_pending: false,
+      emergency_workflow_acknowledged_at: new Date().toISOString(),
+      emergency_workflow_acknowledged_action: action,
+      driving_events: (current.driving_events || []).map((event) => (
+        event.type === 'possible_crash'
+          ? { ...event, emergency_workflow_pending: false, emergency_workflow_acknowledged: action }
+          : event
+      )),
+    };
+    activeTripStore.set(updated);
+    activeTripRef.current = updated;
+    setActiveTrip(updated);
+    setHazardMessage(null);
+    recordTrackingDiagnostic({
+      type: 'emergency_check_in',
+      title: action === 'call' ? 'Emergency call opened' : 'Driver checked in OK',
+      reason: action,
+      speed_kmh: Math.round(currentLocation?.speed_kmh || 0),
+      stopped_seconds: 0,
+      drift_m: 0,
+    });
+    if (action === 'call' && typeof window !== 'undefined') {
+      window.location.href = 'tel:911';
+    }
+  };
+
   const handleEndTrip = async () => {
     const tripToEnd = activeTripRef.current || activeTrip;
     if (!tripToEnd) return;
@@ -544,6 +575,9 @@ export default function Dashboard() {
       status: 'completed',
       background_tracking: tripToEnd.background_tracking,
       start_source: tripToEnd.start_source || 'manual',
+      emergency_workflow_pending: tripToEnd.emergency_workflow_pending === true,
+      emergency_workflow_acknowledged_at: tripToEnd.emergency_workflow_acknowledged_at || null,
+      emergency_workflow_acknowledged_action: tripToEnd.emergency_workflow_acknowledged_action || null,
       native_phone_usage_access_granted: nativePhoneUsageSummary?.usage_access_granted === true,
       native_phone_usage_events: nativePhoneUsageSummary?.events || [],
       native_phone_usage_event_count: nativePhoneUsageSummary?.event_count || 0,
@@ -921,6 +955,38 @@ export default function Dashboard() {
             {hazardMessage && (hazardMessage.persistent || Date.now() - hazardMessage.at < 2 * 60 * 1000) && (
               <div className="mb-4 rounded-xl bg-red-500/25 px-3 py-2 text-sm font-medium text-red-50">
                 {hazardMessage.body}
+              </div>
+            )}
+
+            {activeTrip?.emergency_workflow_pending && (
+              <div className="mb-4 rounded-2xl border border-red-200/30 bg-red-600/30 p-3 text-red-50 shadow-sm">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold">Emergency check-in</div>
+                    <div className="mt-1 text-xs text-red-50/85">
+                      Possible incident detected. Confirm you are OK or call emergency services.
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => acknowledgeEmergencyWorkflow('ok')}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/90 px-3 py-2 text-xs font-bold text-red-700"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    I'm OK
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => acknowledgeEmergencyWorkflow('call')}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-900 px-3 py-2 text-xs font-bold text-white"
+                  >
+                    <PhoneCall className="h-3.5 w-3.5" />
+                    Call 911
+                  </button>
+                </div>
               </div>
             )}
 

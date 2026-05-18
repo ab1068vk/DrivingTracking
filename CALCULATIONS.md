@@ -76,7 +76,7 @@ Default user settings live in `src/lib/trackingStore.js`.
 threshold_harsh_brake_ms2: 3.5,
 threshold_rapid_accel_ms2: 3.0,
 threshold_tailgate_decel_ms2: 2.5,
-threshold_sharp_turn_g_low: 0.30,
+threshold_sharp_turn_g_low: 0.35,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
 threshold_speeding_kmh: 100,
@@ -429,7 +429,7 @@ lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low'
 
 Defaults:
 
-- low: `0.30 g`
+- low: `0.35 g`
 - medium: `0.45 g`
 - high: `0.60 g`
 
@@ -1287,7 +1287,7 @@ It then picks a `focus_area` and up to 4 suggested actions.
 
 Component: `LiveCoachOverlay`
 
-During an active trip, the overlay recalculates partial-trip stats and events every `60 seconds`:
+During an active trip, the overlay recalculates partial-trip stats and events every `15 seconds`:
 
 ```js
 const stats = calculateTripStats(currentRoutePoints, tripStartTime, new Date(), thresholds);
@@ -1304,7 +1304,7 @@ Only one message is shown at a time. Priority is:
 
 The setting `live_coaching_enabled` disables this feature completely.
 
-Live coaching evaluates active trips every `15 seconds`. Voice alerts use the device/browser `speechSynthesis` API when `voice_alerts_enabled` is true. Settings includes a test button that speaks a short Road Sage phrase and reports when speech output is unavailable in the current browser or Android WebView.
+Live coaching evaluates active trips every `15 seconds`. When a toast is queued, the voice message is spoken immediately as the toast is shown. Android native builds use native TextToSpeech first, then browser `speechSynthesis` only as a fallback. Live phone-use alerts merge GPS behavior with Android Usage Access sessions when that permission is enabled.
 
 ## Achievement Badges
 

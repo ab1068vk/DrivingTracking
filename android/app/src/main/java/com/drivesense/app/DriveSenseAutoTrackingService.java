@@ -74,7 +74,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
     private static final double AUTO_START_SPEED_KMH = 3d;
-    private static final long AUTO_START_MOVING_MS = 3_000L;
+    private static final long AUTO_START_MOVING_MS = 1_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
@@ -898,7 +898,28 @@ public class DriveSenseAutoTrackingService extends Service {
         long now = System.currentTimeMillis();
         if (!force && now - lastLiveNotificationMs < LIVE_NOTIFICATION_MIN_INTERVAL_MS) return;
         lastLiveNotificationMs = now;
+        checkAndroidUsageAccessPhoneUse(now);
         updateNotification(buildLiveTripStatus(now));
+    }
+
+    private void checkAndroidUsageAccessPhoneUse(long nowMs) {
+        if (activeStartMs <= 0L || !DriveSensePhoneUsageTracker.hasUsageAccess(this)) return;
+        JSONObject usage = DriveSensePhoneUsageTracker.queryTripUsage(this, Math.max(activeStartMs, nowMs - 120_000L), nowMs);
+        JSONArray sessions = usage.optJSONArray("events");
+        if (sessions == null || sessions.length() == 0) return;
+
+        JSONObject latest = sessions.optJSONObject(sessions.length() - 1);
+        if (latest == null) return;
+        long startMs = latest.optLong("start_ms", 0L);
+        long durationSeconds = latest.optLong("duration_seconds", 0L);
+        if (startMs <= lastNativePhoneWindowMs || durationSeconds < 2L) return;
+
+        lastNativePhoneWindowMs = startMs;
+        nativeMicroSteerCount++;
+        if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
+            sendPhoneUseWarningNotification();
+            lastPhoneUseNotifyMs = nowMs;
+        }
     }
 
     private String buildLiveTripStatus(long nowMs) {

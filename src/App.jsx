@@ -89,7 +89,7 @@ const AuthenticatedApp = () => {
   return (
     <Routes>
       {/* Onboarding (no layout) — only shown to new users */}
-      {!onboardingDone && <Route path="*" element={<Onboarding />} />}
+      {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
 
       {/* Main App with shared Layout */}
       <Route element={<Layout />}>

@@ -771,7 +771,7 @@ Auto-start logic:
 
 - Vehicle activity confidence must be at least 65.
 - Current speed must be at least 3 km/h.
-- Recent moving time must be at least 3 seconds.
+- Recent moving time must be at least 1 second.
 
 Auto-stop logic:
 
@@ -781,7 +781,7 @@ Auto-stop logic:
 - STILL activity with stable GPS ends after 90 seconds; noisier stopped GPS waits longer.
 - A GPS-only parked fallback can end a foreground trip after 5 minutes of near-zero speed with parked-like drift, or after 10 minutes at near-zero speed.
 
-On non-Android web, speed-only auto start can trigger when speed is at least 3 km/h for at least 3 seconds.
+On non-Android web, speed-only auto start can trigger when speed is at least 3 km/h for at least 1 second.
 
 ### 9.3 Android Native Auto Tracking
 
@@ -799,7 +799,7 @@ Native auto tracking behavior:
 3. `DriveSenseAutoTrackingService` starts as a foreground service.
 4. The service requests activity updates every 15 seconds and keeps an armed high-accuracy location watch.
 5. `DriveSenseActivityReceiver` receives activity updates.
-6. In-vehicle activity with confidence at least 65 and movement above 3 km/h for 3 seconds starts a native trip.
+6. In-vehicle activity with confidence at least 65 and movement above 3 km/h for 1 second starts a native trip.
 7. The service starts high-accuracy location updates every 2 seconds, with a 1 second minimum interval and 5 meter minimum distance.
 8. Native route points are filtered for accuracy, noise, and impossible speed.
 9. Still, walking, unknown, or long in-vehicle stopped states end the trip only after the parked timers and GPS drift checks pass.
@@ -2367,7 +2367,7 @@ Default user settings live in `src/lib/trackingStore.js`.
 threshold_harsh_brake_ms2: 3.5,
 threshold_rapid_accel_ms2: 3.0,
 threshold_tailgate_decel_ms2: 2.5,
-threshold_sharp_turn_g_low: 0.30,
+threshold_sharp_turn_g_low: 0.35,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
 threshold_speeding_kmh: 100,
@@ -2666,7 +2666,7 @@ lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low'
 
 Defaults:
 
-- low: `0.30 g`
+- low: `0.35 g`
 - medium: `0.45 g`
 - high: `0.60 g`
 
@@ -3905,7 +3905,7 @@ App-specific components:
 | `src/components/Layout.jsx` | Responsive app shell, sidebar, mobile menu, active trip pill. |
 | `src/components/ProtectedRoute.jsx` | Route guard placeholder using auth context. |
 | `src/components/EventBadge.jsx` | Event/severity badge rendering with icons and color classes. |
-| `src/components/LiveCoachOverlay.jsx` | Dismissible active-trip coaching toast that evaluates current route stats/events every 60 seconds. |
+| `src/components/LiveCoachOverlay.jsx` | Dismissible active-trip coaching toast that evaluates current route stats/events every 15 seconds. |
 | `src/components/ScoreRing.jsx` | Circular score visualization. |
 | `src/components/StatCard.jsx` | Animated metric card used across dashboards. |
 | `src/components/TripCard.jsx` | Trip summary card used in lists. |
@@ -3950,7 +3950,7 @@ Android resources:
 2. Location permission request.
 3. Tracking mode selection.
 
-Tracking options are manual, foreground auto, and background auto. Location permission updates `location_permission_granted`. Choosing foreground auto can request activity recognition. Choosing background auto requests activity recognition, background location, and notification permission where applicable. Finishing onboarding stores `onboarding_completed: true`, selected tracking mode, and tracking capability flags in `drivesense_settings`.
+Tracking options are manual, foreground auto, and background auto. On first launch, onboarding automatically starts the recommended Android permission sequence for location, notifications, motion/activity, background tracking, and Android Usage Access. Location permission updates `location_permission_granted`. Choosing foreground auto can request activity recognition. Choosing background auto requests activity recognition, background location, and notification permission where applicable. Finishing onboarding stores `onboarding_completed: true`, selected tracking mode, and tracking capability flags in `drivesense_settings`.
 
 #### Dashboard
 
@@ -3984,7 +3984,7 @@ Foreground auto mode watches location and activity recognition while the React a
 
 Dashboard analytics shown from recent trips include weekly distance, score, risky event totals, goals, score trend, coach tips, last trips, and active-trip state.
 
-When `live_coaching_enabled` is true, `LiveCoachOverlay` evaluates the active trip every 60 seconds. It queues one bottom toast at a time and prioritizes recent near misses, new harsh brakes, current speeding, new rapid accelerations, and extended idling.
+When `live_coaching_enabled` is true, `LiveCoachOverlay` evaluates the active trip every 15 seconds. It queues one bottom toast at a time and speaks the alert immediately when the toast is shown. It prioritizes live Android Usage Access phone-use sessions, GPS phone-use signals, recent near misses, new harsh brakes, current speeding, new rapid accelerations, and extended idling.
 
 #### Trip History
 
@@ -4135,7 +4135,7 @@ data_retention_days: 365,
 threshold_harsh_brake_ms2: 3.5,
 threshold_rapid_accel_ms2: 3.0,
 threshold_tailgate_decel_ms2: 2.5,
-threshold_sharp_turn_g_low: 0.30,
+threshold_sharp_turn_g_low: 0.35,
 threshold_sharp_turn_g_medium: 0.45,
 threshold_sharp_turn_g_high: 0.60,
 threshold_speeding_kmh: 100,
@@ -4560,7 +4560,7 @@ Cache invalidation:
 Live voice alerts:
 
 - `LiveCoachOverlay.jsx` evaluates active trip points every 15 seconds.
-- It speaks urgent alerts with `window.speechSynthesis` when `voice_alerts_enabled` is true.
+- It speaks urgent alerts as soon as the toast is shown when `voice_alerts_enabled` is true. Android native builds try native TextToSpeech first, then `window.speechSynthesis` only as a fallback.
 - `Settings.jsx` includes a **Test** button beside Live voice alerts to confirm speech output is available in the current browser/WebView.
 
 New tests cover:

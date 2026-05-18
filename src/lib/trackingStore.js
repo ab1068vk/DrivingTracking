@@ -29,7 +29,7 @@ export const DEFAULT_SETTINGS = {
   threshold_harsh_brake_ms2: 3.5,
   threshold_rapid_accel_ms2: 3.0,
   threshold_tailgate_decel_ms2: 2.5,
-  threshold_sharp_turn_g_low: 0.30,
+  threshold_sharp_turn_g_low: 0.35,
   threshold_sharp_turn_g_medium: 0.45,
   threshold_sharp_turn_g_high: 0.60,
   threshold_speeding_kmh: 100,
@@ -141,6 +141,7 @@ export const localSettings = {
           if (parsed.threshold_speeding_kmh == null || parsed.threshold_speeding_kmh === 130) merged.threshold_speeding_kmh = 100;
           if (parsed.threshold_speed_over_kmh == null || parsed.threshold_speed_over_kmh === 10) merged.threshold_speed_over_kmh = 5;
           if (parsed.threshold_speed_creep_kmh == null || parsed.threshold_speed_creep_kmh === 10) merged.threshold_speed_creep_kmh = 5;
+          if (parsed.threshold_sharp_turn_g_low == null || parsed.threshold_sharp_turn_g_low === 0.30) merged.threshold_sharp_turn_g_low = 0.35;
           merged.settings_defaults_version = 2;
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
         }

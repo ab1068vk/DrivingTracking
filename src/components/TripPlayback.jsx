@@ -21,6 +21,51 @@ const EVENT_COLORS = {
   possible_crash: '#991b1b',
 };
 
+const titleCase = (value) => String(value || '')
+  .replace(/_/g, ' ')
+  .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const escapeHtml = (value) => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;');
+
+const formatEventTime = (value) => {
+  const date = value ? new Date(value) : null;
+  return date && Number.isFinite(date.getTime())
+    ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null;
+};
+
+const eventPopupHtml = (event) => {
+  const limit = event.speed_limit_kmh ?? event.inferred_zone_kmh ?? event.actualLimitKmh;
+  const rows = [
+    ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
+    ['Time', formatEventTime(event.timestamp || event.startTime)],
+    ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],
+    ['Limit', Number.isFinite(Number(limit)) ? `${Math.round(Number(limit))} km/h` : null],
+    ['Over by', Number.isFinite(Number(event.speed_kmh)) && Number.isFinite(Number(limit))
+      ? `${Math.max(0, Math.round(Number(event.speed_kmh) - Number(limit)))} km/h`
+      : null],
+    ['Duration', Number.isFinite(Number(event.durationS ?? event.duration_seconds)) ? `${Math.round(Number(event.durationS ?? event.duration_seconds))}s` : null],
+    ['Value', Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(event.type === 'sharp_turn' ? 2 : 1) : null],
+    ['Source', event.speed_limit_source || event.source || null],
+    ['Confidence', event.zone_confidence || event.confidence_level || event.confidence || null],
+    ['Signals', Array.isArray(event.signals_triggered) && event.signals_triggered.length ? event.signals_triggered.join(', ') : null],
+  ].filter(([, value]) => value != null && value !== '');
+
+  return `
+    <div style="min-width:200px">
+      <b>${escapeHtml(titleCase(event.type || 'event'))}</b>
+      <div style="margin-top:6px;display:grid;gap:3px">
+        ${rows.map(([key, value]) => `<div><span style="color:#64748b">${escapeHtml(key)}:</span> ${escapeHtml(value)}</div>`).join('')}
+      </div>
+    </div>
+  `;
+};
+
 let leafletLoaded = false;
 let loadPromise = null;
 function loadLeaflet() {
@@ -113,7 +158,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             className: '', iconSize: [16, 16], iconAnchor: [8, 8],
           });
           window.L.marker([evt.lat, evt.lng], { icon })
-            .bindPopup(`<b>${evt.type?.replace('_', ' ')}</b><br>Severity: ${evt.severity}`)
+            .bindPopup(eventPopupHtml(evt))
             .addTo(map);
         });
 
