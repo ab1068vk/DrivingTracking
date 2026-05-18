@@ -87,8 +87,8 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route') return 'This trip does not have enough GPS points to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
-  if (context.status === 'no_tagged_ways') return 'OpenStreetMap did not return maxspeed tags for roads near this route, so fallback thresholds are used.';
+  if (context.status === 'no_tagged_ways') return 'OpenStreetMap did not return usable road tags near this route, so GPS fallback thresholds are used.';
   if (context.status === 'unavailable') return context.error || 'OpenStreetMap speed-limit lookup is unavailable. Check internet access and try refresh again.';
-  if (context.coverage === 0) return 'OpenStreetMap was checked, but no route points matched tagged speed-limit roads.';
-  return `${context.coverage}% of route points have OpenStreetMap speed limits.`;
+  if (context.coverage === 0) return 'OpenStreetMap was checked, but no route points matched usable road-limit data.';
+  return `${context.coverage}% of route points have OpenStreetMap maxspeed or road-type default limits.`;
 }

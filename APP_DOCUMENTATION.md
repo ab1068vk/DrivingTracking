@@ -2672,7 +2672,7 @@ Defaults:
 
 #### Speeding
 
-Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM speed limits. If no OSM limit is available, the app uses road-context fallback limits instead of a blanket highway value: 40 km/h residential, 60 km/h urban, and 100 km/h highway, with the configured speed-over margin added.
+Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM speed limits. If `maxspeed` is missing but the OSM road type is available, the app uses OSM `highway=*` urban defaults before falling back to GPS road-context limits: 40 km/h residential, 60 km/h urban, and 100 km/h highway, with the configured speed-over margin added.
 
 ```js
 const contextualSpeedingThreshold = Math.min(

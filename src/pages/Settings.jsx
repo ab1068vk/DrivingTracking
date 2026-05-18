@@ -1445,7 +1445,7 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="OpenStreetMap speed limits"
-          sublabel="Use Overpass maxspeed tags after trips; fallback thresholds fill gaps"
+          sublabel="Use Overpass maxspeed tags after trips; OSM road-type defaults and GPS thresholds fill gaps"
         >
           <Toggle
             value={cfg.speed_limit_lookup_enabled !== false}

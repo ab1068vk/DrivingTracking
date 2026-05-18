@@ -403,6 +403,18 @@ describe('tripEngine', () => {
     expect(detectDrivingEvents(osmTaggedUrbanRoad).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
+  it('keeps OSM highway-default speed sources separate from posted maxspeed', () => {
+    const defaultTaggedUrbanRoad = Array.from({ length: 6 }, (_, index) => ({
+      ...point(43.6532 + index * 0.0002, -79.3832, index * 2, 70),
+      heading: 0,
+      speed_limit_kmh: 60,
+      speed_limit_source: 'osm_highway_default',
+    }));
+
+    const speeding = detectDrivingEvents(defaultTaggedUrbanRoad).find((event) => event.type === EVENT_TYPES.SPEEDING);
+    expect(speeding?.speed_limit_source).toBe('osm_highway_default');
+  });
+
   it('ignores low-speed parked jitter for jerk, reaction, and hill scoring', () => {
     const parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({
       ...point(43.6532 + index * 0.00001, -79.3832, index * 5, speed, 6),

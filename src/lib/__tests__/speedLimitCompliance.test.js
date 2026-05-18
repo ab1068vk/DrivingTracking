@@ -52,4 +52,15 @@ describe('speed-limit compliance', () => {
     expect(buckets.some((bucket) => bucket.limit_source === 'openstreetmap')).toBe(true);
     expect(result.overall_compliance_score).toBeLessThan(100);
   });
+
+  it('reports OSM highway defaults separately from posted maxspeed limits', () => {
+    const points = Array.from({ length: 20 }, (_, index) => ({
+      ...p(index, 62),
+      speed_limit_kmh: 50,
+      speed_limit_source: 'osm_highway_default',
+    }));
+    const result = calculateSpeedLimitCompliance(points, {}, DEFAULT_THRESHOLDS);
+    const buckets = [result.highway_compliance, result.urban_compliance, result.residential_compliance].filter(Boolean);
+    expect(buckets.some((bucket) => bucket.limit_source === 'osm_highway_default')).toBe(true);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMaxspeedKmh } from '@/lib/speedLimitSource';
+import { defaultSpeedLimitKmhForOsmHighway, parseMaxspeedKmh } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores } from '@/lib/weatherContext';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 
@@ -8,6 +8,13 @@ describe('open-source trip context', () => {
     expect(parseMaxspeedKmh('50')).toBe(50);
     expect(parseMaxspeedKmh('30 mph')).toBe(48);
     expect(parseMaxspeedKmh('signals')).toBeNull();
+  });
+
+  it('maps OSM highway tags to urban default speed limits', () => {
+    expect(defaultSpeedLimitKmhForOsmHighway('residential')).toBe(40);
+    expect(defaultSpeedLimitKmhForOsmHighway('secondary')).toBe(60);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway')).toBe(100);
+    expect(defaultSpeedLimitKmhForOsmHighway('unclassified')).toBe(50);
   });
 
   it('penalizes harsh events more during risky weather', () => {

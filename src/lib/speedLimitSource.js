@@ -1,7 +1,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
 
-const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v1';
+const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_BBOX_SPAN_DEG = 0.8;
@@ -49,9 +49,7 @@ function overpassQuery(bounds) {
   return `
     [out:json][timeout:25];
     (
-      way["highway"]["maxspeed"](${bbox});
-      way["highway"]["maxspeed:forward"](${bbox});
-      way["highway"]["maxspeed:backward"](${bbox});
+      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"](${bbox});
     );
     out tags geom;
   `;
@@ -75,12 +73,28 @@ async function fetchOverpassWays(bounds) {
   }
 }
 
+export function defaultSpeedLimitKmhForOsmHighway(highway) {
+  const value = String(highway || '').toLowerCase().trim();
+  if (!value) return null;
+  if (value === 'living_street') return 20;
+  if (value === 'service') return 30;
+  if (value === 'residential') return 40;
+  if (value === 'tertiary' || value === 'tertiary_link' || value === 'unclassified' || value === 'road') return 50;
+  if (value === 'primary' || value === 'primary_link' || value === 'secondary' || value === 'secondary_link') return 60;
+  if (value === 'trunk_link' || value === 'motorway_link') return 80;
+  if (value === 'motorway' || value === 'trunk') return 100;
+  return null;
+}
+
 function normalizeWays(elements = []) {
   return elements
     .map((element) => {
-      const limitKmh = parseMaxspeedKmh(
+      const taggedLimitKmh = parseMaxspeedKmh(
         element.tags?.maxspeed ?? element.tags?.['maxspeed:forward'] ?? element.tags?.['maxspeed:backward']
       );
+      const highway = element.tags?.highway || null;
+      const defaultLimitKmh = taggedLimitKmh ? null : defaultSpeedLimitKmhForOsmHighway(highway);
+      const limitKmh = taggedLimitKmh ?? defaultLimitKmh;
       const geometry = Array.isArray(element.geometry)
         ? element.geometry
           .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
@@ -91,6 +105,8 @@ function normalizeWays(elements = []) {
       return {
         id: element.id,
         limitKmh,
+        limitSource: taggedLimitKmh ? 'openstreetmap' : 'osm_highway_default',
+        highway,
         name: element.tags?.name || element.tags?.ref || null,
         geometry,
       };
@@ -177,9 +193,10 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
       return {
         ...point,
         speed_limit_kmh: match.limitKmh,
-        speed_limit_source: 'openstreetmap',
+        speed_limit_source: match.limitSource,
         speed_limit_way_id: match.id,
         speed_limit_road_name: match.name,
+        speed_limit_highway: match.highway,
       };
     });
 

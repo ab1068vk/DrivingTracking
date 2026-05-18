@@ -49,15 +49,16 @@ Files:
 - `src/pages/TripDetail.jsx`
 - `src/components/TripMap.jsx`
 
-When a trip ends, Dashboard runs OSRM map matching first, then annotates route points with OpenStreetMap `maxspeed` tags from Overpass. Trip Detail also exposes **Refresh OSM Context** so existing trips can rerun the same open-source context without recording a new drive.
+When a trip ends, Dashboard runs OSRM map matching first, then annotates route points with OpenStreetMap `maxspeed` tags from Overpass. If a matched OSM road has no `maxspeed`, the app uses the road's `highway=*` tag to assign an urban road-type default before falling back to GPS-only context. Trip Detail also exposes **Refresh OSM Context** so existing trips can rerun the same open-source context without recording a new drive.
 
 The speed-limit matcher uses point-to-road-segment distance, not just nearby way vertices. Each matched point receives:
 
 ```js
 speed_limit_kmh
-speed_limit_source: 'openstreetmap'
+speed_limit_source: 'openstreetmap' | 'osm_highway_default'
 speed_limit_way_id
 speed_limit_road_name
+speed_limit_highway
 ```
 
 After refresh, Trip Detail recalculates stats, events, speed compliance, scores, weather adjustment, map-matching status, and OSM coverage. Trip Detail and Map can draw an **OSM Speed Limits** layer:
@@ -435,7 +436,7 @@ Defaults:
 
 ### Speeding
 
-Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM limits. Otherwise, it uses road-context fallback limits so city/residential roads do not inherit the highway fallback:
+Speeding uses OpenStreetMap `maxspeed` when route points have matched OSM limits. If `maxspeed` is missing but the OSM road type is available, the app uses urban defaults such as residential 40 km/h, unclassified/tertiary 50 km/h, primary/secondary 60 km/h, and motorway/trunk 100 km/h. Only when no usable OSM road match exists does it use GPS road-context fallback limits:
 
 ```js
 const fallbackLimit =

@@ -321,7 +321,7 @@ export default function MapScreen() {
         {selectedHasSpeedLimits && (
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 bg-emerald-500 rounded-full" />
-            OSM speed limit
+            OSM/default speed limit
           </div>
         )}
       </div>

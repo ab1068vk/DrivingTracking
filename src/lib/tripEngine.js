@@ -2311,14 +2311,22 @@ function contextualFallbackLimitKmh(points = [], index = 0, zone = null, thresho
   return roadLimit;
 }
 
-function actualSpeedLimitKmhForIndex(points = [], index) {
+function speedLimitForIndex(points = [], index) {
   const candidates = [
-    points[index]?.speed_limit_kmh,
-    points[index - 1]?.speed_limit_kmh,
-    points[index + 1]?.speed_limit_kmh,
+    points[index],
+    points[index - 1],
+    points[index + 1],
   ];
-  const limit = candidates.map(Number).find((value) => Number.isFinite(value) && value > 0);
-  return limit || null;
+  for (const point of candidates) {
+    const limitKmh = Number(point?.speed_limit_kmh);
+    if (Number.isFinite(limitKmh) && limitKmh > 0) {
+      return {
+        limitKmh,
+        source: point?.speed_limit_source || 'openstreetmap',
+      };
+    }
+  }
+  return null;
 }
 
 /**
@@ -2335,9 +2343,9 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const roadTypes = classifyRoadTypesByPoint(points);
   const zones = Array.isArray(stats.speed_zones) ? stats.speed_zones : inferSpeedZones(points, thresholds);
   const byType = {
-    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0 },
-    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0 },
-    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0 },
+    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
+    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
+    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
   };
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
 
@@ -2347,12 +2355,16 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     if (speed <= (thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH)) return;
     const roadType = roadTypes[index] || 'urban';
     const zone = zones.find((item) => index >= item.startIndex && index <= item.endIndex);
-    const actualLimit = actualSpeedLimitKmhForIndex(points, index);
-    const limit = actualLimit ?? zone?.inferredZoneKmh ?? complianceFallbackLimit(roadType, thresholds);
+    const speedLimit = speedLimitForIndex(points, index);
+    const limit = speedLimit?.limitKmh ?? zone?.inferredZoneKmh ?? complianceFallbackLimit(roadType, thresholds);
     const bucket = byType[roadType];
     bucket.totalPoints++;
     bucket.limitTotal += limit;
-    if (actualLimit) bucket.actualLimitPoints++;
+    if (speedLimit) {
+      bucket.actualLimitPoints++;
+      if (speedLimit.source === 'openstreetmap') bucket.osmMaxspeedPoints++;
+      if (speedLimit.source === 'osm_highway_default') bucket.osmDefaultPoints++;
+    }
     bucket.maxSpeed = Math.max(bucket.maxSpeed, speed);
     if (speed > limit + speedOver) bucket.overLimitPoints++;
   });
@@ -2362,13 +2374,20 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     const inferredLimit = Math.round(bucket.limitTotal / bucket.totalPoints);
     const rate = 1 - bucket.overLimitPoints / bucket.totalPoints;
     const maxExcessKmh = Math.max(0, bucket.maxSpeed - inferredLimit);
+    const limitSource = bucket.osmMaxspeedPoints > bucket.totalPoints / 2
+      ? 'openstreetmap'
+      : bucket.osmDefaultPoints > bucket.totalPoints / 2
+        ? 'osm_highway_default'
+        : 'inferred';
     return {
       score: clamp(Math.round(rate * 100 - maxExcessKmh * 0.5), 0, 100),
       rate: round2(rate),
       max_excess_kmh: round1(maxExcessKmh),
       inferred_limit_kmh: inferredLimit,
-      limit_source: bucket.actualLimitPoints > bucket.totalPoints / 2 ? 'openstreetmap' : 'inferred',
+      limit_source: limitSource,
       actual_limit_coverage: round2(bucket.actualLimitPoints / bucket.totalPoints),
+      osm_maxspeed_coverage: round2(bucket.osmMaxspeedPoints / bucket.totalPoints),
+      osm_highway_default_coverage: round2(bucket.osmDefaultPoints / bucket.totalPoints),
       point_count: bucket.totalPoints,
     };
   };
@@ -2955,7 +2974,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
         value: Math.round(speedingPeakSpeed),
         speed_kmh: Math.round(speedingPeakSpeed),
         speed_limit_kmh: speedingZone?.actualLimitKmh ?? null,
-        speed_limit_source: speedingZone?.actualLimitKmh ? 'openstreetmap' : 'inferred',
+        speed_limit_source: speedingZone?.speedLimitSource || (speedingZone?.actualLimitKmh ? 'openstreetmap' : 'inferred'),
         inferred_zone_kmh: speedingZone?.inferredZoneKmh ?? null,
         zone_confidence: speedingZone?.confidence ?? null,
       });
@@ -3082,7 +3101,8 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       }
     }
 
-    const actualLimitKmh = actualSpeedLimitKmhForIndex(points, i);
+    const speedLimit = speedLimitForIndex(points, i);
+    const actualLimitKmh = speedLimit?.limitKmh ?? null;
     const inferredZone = zoneForIndex(i);
     const fallbackLimitKmh = contextualFallbackLimitKmh(points, i, inferredZone, thresholds, roadTypesByPoint);
     const speedOverKmh = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
@@ -3092,6 +3112,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       confidence: inferredZone?.confidence ?? 'fallback',
       road_type: inferredZone?.road_type ?? roadTypesByPoint[i] ?? 'urban',
       actualLimitKmh,
+      speedLimitSource: speedLimit?.source ?? null,
     };
     const contextualSpeedingThreshold = actualLimitKmh
       ? actualLimitKmh + speedOverKmh

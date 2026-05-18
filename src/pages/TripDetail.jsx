@@ -300,7 +300,7 @@ export default function TripDetail() {
   const speedLimitContext = trip.speed_limit_context || null;
   const mapMatchingContext = trip.map_matching_context || null;
   const osmSpeedLimitPoints = (trip.route_points || []).filter((point) => (
-    point.speed_limit_source === 'openstreetmap' &&
+    ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source) &&
     Number.isFinite(Number(point.speed_limit_kmh))
   ));
   const osmSpeedLimits = [...new Set(osmSpeedLimitPoints.map((point) => Number(point.speed_limit_kmh)).filter(Number.isFinite))]
@@ -533,7 +533,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Detected limits: ${osmSpeedLimits.join(', ')} km/h.` : 'Fallback thresholds fill gaps.'}
+                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Detected/default limits: ${osmSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
               </div>
               {speedLimitContext.error && (
                 <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
@@ -1061,7 +1061,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM limit' : 'Inferred limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? 'OSM road-type default' : 'Inferred limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}
                 </div>
               </div>
             ))}
