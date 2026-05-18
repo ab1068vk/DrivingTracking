@@ -1809,7 +1809,7 @@ Import behavior:
 - Upserts vehicles.
 - Upserts trips.
 - Optionally merges settings into current settings.
-- Versions earlier than `7` import cleanly but mark trips for rescore before upsert so phone-use windows, advanced metrics, false-positive fixes, and schema-version fields can be regenerated.
+- Versions earlier than `8` import cleanly but mark trips for rescore before upsert so phone-use windows, advanced metrics, false-positive fixes, and schema-version fields can be regenerated.
 - Native Android JSON backup export also writes to the public Downloads folder through `saveExportToDownloads`.
 
 ## 15. Android Project
@@ -2221,8 +2221,8 @@ Additional insight exports in `src/lib/tripInsights.js`:
 
 Storage and backup changes:
 
-- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 7`.
-- Completed trips missing advanced fields, marked `needs_rescore`, or from an older schema are rescored on read/write with the current thresholds. Version 7 forces older trips through the stricter lane-change, erratic-speed, overtake, traffic-stop, and night-card behavior.
+- `localTripRepository.js` defines `TRIP_SCHEMA_VERSION = 8`.
+- Completed trips missing advanced fields, marked `needs_rescore`, or from an older schema are rescored on read/write with the current thresholds. Version 8 also reconstructs phone-use events from stored phone-use arrays, driving-event entries, native Android Usage Access evidence, or summary fields so refresh/rescore paths do not hide prior phone-use trips.
 - JSON backups now export version `4`; older imports mark trips with `needs_rescore` before upsert.
 - CSV export now includes aggressive, defensive, near-miss, smooth braking, SVI, fuel band, engine stress, tire wear, hill, merge, parking, overtake, phone proxy, phone-use windows/seconds/risk/score/percent, drowsy, speed creep, and CO2-saved columns.
 
@@ -3986,6 +3986,8 @@ Dashboard analytics shown from recent trips include weekly distance, score, risk
 
 When `live_coaching_enabled` is true, `LiveCoachOverlay` evaluates the active trip every 15 seconds. It queues one bottom toast at a time and speaks the alert immediately when the toast is shown. It prioritizes live Android Usage Access phone-use sessions, GPS phone-use signals, recent near misses, new harsh brakes, current speeding, new rapid accelerations, and extended idling.
 
+Voice alert priority is phone use, near miss, harsh brake, tailgating/following gap, speeding, rapid acceleration, then extended idling. Only one alert is spoken at a time.
+
 #### Trip History
 
 `TripHistory.jsx` fetches up to 1000 trips sorted by `-start_time`. It supports:
@@ -4197,7 +4199,7 @@ Local trip repository rules:
 - Primary web store is IndexedDB database `drivesense_mobile`, version `1`, object store `trips`, key path `id`.
 - Fallback store is JSON under `drivesense_trips`.
 - `TRIP_SCHEMA_VERSION` is `7`.
-- Completed trips with missing advanced fields, `needs_rescore`, or old schema version are rescored before being returned. Version 7 refreshes false-positive-sensitive metrics such as lane changes, overtakes, erratic speed, and traffic idle buckets.
+- Completed trips with missing advanced fields, `needs_rescore`, or old schema version are rescored before being returned. Version 8 refreshes false-positive-sensitive metrics and preserves phone-use display evidence across rescoring and OSM context refreshes.
 - Android native completed trips are imported before list/get operations on Android.
 - Imported native trips are recalculated by JS, simplified to 10-meter route tolerance, marked `imported_from_native: true`, and then native completed trips are cleared.
 - Data retention deletes trips older than `data_retention_days` based on `end_time`, `start_time`, or `created_at`.
@@ -4525,7 +4527,7 @@ Trip schema version 3 adds these completed-trip fields:
 
 Completed trips missing any version-3 advanced field are rescored on read/import. The driver signature cache uses the `drivesense_driver_signature` Preferences key and is invalidated when completed trips are created, updated, or bulk imported.
 
-Trip schema version 7 is the current local schema. It preserves the version-3 advanced fields and forces a rescore for older completed trips so the stricter May 2026 false-positive fixes are applied to existing history:
+Trip schema version 8 is the current local schema. It preserves the version-3 advanced fields and forces a rescore for older completed trips so the stricter May 2026 false-positive fixes and phone-use event reconstruction are applied to existing history:
 
 - Lane changes require stronger GPS shape, speed stability, and counter-steer evidence.
 - Erratic-speed windows require sustained variance plus repeated speed reversals.
@@ -4561,6 +4563,7 @@ Live voice alerts:
 
 - `LiveCoachOverlay.jsx` evaluates active trip points every 15 seconds.
 - It speaks urgent alerts as soon as the toast is shown when `voice_alerts_enabled` is true. Android native builds try native TextToSpeech first, then `window.speechSynthesis` only as a fallback.
+- Alert type order is phone use, near miss, harsh brake, tailgating, speeding, rapid acceleration, and extended idling. One queued message is spoken at a time.
 - `Settings.jsx` includes a **Test** button beside Live voice alerts to confirm speech output is available in the current browser/WebView.
 
 New tests cover:

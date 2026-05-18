@@ -1306,6 +1306,18 @@ The setting `live_coaching_enabled` disables this feature completely.
 
 Live coaching evaluates active trips every `15 seconds`. When a toast is queued, the voice message is spoken immediately as the toast is shown. Android native builds use native TextToSpeech first, then browser `speechSynthesis` only as a fallback. Live phone-use alerts merge GPS behavior with Android Usage Access sessions when that permission is enabled.
 
+Voice alert priority is:
+
+1. Phone use / distracted-driving window.
+2. Near miss.
+3. New harsh brake.
+4. Tailgate/following-gap cycle.
+5. Speeding above the active OSM or fallback threshold plus the configured margin.
+6. New rapid acceleration.
+7. Extended idling over the configured idle window.
+
+Only one voice message is spoken at a time. The next alert waits until the current toast finishes.
+
 ## Achievement Badges
 
 Function: `calculateAchievementBadges`

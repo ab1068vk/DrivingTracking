@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPhoneUseFromAndroidUsage,
+  buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
   mergePhoneUseSignals,
 } from '@/lib/phoneUsageAccess';
@@ -64,5 +65,28 @@ describe('Android phone usage access merge', () => {
 
     expect(events).toHaveLength(1);
     expect(again).toHaveLength(1);
+  });
+
+  it('reconstructs visible phone-use events from stored trip evidence', () => {
+    const routePoints = Array.from({ length: 40 }, (_, index) => routePoint(index));
+    const trip = {
+      phone_use_window_count: 1,
+      phone_use_risk: 'medium',
+      native_phone_usage_access_granted: true,
+      native_phone_usage_events: [{
+        package_name: 'com.chat.app',
+        start_ms: baseTime + 5_000,
+        end_ms: baseTime + 25_000,
+        duration_seconds: 20,
+      }],
+      driving_events: [],
+    };
+
+    const phoneUse = buildPhoneUseFromTripEvidence(trip, routePoints, 120, {});
+    const events = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events, phoneUse);
+
+    expect(phoneUse.phone_use_window_count).toBe(1);
+    expect(phoneUse.phone_use_events[0].source).toBe('android_usage_access');
+    expect(events.some((event) => event.type === 'phone_use')).toBe(true);
   });
 });

@@ -68,7 +68,7 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 - Overtake quality is only calculated for aggressive overtake events or high-speed lane changes with a real speed-up pattern.
 - Weather context uses historical Open-Meteo data for past trips and samples the trip time more tightly so a nearby rainy hour does not label a sunny drive as rainy.
 - Trip cards automatically show a Night tag when `night_driving` is true, even if the user did not manually tag the trip.
-- Local trip schema version 7 rescans older completed trips so advanced trip-page fields are recalculated with the current engine.
+- Local trip schema version 8 rescans older completed trips so advanced trip-page fields are recalculated with the current engine and phone-use events are restored from stored trip evidence.
 
 ## Open-Source Context And Live Coaching
 
@@ -79,6 +79,7 @@ Background Auto still will not run after Android force-stops the app. Open Road 
 - Harsh braking defaults to 3.5 m/s2, rapid acceleration defaults to 3.0 m/s2, and speed-creep alerts default to a 5 km/h drift.
 - Settings includes a **Test** button for live voice alerts; Android WebView falls back to native TextToSpeech when browser speech output is unavailable.
 - Live coaching checks active trips every 15 seconds and speaks the selected urgent alert as soon as the toast is shown. Android uses native TextToSpeech first, and phone-use alerts can use Android Usage Access live when that permission is enabled.
+- Voice priority is phone use, near miss, harsh brake, tailgating, speeding, rapid acceleration, then extended idling. One message is spoken at a time.
 - The emergency workflow now shows an active-trip check-in with "I'm OK" and "Call 911" actions after a possible incident, instead of only storing a Settings toggle.
 
 ## Native Background Tracking

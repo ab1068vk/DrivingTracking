@@ -9,6 +9,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 
 export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get()) {
   if (!trip) throw new Error('Trip not loaded');
@@ -35,7 +36,12 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
   const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const detectedEvents = Reflect.get(detection, 'events') ?? detection;
-  const phoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+  const phoneUse = buildPhoneUseFromTripEvidence(
+    trip,
+    routePoints,
+    stats.duration_seconds,
+    Reflect.get(detection, 'phoneUse') ?? {}
+  );
   const weatherContext = await fetchWeatherContextForTrip(routePoints, trip.start_time, trip.end_time, settings).catch((error) => ({
     provider: 'open-meteo',
     status: 'unavailable',
@@ -46,7 +52,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }));
   let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   scores = applyWeatherRiskToScores(scores, weatherContext);
-  const events = scores.driving_events || detectedEvents;
+  const events = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse);
   const simplifiedPoints = simplifyRoute(routePoints, 10, events);
 
   return {

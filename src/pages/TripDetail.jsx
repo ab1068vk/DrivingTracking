@@ -28,6 +28,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
+import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import {
   TRIP_TAG_OPTIONS,
   buildScoreExplanation,
@@ -307,10 +308,10 @@ export default function TripDetail() {
   const sensorFusionSummary = trip.sensor_fusion_summary || null;
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
-  const phoneUseEvents = (trip.driving_events || []).filter((event) => event.type === 'phone_use');
-  const phoneUseWindows = phoneUseEvents.length ? phoneUseEvents : (trip.phone_use_events || []);
-  const phoneUseRisk = trip.phone_use_risk || 'none';
-  const showPhoneUse = (trip.phone_use_window_count || phoneUseWindows.length || 0) > 0 || phoneUseRisk !== 'none';
+  const displayPhoneUse = buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
+  const phoneUseWindows = displayPhoneUse.phone_use_events || [];
+  const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
+  const showPhoneUse = (displayPhoneUse.phone_use_window_count || trip.phone_use_window_count || phoneUseWindows.length || 0) > 0 || phoneUseRisk !== 'none';
   const avgPhoneUseSpeed = phoneUseWindows.length
     ? Math.round(phoneUseWindows.reduce((sum, event) => sum + (Number(event.speed_kmh) || 0), 0) / phoneUseWindows.length)
     : 0;
@@ -320,9 +321,10 @@ export default function TripDetail() {
     low: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
+  const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse);
   const mapEvents = settings.phone_use_show_on_map === false
-    ? (trip.driving_events || []).filter((event) => event.type !== 'phone_use')
-    : (trip.driving_events || []);
+    ? displayEvents.filter((event) => event.type !== 'phone_use')
+    : displayEvents;
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -617,12 +619,12 @@ export default function TripDetail() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Smartphone className="mb-2 h-4 w-4 text-red-500" />
-                  <div className="font-grotesk text-2xl font-bold">{trip.phone_use_window_count ?? phoneUseWindows.length}</div>
+                  <div className="font-grotesk text-2xl font-bold">{displayPhoneUse.phone_use_window_count || trip.phone_use_window_count || phoneUseWindows.length}</div>
                   <div className="text-xs text-muted-foreground">windows detected</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Clock className="mb-2 h-4 w-4 text-orange-500" />
-                  <div className="font-grotesk text-2xl font-bold">{Math.round(trip.phone_use_total_seconds || 0)}s</div>
+                  <div className="font-grotesk text-2xl font-bold">{Math.round(displayPhoneUse.phone_use_total_seconds || trip.phone_use_total_seconds || 0)}s</div>
                   <div className="text-xs text-muted-foreground">estimated duration</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
@@ -632,7 +634,7 @@ export default function TripDetail() {
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Focus className="mb-2 h-4 w-4 text-violet-500" />
-                  <div className="font-grotesk text-2xl font-bold">{Math.round((trip.phone_use_pct_of_trip || 0) * 10) / 10}%</div>
+                  <div className="font-grotesk text-2xl font-bold">{Math.round((displayPhoneUse.phone_use_pct_of_trip || trip.phone_use_pct_of_trip || 0) * 10) / 10}%</div>
                   <div className="text-xs text-muted-foreground">of trip time</div>
                 </div>
               </div>
@@ -669,9 +671,9 @@ export default function TripDetail() {
                 </div>
               </details>
 
-              {settings.phone_use_affects_score !== false && (trip.phone_use_score || 100) < 95 && (
+              {settings.phone_use_affects_score !== false && (displayPhoneUse.phone_use_score || trip.phone_use_score || 100) < 95 && (
                 <div className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
-                  Phone use reduced your Safety score by about {Math.max(1, Math.round((100 - (trip.phone_use_score || 100)) * 0.05))} point{Math.round((100 - (trip.phone_use_score || 100)) * 0.05) === 1 ? '' : 's'}.
+                  Phone use reduced your Safety score by about {Math.max(1, Math.round((100 - (displayPhoneUse.phone_use_score || trip.phone_use_score || 100)) * 0.05))} point{Math.round((100 - (displayPhoneUse.phone_use_score || trip.phone_use_score || 100)) * 0.05) === 1 ? '' : 's'}.
                 </div>
               )}
             </div>
@@ -1232,7 +1234,7 @@ export default function TripDetail() {
       </motion.div>
 
       {/* Driving Events */}
-      {trip.driving_events && trip.driving_events.length > 0 && (
+      {displayEvents.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1242,7 +1244,7 @@ export default function TripDetail() {
           <h2 className="font-semibold mb-4">
             Driving Events
             <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {trip.driving_events.length} detected
+              {displayEvents.length} detected
             </span>
           </h2>
 
@@ -1272,7 +1274,7 @@ export default function TripDetail() {
 
           {/* Event list */}
           <div className="space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
-            {trip.driving_events.map((evt, i) => {
+            {displayEvents.map((evt, i) => {
               const labels = {
                 harsh_brake: { label: 'Harsh Brake', icon: '🛑', color: 'text-red-600' },
                 rapid_acceleration: { label: 'Rapid Acceleration', icon: '⚡', color: 'text-yellow-600' },
@@ -1285,11 +1287,14 @@ export default function TripDetail() {
                 tailgate_cycle: { label: 'Tailgate Cycle', icon: '!!', color: 'text-red-600' },
                 erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
                 possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
+                phone_use: { label: 'Phone Use', icon: 'P', color: 'text-red-600' },
               };
               const cfg = labels[evt.type] || { label: evt.type, icon: '⚠', color: 'text-foreground' };
               const eventValueText = evt.type === 'possible_crash'
                 ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
-                : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
+                : evt.type === 'phone_use'
+                  ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
+                  : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
               return (
                 <div key={i} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                   <div className="flex items-center gap-2.5">

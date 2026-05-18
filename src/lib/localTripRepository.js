@@ -7,9 +7,8 @@ import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
-  buildPhoneUseFromAndroidUsage,
+  buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
-  mergePhoneUseSignals,
 } from '@/lib/phoneUsageAccess';
 
 const TRIPS_KEY = 'drivesense_trips';
@@ -17,7 +16,7 @@ const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 7;
+export const TRIP_SCHEMA_VERSION = 8;
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
@@ -41,6 +40,9 @@ export const TRIP_SCHEMA_VERSION = 7;
  *
  * Version 7 recalculates completed trips with stricter lane-change,
  * erratic-speed, overtake-quality, traffic-stop, and night-card logic.
+ *
+ * Version 8 preserves and reconstructs phone-use events across rescoring and
+ * OpenStreetMap/weather refreshes so historical phone-use trips remain visible.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -110,16 +112,8 @@ const invalidateTripDerivedCaches = async () => {
 
 let importingNativeTrips = false;
 
-const nativeUsageSummaryFromTrip = (trip = {}) => ({
-  usage_access_granted: trip.native_phone_usage_access_granted === true,
-  events: Array.isArray(trip.native_phone_usage_events) ? trip.native_phone_usage_events : [],
-  event_count: Number(trip.native_phone_usage_event_count) || 0,
-  total_seconds: Number(trip.native_phone_usage_total_seconds) || 0,
-});
-
 const mergedPhoneUseForTrip = (trip, routePoints, stats, detectionPhoneUse) => {
-  const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativeUsageSummaryFromTrip(trip), routePoints, stats.duration_seconds);
-  return mergePhoneUseSignals(detectionPhoneUse, usagePhoneUse, stats.duration_seconds);
+  return buildPhoneUseFromTripEvidence(trip, routePoints, stats.duration_seconds, detectionPhoneUse);
 };
 
 const rescoreTrip = (trip) => {
@@ -157,6 +151,7 @@ const needsRescore = (trip) => (
     trip.dominant_road_type == null ||
     trip.phone_use_score == null ||
     trip.phone_use_risk == null ||
+    (Number(trip.phone_use_window_count) > 0 && !(trip.driving_events || []).some((event) => event?.type === 'phone_use')) ||
     trip.schema_version !== TRIP_SCHEMA_VERSION
   )
 );

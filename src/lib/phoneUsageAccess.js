@@ -6,6 +6,15 @@ const timestampMs = (value) => {
 };
 
 const riskRank = { none: 0, low: 1, medium: 2, high: 3 };
+const emptyPhoneUse = () => ({
+  phone_use_events: [],
+  phone_use_window_count: 0,
+  phone_use_total_seconds: 0,
+  phone_use_high_confidence_count: 0,
+  phone_use_risk: 'none',
+  phone_use_score: 100,
+  phone_use_pct_of_trip: 0,
+});
 
 function nearestRoutePoint(routePoints = [], targetMs = null) {
   if (!routePoints.length || targetMs == null) return null;
@@ -99,6 +108,57 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
   };
 }
 
+export function buildPhoneUseFromEvents(events = [], tripDurationSeconds = 0, fallbackRisk = 'none') {
+  const phoneEvents = (events || [])
+    .filter((event) => event?.type === 'phone_use')
+    .map((event) => {
+      const startMs = timestampMs(event.startTime || event.timestamp);
+      const endMs = timestampMs(event.endTime);
+      const durationS = Number(event.durationS ?? event.duration_seconds) ||
+        (startMs != null && endMs != null && endMs > startMs ? Math.round((endMs - startMs) / 1000) : 0);
+      const confidence = Number(event.confidence ?? event.value) || (event.confidence_level === 'high' ? 0.9 : event.confidence_level === 'medium' ? 0.65 : 0.45);
+      return {
+        ...event,
+        type: 'phone_use',
+        timestamp: event.timestamp || event.startTime || new Date().toISOString(),
+        startTime: event.startTime || event.timestamp,
+        durationS: Math.max(0, Math.round(durationS)),
+        duration_seconds: Math.max(0, Math.round(durationS)),
+        confidence,
+        confidence_level: event.confidence_level || (confidence >= 0.75 ? 'high' : confidence >= 0.55 ? 'medium' : 'low'),
+        severity: event.severity || (confidence >= 0.75 ? 'high' : confidence >= 0.55 ? 'medium' : 'low'),
+      };
+    });
+
+  if (!phoneEvents.length) return emptyPhoneUse();
+
+  const totalSeconds = phoneEvents.reduce((sum, event) => sum + (Number(event.durationS ?? event.duration_seconds) || 0), 0);
+  const highConfidenceCount = phoneEvents.filter((event) => (
+    event.confidence_level === 'high' || Number(event.confidence) >= 0.75
+  )).length;
+  const duration = Math.max(1, Number(tripDurationSeconds) || 1);
+  const calculatedRisk = totalSeconds >= 60 || highConfidenceCount >= 2
+    ? 'high'
+    : totalSeconds >= 10 || highConfidenceCount >= 1
+      ? 'medium'
+      : 'low';
+  const phoneUseRisk = [fallbackRisk || 'none', calculatedRisk]
+    .sort((a, b) => (riskRank[b] || 0) - (riskRank[a] || 0))[0] || 'none';
+  const penalty = phoneEvents.reduce((sum, event) => (
+    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 10 : 4)
+  ), 0);
+
+  return {
+    phone_use_events: phoneEvents,
+    phone_use_window_count: phoneEvents.length,
+    phone_use_total_seconds: Math.round(totalSeconds),
+    phone_use_high_confidence_count: highConfidenceCount,
+    phone_use_risk: phoneUseRisk,
+    phone_use_score: Math.max(0, Math.round(100 - penalty)),
+    phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+  };
+}
+
 export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripDurationSeconds = 0) {
   const events = [
     ...(gpsPhoneUse.phone_use_events || []),
@@ -132,6 +192,39 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
     phone_use_score: score,
     phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
   };
+}
+
+export function mergeManyPhoneUseSignals(signals = [], tripDurationSeconds = 0) {
+  return signals.reduce(
+    (merged, signal) => mergePhoneUseSignals(merged, signal || {}, tripDurationSeconds),
+    emptyPhoneUse()
+  );
+}
+
+export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripDurationSeconds = 0, detectionPhoneUse = {}) {
+  const nativeUsage = buildPhoneUseFromAndroidUsage({
+    usage_access_granted: trip.native_phone_usage_access_granted === true,
+    events: Array.isArray(trip.native_phone_usage_events) ? trip.native_phone_usage_events : [],
+    event_count: Number(trip.native_phone_usage_event_count) || 0,
+    total_seconds: Number(trip.native_phone_usage_total_seconds) || 0,
+  }, routePoints, tripDurationSeconds);
+  const storedEvents = buildPhoneUseFromEvents([
+    ...(Array.isArray(trip.phone_use_events) ? trip.phone_use_events : []),
+    ...(Array.isArray(trip.driving_events) ? trip.driving_events.filter((event) => event?.type === 'phone_use') : []),
+  ], tripDurationSeconds, trip.phone_use_risk || 'none');
+  const summaryOnly = Number(trip.phone_use_window_count) > 0 && !storedEvents.phone_use_events.length
+    ? {
+      phone_use_events: [],
+      phone_use_window_count: Number(trip.phone_use_window_count) || 0,
+      phone_use_total_seconds: Number(trip.phone_use_total_seconds) || 0,
+      phone_use_high_confidence_count: Number(trip.phone_use_high_confidence_count) || 0,
+      phone_use_risk: trip.phone_use_risk || 'low',
+      phone_use_score: Number.isFinite(Number(trip.phone_use_score)) ? Number(trip.phone_use_score) : 90,
+      phone_use_pct_of_trip: Number(trip.phone_use_pct_of_trip) || 0,
+    }
+    : emptyPhoneUse();
+
+  return mergeManyPhoneUseSignals([detectionPhoneUse, nativeUsage, storedEvents, summaryOnly], tripDurationSeconds);
 }
 
 export function mergePhoneUseEventsIntoDrivingEvents(drivingEvents = [], phoneUse = {}) {
