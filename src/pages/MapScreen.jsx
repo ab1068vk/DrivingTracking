@@ -121,6 +121,8 @@ export default function MapScreen() {
     ? 'Select a trip to fetch road context.'
     : selectedHasSpeedLimits
       ? 'Turning the layer on recolors the selected route: green is within the matched/default limit, orange is over, red is well over.'
+      : selectedSpeedLimitStatus === 'unavailable'
+        ? selectedTrip.speed_limit_context?.error || 'The OSM speed-limit lookup failed, so the map is still using GPS speed bands and fallback scoring thresholds.'
       : selectedSpeedLimitStatus === 'not_fetched'
         ? 'Before fetching, the map shows only GPS speed bands and event markers. Fetch context to look for road limits.'
         : 'No speed-limit layer is available for this trip, so the map will not visibly change until OSM returns matched limits.';

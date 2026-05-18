@@ -367,6 +367,8 @@ export default function TripDetail() {
     : `${tripMapPointCount} GPS readings`;
   const speedLimitLayerEffect = osmSpeedLimitPoints.length > 0
     ? 'The speed-limit layer recolors this route: green is within the matched/default limit, orange is over, red is well over.'
+    : speedLimitContext?.status === 'unavailable'
+      ? speedLimitContext.error || 'The OSM speed-limit lookup failed, so this map is still using GPS speed bands and fallback scoring thresholds.'
     : speedLimitContext
       ? 'OSM context was checked, but no matched limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
       : 'Before fetching OSM context, this map shows GPS speed bands and event markers only.';

@@ -109,6 +109,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       status: speedLimitContext.status,
       coverage: speedLimitContext.coverage,
       source: speedLimitContext.source,
+      query_count: speedLimitContext.query_count,
       error: speedLimitContext.error,
     },
     map_matching_context: {
@@ -132,6 +133,8 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
   if (context.status === 'no_tagged_ways') return 'OpenStreetMap did not return usable road tags near this route, so GPS fallback thresholds are used.';
   if (context.status === 'unavailable') return context.error || 'OpenStreetMap speed-limit lookup is unavailable. Check internet access and try refresh again.';
+  if (context.status === 'partial_fetched' && context.coverage === 0) return 'OpenStreetMap partially responded, but no route points matched usable road-limit data.';
+  if (context.status === 'partial_fetched') return `${context.coverage}% of route points have speed limits from partial OpenStreetMap results.`;
   if (context.coverage === 0) return 'OpenStreetMap was checked, but no route points matched usable road-limit data.';
   return `${context.coverage}% of route points have OpenStreetMap maxspeed or road-type default limits.`;
 }

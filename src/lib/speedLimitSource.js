@@ -3,9 +3,17 @@ import { haversineDistance } from '@/lib/tripEngine';
 
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+const FALLBACK_OVERPASS_URLS = [
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
+];
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_BBOX_SPAN_DEG = 0.8;
 const MAX_GEOMETRY_POINTS = 900;
+const DIRECT_BBOX_SPAN_DEG = 0.08;
+const MAX_CORRIDOR_QUERIES = 6;
+const MAX_CORRIDOR_SAMPLE_POINTS = 180;
+const CORRIDOR_PAD_DEG = 0.006;
 
 const round = (value, places = 4) => Number(value).toFixed(places);
 
@@ -21,12 +29,11 @@ export function parseMaxspeedKmh(value) {
   return Math.round(mph ? parsed * 1.60934 : parsed);
 }
 
-function routeBounds(points = []) {
+function routeBounds(points = [], pad = 0.01) {
   const valid = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   if (!valid.length) return null;
   const lats = valid.map((point) => point.lat);
   const lngs = valid.map((point) => point.lng);
-  const pad = 0.01;
   return {
     south: Math.min(...lats) - pad,
     west: Math.min(...lngs) - pad,
@@ -44,6 +51,43 @@ function cacheKeyForBounds(bounds) {
   ].join(',');
 }
 
+function bboxSpan(bounds) {
+  return {
+    lat: bounds ? bounds.north - bounds.south : 0,
+    lng: bounds ? bounds.east - bounds.west : 0,
+  };
+}
+
+function uniqueBy(items = [], keyFor) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = keyFor(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function sampleRoutePoints(points = [], maxPoints = MAX_CORRIDOR_SAMPLE_POINTS) {
+  const valid = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (valid.length <= maxPoints) return valid;
+  const step = (valid.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, index) => valid[Math.round(index * step)]);
+}
+
+function corridorBounds(routePoints = []) {
+  const sampled = sampleRoutePoints(routePoints);
+  if (!sampled.length) return [];
+  const chunkSize = Math.max(8, Math.ceil(sampled.length / MAX_CORRIDOR_QUERIES));
+  const chunks = [];
+  for (let start = 0; start < sampled.length; start += chunkSize) {
+    const end = Math.min(sampled.length, start + chunkSize + 1);
+    const bounds = routeBounds(sampled.slice(start, end), CORRIDOR_PAD_DEG);
+    if (bounds) chunks.push(bounds);
+  }
+  return uniqueBy(chunks, cacheKeyForBounds);
+}
+
 function overpassQuery(bounds) {
   const bbox = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
   return `
@@ -55,11 +99,28 @@ function overpassQuery(bounds) {
   `;
 }
 
-async function fetchOverpassWays(bounds) {
+async function fetchOverpassWays(bounds, settings = {}) {
+  const urls = uniqueBy([
+    settings.overpass_speed_limit_url,
+    OVERPASS_URL,
+    ...FALLBACK_OVERPASS_URLS,
+  ].filter(Boolean), (url) => url);
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      return await fetchOverpassWaysFromUrl(bounds, url);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Overpass request failed');
+}
+
+async function fetchOverpassWaysFromUrl(bounds, url) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(OVERPASS_URL, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
       body: new URLSearchParams({ data: overpassQuery(bounds) }),
@@ -70,6 +131,25 @@ async function fetchOverpassWays(bounds) {
     return Array.isArray(data?.elements) ? data.elements : [];
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function loadCachedWaysForBounds(bounds, settings, cache, nextCache) {
+  const key = cacheKeyForBounds(bounds);
+  const cached = cache[key];
+  if (cached && Date.now() - cached.savedAt < CACHE_MAX_AGE_MS) {
+    return { ways: cached.ways || [], status: 'cache_hit', error: null };
+  }
+  try {
+    const ways = normalizeWays(await fetchOverpassWays(bounds, settings));
+    nextCache[key] = { savedAt: Date.now(), ways };
+    return { ways, status: ways.length ? 'fetched' : 'no_tagged_ways', error: null };
+  } catch (error) {
+    return {
+      ways: [],
+      status: 'unavailable',
+      error: error?.name === 'AbortError' ? 'OpenStreetMap speed-limit lookup timed out.' : error?.message,
+    };
   }
 }
 
@@ -157,19 +237,46 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
     return { ways: [], status: 'bbox_too_large', source: 'openstreetmap_overpass' };
   }
 
-  const key = cacheKeyForBounds(bounds);
   const cache = await getJson(SPEED_LIMIT_CACHE_KEY, {});
-  const cached = cache[key];
-  if (cached && Date.now() - cached.savedAt < CACHE_MAX_AGE_MS) {
-    return { ways: cached.ways || [], status: 'cache_hit', source: 'openstreetmap_overpass' };
+  const nextCache = { ...cache };
+  const span = bboxSpan(bounds);
+  const queryBounds = span.lat <= DIRECT_BBOX_SPAN_DEG && span.lng <= DIRECT_BBOX_SPAN_DEG
+    ? [bounds]
+    : corridorBounds(routePoints);
+
+  if (!queryBounds.length) {
+    return { ways: [], status: 'empty_route', source: 'openstreetmap_overpass' };
   }
 
-  const ways = normalizeWays(await fetchOverpassWays(bounds));
-  await setJson(SPEED_LIMIT_CACHE_KEY, {
-    ...cache,
-    [key]: { savedAt: Date.now(), ways },
-  });
-  return { ways, status: ways.length ? 'fetched' : 'no_tagged_ways', source: 'openstreetmap_overpass' };
+  const results = await Promise.all(queryBounds.map((item) => loadCachedWaysForBounds(item, settings, cache, nextCache)));
+  await setJson(SPEED_LIMIT_CACHE_KEY, nextCache);
+
+  const ways = uniqueBy(results.flatMap((result) => result.ways), (way) => `${way.id}:${way.limitKmh}`);
+  const failures = results.filter((result) => result.status === 'unavailable');
+  const cacheHits = results.filter((result) => result.status === 'cache_hit');
+  const fetched = results.filter((result) => result.status === 'fetched');
+  const noTags = results.filter((result) => result.status === 'no_tagged_ways');
+  const error = failures.map((result) => result.error).find(Boolean) || null;
+
+  if (ways.length) {
+    return {
+      ways,
+      status: failures.length ? 'partial_fetched' : cacheHits.length && !fetched.length ? 'cache_hit' : 'fetched',
+      source: 'openstreetmap_overpass',
+      query_count: queryBounds.length,
+      error,
+    };
+  }
+  if (failures.length === results.length) {
+    return { ways: [], status: 'unavailable', source: 'openstreetmap_overpass', query_count: queryBounds.length, error };
+  }
+  return {
+    ways: [],
+    status: noTags.length || cacheHits.length ? 'no_tagged_ways' : 'unavailable',
+    source: 'openstreetmap_overpass',
+    query_count: queryBounds.length,
+    error,
+  };
 }
 
 export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) {
@@ -181,6 +288,8 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
         coverage: 0,
         status: result.status,
         source: result.source,
+        query_count: result.query_count,
+        error: result.error,
       };
     }
 
@@ -205,6 +314,8 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
       coverage: routePoints.length ? Math.round((matched / routePoints.length) * 100) : 0,
       status: result.status,
       source: result.source,
+      query_count: result.query_count,
+      error: result.error,
     };
   } catch (error) {
     return {
