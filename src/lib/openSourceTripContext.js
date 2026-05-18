@@ -3,7 +3,6 @@ import {
   calculateTripScores,
   calculateTripStats,
   detectDrivingEvents,
-  simplifyRoute,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
@@ -53,12 +52,11 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   scores = applyWeatherRiskToScores(scores, weatherContext);
   const events = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse);
-  const simplifiedPoints = simplifyRoute(routePoints, 10, events);
 
   return {
     ...stats,
     ...scores,
-    route_points: simplifiedPoints,
+    route_points: routePoints,
     route_points_raw_count: routePoints.length,
     driving_events: events,
     speed_limit_context: {

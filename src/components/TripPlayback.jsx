@@ -85,6 +85,7 @@ function loadLeaflet() {
 }
 
 const SPEEDS = [1, 2, 4, 8];
+const REVIEW_SECONDS_PER_POINT = 0.6;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const carIconHtml = (color, heading, label = '') => `
@@ -282,13 +283,15 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     const speed = SPEEDS[speedIdx];
     let last = null;
     const totalSeconds = stats.durationSeconds || Math.max(1, totalPoints - 1);
+    const reviewDurationSeconds = Math.max(8, totalPoints * REVIEW_SECONDS_PER_POINT);
+    const timelineScale = totalSeconds > 0 ? totalSeconds / reviewDurationSeconds : 1;
 
     const step = (ts) => {
       if (!last) last = ts;
       const elapsedMs = ts - last;
       last = ts;
       setPlaybackElapsedSeconds((previous) => {
-        const next = previous + (elapsedMs / 1000) * speed;
+        const next = previous + (elapsedMs / 1000) * speed * timelineScale;
         if (next >= totalSeconds) {
           setPlaying(false);
           setCurrentIdx(totalPoints - 1);

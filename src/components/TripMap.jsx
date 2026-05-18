@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
-import { buildPlaybackTimeline, downsampleRoutePoints } from '@/lib/mapPlaybackInsights';
+import { buildPlaybackTimeline } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -9,8 +9,6 @@ import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZo
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const TORONTO_CENTER = [43.6532, -79.3832];
-const ROUTE_ARROW_SVG = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 18-7-4-7 4 7-18z"/></svg>');
-
 const TILE_STYLES = {
   standard: {
     label: 'Standard',
@@ -361,10 +359,8 @@ export default function TripMap({
         ...route,
         color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
         opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-        route_points: downsampleRoutePoints(
-          maskRoutePointsForPrivacy(route.route_points || [], privacySettings).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
-          route.selected ? 2000 : 180
-        ),
+        route_points: maskRoutePointsForPrivacy(route.route_points || [], privacySettings)
+          .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
       }))
       .filter((route) => route.route_points.length > 1);
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
@@ -475,22 +471,6 @@ export default function TripMap({
       const primaryRoute = validRoutes.find((route) => route.selected) || validRoutes[0];
       const latLngs = primaryRoute.route_points.map(p => [p.lat, p.lng]);
       const primaryStops = detectStops(primaryRoute.route_points);
-
-      if (primaryRoute.route_points.length > 8) {
-        const arrowEvery = Math.max(4, Math.floor(primaryRoute.route_points.length / 7));
-        for (let i = arrowEvery; i < primaryRoute.route_points.length - 1; i += arrowEvery) {
-          const prev = primaryRoute.route_points[i - 1];
-          const curr = primaryRoute.route_points[i];
-          const bearing = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
-          const arrowIcon = window.L.divIcon({
-            html: `<div style="width:22px;height:22px;border-radius:999px;background:rgba(255,255,255,0.86);border:1px solid rgba(15,23,42,0.18);box-shadow:0 2px 8px rgba(15,23,42,0.22);display:flex;align-items:center;justify-content:center;transform:rotate(${bearing}deg)"><img src="data:image/svg+xml,${ROUTE_ARROW_SVG}" style="width:16px;height:16px" alt="" /></div>`,
-            className: '',
-            iconSize: [22, 22],
-            iconAnchor: [11, 11],
-          });
-          window.L.marker([curr.lat, curr.lng], { icon: arrowIcon, interactive: false }).addTo(layers);
-        }
-      }
 
       primaryStops.slice(0, 12).forEach((stop, index) => {
         window.L.circleMarker([stop.lat, stop.lng], {

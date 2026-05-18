@@ -13,6 +13,7 @@ import android.graphics.Color;
 import android.location.Location;
 import android.os.Build;
 import android.os.IBinder;
+import android.speech.tts.TextToSpeech;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -110,6 +111,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private long lastPhoneUseNotifyMs = 0L;
     private long lastNativePhoneWindowMs = 0L;
     private long lastLiveNotificationMs = 0L;
+    private TextToSpeech textToSpeech;
+    private boolean textToSpeechReady = false;
     private String nativeAutoStartReason = "";
     private String lastNativeAutoStopReason = "";
 
@@ -173,6 +176,12 @@ public class DriveSenseAutoTrackingService extends Service {
         removeActivityUpdates();
         stopLocationUpdates();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+            textToSpeech.shutdown();
+            textToSpeech = null;
+            textToSpeechReady = false;
+        }
         super.onDestroy();
     }
 
@@ -734,8 +743,37 @@ public class DriveSenseAutoTrackingService extends Service {
             long now = System.currentTimeMillis();
             if (now - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
                 sendPhoneUseWarningNotification();
+                speakNativeAlert("Put your phone down. Keep your eyes on the road.");
                 lastPhoneUseNotifyMs = now;
             }
+        }
+    }
+
+    private void speakNativeAlert(String text) {
+        if (text == null || text.trim().isEmpty()) return;
+        if (textToSpeech != null && textToSpeechReady) {
+            speakNativeAlertNow(text);
+            return;
+        }
+        if (textToSpeech == null) {
+            textToSpeech = new TextToSpeech(this, status -> {
+                if (status == TextToSpeech.SUCCESS && textToSpeech != null) {
+                    textToSpeech.setLanguage(Locale.getDefault());
+                    textToSpeech.setSpeechRate(0.95f);
+                    textToSpeechReady = true;
+                    speakNativeAlertNow(text);
+                }
+            });
+        }
+    }
+
+    private void speakNativeAlertNow(String text) {
+        if (textToSpeech == null) return;
+        String utteranceId = "drivesense_phone_use_" + System.currentTimeMillis();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+        } else {
+            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
         }
     }
 
@@ -918,6 +956,7 @@ public class DriveSenseAutoTrackingService extends Service {
         nativeMicroSteerCount++;
         if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
             sendPhoneUseWarningNotification();
+            speakNativeAlert("Put your phone down. Keep your eyes on the road.");
             lastPhoneUseNotifyMs = nowMs;
         }
     }

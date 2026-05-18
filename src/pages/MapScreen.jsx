@@ -73,6 +73,7 @@ export default function MapScreen() {
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
+      setShowSpeedLimits(true);
     },
   });
 
@@ -89,6 +90,8 @@ export default function MapScreen() {
     : (selectedTrip?.driving_events || []);
   const selectedSpeedLimitCoverage = selectedTrip?.speed_limit_context?.coverage ?? 0;
   const selectedHasSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
+  const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
+  const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
   const selectedRiskSegments = useMemo(() => (
     selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
   ), [routeRiskIndex, selectedTrip]);
@@ -344,8 +347,15 @@ export default function MapScreen() {
           </div>
           <div className="grid gap-2 sm:grid-cols-3">
             <button
-              onClick={() => setShowSpeedLimits(value => !value)}
-              disabled={!selectedHasSpeedLimits}
+              onClick={() => {
+                if (!selectedTrip) return;
+                if (!selectedHasSpeedLimits) {
+                  contextMutation.mutate();
+                  return;
+                }
+                setShowSpeedLimits(value => !value);
+              }}
+              disabled={!selectedTrip || contextMutation.isPending}
               className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
                 showSpeedLimits ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-border bg-secondary/40 text-muted-foreground'
               }`}
@@ -355,7 +365,13 @@ export default function MapScreen() {
                 OSM speed limits
               </div>
               <div className="mt-1 font-normal">
-                {selectedHasSpeedLimits ? `${selectedSpeedLimitCoverage}% route coverage` : 'Open a trip detail and refresh context'}
+                {!selectedTrip
+                  ? 'Select a trip first'
+                  : selectedHasSpeedLimits
+                    ? `${selectedSpeedLimitCoverage}% route coverage - tap to toggle layer`
+                    : contextMutation.isPending
+                      ? 'Fetching OSM speed limits and map matching...'
+                      : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to refresh`}
               </div>
             </button>
             <button
@@ -378,6 +394,18 @@ export default function MapScreen() {
               <div className="mt-1 font-normal">{dangerZones.length} local zones</div>
             </button>
           </div>
+          {selectedTrip && (
+            <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
+              <div className="font-semibold text-foreground">What the OSM button does</div>
+              <div className="mt-1">
+                It fetches OpenStreetMap/Overpass speed limits, runs OSRM map matching when enabled, then redraws the selected trip as green/orange/red speed-limit compliance segments.
+              </div>
+              <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
+                <span>Map matching: {selectedMapMatchingStatus.replace(/_/g, ' ')}</span>
+              </div>
+            </div>
+          )}
           {selectedTrip && !selectedHasSpeedLimits && (
             <div className="mt-3 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
               <div>{describeOsmSpeedLimitStatus(selectedTrip.speed_limit_context)}</div>

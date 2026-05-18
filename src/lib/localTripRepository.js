@@ -1,7 +1,7 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
-import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents, simplifyRoute } from '@/lib/tripEngine';
+import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
@@ -189,14 +189,13 @@ const importNativeCompletedTrips = async () => {
       const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
       const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
-      const simplifiedRoutePoints = simplifyRoute(routePoints, 10, drivingEvents);
 
       const importedTrip = {
         ...trip,
         ...stats,
         ...scores,
         co2_saved_kg: economics.co2_saved_kg,
-        route_points: simplifiedRoutePoints,
+        route_points: routePoints,
         route_points_raw_count: routePoints.length,
         driving_events: drivingEvents,
         imported_from_native: true,

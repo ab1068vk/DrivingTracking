@@ -14,7 +14,7 @@ import {
   calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
-  formatDistance, formatDuration, formatSpeed, simplifyRoute
+  formatDistance, formatDuration, formatSpeed
 } from '@/lib/tripEngine';
 import { activeTripStore, getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
@@ -538,7 +538,6 @@ export default function Dashboard() {
     let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime });
     scores = applyWeatherRiskToScores(scores, weatherContext);
     const tripEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
-    const simplifiedPoints = simplifyRoute(pts, 10, tripEvents);
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
     const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
     const sensorFusionSummary = buildSensorFusionSummary(sensorFusionRef.current?.getSamples?.() || [], pts, latestActivityRef.current);
@@ -550,7 +549,7 @@ export default function Dashboard() {
       start_time: tripToEnd.start_time,
       end_time: endTime,
       vehicle_id: completedVehicle?.id || null,
-      route_points: simplifiedPoints,
+      route_points: pts,
       route_points_raw_count: pts.length,
       ...scores,
       driving_events: tripEvents,
