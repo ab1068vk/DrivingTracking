@@ -17,7 +17,7 @@ import {
 import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
-import { speakSafetyAlert } from '@/lib/voiceAlerts';
+import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
@@ -50,12 +50,17 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
   });
 
   const showNext = () => {
-    if (visibleRef.current || queueRef.current.length === 0 || dismissed) return;
+    if (visibleRef.current || queueRef.current.length === 0) return;
     visibleRef.current = true;
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
-    setMessage(normalized);
-    speakSafetyAlert(plainText(normalized.text), localSettings.get()).catch(() => {});
+    const settings = localSettings.get();
+    const voiceText = plainText(normalized.text);
+    const speak = normalized.voiceKey
+      ? speakSafetyAlertOnce(normalized.voiceKey, voiceText, settings, normalized.voiceCooldownMs).catch(() => {})
+      : speakSafetyAlert(voiceText, settings).catch(() => {});
+    void speak;
+    if (!dismissed) setMessage(normalized);
     setTimeout(() => {
       visibleRef.current = false;
       setMessage(null);
@@ -138,7 +143,13 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       } else if (recentNearMiss) nextMessage = 'Near miss detected - increase following distance';
       else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) nextMessage = 'Brake earlier and more gradually';
       else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) nextMessage = 'Open your following gap';
-      else if (latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) nextMessage = "You're above the speed threshold";
+      else if (settings.speed_warning_enabled !== false && latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
+        nextMessage = {
+          text: `Speed warning. ${Math.round(latestSpeed)} kilometers per hour.`,
+          voiceKey: 'speeding',
+          voiceCooldownMs: 60000,
+        };
+      }
       else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) nextMessage = 'Accelerate more smoothly';
       else if ((stats.idle_time_seconds || 0) > 300) nextMessage = 'Extended idling detected';
 
@@ -149,7 +160,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           durationS: latestSpeeding.duration_seconds ?? 0,
         }, settings).catch(() => {});
         if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('speeding', 60000)) {
-          nextMessage = `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`;
+          nextMessage = {
+            text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`,
+            voiceKey: 'speeding',
+            voiceCooldownMs: 60000,
+          };
         }
       }
       if (stats.drowsy_risk_level === 'high' && settings.notif_drowsy_alert_enabled !== false) {

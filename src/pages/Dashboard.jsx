@@ -71,7 +71,7 @@ import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { mapMatchRoute } from '@/lib/mapMatching';
-import { speakSafetyAlert } from '@/lib/voiceAlerts';
+import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 import {
   buildSensorFusionSummary,
   createMotionSensorFusion,
@@ -256,6 +256,20 @@ export default function Dashboard() {
         }
         activeTripStore.addPoint(point);
         const speed = Number(point.speed_kmh) || 0;
+        const speedLimitKmh = Number(point.speed_limit_kmh) || Number(latestSettings.threshold_speeding_kmh) || 100;
+        const speedMarginKmh = Number(latestSettings.threshold_speed_over_kmh ?? 5);
+        if (
+          latestSettings.speed_warning_enabled !== false &&
+          latestSettings.voice_alerts_enabled !== false &&
+          speed > speedLimitKmh + speedMarginKmh
+        ) {
+          speakSafetyAlertOnce(
+            'speeding',
+            `Speed warning. ${Math.round(speed)} kilometers per hour.`,
+            latestSettings,
+            60 * 1000
+          ).catch(() => {});
+        }
         setActiveTrip(prev => {
           if (!prev) return prev;
           const updated = { ...prev, route_points: [...(prev.route_points || []), point] };
