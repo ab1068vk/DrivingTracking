@@ -139,6 +139,7 @@ function samplesForTrip(data, startTime, endTime) {
   const midpointMs = Number.isFinite(startMs) && Number.isFinite(endMs)
     ? startMs + (endMs - startMs) / 2
     : startMs;
+  /** @type {{ time: string, index: number, delta: number } | null} */
   let nearest = null;
   times.forEach((time, index) => {
     const ms = new Date(time).getTime();

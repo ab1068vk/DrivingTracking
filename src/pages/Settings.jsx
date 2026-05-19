@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { toast } from '@/components/ui/use-toast';
 import { applyThemeMode, getLastParkedLocation, localSettings } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds } from '@/lib/tripEngine';
@@ -250,7 +251,11 @@ export default function Settings() {
     if (wantsNotifications) {
       const granted = await requestNotificationPermission();
       if (!granted) {
-        alert(getPermissionExplanation('notifications'));
+        toast({
+          title: 'Notification permission needed',
+          description: getPermissionExplanation('notifications'),
+          variant: 'destructive',
+        });
         await refreshPermissions();
         return;
       }
@@ -267,7 +272,11 @@ export default function Settings() {
   };
 
   const showPrivacyPolicy = () => {
-    alert('Road Sage stores trip, route, score, vehicle, and settings data locally on this device. The app does not upload trips to a cloud service, does not sell data, and does not use ads or analytics. Deleting trips in Settings removes local trip history from this device.');
+    toast({
+      title: 'Privacy and local data',
+      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally on this device. It does not upload trips, sell data, or use ads or analytics.',
+      duration: 9000,
+    });
   };
 
   const updateTrackingPaused = async (paused) => {
@@ -304,14 +313,22 @@ export default function Settings() {
 
     const locationGranted = await requestForegroundLocationPermission();
     if (!locationGranted) {
-      alert(getPermissionExplanation('foregroundLocation'));
+      toast({
+        title: 'Location permission needed',
+        description: getPermissionExplanation('foregroundLocation'),
+        variant: 'destructive',
+      });
       await refreshPermissions();
       return;
     }
 
     const activityGranted = !isAndroid() || await requestActivityRecognitionPermission();
     if (!activityGranted) {
-      alert(getPermissionExplanation('activityRecognition'));
+      toast({
+        title: 'Activity permission needed',
+        description: getPermissionExplanation('activityRecognition'),
+        variant: 'destructive',
+      });
       await refreshPermissions();
       return;
     }
@@ -319,7 +336,12 @@ export default function Settings() {
     if (mode === 'background_auto') {
       const backgroundGranted = await requestBackgroundLocationPermission();
       if (!backgroundGranted) {
-        alert('Android requires Location permission set to "Allow all the time" for background auto tracking. In the app settings screen that opened, tap Permissions > Location > Allow all the time, then return to Road Sage and turn Background Tracking on again.');
+        toast({
+          title: 'Background location needed',
+          description: 'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.',
+          variant: 'destructive',
+          duration: 9000,
+        });
         await refreshPermissions();
         return;
       }
@@ -328,7 +350,11 @@ export default function Settings() {
         try {
           await startNativeAutoTracking();
         } catch (error) {
-          alert(error.message || 'Could not start native background auto tracking. Check Location, Physical Activity, Notifications, and Battery Optimization settings.');
+          toast({
+            title: 'Background tracking could not start',
+            description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
+            variant: 'destructive',
+          });
           await refreshPermissions();
           return;
         }
@@ -369,7 +395,11 @@ export default function Settings() {
 
   const savePrivacyZone = (location, sourceLabel) => {
     if (!location?.lat || !location?.lng) {
-      alert('No location is available for that privacy zone yet.');
+      toast({
+        title: 'No location available',
+        description: 'Try again after Road Sage has a current or parked location.',
+        variant: 'destructive',
+      });
       return;
     }
     const updated = upsertPrivacyZone({
@@ -388,7 +418,11 @@ export default function Settings() {
       const location = await getCurrentLocation();
       savePrivacyZone(location, 'Current location');
     } catch (error) {
-      alert(error.message || 'Could not get current location.');
+      toast({
+        title: 'Could not get current location',
+        description: error.message || 'Check location permission and GPS availability.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -429,14 +463,24 @@ export default function Settings() {
       await openAndroidBatteryOptimizationSettings();
       await refreshPermissions();
     } catch {
-      alert('Could not open the Android battery optimization screen. Open Android Settings > Apps > Road Sage > Battery and choose Unrestricted.');
+      toast({
+        title: 'Battery settings unavailable',
+        description: 'Open Android Settings > Apps > Road Sage > Battery and choose Unrestricted.',
+        variant: 'destructive',
+      });
     }
   };
 
   const handleMotionPermission = async () => {
     const granted = await requestMotionSensorPermission();
     await refreshPermissions();
-    if (!granted) alert(getPermissionExplanation('motionSensors'));
+    if (!granted) {
+      toast({
+        title: 'Motion permission needed',
+        description: getPermissionExplanation('motionSensors'),
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleObdPairing = async () => {
@@ -460,14 +504,22 @@ export default function Settings() {
       await tripService.delete(t.id);
     }
     qc.invalidateQueries();
-    alert('All trips deleted.');
+    toast({
+      title: 'Trips deleted',
+      description: 'All local trip history was removed from this device.',
+    });
   };
 
   const handleExportAll = async () => {
     const completed = allTrips.filter(t => t.status === 'completed');
     const csv = tripsToCSV(completed);
     const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
-    if (result?.native) alert(`Export saved to Downloads as ${result.filename}.`);
+    toast({
+      title: 'Export saved',
+      description: result?.native
+        ? `${result.filename} was saved to Downloads.`
+        : `${result?.filename || 'Trip CSV'} is downloading.`,
+    });
   };
 
   const handleExportBackup = async () => {
@@ -476,7 +528,12 @@ export default function Settings() {
       vehicles: allVehicles,
       settings: cfg,
     });
-    if (result?.native) alert(`Full backup saved to Downloads as ${result.filename}.`);
+    toast({
+      title: 'Backup saved',
+      description: result?.native
+        ? `${result.filename} was saved to Downloads.`
+        : `${result?.filename || 'Road Sage backup'} is downloading.`,
+    });
   };
 
   const handleImportBackup = async (event) => {
@@ -490,9 +547,16 @@ export default function Settings() {
       setCfg(localSettings.get());
       applyThemeMode(localSettings.get().dark_mode);
       await qc.invalidateQueries();
-      alert(`Import complete: ${result.trips} trips and ${result.vehicles} vehicles merged.`);
+      toast({
+        title: 'Import complete',
+        description: `${result.trips} trips and ${result.vehicles} vehicles merged.`,
+      });
     } catch (error) {
-      alert(error.message || 'Could not import backup.');
+      toast({
+        title: 'Could not import backup',
+        description: error.message || 'Make sure the file is a Road Sage backup JSON file.',
+        variant: 'destructive',
+      });
     }
   };
 

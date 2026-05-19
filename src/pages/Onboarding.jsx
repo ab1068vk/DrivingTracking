@@ -311,7 +311,7 @@ export default function Onboarding({ onComplete }) {
             <div className="space-y-3 mb-6">
               <button
                 type="button"
-                onClick={handleRecommendedSetup}
+                onClick={() => handleRecommendedSetup()}
                 disabled={requesting}
                 className="w-full rounded-2xl border border-primary/30 bg-primary/10 p-3 text-left text-sm font-semibold text-primary disabled:opacity-50"
               >

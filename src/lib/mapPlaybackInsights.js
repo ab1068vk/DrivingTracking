@@ -93,6 +93,7 @@ const segmentSpeed = (prev, curr, distanceKm, durationSeconds) => {
 
 const collectStops = (segments = []) => {
   const stops = [];
+  /** @type {{ startIndex: number, endIndex: number, durationSeconds: number, distanceKm: number } | null} */
   let active = null;
   segments.forEach((segment) => {
     if (segment.speedKmh <= IDLE_SPEED_KMH) {

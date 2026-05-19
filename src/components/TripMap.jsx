@@ -131,8 +131,11 @@ const routeTelemetry = (points = []) => {
 };
 
 const detectStops = (points = []) => {
+  /** @type {Array<Record<string, any> & { durationSeconds: number }>} */
   const stops = [];
+  /** @type {Record<string, any> | null} */
   let start = null;
+  /** @type {Record<string, any> | null} */
   let last = null;
 
   points.forEach((point) => {
