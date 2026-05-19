@@ -290,6 +290,7 @@ export default function TripMap({
   const [ready, setReady] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
+  const [tileErrorCount, setTileErrorCount] = useState(0);
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
 
@@ -328,7 +329,9 @@ export default function TripMap({
       tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
         attribution: tileConfig.attribution,
         maxZoom: tileConfig.maxZoom,
-      }).addTo(map);
+      })
+        .on('tileerror', () => setTileErrorCount((count) => count + 1))
+        .addTo(map);
 
       layersRef.current = window.L.layerGroup().addTo(map);
       map.setView(TORONTO_CENTER, 12);
@@ -355,12 +358,19 @@ export default function TripMap({
     if (!ready || !map || !window.L || !tileLayerRef.current) return;
 
     const tileConfig = TILE_STYLES[tileStyle] || TILE_STYLES.standard;
+    setTileErrorCount(0);
     map.removeLayer(tileLayerRef.current);
     tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
       attribution: tileConfig.attribution,
       maxZoom: tileConfig.maxZoom,
-    }).addTo(map);
+    })
+      .on('tileerror', () => setTileErrorCount((count) => count + 1))
+      .addTo(map);
   }, [ready, tileStyle]);
+
+  useEffect(() => {
+    if (tileErrorCount >= 4) setMapFailed(true);
+  }, [tileErrorCount]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -853,7 +863,7 @@ function OfflineRoutePreview({ routePoints = [], routes = null, events = [], hei
         })}
       </svg>
       <div className="pointer-events-none absolute inset-x-3 bottom-3 rounded-xl bg-background/85 px-3 py-2 text-xs font-medium text-muted-foreground shadow-sm">
-        Offline route preview
+        Offline route preview - map tiles unavailable
       </div>
     </div>
   );

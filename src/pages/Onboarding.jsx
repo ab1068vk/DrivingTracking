@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Car, MapPin, Activity, Bell, Shield, ChevronRight, Check, AlertCircle } from 'lucide-react';
+import { Activity, Bell, Car, Check, ChevronRight, Globe2, MapPin, Play, Search, Shield } from 'lucide-react';
 import { localSettings } from '@/lib/trackingStore';
 import {
+  getPermissionStatus,
   requestActivityRecognitionPermission,
   requestBackgroundLocationPermission,
   requestForegroundLocationPermission,
@@ -68,25 +69,51 @@ const TRACKING_OPTIONS = [
     id: 'manual',
     title: 'Manual Only',
     description: 'Tap "Start Trip" to begin tracking. No background activity.',
-    icon: '🕹️',
+    icon: Play,
     recommended: false,
   },
   {
     id: 'auto_detect',
     title: 'Auto-Detect',
     description: 'App detects when you start driving while open in foreground.',
-    icon: '🔍',
+    icon: Search,
     recommended: true,
   },
   {
     id: 'background_auto',
     title: 'Background Auto',
     description: 'Tracks trips automatically, even when app is closed. Uses more battery.',
-    icon: '🌐',
+    icon: Globe2,
     recommended: false,
     warning: 'Uses more battery. Requires background location permission.',
   },
 ];
+
+function SetupChecklistRow({ label, detail, ready, onAction, actionLabel = 'Set up', disabled = false }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
+      <div className="min-w-0">
+        <div className="text-sm font-semibold">{label}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{detail}</div>
+      </div>
+      {ready ? (
+        <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <Check className="h-3 w-3" />
+          Ready
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={onAction}
+          disabled={disabled}
+          className="flex-shrink-0 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(0);
@@ -95,6 +122,8 @@ export default function Onboarding({ onComplete }) {
   const [motionGranted, setMotionGranted] = useState(getMotionSensorSupport().status === 'granted');
   const [activityGranted, setActivityGranted] = useState(false);
   const [notificationsGranted, setNotificationsGranted] = useState(false);
+  const [backgroundGranted, setBackgroundGranted] = useState(false);
+  const [usageAccessGranted, setUsageAccessGranted] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [setupStatus, setSetupStatus] = useState('');
   const navigate = useNavigate();
@@ -102,11 +131,23 @@ export default function Onboarding({ onComplete }) {
   const currentStep = STEPS[step];
   const isLast = step === STEPS.length - 1;
 
+  const refreshSetupStatus = async () => {
+    const status = await getPermissionStatus();
+    setLocationGranted(status.foregroundLocation === 'granted');
+    setNotificationsGranted(status.notifications === 'granted');
+    setMotionGranted(status.motionSensors === 'granted');
+    setActivityGranted(!isAndroid() || status.activityRecognition === 'granted');
+    setBackgroundGranted(!isAndroid() || status.backgroundLocation === 'granted');
+    setUsageAccessGranted(!isAndroid() || status.phoneUsageAccess === 'granted');
+    return status;
+  };
+
   const handleLocationRequest = async () => {
     setRequesting(true);
     const granted = await requestForegroundLocationPermission();
     setLocationGranted(granted);
     localSettings.update({ location_permission_granted: granted });
+    await refreshSetupStatus().catch(() => {});
     setRequesting(false);
   };
 
@@ -117,6 +158,7 @@ export default function Onboarding({ onComplete }) {
     setMotionGranted(motionOk);
     setActivityGranted(activityOk);
     localSettings.update({ activity_permission_granted: activityOk });
+    await refreshSetupStatus().catch(() => {});
     setRequesting(false);
   };
 
@@ -125,6 +167,15 @@ export default function Onboarding({ onComplete }) {
     const granted = await requestNotificationPermission();
     setNotificationsGranted(granted);
     localSettings.update({ notification_permission_granted: granted });
+    await refreshSetupStatus().catch(() => {});
+    setRequesting(false);
+  };
+
+  const handleBackgroundLocationRequest = async () => {
+    setRequesting(true);
+    const granted = await requestBackgroundLocationPermission();
+    setBackgroundGranted(granted);
+    await refreshSetupStatus().catch(() => {});
     setRequesting(false);
   };
 
@@ -151,12 +202,9 @@ export default function Onboarding({ onComplete }) {
     const recommendedMode = isAndroid() ? 'background_auto' : 'auto_detect';
     setTrackingMode(recommendedMode);
     await requestTrackingModePermissions(recommendedMode);
-    setLocationGranted(localSettings.get().location_permission_granted === true);
-    setNotificationsGranted(localSettings.get().notification_permission_granted === true);
-    setMotionGranted(getMotionSensorSupport().status === 'granted');
-    setActivityGranted(!isAndroid() || localSettings.get().activity_permission_granted === true);
+    await refreshSetupStatus().catch(() => {});
     setSetupStatus(isAndroid()
-      ? 'Core prompts complete. Phone Usage Access opens in Android Settings because Android does not allow an in-app prompt.'
+      ? 'Core prompts complete. Finish any Android settings rows that still show setup.'
       : 'Core prompts complete.');
     setRequesting(false);
     if (autoOpenUsageAccess && isAndroid()) {
@@ -173,6 +221,20 @@ export default function Onboarding({ onComplete }) {
       });
     }, 700);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    refreshSetupStatus().catch(() => {});
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshSetupStatus().catch(() => {});
+    };
+    const onFocus = () => refreshSetupStatus().catch(() => {});
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   const handleNext = async () => {
@@ -329,6 +391,9 @@ export default function Onboarding({ onComplete }) {
                 </button>
               )}
               {TRACKING_OPTIONS.map(opt => (
+                (() => {
+                  const OptionIcon = opt.icon;
+                  return (
                 <button
                   key={opt.id}
                   onClick={() => setTrackingMode(opt.id)}
@@ -339,7 +404,9 @@ export default function Onboarding({ onComplete }) {
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    <span className="text-2xl">{opt.icon}</span>
+                    <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-secondary">
+                      <OptionIcon className="h-4 w-4 text-primary" />
+                    </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-sm">{opt.title}</span>
@@ -352,7 +419,6 @@ export default function Onboarding({ onComplete }) {
                       <p className="text-xs text-muted-foreground mt-0.5">{opt.description}</p>
                       {opt.warning && (
                         <div className="flex items-center gap-1 mt-1 text-xs text-orange-500">
-                          <AlertCircle className="w-3 h-3" />
                           {opt.warning}
                         </div>
                       )}
@@ -362,7 +428,52 @@ export default function Onboarding({ onComplete }) {
                     )}
                   </div>
                 </button>
+                  );
+                })()
               ))}
+              <div className="space-y-2 rounded-2xl bg-secondary/40 p-3">
+                <div className="text-xs font-bold uppercase tracking-normal text-muted-foreground">Setup checklist</div>
+                <SetupChecklistRow
+                  label="Location"
+                  detail="Required for routes, speed, distance, and parking."
+                  ready={locationGranted}
+                  onAction={handleLocationRequest}
+                  disabled={requesting}
+                />
+                <SetupChecklistRow
+                  label="Motion and activity"
+                  detail={isAndroid() ? 'Confirms driving and powers Android auto detection.' : 'Improves movement and incident detection where available.'}
+                  ready={motionGranted && activityGranted}
+                  onAction={handleMotionActivityRequest}
+                  disabled={requesting}
+                />
+                <SetupChecklistRow
+                  label="Notifications"
+                  detail="Shows trip, safety, reminder, and report updates."
+                  ready={notificationsGranted}
+                  onAction={handleNotificationRequest}
+                  disabled={requesting}
+                />
+                {isAndroid() && trackingMode === 'background_auto' && (
+                  <SetupChecklistRow
+                    label="Background location"
+                    detail="Needed for automatic trip capture while the app sleeps."
+                    ready={backgroundGranted}
+                    onAction={handleBackgroundLocationRequest}
+                    disabled={requesting}
+                  />
+                )}
+                {isAndroid() && (
+                  <SetupChecklistRow
+                    label="Phone Usage Access"
+                    detail="Optional, but makes phone-use detection measured instead of inferred."
+                    ready={usageAccessGranted}
+                    onAction={() => openAndroidUsageAccessSettings().then(() => refreshSetupStatus()).catch(() => {})}
+                    actionLabel="Open"
+                    disabled={requesting}
+                  />
+                )}
+              </div>
             </div>
           )}
         </motion.div>

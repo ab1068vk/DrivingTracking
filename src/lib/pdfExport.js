@@ -50,6 +50,48 @@ function mostImprovedWeek(trips = []) {
   return best ? `${best.key} (${best.delta >= 0 ? '+' : ''}${Math.round(best.delta)} pts)` : 'Not enough weekly history';
 }
 
+function drawHorizontalBars(doc, title, rows, startY, options = {}) {
+  const maxValue = Math.max(1, ...rows.map((row) => Number(row.value) || 0));
+  const barWidth = options.barWidth || 86;
+  const barX = options.barX || 78;
+  let y = startY;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(title, 14, y);
+  y += 10;
+  doc.setFontSize(8);
+  rows.forEach((row) => {
+    const value = Number(row.value) || 0;
+    const width = Math.max(1, (value / maxValue) * barWidth);
+    const color = row.color || [59, 130, 246];
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40);
+    doc.text(String(row.label), 14, y + 3, { maxWidth: barX - 18 });
+    doc.setDrawColor(230);
+    doc.setFillColor(245, 245, 245);
+    doc.roundedRect(barX, y - 2, barWidth, 5, 1, 1, 'FD');
+    doc.setFillColor(color[0], color[1], color[2]);
+    doc.roundedRect(barX, y - 2, width, 5, 1, 1, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(row.display ?? value), barX + barWidth + 5, y + 3);
+    y += 9;
+  });
+  doc.setTextColor(0);
+  return y;
+}
+
+function recentTripTrendRows(trips = []) {
+  return [...trips]
+    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+    .slice(-8)
+    .map((trip) => ({
+      label: formatDate(trip.start_time),
+      value: Number(trip.score_overall) || 0,
+      display: `${Math.round(Number(trip.score_overall) || 0)} score`,
+      color: (trip.score_overall || 0) >= 80 ? [34, 197, 94] : (trip.score_overall || 0) >= 60 ? [234, 179, 8] : [239, 68, 68],
+    }));
+}
+
 export async function exportMonthlyReportPDF(trips = [], period = 'month', settings = {}) {
   const tripList = Array.isArray(trips) ? trips : [];
   const doc = new jsPDF();
@@ -80,7 +122,10 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
     doc.text(String(value), 70, y);
     y += 10;
   });
-  doc.text('Full charts available in the app under Reports.', 14, 120);
+  const trendRows = recentTripTrendRows(tripList);
+  if (trendRows.length) {
+    drawHorizontalBars(doc, 'Recent Score Trend', trendRows, 112, { barWidth: 72, barX: 72 });
+  }
 
   doc.addPage();
   doc.setFont('helvetica', 'bold');
@@ -129,7 +174,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   const summaryRows = [
     ['Best trip', summary.best_trip ? `${formatDate(summary.best_trip.start_time)} (${summary.best_trip.score_overall})` : 'None'],
     ['Worst trip', summary.worst_trip ? `${formatDate(summary.worst_trip.start_time)} (${summary.worst_trip.score_overall})` : 'None'],
-    ['Longest trip', sortedByDistance[0] ? `${formatDate(sortedByDistance[0].start_time)} · ${formatDistance(sortedByDistance[0].distance_km ?? 0, settings.units)}` : 'None'],
+    ['Longest trip', sortedByDistance[0] ? `${formatDate(sortedByDistance[0].start_time)} - ${formatDistance(sortedByDistance[0].distance_km ?? 0, settings.units)}` : 'None'],
     ['Most improved week', mostImprovedWeek(tripList)],
     ['Total estimated fuel cost', `$${economics.cost.toFixed(2)}`],
     ['Total CO2', `${economics.co2.toFixed(1)} kg`],
@@ -143,7 +188,13 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
     doc.text(String(value), 76, y, { maxWidth: 110 });
     y += 12;
   });
-  doc.text('Full charts available in the app under Reports.', 14, y + 10);
+  const riskRows = [
+    { label: 'Harsh brakes', value: summary.total_harsh_brakes || 0, color: [239, 68, 68] },
+    { label: 'Rapid acceleration', value: summary.total_rapid_accels || 0, color: [245, 158, 11] },
+    { label: 'Sharp turns', value: summary.total_sharp_turns || 0, color: [59, 130, 246] },
+    { label: 'Speeding', value: summary.total_speeding_events || 0, color: [249, 115, 22] },
+  ];
+  drawHorizontalBars(doc, 'Risk Event Breakdown', riskRows, y + 12, { barWidth: 82, barX: 78 });
 
   if (isNativePlatform()) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
@@ -182,7 +233,7 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.setFontSize(12);
   doc.text('/ 100', 111, 70);
   doc.setFontSize(14);
-  doc.text(`${ubiReport.ubiGrade} · ${ubiReport.ubiTier}`, 92, 82, { align: 'center' });
+  doc.text(`${ubiReport.ubiGrade} - ${ubiReport.ubiTier}`, 92, 82, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   const hours = Math.floor((ubiReport.totalDrivingMinutes || 0) / 60);

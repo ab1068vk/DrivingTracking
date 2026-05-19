@@ -1328,6 +1328,14 @@ export default function TripDetail() {
                 : evt.type === 'phone_use'
                   ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
                   : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
+              const inferredTypes = ['lane_change', 'tailgate_cycle', 'erratic_speed', 'phone_use', 'near_miss', 'aggressive_overtake'];
+              const confidenceText = evt.source === 'android_usage_access'
+                ? 'Measured phone activity'
+                : evt.type === 'speeding' && evt.speed_limit_source
+                  ? `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
+                  : inferredTypes.includes(evt.type)
+                    ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
+                    : 'Measured from GPS motion';
               return (
                 <div key={i} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                   <div className="flex items-center gap-2.5">
@@ -1337,6 +1345,7 @@ export default function TripDetail() {
                       <div className="text-xs text-muted-foreground">
                         {new Date(evt.timestamp).toLocaleTimeString()} - {eventValueText}
                       </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
                     </div>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize

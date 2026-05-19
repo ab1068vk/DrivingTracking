@@ -809,6 +809,58 @@ export default function Dashboard() {
   })();
 
   const units = settings.units || 'metric';
+  const trackingReadiness = (() => {
+    const mode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+    const checks = [
+      {
+        label: 'Tracking mode',
+        ready: mode !== 'paused',
+        detail: mode === 'paused'
+          ? 'All tracking is paused in Settings.'
+          : mode === 'manual'
+            ? 'Manual start is available.'
+            : mode === 'background_auto'
+              ? 'Background auto is selected.'
+              : 'Foreground auto-detect is selected.',
+      },
+      {
+        label: 'Location',
+        ready: mode === 'manual' || settings.location_permission_granted === true,
+        detail: settings.location_permission_granted ? 'Location permission is recorded as granted.' : 'Location permission is needed before automatic tracking can start.',
+      },
+      {
+        label: 'Activity',
+        ready: !isAndroid() || mode === 'manual' || settings.activity_permission_granted === true,
+        detail: isAndroid()
+          ? settings.activity_permission_granted ? 'Physical Activity is ready.' : 'Physical Activity helps auto tracking tell driving from walking or still time.'
+          : 'Activity permission is not required on this platform.',
+      },
+      {
+        label: 'Background',
+        ready: mode !== 'background_auto' || settings.background_location_granted === true,
+        detail: mode === 'background_auto'
+          ? settings.background_location_granted ? 'Background location is ready.' : 'Allow all-the-time location for background auto tracking.'
+          : 'Background location is not needed for this mode.',
+      },
+      {
+        label: 'Notifications',
+        ready: mode !== 'background_auto' || settings.notification_permission_granted === true,
+        detail: mode === 'background_auto'
+          ? settings.notification_permission_granted ? 'Foreground service notifications are ready.' : 'Android background tracking needs notifications for its persistent status.'
+          : 'Notifications improve trip summaries and safety alerts.',
+      },
+    ];
+    const blockers = checks.filter((item) => !item.ready);
+    return {
+      mode,
+      checks,
+      ready: blockers.length === 0,
+      headline: blockers.length === 0 ? 'Tracking is ready' : `${blockers.length} tracking setup item${blockers.length === 1 ? '' : 's'} need attention`,
+      detail: blockers.length === 0
+        ? mode === 'manual' ? 'Manual trips can start anytime.' : 'Auto tracking has the recorded permissions it needs.'
+        : blockers[0].detail,
+    };
+  })();
 
   return (
     <div className="space-y-6 pb-4">
@@ -837,6 +889,37 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {!tracking && (
+        <div className={`rounded-3xl border p-4 shadow-sm ${
+          trackingReadiness.ready
+            ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20'
+            : 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20'
+        }`}>
+          <div className="flex items-start gap-3">
+            {trackingReadiness.ready ? (
+              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-600 dark:text-emerald-300" />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-300" />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold">{trackingReadiness.headline}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{trackingReadiness.detail}</div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                {trackingReadiness.checks.map((item) => (
+                  <div key={item.label} className="rounded-xl bg-background/60 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold">{item.label}</span>
+                      <span className={`h-2 w-2 rounded-full ${item.ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(brakingImprovement || parkingReminder) && (
         <div className="grid gap-3 md:grid-cols-2">

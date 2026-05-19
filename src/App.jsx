@@ -6,7 +6,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
@@ -14,21 +14,34 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { Route as RouteIcon } from 'lucide-react';
 
-// Page imports
 import Layout from '@/components/Layout';
-import Onboarding from '@/pages/Onboarding';
-import Dashboard from '@/pages/Dashboard';
-import TripHistory from '@/pages/TripHistory';
-import TripDetail from '@/pages/TripDetail';
-import MapScreen from '@/pages/MapScreen';
-import Reports from '@/pages/Report';
-import Settings from '@/pages/Settings';
-import AndroidReference from '@/pages/AndroidReference';
-import Vehicles from '@/pages/Vehicles';
-import Achievements from '@/pages/Achievements';
-import DrivingCoach from '@/pages/DrivingCoach';
-import Diagnostics from '@/pages/Diagnostics';
-import Insights from '@/pages/Insights';
+
+const Onboarding = lazy(() => import('@/pages/Onboarding'));
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const TripHistory = lazy(() => import('@/pages/TripHistory'));
+const TripDetail = lazy(() => import('@/pages/TripDetail'));
+const MapScreen = lazy(() => import('@/pages/MapScreen'));
+const Reports = lazy(() => import('@/pages/Report'));
+const Settings = lazy(() => import('@/pages/Settings'));
+const AndroidReference = lazy(() => import('@/pages/AndroidReference'));
+const Vehicles = lazy(() => import('@/pages/Vehicles'));
+const Achievements = lazy(() => import('@/pages/Achievements'));
+const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
+const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
+const Insights = lazy(() => import('@/pages/Insights'));
+
+function AppLoading() {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-500 via-cyan-500 to-slate-900 flex items-center justify-center shadow-lg animate-pulse">
+          <RouteIcon className="h-6 w-6 text-white" />
+        </div>
+        <div className="text-muted-foreground text-sm">Loading Road Sage...</div>
+      </div>
+    </div>
+  );
+}
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -68,16 +81,7 @@ const AuthenticatedApp = () => {
   }, [navigate]);
 
   if (isLoadingPublicSettings || isLoadingAuth || onboardingDone === null) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-500 via-cyan-500 to-slate-900 flex items-center justify-center shadow-lg animate-pulse">
-            <RouteIcon className="h-6 w-6 text-white" />
-          </div>
-          <div className="text-muted-foreground text-sm">Loading Road Sage...</div>
-        </div>
-      </div>
-    );
+    return <AppLoading />;
   }
 
   if (authError) {
@@ -87,8 +91,9 @@ const AuthenticatedApp = () => {
   }
 
   return (
+    <Suspense fallback={<AppLoading />}>
     <Routes>
-      {/* Onboarding (no layout) — only shown to new users */}
+      {/* Onboarding (no layout) - only shown to new users */}
       {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
 
       {/* Main App with shared Layout */}
@@ -109,6 +114,7 @@ const AuthenticatedApp = () => {
 
       <Route path="*" element={<PageNotFound />} />
     </Routes>
+    </Suspense>
   );
 };
 

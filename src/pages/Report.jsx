@@ -677,7 +677,7 @@ export default function Reports() {
             transition={{ delay: 0.28 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
-            <h2 className="font-semibold mb-1">Event Trends — Last 6 Months</h2>
+            <h2 className="font-semibold mb-1">Event Trends - Last 6 Months</h2>
             <p className="text-xs text-muted-foreground mb-4">Harsh braking vs rapid acceleration per month</p>
             <ResponsiveContainer width="100%" height={170}>
               <BarChart data={eventTrendData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barGap={2}>
@@ -686,7 +686,7 @@ export default function Reports() {
                 <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} allowDecimals={false} />
                 <Tooltip
                   contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [v, name === 'harshBrakes' ? '🛑 Harsh Brakes' : '⚡ Rapid Accels']}
+                  formatter={(v, name) => [v, name === 'harshBrakes' ? 'Harsh Brakes' : 'Rapid Accels']}
                 />
                 <Bar dataKey="harshBrakes" fill="#ef4444" radius={[4, 4, 0, 0]} name="harshBrakes" />
                 <Bar dataKey="rapidAccels" fill="#f59e0b" radius={[4, 4, 0, 0]} name="rapidAccels" />
@@ -736,7 +736,7 @@ export default function Reports() {
             {summary.most_common_risk && (
               <div className="mt-4 p-3 bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800/40 rounded-xl text-sm">
                 <div className="text-orange-600 dark:text-orange-400 font-medium">
-                  ⚠️ Most common risk: {riskLabels[summary.most_common_risk]}
+                  Most common risk: {riskLabels[summary.most_common_risk]}
                 </div>
                 <div className="text-orange-500 dark:text-orange-500/80 text-xs mt-0.5">
                   Focus on improving this for a better score

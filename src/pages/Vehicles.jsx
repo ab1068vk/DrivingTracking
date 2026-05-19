@@ -7,8 +7,27 @@ import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, Aler
 import VehicleCompare from '@/components/VehicleCompare';
 import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
+import { toast } from '@/components/ui/use-toast';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+
+function validateVehicleForm(form) {
+  const errors = [];
+  const year = Number(form.year);
+  const currentYear = new Date().getFullYear() + 1;
+  const odometer = Number(form.odometer_km);
+  const efficiency = Number(form.fuel_efficiency_l_per_100km);
+  const fuelPrice = Number(form.fuel_price_per_liter);
+  const reserve = Number(form.maintenance_reserve_per_km);
+
+  if (!String(form.name || '').trim()) errors.push('Nickname is required.');
+  if (form.year && (!Number.isInteger(year) || year < 1900 || year > currentYear)) errors.push(`Year must be between 1900 and ${currentYear}.`);
+  if (!Number.isFinite(odometer) || odometer < 0) errors.push('Odometer must be zero or higher.');
+  if (!Number.isFinite(efficiency) || efficiency <= 0 || efficiency > 40) errors.push('Fuel efficiency must be between 0 and 40 L/100km.');
+  if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > 10) errors.push('Fuel price must be between 0 and 10.');
+  if (!Number.isFinite(reserve) || reserve < 0 || reserve > 5) errors.push('Maintenance reserve must be between 0 and 5 per km.');
+  return errors;
+}
 
 function VehicleForm({ initial = {}, onSave, onCancel }) {
   const [form, setForm] = useState({
@@ -27,6 +46,8 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
     ...initial,
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const errors = validateVehicleForm(form);
+  const canSave = errors.length === 0;
 
   return (
     <div className="bg-secondary/50 rounded-2xl p-4 space-y-3">
@@ -101,19 +122,24 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
           ))}
         </div>
       </div>
+      {errors.length > 0 && (
+        <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-300">
+          {errors[0]}
+        </div>
+      )}
       <div className="flex gap-2">
         <button onClick={onCancel} className="flex-1 py-2 border border-border rounded-xl text-sm font-medium hover:bg-secondary transition-colors flex items-center justify-center gap-1.5">
           <X className="w-3.5 h-3.5" /> Cancel
         </button>
         <button
-          onClick={() => form.name.trim() && onSave({
+          onClick={() => canSave && onSave({
             ...form,
             odometer_km: Number(form.odometer_km) || 0,
             fuel_efficiency_l_per_100km: Number(form.fuel_efficiency_l_per_100km) || 8.5,
             fuel_price_per_liter: Number(form.fuel_price_per_liter) || 1.65,
             maintenance_reserve_per_km: Number(form.maintenance_reserve_per_km) || 0.08,
           })}
-          disabled={!form.name.trim()}
+          disabled={!canSave}
           className="flex-1 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-40"
         >
           <Check className="w-3.5 h-3.5" /> Save
@@ -152,8 +178,16 @@ export default function Vehicles() {
 
   const deleteMut = useMutation({
     mutationFn: (/** @type {any} */ id) => vehicleService.delete(id),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      toast({ title: 'Vehicle deleted', description: 'Vehicle stats were removed. Existing trips are kept.' });
+    },
   });
+
+  const handleDeleteVehicle = (vehicle) => {
+    if (!confirm(`Delete ${vehicle.name || 'this vehicle'}? Existing trips will stay in history, but this vehicle profile will be removed.`)) return;
+    deleteMut.mutate(vehicle.id);
+  };
 
   const handleSetDefault = async (id) => {
     for (const v of vehicles) {
@@ -305,7 +339,7 @@ export default function Vehicles() {
                         </span>
                         {v.is_default && (
                           <span className="text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-600 border border-amber-200 dark:border-amber-800/50 px-1.5 py-0.5 rounded-full">
-                            ★ Default
+                            Default
                           </span>
                         )}
                       </div>
@@ -331,7 +365,7 @@ export default function Vehicles() {
                         className="p-1.5 text-muted-foreground hover:bg-secondary rounded-lg transition-colors">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => deleteMut.mutate(v.id)}
+                      <button onClick={() => handleDeleteVehicle(v)}
                         className="p-1.5 text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
