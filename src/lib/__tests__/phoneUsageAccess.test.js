@@ -33,6 +33,35 @@ describe('Android phone usage access merge', () => {
     expect(usage.phone_use_events[0].lat).toBeDefined();
   });
 
+  it('ignores passive navigation and stale usage sessions', () => {
+    const routePoints = Array.from({ length: 40 }, (_, index) => routePoint(index));
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [
+        { package_name: 'com.google.android.apps.maps', start_ms: baseTime + 5_000, end_ms: baseTime + 25_000, duration_seconds: 20 },
+        { package_name: 'com.chat.app', start_ms: baseTime + 5 * 60_000, end_ms: baseTime + 5 * 60_000 + 20_000, duration_seconds: 20 },
+      ],
+    }, routePoints, 120);
+
+    expect(usage.phone_use_window_count).toBe(0);
+    expect(usage.phone_use_risk).toBe('none');
+  });
+
+  it('requires Android usage to overlap moving trip points', () => {
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [{
+        package_name: 'com.chat.app',
+        start_ms: baseTime + 5_000,
+        end_ms: baseTime + 25_000,
+        duration_seconds: 20,
+      }],
+    }, Array.from({ length: 40 }, (_, index) => routePoint(index, 0)), 120);
+
+    expect(usage.phone_use_window_count).toBe(0);
+    expect(usage.phone_use_score).toBe(100);
+  });
+
   it('keeps the higher risk and lower score when GPS and usage access are combined', () => {
     const gps = {
       phone_use_events: [],

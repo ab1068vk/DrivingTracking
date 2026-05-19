@@ -950,7 +950,7 @@ public class DriveSenseAutoTrackingService extends Service {
         if (latest == null) return;
         long startMs = latest.optLong("start_ms", 0L);
         long durationSeconds = latest.optLong("duration_seconds", 0L);
-        if (startMs <= lastNativePhoneWindowMs || durationSeconds < 2L) return;
+        if (startMs <= lastNativePhoneWindowMs || durationSeconds < 5L || lastKnownSpeedKmh < 15d) return;
 
         lastNativePhoneWindowMs = startMs;
         nativeMicroSteerCount++;

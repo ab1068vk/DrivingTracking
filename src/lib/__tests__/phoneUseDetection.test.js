@@ -49,6 +49,25 @@ describe('phone use detection', () => {
     expect(result.phone_use_events).toEqual([]);
   });
 
+  it('does not flag secondary drift signals without primary phone evidence', () => {
+    const points = Array.from({ length: 24 }, (_, index) => ({
+      lat: 43.65 + index * 0.00012,
+      lng: -79.38 + Math.sin(index / 5) * 0.00006,
+      speed_kmh: 58 + Math.sin(index / 3) * 7,
+      timestamp: new Date(baseTime + index * 1000).toISOString(),
+    }));
+    const result = detectPhoneUseWindows(points, {
+      ...DEFAULT_THRESHOLDS,
+      PHONE_MICRO_STEER_COUNT: 99,
+      PHONE_LANE_DRIFT_DEG: 2,
+      PHONE_COUPLING_THRESHOLD: 0.9,
+      PHONE_CONFIDENCE_THRESHOLD: 0.05,
+    });
+
+    expect(result.phone_use_events).toEqual([]);
+    expect(result.phone_use_risk).toBe('none');
+  });
+
   it('detects injected micro-steer oscillations', () => {
     const result = detectPhoneUseWindows(oscillationBlock(0), {
       ...DEFAULT_THRESHOLDS,

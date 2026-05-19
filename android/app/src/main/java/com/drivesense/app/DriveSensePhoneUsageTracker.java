@@ -12,7 +12,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 class DriveSensePhoneUsageTracker {
-    private static final long MIN_SESSION_MS = 2_000L;
+    private static final long MIN_SESSION_MS = 5_000L;
     private static final long MERGE_GAP_MS = 10_000L;
     private static final long MAX_SESSION_MS = 30 * 60_000L;
 
@@ -54,7 +54,7 @@ class DriveSensePhoneUsageTracker {
         while (usageEvents != null && usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event);
             String packageName = event.getPackageName();
-            if (packageName == null || packageName.equals(ownPackage)) continue;
+            if (isIgnoredPackage(packageName, ownPackage)) continue;
 
             int type = event.getEventType();
             long eventMs = event.getTimeStamp();
@@ -113,6 +113,28 @@ class DriveSensePhoneUsageTracker {
                 type == UsageEvents.Event.ACTIVITY_PAUSED ||
                 type == UsageEvents.Event.ACTIVITY_STOPPED
             ));
+    }
+
+    private static boolean isIgnoredPackage(String packageName, String ownPackage) {
+        if (packageName == null || packageName.equals(ownPackage)) return true;
+        return packageName.equals("android") ||
+            packageName.startsWith("com.android.systemui") ||
+            packageName.startsWith("com.android.launcher") ||
+            packageName.startsWith("com.android.settings") ||
+            packageName.startsWith("com.android.permissioncontroller") ||
+            packageName.startsWith("com.android.inputmethod") ||
+            packageName.startsWith("com.android.providers") ||
+            packageName.startsWith("com.android.phone") ||
+            packageName.startsWith("com.android.server.telecom") ||
+            packageName.equals("com.google.android.apps.maps") ||
+            packageName.equals("com.google.android.projection.gearhead") ||
+            packageName.equals("com.google.android.apps.youtube.music") ||
+            packageName.equals("com.google.android.googlequicksearchbox") ||
+            packageName.equals("com.spotify.music") ||
+            packageName.equals("com.waze") ||
+            packageName.toLowerCase().contains("launcher") ||
+            packageName.toLowerCase().contains("keyboard") ||
+            packageName.toLowerCase().contains("inputmethod");
     }
 
     private static long appendSession(JSONArray sessions, String packageName, long startMs, long endMs, long lastClosedEndMs) {

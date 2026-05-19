@@ -57,6 +57,13 @@ const RISK_COLORS = {
   low: '#3b82f6',
 };
 
+const CORNERING_HEATMAP_BANDS = [
+  { min: 0.40, label: 'Hard', color: '#dc2626', weight: 8 },
+  { min: 0.28, label: 'Firm', color: '#f97316', weight: 7 },
+  { min: 0.16, label: 'Active', color: '#eab308', weight: 6 },
+  { min: 0.06, label: 'Light', color: '#22c55e', weight: 5 },
+];
+
 const titleCase = (value) => String(value || '')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (char) => char.toUpperCase());
@@ -83,6 +90,10 @@ const phoneUseIconHtml = (color) => `
     </svg>
   </div>
 `;
+
+const corneringBandForG = (lateralG) => (
+  CORNERING_HEATMAP_BANDS.find((band) => lateralG >= band.min) || null
+);
 
 const formatEventTime = (value) => {
   const date = value ? new Date(value) : null;
@@ -387,6 +398,13 @@ export default function TripMap({
             : [];
 
         if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
+          window.L.polyline(latLngs, {
+            color: '#64748b',
+            weight: 3,
+            opacity: Math.min(route.opacity, 0.35),
+            smoothFactor: 1.5,
+          }).addTo(layers);
+
           for (let i = 1; i < route.route_points.length - 1; i++) {
             const prev = route.route_points[i - 1];
             const curr = route.route_points[i];
@@ -396,19 +414,27 @@ export default function TripMap({
             if (dtPrev <= 0 || dtNext <= 0 || dtPrev > 15 || dtNext > 15) continue;
             const h1 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
             const h2 = calculateBearing(curr.lat, curr.lng, next.lat, next.lng);
-            const speed = Number(curr.speed_kmh) || Number(next.speed_kmh) || 0;
-            const lateralG = ((speed / 3.6) * ((headingDiff(h1, h2) * Math.PI / 180) / Math.max(1.5, (dtPrev + dtNext) / 2))) / 9.81;
-            const color = lateralG >= 0.4 ? '#ef4444' : lateralG >= 0.2 ? '#f59e0b' : '#22c55e';
+            const headingChange = headingDiff(h1, h2);
+            const speedCandidates = [prev.speed_kmh, curr.speed_kmh, next.speed_kmh]
+              .map(Number)
+              .filter(Number.isFinite);
+            const speed = speedCandidates.length
+              ? speedCandidates.reduce((sum, value) => sum + value, 0) / speedCandidates.length
+              : 0;
+            if (speed < 15 || headingChange < 1.5) continue;
+            const lateralG = ((speed / 3.6) * ((headingChange * Math.PI / 180) / Math.max(1.5, (dtPrev + dtNext) / 2))) / 9.81;
+            const band = corneringBandForG(lateralG);
+            if (!band) continue;
             window.L.polyline(
-              [[curr.lat, curr.lng], [next.lat, next.lng]],
+              [[prev.lat, prev.lng], [curr.lat, curr.lng], [next.lat, next.lng]],
               {
-                color,
-                weight: route.selected ? 6 : 3,
-                opacity: route.opacity,
+                color: band.color,
+                weight: band.weight,
+                opacity: Math.max(route.opacity, 0.82),
                 smoothFactor: 1.5,
               }
             )
-              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}Cornering: ${lateralG.toFixed(2)}g`)
+              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${band.label} cornering<br>${lateralG.toFixed(2)}g at ${Math.round(speed)} km/h<br>${Math.round(headingChange)}&deg; heading change`)
               .addTo(layers);
           }
         } else if (speedSegments.length > 0) {
@@ -702,6 +728,22 @@ export default function TripMap({
               {selectedSegment.overLimitKmh > 0 ? ` - ${Math.round(selectedSegment.overLimitKmh)} km/h over` : ''}
             </div>
           )}
+        </div>
+      )}
+      {showCorneringHeatmap && hasRoute && !selectedSegment && (
+        <div className="absolute left-3 top-3 z-10 w-[min(260px,calc(100%-5.5rem))] rounded-xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
+          <div className="mb-2 font-semibold">Cornering heatmap</div>
+          <div className="space-y-1.5">
+            {CORNERING_HEATMAP_BANDS.map((band) => (
+              <div key={band.label} className="flex items-center justify-between gap-3">
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <span className="h-2.5 w-6 rounded-full" style={{ backgroundColor: band.color }} />
+                  {band.label}
+                </span>
+                <span className="font-medium">{band.min.toFixed(2)}g+</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {showInsights && hasRoute && (

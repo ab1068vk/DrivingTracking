@@ -6,6 +6,18 @@ const timestampMs = (value) => {
 };
 
 const riskRank = { none: 0, low: 1, medium: 2, high: 3 };
+const MOVING_USAGE_SPEED_KMH = 15;
+const MAX_ROUTE_EVENT_DELTA_MS = 20_000;
+const MIN_USAGE_SESSION_SECONDS = 5;
+const PASSIVE_USAGE_PACKAGE_PATTERNS = [
+  /^android$/,
+  /^com\.android\.(systemui|launcher|settings|permissioncontroller|inputmethod|providers|phone|server\.telecom)/,
+  /^com\.google\.android\.(apps\.maps|apps\.youtube\.music|googlequicksearchbox|projection\.gearhead)$/,
+  /^com\.waze$/,
+  /^com\.spotify\.music$/,
+  /launcher/i,
+  /(keyboard|inputmethod|\.ime$)/i,
+];
 const emptyPhoneUse = () => ({
   phone_use_events: [],
   phone_use_window_count: 0,
@@ -16,20 +28,24 @@ const emptyPhoneUse = () => ({
   phone_use_pct_of_trip: 0,
 });
 
+function isPassiveUsagePackage(packageName = '') {
+  return PASSIVE_USAGE_PACKAGE_PATTERNS.some((pattern) => pattern.test(packageName));
+}
+
 function nearestRoutePoint(routePoints = [], targetMs = null) {
-  if (!routePoints.length || targetMs == null) return null;
-  let best = null;
+  if (!routePoints.length || targetMs == null) return { point: null, deltaMs: Number.POSITIVE_INFINITY };
+  let bestPoint = null;
   let bestDelta = Number.POSITIVE_INFINITY;
   for (const point of routePoints) {
     const pointMs = timestampMs(point?.timestamp);
     if (pointMs == null) continue;
     const delta = Math.abs(pointMs - targetMs);
     if (delta < bestDelta) {
-      best = point;
+      bestPoint = point;
       bestDelta = delta;
     }
   }
-  return best;
+  return { point: bestPoint, deltaMs: bestDelta };
 }
 
 function eventKey(event = {}) {
@@ -45,20 +61,24 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
   const sessions = Array.isArray(summary?.events) ? summary.events : [];
   const events = sessions
     .map((session, index) => {
+      if (isPassiveUsagePackage(session.package_name || '')) return null;
       const startMs = Number(session.start_ms) || timestampMs(session.start_time);
       const endMs = Number(session.end_ms) || timestampMs(session.end_time);
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
 
       const durationS = Math.max(1, Math.round(Number(session.duration_seconds) || ((endMs - startMs) / 1000)));
-      if (durationS < 2) return null;
+      if (durationS < MIN_USAGE_SESSION_SECONDS) return null;
 
       const midpointMs = startMs + (endMs - startMs) / 2;
-      const routePoint = nearestRoutePoint(routePoints, midpointMs) || routePoints[Math.min(routePoints.length - 1, Math.max(0, index))] || {};
+      const nearest = nearestRoutePoint(routePoints, midpointMs);
+      const routePoint = nearest.point || routePoints[Math.min(routePoints.length - 1, Math.max(0, index))] || {};
+      if (!nearest.point || nearest.deltaMs > MAX_ROUTE_EVENT_DELTA_MS) return null;
       const speedKmh = Number(routePoint.speed_kmh) || 0;
-      const confidence = durationS >= 10 ? 0.98 : 0.90;
-      const severity = durationS >= 45 || speedKmh >= 80
+      if (speedKmh < MOVING_USAGE_SPEED_KMH) return null;
+      const confidence = durationS >= 20 ? 0.92 : 0.82;
+      const severity = durationS >= 90 || speedKmh >= 100
         ? 'high'
-        : durationS >= 10 || speedKmh >= 30
+        : durationS >= 20 || speedKmh >= 50
           ? 'medium'
           : 'low';
 
@@ -76,7 +96,7 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
         speed_kmh: Math.round(speedKmh),
         confidence,
         confidence_level: 'high',
-        signals_triggered: ['android_usage_access'],
+        signals_triggered: ['android_usage_access', 'moving_trip_overlap'],
         severity,
         value: confidence,
       };

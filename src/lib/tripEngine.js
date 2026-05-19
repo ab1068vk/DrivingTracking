@@ -1786,8 +1786,11 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
       );
       if (sustainedTurnLike && signalsTriggered.length < 2) return null;
 
-      const confidence = Math.min(1, average(smoothed.slice(run.startIndex, run.endIndex + 1)));
       const meanSpeed = average(windowSamples.map((sample) => sample.speed_kmh));
+      const confidence = Math.min(1, average(smoothed.slice(run.startIndex, run.endIndex + 1)));
+      const hasPrimaryPhoneSignal = signalsTriggered.includes('micro_steer') ||
+        signalsTriggered.includes('speed_creep');
+      if (!hasPrimaryPhoneSignal) return null;
       const confidenceLevel = confidence < 0.55 ? 'low' : confidence < 0.75 ? 'medium' : 'high';
       const severity = confidence < 0.55 || meanSpeed < 50
         ? 'low'
