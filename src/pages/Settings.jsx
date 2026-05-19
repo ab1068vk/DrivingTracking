@@ -271,14 +271,7 @@ export default function Settings() {
   };
 
   const updateTrackingPaused = async (paused) => {
-    const updated = paused
-      ? updateCfg({
-        tracking_paused: true,
-        tracking_mode: 'manual',
-        auto_tracking_enabled: false,
-        background_tracking_enabled: false,
-      })
-      : updateCfg({ tracking_paused: false });
+    const updated = updateCfg({ tracking_paused: paused });
     if (!isAndroid()) return;
 
     if (paused) {
