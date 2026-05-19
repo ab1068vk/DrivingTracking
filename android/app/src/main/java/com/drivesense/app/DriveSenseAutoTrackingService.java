@@ -44,6 +44,7 @@ import java.util.TimeZone;
 public class DriveSenseAutoTrackingService extends Service {
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
     static final String ACTION_STOP = "com.drivesense.app.action.STOP_NATIVE_AUTO";
+    static final String ACTION_END_TRIP = "com.drivesense.app.action.END_NATIVE_TRIP";
     static final String ACTION_ACTIVITY = "com.drivesense.app.action.ACTIVITY_UPDATE";
     static final String EXTRA_ACTIVITY_TYPE = "activityType";
     static final String EXTRA_ACTIVITY_CONFIDENCE = "activityConfidence";
@@ -154,6 +155,10 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         DriveSenseNativeTripStore.setServiceEnabled(this, true);
+        if (ACTION_END_TRIP.equals(action)) {
+            finishTrip("notification_end_trip", true);
+            recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "notification_end_trip", 0d, 0L, 0d);
+        }
         if (ACTION_START.equals(action) || action == null) {
             recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "service_start", 0d, 0L, 0d);
         }
@@ -899,7 +904,7 @@ public class DriveSenseAutoTrackingService extends Service {
 
         if (isTripActive()) {
             Intent stopIntent = new Intent(this, DriveSenseAutoTrackingService.class);
-            stopIntent.setAction(ACTION_STOP);
+            stopIntent.setAction(ACTION_END_TRIP);
             PendingIntent stopPendingIntent = PendingIntent.getService(
                 this,
                 2,
