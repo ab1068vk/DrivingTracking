@@ -79,6 +79,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long AUTO_START_MOVING_MS = 1_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
+    private static final String CAPACITOR_PREFS = "CapacitorStorage";
+    private static final String SETTINGS_KEY = "drivesense_settings";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
     private static final int TRIP_COMPLETED_NOTIFICATION_ID = 2002;
     private static final int PHONE_MICRO_STEER_WINDOW_MS = 10_000;
@@ -708,6 +710,7 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void updatePhoneUseProxy(double bearing, double speedKmh, long timestampMs) {
+        if (!isSettingEnabled("phone_use_detection_enabled", true) || !isSettingEnabled("phone_use_live_alert_enabled", true)) return;
         while (!recentHeadings.isEmpty() && timestampMs - recentHeadings.peekFirst()[1] > PHONE_MICRO_STEER_WINDOW_MS) {
             recentHeadings.pollFirst();
         }
@@ -748,7 +751,9 @@ public class DriveSenseAutoTrackingService extends Service {
             long now = System.currentTimeMillis();
             if (now - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
                 sendPhoneUseWarningNotification();
-                speakNativeAlert("Put your phone down. Keep your eyes on the road.");
+                if (isSettingEnabled("voice_alerts_enabled", true)) {
+                    speakNativeAlert("Put your phone down. Keep your eyes on the road.");
+                }
                 lastPhoneUseNotifyMs = now;
             }
         }
@@ -790,6 +795,12 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void sendPhoneUseWarningNotification() {
+        if (!isSettingEnabled("notifications_enabled", true) ||
+            !isSettingEnabled("notif_safety_alerts_enabled", true) ||
+            !isSettingEnabled("notif_phone_use_alert_enabled", true) ||
+            !isSettingEnabled("phone_use_live_alert_enabled", true)) {
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             return;
@@ -946,6 +957,7 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void checkAndroidUsageAccessPhoneUse(long nowMs) {
+        if (!isSettingEnabled("phone_use_detection_enabled", true) || !isSettingEnabled("phone_use_live_alert_enabled", true)) return;
         if (activeStartMs <= 0L || !DriveSensePhoneUsageTracker.hasUsageAccess(this)) return;
         JSONObject usage = DriveSensePhoneUsageTracker.queryTripUsage(this, Math.max(activeStartMs, nowMs - 120_000L), nowMs);
         JSONArray sessions = usage.optJSONArray("events");
@@ -961,8 +973,22 @@ public class DriveSenseAutoTrackingService extends Service {
         nativeMicroSteerCount++;
         if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
             sendPhoneUseWarningNotification();
-            speakNativeAlert("Put your phone down. Keep your eyes on the road.");
+            if (isSettingEnabled("voice_alerts_enabled", true)) {
+                speakNativeAlert("Put your phone down. Keep your eyes on the road.");
+            }
             lastPhoneUseNotifyMs = nowMs;
+        }
+    }
+
+    private boolean isSettingEnabled(String key, boolean defaultValue) {
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SETTINGS_KEY, null);
+            if (raw == null || raw.trim().isEmpty()) return defaultValue;
+            JSONObject settings = new JSONObject(raw);
+            if (!settings.has(key) || settings.isNull(key)) return defaultValue;
+            return settings.optBoolean(key, defaultValue);
+        } catch (Exception ignored) {
+            return defaultValue;
         }
     }
 

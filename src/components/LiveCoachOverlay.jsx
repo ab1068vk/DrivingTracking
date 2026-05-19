@@ -23,6 +23,17 @@ const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
+const VOICE_COOLDOWNS_MS = {
+  phone_use: 120000,
+  near_miss: 120000,
+  harsh_brake: 30000,
+  tailgate: 60000,
+  speeding: 60000,
+  drowsy: 10 * 60 * 1000,
+  rapid_accel: 30000,
+  long_drive: 30 * 60 * 1000,
+  idle: 5 * 60 * 1000,
+};
 
 const plainText = (message) => {
   if (typeof message === 'string') return message;
@@ -42,7 +53,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
   const visibleRef = useRef(false);
   const queueRef = useRef([]);
   const lastCoachCheckRef = useRef(0);
-  const lastVoiceAlertRef = useRef({});
+  const lastDisplayedAlertRef = useRef({});
   const previousCountsRef = useRef({
     [EVENT_TYPES.HARSH_BRAKE]: currentEvents.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length,
     [EVENT_TYPES.RAPID_ACCELERATION]: currentEvents.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length,
@@ -76,6 +87,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       [EVENT_TYPES.TAILGATE_CYCLE]: 0,
     };
     lastCoachCheckRef.current = new Date(tripStartTime).getTime() || Date.now();
+    lastDisplayedAlertRef.current = {};
   }, [tripStartTime]);
 
   useEffect(() => {
@@ -88,19 +100,20 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const thresholds = buildDrivingThresholds(settings);
       const currentTime = new Date().toISOString();
       const now = Date.now();
-      const canSpeakTimedAlert = (key, cooldownMs) => {
-        const last = lastVoiceAlertRef.current[key] || 0;
+      const canDisplayAlert = (key, cooldownMs) => {
+        if (!key || !cooldownMs) return true;
+        const last = lastDisplayedAlertRef.current[key] || 0;
         if (now - last < cooldownMs) return false;
-        lastVoiceAlertRef.current[key] = now;
+        lastDisplayedAlertRef.current[key] = now;
         return true;
       };
       const stats = calculateTripStats(currentRoutePoints, tripStartTime, currentTime, thresholds);
       const detection = detectDrivingEvents(currentRoutePoints, thresholds, currentTime);
       const events = Reflect.get(detection, 'events') ?? detection;
       const gpsPhoneUse = Reflect.get(detection, 'phoneUse') ?? {};
-      let phoneUse = gpsPhoneUse;
+      let phoneUse = settings.phone_use_detection_enabled === false ? {} : gpsPhoneUse;
       const tripStartMs = new Date(tripStartTime).getTime();
-      if (isAndroid() && Number.isFinite(tripStartMs)) {
+      if (settings.phone_use_detection_enabled !== false && isAndroid() && Number.isFinite(tripStartMs)) {
         const usageSummary = await getAndroidPhoneUsageSummary(tripStartMs, now).catch(() => null);
         const usagePhoneUse = buildPhoneUseFromAndroidUsage(usageSummary || {}, currentRoutePoints, stats.duration_seconds);
         phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
@@ -120,9 +133,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
       const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
+      const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
 
       let nextMessage = null;
-      if (newPhoneWindows.length > 0) {
+      const livePhoneAlertsEnabled = settings.phone_use_detection_enabled !== false && settings.phone_use_live_alert_enabled !== false;
+      if (newPhoneWindows.length > 0 && livePhoneAlertsEnabled) {
         const highestConfidence = [...newPhoneWindows].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
         nextMessage = {
           text: (
@@ -133,25 +148,64 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           ),
           tone: 'danger',
           displayMs: PHONE_DISPLAY_MS,
+          voiceKey: 'phone_use',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.phone_use,
         };
-        if (settings.phone_use_live_alert_enabled !== false && settings.notif_phone_use_alert_enabled !== false) {
+        if (settings.notif_phone_use_alert_enabled !== false) {
           notifyPhoneUseDetected({
             confidence: highestConfidence.confidence_level,
             speedKmh: highestConfidence.speed_kmh,
           }, settings).catch(() => {});
         }
-      } else if (recentNearMiss) nextMessage = 'Near miss detected - increase following distance';
-      else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) nextMessage = 'Brake earlier and more gradually';
-      else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) nextMessage = 'Open your following gap';
-      else if (settings.speed_warning_enabled !== false && latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
+      } else if (recentNearMiss) {
+        nextMessage = {
+          text: 'Near miss detected - increase following distance',
+          voiceKey: 'near_miss',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.near_miss,
+        };
+      } else if (stats.drowsy_risk_level === 'high') {
+        nextMessage = {
+          text: 'Fatigue warning. Take a break when it is safe.',
+          voiceKey: 'drowsy',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.drowsy,
+        };
+      } else if (settings.speed_warning_enabled !== false && latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
         nextMessage = {
           text: `Speed warning. ${Math.round(latestSpeed)} kilometers per hour.`,
           voiceKey: 'speeding',
-          voiceCooldownMs: 60000,
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
+        };
+      } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
+        nextMessage = {
+          text: 'Brake earlier and more gradually',
+          voiceKey: 'harsh_brake',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
+        };
+      } else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) {
+        nextMessage = {
+          text: 'Open your following gap',
+          voiceKey: 'tailgate',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.tailgate,
+        };
+      } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
+        nextMessage = {
+          text: 'Accelerate more smoothly',
+          voiceKey: 'rapid_accel',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.rapid_accel,
+        };
+      } else if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
+        nextMessage = {
+          text: `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`,
+          voiceKey: 'long_drive',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.long_drive,
+        };
+      } else if ((stats.idle_time_seconds || 0) > 300) {
+        nextMessage = {
+          text: 'Extended idling detected',
+          voiceKey: 'idle',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.idle,
         };
       }
-      else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) nextMessage = 'Accelerate more smoothly';
-      else if ((stats.idle_time_seconds || 0) > 300) nextMessage = 'Extended idling detected';
 
       if (latestSpeeding && settings.notif_speeding_alert_enabled !== false) {
         notifySpeedingAlert({
@@ -159,11 +213,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           limitKmh: latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
           durationS: latestSpeeding.duration_seconds ?? 0,
         }, settings).catch(() => {});
-        if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('speeding', 60000)) {
+        if (!nextMessage && settings.voice_alerts_enabled !== false) {
           nextMessage = {
             text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`,
             voiceKey: 'speeding',
-            voiceCooldownMs: 60000,
+            voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
           };
         }
       }
@@ -172,20 +226,13 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           drowsyRiskLevel: 'high',
           tripDurationMinutes: (stats.duration_seconds || 0) / 60,
         }, settings).catch(() => {});
-        if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('drowsy', 10 * 60 * 1000)) {
-          nextMessage = 'Fatigue warning. Take a break when it is safe.';
-        }
       }
-      const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
       if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
         notifyFatigueBreakReminder({
           tripDurationMinutes: durationMins,
           thresholdMinutes: settings.threshold_long_drive_minutes ?? 120,
           tripId: tripStartTime,
         }, settings).catch(() => {});
-        if (!nextMessage && settings.voice_alerts_enabled !== false && canSpeakTimedAlert('long_drive', 30 * 60 * 1000)) {
-          nextMessage = `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`;
-        }
       }
 
       previousCountsRef.current = {
@@ -195,7 +242,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       };
       lastCoachCheckRef.current = now;
 
-      if (nextMessage) {
+      if (nextMessage && canDisplayAlert(nextMessage.voiceKey, nextMessage.voiceCooldownMs)) {
         queueRef.current.push(nextMessage);
         showNext();
       }

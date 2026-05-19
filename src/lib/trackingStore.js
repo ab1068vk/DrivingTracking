@@ -8,6 +8,24 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+let lastNativeSettingsSync = '';
+
+const syncSettingsForNative = (settings) => {
+  if (typeof window === 'undefined') return;
+  const serialized = JSON.stringify(settings);
+  if (serialized === lastNativeSettingsSync) return;
+  lastNativeSettingsSync = serialized;
+  import('@capacitor/core')
+    .then(({ Capacitor }) => {
+      if (!Capacitor.isNativePlatform()) return null;
+      return import('@capacitor/preferences');
+    })
+    .then((module) => {
+      if (!module?.Preferences) return;
+      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch(() => {});
+    })
+    .catch(() => {});
+};
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
@@ -144,12 +162,15 @@ export const localSettings = {
           if (parsed.threshold_sharp_turn_g_low == null || parsed.threshold_sharp_turn_g_low === 0.30) merged.threshold_sharp_turn_g_low = 0.35;
           merged.settings_defaults_version = 2;
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+          syncSettingsForNative(merged);
         }
+        syncSettingsForNative(merged);
         return merged;
       }
       // New user: save defaults immediately so we can detect returning users
       const defaults = { ...DEFAULT_SETTINGS };
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
+      syncSettingsForNative(defaults);
       return defaults;
     } catch {
       return { ...DEFAULT_SETTINGS };
@@ -158,6 +179,7 @@ export const localSettings = {
   set(data) {
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
+      syncSettingsForNative(data);
     } catch {}
   },
   update(patch) {
