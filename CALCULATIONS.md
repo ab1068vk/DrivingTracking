@@ -1,4 +1,4 @@
-# DriveSense App Calculations
+# Road Sage App Calculations
 
 This document explains where every in-app calculation is done and shows the main code formulas used by the app.
 
@@ -12,8 +12,284 @@ The calculation code is concentrated in these files:
 - `src/lib/trackingStore.js`: default thresholds, settings, and last-parked storage helpers.
 - `src/lib/localTripRepository.js`: rescoring imported/background trips and storing the last parked location for native trips.
 - `src/lib/pdfExport.js`: monthly PDF report totals and table export formatting.
+- `src/lib/speedLimitSource.js`: OpenStreetMap `maxspeed` parsing, road-type speed defaults, Overpass cache, and route-point speed-limit annotation.
+- `src/lib/weatherContext.js`: Open-Meteo weather sampling and weather-risk score inputs.
+- `src/lib/phoneUsageAccess.js`: Android Usage Access phone-use evidence, GPS proxy merge, and phone-use score/risk.
+- `src/lib/dailyFatigueEngine.js`: same-day fatigue accumulation and pre-trip break recommendation.
+- `src/lib/preTripRisk.js`: pre-trip composite risk and readiness score.
+- `src/lib/predictiveRouteRisk.js`: predictive route risk from recent trip baseline, danger zones, weather, and time of day.
+- `src/lib/dangerZoneEngine.js`: repeated event clustering into alertable danger zones.
+- `src/lib/routeRiskIndex.js`: historical segment risk index.
+- `src/lib/sensorFusionModel.js`: motion sensor normalization, harsh-motion summary, event confirmation, and crash incident proxy.
+- `src/lib/thresholdCalibration.js`: adaptive threshold suggestions from historical trips and reviewed event feedback.
+- `src/lib/privacyZones.js`: privacy-zone masking for route points, events, and addresses.
+- `src/lib/driverAnomaly.js`: on-device driver baseline and anomaly score.
+- `src/lib/ubiReport.js`: usage-based-insurance-style score card.
+- `src/lib/obdBluetooth.js`: OBD-II PID parsing and Web Bluetooth support checks.
 - `src/pages/Dashboard.jsx`: trip completion pipeline.
 - `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java`: native Android background trip capture, GPS filtering, native stats, and native auto-stop.
+
+## Current Calculation Sync - May 20, 2026
+
+This section is the short source-of-truth summary for the latest code. The detailed sections below expand each calculation.
+
+### Auto-start and candidate validation
+
+JavaScript foreground auto-start in `src/lib/activityRecognition.js` uses:
+
+```js
+AUTO_START_IN_VEHICLE_CONFIDENCE = 65
+AUTO_START_SPEED_KMH = 5
+AUTO_START_IN_VEHICLE_SECONDS = 2
+AUTO_START_GPS_FALLBACK_SECONDS = 2
+WALKING_SPEED_CUTOFF_KMH = 10
+```
+
+`shouldAutoStartTracking({ activity, currentSpeedKmh, recentMovingSeconds })` returns true when:
+
+```text
+(activity.type == in_vehicle AND activity.confidence >= 65 AND speed >= 5 AND movingSeconds >= 2)
+OR
+(activity missing/unknown/uncertain AND speed >= 5 AND movingSeconds >= 2)
+```
+
+Native background auto tracking in `DriveSenseAutoTrackingService.java` first creates a hidden candidate trip. A candidate becomes a real native trip only after vehicle-like proof:
+
+```text
+normal candidate:
+  stable GPS points >= 4
+  distance >= 150 m
+  max speed >= 10 km/h
+
+candidate near last parked location within 5 minutes and 75 m:
+  stable GPS points >= 5
+  distance >= 250 m
+  max speed >= 10 km/h
+
+walking/running/cycling confidence >= 75 AND max speed <= 10 km/h:
+  discard as movement_looked_like_walking
+
+candidate age >= 180 seconds without proof:
+  discard as no_vehicle_speed_segment, unstable_gps_drift, or gps_movement_too_short
+```
+
+### Native stop timers
+
+Current native stop constants:
+
+```java
+MIN_VEHICLE_CONFIDENCE = 65;
+MIN_STILL_CONFIDENCE = 70;
+AUTO_STOP_FOOT_MS = 10_000L;
+AUTO_STOP_STILL_STABLE_MS = 90_000L;
+AUTO_STOP_STILL_DRIFT_MS = 150_000L;
+AUTO_STOP_PARKED_GPS_STABLE_MS = 90_000L;
+AUTO_STOP_PARKED_GPS_RELAXED_MS = 300_000L;
+AUTO_STOP_IN_VEHICLE_MS = 120_000L;
+AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 300_000L;
+AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
+AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
+STALE_LOCATION_STOP_MS = 30_000L;
+GPS_STILL_DRIFT_M = 8.0d;
+GPS_VEHICLE_DRIFT_M = 5.0d;
+GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
+AUTO_START_SPEED_KMH = 5.0d;
+AUTO_START_MOVING_MS = 2_000L;
+PARKING_COOLDOWN_MS = 300_000L;
+PARKING_COOLDOWN_RADIUS_M = 75.0d;
+CANDIDATE_CONFIRM_DISTANCE_M = 150.0d;
+CANDIDATE_CONFIRM_DISTANCE_COOLDOWN_M = 250.0d;
+CANDIDATE_CONFIRM_SPEED_KMH = 10.0d;
+WALKING_SPEED_CUTOFF_KMH = 10.0d;
+```
+
+### Newer risk, calibration, and report formulas
+
+Daily fatigue in `computeDailyFatigue()`:
+
+```text
+totalDrivingMinutes = sum(max(0, duration_seconds - idle_time_seconds) / 60)
+durationFatigue = min(5, totalDrivingMinutes / 60)
+tripCountFatigue = min(2, max(0, tripCount - 1) * 0.5)
+recoveryCredit = minutesSinceLastTrip == null ? 2 : min(2, minutesSinceLastTrip / 30)
+cumulativeFatigueScore = clamp(round1(durationFatigue + tripCountFatigue - recoveryCredit), 0, 10)
+level = critical >= 7, high >= 5, moderate >= 3, else low
+```
+
+Pre-trip risk in `computePreTripRisk()`:
+
+```text
+compositeRisk =
+  timeOfDay * 0.14 +
+  dayOfWeek * 0.10 +
+  recentTrend * 0.18 +
+  dailyFatigue * 0.20 +
+  lastTripOutcome * 0.12 +
+  weather * 0.08 +
+  dangerZones * 0.06 +
+  routeForecast * 0.08 +
+  recentRest * 0.04
+
+readinessScore = 100 - compositeRisk
+riskLevel = high when compositeRisk >= 65, or when dailyFatigue >= 90 and lastTripOutcome >= 70
+riskLevel = moderate when compositeRisk >= 40
+```
+
+Predictive route risk in `estimatePredictiveRouteRisk()`:
+
+```text
+riskScore = clamp(round(
+  (100 - avgScoreOfRecent20Trips) * 0.45 +
+  eventDensityPerKm * 18 +
+  nearbyDangerZoneCountWithin2000m * 10 +
+  weatherRiskScore * 0.25 +
+  timeRisk
+), 0, 100)
+
+timeRisk = 18 at 22:00-04:59, 10 at 16:00-18:59, otherwise 0
+```
+
+Route risk index in `buildRouteRiskIndex()`:
+
+```text
+segment key = endpoints rounded to 4 decimals, ordered so both directions share one key
+eventRate = totalEvents / max(1, tripCount)
+harshRate = harshCount / max(1, tripCount)
+riskScore = min(100, round(eventRate * 20 + harshRate * 40 + (avgSpeed >= 100 ? 10 : 0)))
+riskLevel = high >= 60, moderate >= 30, else low
+```
+
+Danger zones in `buildDangerZones()`:
+
+```text
+cellSizeM default = 80
+minEvents default = 3
+severity points: high = 3, medium = 2, low = 1
+riskLevel = critical >= 15, high >= 8, medium >= 4, else low
+radiusM = cellSizeM * 1.2
+```
+
+Adaptive calibration in `computeCalibrationProfile()`:
+
+```text
+requires:
+  completed trips >= 15 and km >= 200
+  OR reviewed event feedback count >= 3
+
+harsh brake suggestion = clamp(percentile(abs(deceleration), 90%), 3.0, 7.0)
+rapid accel suggestion = clamp(percentile(acceleration, 88%), 2.0, 6.0)
+sharp turn low/medium/high = percentile(lateralG, 70%/85%/95%) when at least 20 lateral-g samples exist
+feedback can raise a threshold when at least 2 reviewed events of that type are marked wrong
+```
+
+UBI report in `computeUBIReport()`:
+
+```text
+weights:
+  mileage = 0.15
+  timeOfDay = 0.20
+  hardBraking = 0.25
+  acceleration = 0.20
+  cornering = 0.10
+  speedCompliance = 0.10
+
+mileageScore = clamp(round(100 - max(0, (totalKm - 1000) / 1000) * 5), 20, 100)
+timeOfDayScore = round(max(0, 100 - nightTripRatio * 150))
+brakingScore = max(0, round(100 - harshBrakesPer100Km * 8))
+accelScore = max(0, round(100 - rapidAccelPer100Km * 8))
+corneringScore = max(0, round(100 - sharpTurnsPer100Km * 6))
+speedScore = max(0, round(100 - speedingPer100Km * 10))
+ubiScore = weighted sum of the six category scores
+grade = A+ >= 90, A >= 80, B >= 70, C >= 60, else D
+tier = Preferred >= 85, Standard >= 70, else Non-preferred
+```
+
+OpenStreetMap speed-limit defaults in `defaultSpeedLimitKmhForOsmHighway()`:
+
+```text
+living_street = 20 km/h
+service = 30 km/h
+residential = 40 km/h
+tertiary, tertiary_link, unclassified, road = 50 km/h
+primary, primary_link, secondary, secondary_link = 60 km/h
+trunk_link, motorway_link = 80 km/h
+motorway, trunk = 100 km/h
+```
+
+Phone-use scoring in `phoneUsageAccess.js`:
+
+```text
+Android Usage Access sessions are accepted only when:
+  package is not passive/system/navigation/music
+  duration >= 5 seconds
+  midpoint is within 20 seconds of a route point
+  nearest route speed >= 15 km/h
+
+event severity:
+  high when duration >= 90 seconds or speed >= 100 km/h
+  medium when duration >= 20 seconds or speed >= 50 km/h
+  low otherwise
+
+phone_use_risk:
+  high when total seconds >= 60 or event count >= 3
+  medium when total seconds >= 10
+  low when at least one accepted event exists
+  none when there are no accepted events
+
+phone_use_score = max(0, 100 - sum(high 20, medium 10, low 4))
+phone_use_pct_of_trip = round2(totalSeconds / tripDurationSeconds * 100)
+```
+
+Sensor fusion in `sensorFusionModel.js`:
+
+```text
+magnitude_ms2 = sqrt(ax^2 + ay^2 + az^2)
+linear_magnitude_ms2 = abs(magnitude_ms2 - 9.80665)
+rotation_magnitude_deg_s = sqrt(alpha^2 + beta^2 + gamma^2)
+
+harsh_motion_count = samples where linear_magnitude_ms2 >= 5.5
+impact_like_count = samples where linear_magnitude_ms2 >= 14 and rotation_magnitude_deg_s >= 120
+phone_movement_score = clamp(round(avg(linear) * 5 + avg(rotation) * 0.08 + harshMotionCount * 2), 0, 100)
+quality = good when valid sample count >= min(120, max(20, routePointCount * 2)), else partial
+
+possible crash requires:
+  recent max speed >= 20 km/h
+  peak linear acceleration >= 18 m/s2
+  peak rotation >= 90 deg/s
+  stoppedSeconds >= 8 or STILL activity confidence >= 60
+severity = high when peak linear >= 28, else medium
+confidence = 0.9 when peak linear >= 28 and stoppedSeconds >= 15, else 0.72
+```
+
+Driver anomaly score in `driverAnomaly.js`:
+
+```text
+feature vector:
+  score
+  harsh_per_10km
+  accel_per_10km
+  turn_per_10km
+  speed_per_10km
+  avg_speed
+  phone_pct
+  smoothness
+
+baseline model requires at least 8 completed trips from the most recent 60 completed trips
+each feature stores mean and std, with minimum std = 1
+anomaly_score = clamp(round(mean(min(abs(z), 4)) * 25), 0, 100)
+anomaly_level = high >= 70, moderate >= 45, else normal
+reasons = up to 3 features with abs(z) >= 1.8
+```
+
+OBD-II PID parsing in `obdBluetooth.js`:
+
+```text
+PID 0C RPM = ((A * 256) + B) / 4
+PID 11 throttle percent = round(A * 100 / 255)
+PID 04 engine load percent = round(A * 100 / 255)
+PID 0D vehicle speed = A km/h
+PID 05 coolant temperature = A - 40 C
+```
 
 ## Trip Calculation Pipeline
 
@@ -1343,7 +1619,14 @@ JavaScript function: `shouldAutoStartTracking` in `src/lib/activityRecognition.j
 ```js
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
-  return vehicleConfidence >= 70 && currentSpeedKmh >= 5 && recentMovingSeconds >= 10;
+  const activityMissingOrUncertain = !activity ||
+    activity.type === ACTIVITY_TYPES.UNKNOWN ||
+    (activity.type === ACTIVITY_TYPES.IN_VEHICLE && vehicleConfidence < 65);
+  return (
+    vehicleConfidence >= 65 && currentSpeedKmh >= 5 && recentMovingSeconds >= 2
+  ) || (
+    activityMissingOrUncertain && currentSpeedKmh >= 5 && recentMovingSeconds >= 2
+  );
 }
 ```
 
@@ -1357,15 +1640,17 @@ export function shouldAutoStopTracking({
   gpsPositionDriftM = Number.POSITIVE_INFINITY,
   lastMovingSpeedKmh = 0,
 }) {
-  // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed < 5 stops after 15s.
+  // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed <= 10 stops after 10s.
   // STILL + stable GPS (< 8m drift) stops after 90s.
   // STILL + drift (>= 8m) waits 150s.
-  // IN_VEHICLE + stopped has three paths:
-  // 240s with very stable GPS (< 5m drift).
-  // 360s with relaxed urban GPS drift (< 20m).
-  // 420s at current speed < 2 km/h with parked-like drift (< 20m).
-  // 600s at current speed < 2 km/h and last moving speed < 5 km/h as a final parked safety net.
-  // Missing or UNKNOWN activity waits 300s and requires stable GPS (< 8m drift).
+  // IN_VEHICLE + speed < 2 has parked paths:
+  // 90s with very stable GPS (< 5m drift).
+  // 300s with relaxed urban GPS drift (< 20m).
+  // IN_VEHICLE + speed < 5 has additional paths:
+  // 120s with very stable GPS (< 5m drift).
+  // 300s with speed < 2 and relaxed urban GPS drift (< 20m).
+  // 420s with speed < 2 as a final near-zero-speed timeout.
+  // Missing or UNKNOWN activity waits 180s and requires stable GPS (< 8m drift).
 }
 ```
 
@@ -1378,15 +1663,17 @@ File: `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingServic
 Constants:
 
 ```java
-private static final int MIN_VEHICLE_CONFIDENCE = 70;
+private static final int MIN_VEHICLE_CONFIDENCE = 65;
 private static final int MIN_STILL_CONFIDENCE = 70;
-private static final long AUTO_STOP_FOOT_MS = 15_000L;
+private static final long AUTO_STOP_FOOT_MS = 10_000L;
 private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
 private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
-private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
-private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
+private static final long AUTO_STOP_PARKED_GPS_STABLE_MS = 90_000L;
+private static final long AUTO_STOP_PARKED_GPS_RELAXED_MS = 300_000L;
+private static final long AUTO_STOP_IN_VEHICLE_MS = 120_000L;
+private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 300_000L;
 private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
-private static final long AUTO_STOP_NO_ACTIVITY_MS = 300_000L;
+private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
 private static final long STALE_LOCATION_STOP_MS = 30_000L;
 private static final double GPS_STILL_DRIFT_M = 8.0d;
 private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
@@ -1394,15 +1681,18 @@ private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
 private static final double STATIONARY_SPEED_KMH = 5d;
 private static final double MIN_TRUSTED_SPEED_KMH = 18d;
 private static final double MAX_SPEED_KMH = 220d;
+private static final double AUTO_START_SPEED_KMH = 5d;
+private static final long AUTO_START_MOVING_MS = 2_000L;
 ```
 
-Native start:
+Native start now creates a candidate trip after in-vehicle or armed-GPS movement proof, then confirms it only after stable GPS, distance, and speed checks:
 
 ```java
-if (type == DetectedActivity.IN_VEHICLE && confidence >= MIN_VEHICLE_CONFIDENCE) {
-    stillSinceMs = 0L;
-    nonVehicleSinceMs = 0L;
-    startTripIfNeeded();
+if (!isTripActive() && inVehicle &&
+    lastKnownSpeedKmh >= AUTO_START_SPEED_KMH &&
+    armedMovingSinceMs > 0L &&
+    now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
+    startCandidateTrip("activity_in_vehicle_moving", armedPreviousLocation);
     return;
 }
 ```
@@ -1414,13 +1704,12 @@ boolean speedStopped = lastKnownSpeedKmh < STATIONARY_SPEED_KMH;
 boolean gpsStable = maxDriftSinceStopM < GPS_STILL_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 
-// WALKING/RUNNING/ON_BICYCLE + stopped: finish after 15s.
+// WALKING/RUNNING/ON_BICYCLE + speed <= 10: finish after 10s.
 // STILL + stopped: finish after 90s when GPS is stable, otherwise wait 150s.
-// IN_VEHICLE + stopped: finish after 240s when GPS drift is under 5m.
-// IN_VEHICLE + stopped: finish after 360s when GPS drift is under 20m.
-// IN_VEHICLE + stopped: finish after 420s when speed is under 2 km/h and drift is under 20m.
-// IN_VEHICLE + stopped: finish after 600s when near-zero speed persists as a safety net.
-// UNKNOWN + stopped: finish after 300s only when GPS drift is under 8m.
+// IN_VEHICLE + speed < 2: finish after 90s under 5m drift or 300s under 20m drift.
+// IN_VEHICLE + speed < 5: finish after 120s under 5m drift, 300s under 20m drift when speed < 2,
+// or 420s when speed remains under 2.
+// UNKNOWN + stopped: finish after 180s only when GPS drift is under 8m.
 ```
 
 Native `recordLocation()` maintains `stoppedAnchorLat`, `stoppedAnchorLng`, and `maxDriftSinceStopM`. Moving at or above `5 km/h` resets the anchor, max GPS drift, and stop timers; dropping below `5 km/h` anchors the stop position and tracks maximum drift from that point.

@@ -1,14 +1,14 @@
-# DriveSense App Documentation
+# Road Sage App Documentation
 
-Last updated: 2026-05-15
+Last updated: 2026-05-20
 
-DriveSense is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records driving trips, stores route points on the device, scores driving behavior, shows route maps, manages vehicles, exports backups, and supports Android background auto tracking.
+Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records driving trips, stores route points on the device, scores driving behavior, shows route maps, manages vehicles, exports backups, and supports Android background auto tracking. Some storage keys, backup identifiers, and Android plugin/class names still use the older `DriveSense` name for compatibility.
 
 This document describes the full current application: user features, code structure, runtime behavior, storage, data models, Android integration, setup, and maintenance notes.
 
 ## 1. Product Overview
 
-DriveSense helps a driver understand and improve driving behavior.
+Road Sage helps a driver understand and improve driving behavior.
 
 Primary capabilities:
 
@@ -771,17 +771,18 @@ Auto-start logic:
 
 - Vehicle activity confidence must be at least 65.
 - Current speed must be at least 5 km/h.
-- Recent moving time must be at least 1 second.
+- Recent moving time must be at least 2 seconds.
+- If activity is missing, unknown, or uncertain, GPS fallback can also start after at least 2 seconds at 5 km/h or faster.
 
 Auto-stop logic:
 
 - Current speed below 5 km/h.
 - Still time, activity recognition, and GPS drift are evaluated together.
-- Walking/running/cycling after the car stops can end the trip after 15 seconds.
+- Walking/running/cycling with confidence at least 75 and speed at or below 10 km/h can end the trip after 10 seconds.
 - STILL activity with stable GPS ends after 90 seconds; noisier stopped GPS waits longer.
-- A GPS-only parked fallback can end a foreground trip after 5 minutes of near-zero speed with parked-like drift, or after 10 minutes at near-zero speed.
+- A GPS-only parked fallback can end a foreground trip when unknown activity stays stopped for 180 seconds with stable GPS drift below 8 m.
 
-On non-Android web, speed-only auto start can trigger when speed is at least 5 km/h for at least 1 second.
+On non-Android web, speed-only auto start can trigger when speed is at least 5 km/h for at least 2 seconds.
 
 ### 9.3 Android Native Auto Tracking
 
@@ -797,22 +798,30 @@ Native auto tracking behavior:
 1. React calls `startNativeAutoTracking()`.
 2. The Capacitor plugin checks required native permissions.
 3. `DriveSenseAutoTrackingService` starts as a foreground service.
-4. The service requests activity updates every 15 seconds and keeps an armed high-accuracy location watch.
+4. The service requests activity updates every 5 seconds and keeps an armed high-accuracy location watch.
 5. `DriveSenseActivityReceiver` receives activity updates.
-6. In-vehicle activity with confidence at least 65 and movement above 5 km/h for 1 second starts a native trip.
+6. In-vehicle activity with confidence at least 65 and movement at or above 5 km/h for 2 seconds starts a hidden candidate trip.
 7. The service starts high-accuracy location updates every 2 seconds, with a 1 second minimum interval and 5 meter minimum distance.
-8. Native route points are filtered for accuracy, noise, and impossible speed.
-9. Still, walking, unknown, or long in-vehicle stopped states end the trip only after the parked timers and GPS drift checks pass.
-10. Trips under 30 seconds, under 0.1 km, or with fewer than 2 points are discarded.
-11. Completed native trips are saved to SharedPreferences.
-12. React imports native trips on trip list/detail reads and rescoring happens in JavaScript.
+8. The candidate confirms only after stable GPS points, enough distance, and a vehicle-speed segment prove real driving.
+9. Native route points are filtered for accuracy, noise, and impossible speed.
+10. Still, walking, unknown, or long in-vehicle stopped states end the trip only after the parked timers and GPS drift checks pass.
+11. Trips under 30 seconds, under 0.1 km, or with fewer than 2 points are discarded.
+12. Completed native trips are saved to SharedPreferences.
+13. React imports native trips on trip list/detail reads and rescoring happens in JavaScript.
 
 Important native thresholds:
 
 - Minimum vehicle confidence: 65.
 - Minimum still confidence: 70.
+- Auto-start movement proof: 2 seconds at or above 5 km/h.
+- Candidate confirmation: 4 stable GPS points, 150 m, and 10 km/h max speed.
+- Candidate confirmation near a recently parked location: 5 stable GPS points, 250 m, and 10 km/h max speed.
+- Candidate review timeout: 180000 ms.
+- Parking cooldown: 300000 ms within 75 m of the last parked location.
+- Walking/running/cycling cutoff for discarding or stopping: 10 km/h.
 - Auto-stop STILL duration: 90000 ms when GPS is stable, 150000 ms when GPS is drifting.
-- Auto-stop IN_VEHICLE duration: 240000 ms with very stable GPS, 360000 ms with relaxed drift, 420000 ms at near-zero speed with parked-like drift, 600000 ms as a final near-zero-speed safety net.
+- Auto-stop IN_VEHICLE duration: 90000 ms at speed below 2 km/h with very stable GPS, 300000 ms at speed below 2 km/h with relaxed drift, 120000 ms with speed below 5 km/h and very stable GPS, 300000 ms with speed below 2 km/h and relaxed drift, or 420000 ms at near-zero speed.
+- Auto-stop UNKNOWN duration: 180000 ms with stable GPS.
 - Maximum GPS accuracy: 75 m.
 - Minimum point distance: 8 m.
 - Stationary speed: 5 km/h.
@@ -3496,7 +3505,14 @@ JavaScript function: `shouldAutoStartTracking` in `src/lib/activityRecognition.j
 ```js
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
-  return vehicleConfidence >= 70 && currentSpeedKmh >= 5 && recentMovingSeconds >= 10;
+  const activityMissingOrUncertain = !activity ||
+    activity.type === ACTIVITY_TYPES.UNKNOWN ||
+    (activity.type === ACTIVITY_TYPES.IN_VEHICLE && vehicleConfidence < 65);
+  return (
+    vehicleConfidence >= 65 && currentSpeedKmh >= 5 && recentMovingSeconds >= 2
+  ) || (
+    activityMissingOrUncertain && currentSpeedKmh >= 5 && recentMovingSeconds >= 2
+  );
 }
 ```
 
@@ -3510,15 +3526,17 @@ export function shouldAutoStopTracking({
   gpsPositionDriftM = Number.POSITIVE_INFINITY,
   lastMovingSpeedKmh = 0,
 }) {
-  // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed < 5 stops after 15s.
+  // Fast path: WALKING/RUNNING/CYCLING with confidence >= 75 and speed <= 10 stops after 10s.
   // STILL + stable GPS (< 8m drift) stops after 90s.
   // STILL + drift (>= 8m) waits 150s.
-  // IN_VEHICLE + stopped has three paths:
-  // 240s with very stable GPS (< 5m drift).
-  // 360s with relaxed urban GPS drift (< 20m).
-  // 420s at current speed < 2 km/h with parked-like drift (< 20m).
-  // 600s at current speed < 2 km/h and last moving speed < 5 km/h as a final parked safety net.
-  // Missing or UNKNOWN activity waits 300s and requires stable GPS (< 8m drift).
+  // IN_VEHICLE + speed < 2 has parked paths:
+  // 90s with very stable GPS (< 5m drift).
+  // 300s with relaxed urban GPS drift (< 20m).
+  // IN_VEHICLE + speed < 5 has additional paths:
+  // 120s with very stable GPS (< 5m drift).
+  // 300s with speed < 2 and relaxed urban GPS drift (< 20m).
+  // 420s with speed < 2 as a final near-zero-speed timeout.
+  // Missing or UNKNOWN activity waits 180s and requires stable GPS (< 8m drift).
 }
 ```
 
@@ -3531,15 +3549,17 @@ File: `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingServic
 Constants:
 
 ```java
-private static final int MIN_VEHICLE_CONFIDENCE = 70;
+private static final int MIN_VEHICLE_CONFIDENCE = 65;
 private static final int MIN_STILL_CONFIDENCE = 70;
-private static final long AUTO_STOP_FOOT_MS = 15_000L;
+private static final long AUTO_STOP_FOOT_MS = 10_000L;
 private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
 private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
-private static final long AUTO_STOP_IN_VEHICLE_MS = 240_000L;
-private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 360_000L;
+private static final long AUTO_STOP_PARKED_GPS_STABLE_MS = 90_000L;
+private static final long AUTO_STOP_PARKED_GPS_RELAXED_MS = 300_000L;
+private static final long AUTO_STOP_IN_VEHICLE_MS = 120_000L;
+private static final long AUTO_STOP_IN_VEHICLE_EXTENDED_MS = 300_000L;
 private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
-private static final long AUTO_STOP_NO_ACTIVITY_MS = 300_000L;
+private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
 private static final long STALE_LOCATION_STOP_MS = 30_000L;
 private static final double GPS_STILL_DRIFT_M = 8.0d;
 private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
@@ -3547,15 +3567,18 @@ private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
 private static final double STATIONARY_SPEED_KMH = 5d;
 private static final double MIN_TRUSTED_SPEED_KMH = 18d;
 private static final double MAX_SPEED_KMH = 220d;
+private static final double AUTO_START_SPEED_KMH = 5d;
+private static final long AUTO_START_MOVING_MS = 2_000L;
 ```
 
-Native start:
+Native start creates a candidate trip after in-vehicle or armed-GPS movement proof, then confirms it only after stable GPS, distance, and speed checks:
 
 ```java
-if (type == DetectedActivity.IN_VEHICLE && confidence >= MIN_VEHICLE_CONFIDENCE) {
-    stillSinceMs = 0L;
-    nonVehicleSinceMs = 0L;
-    startTripIfNeeded();
+if (!isTripActive() && inVehicle &&
+    lastKnownSpeedKmh >= AUTO_START_SPEED_KMH &&
+    armedMovingSinceMs > 0L &&
+    now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
+    startCandidateTrip("activity_in_vehicle_moving", armedPreviousLocation);
     return;
 }
 ```
@@ -3567,13 +3590,12 @@ boolean speedStopped = lastKnownSpeedKmh < STATIONARY_SPEED_KMH;
 boolean gpsStable = maxDriftSinceStopM < GPS_STILL_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
 
-// WALKING/RUNNING/ON_BICYCLE + stopped: finish after 15s.
+// WALKING/RUNNING/ON_BICYCLE + speed <= 10: finish after 10s.
 // STILL + stopped: finish after 90s when GPS is stable, otherwise wait 150s.
-// IN_VEHICLE + stopped: finish after 240s when GPS drift is under 5m.
-// IN_VEHICLE + stopped: finish after 360s when GPS drift is under 20m.
-// IN_VEHICLE + stopped: finish after 420s when speed is under 2 km/h and drift is under 20m.
-// IN_VEHICLE + stopped: finish after 600s when near-zero speed persists as a safety net.
-// UNKNOWN + stopped: finish after 300s only when GPS drift is under 8m.
+// IN_VEHICLE + speed < 2: finish after 90s under 5m drift or 300s under 20m drift.
+// IN_VEHICLE + speed < 5: finish after 120s under 5m drift, 300s under 20m drift when speed < 2,
+// or 420s when speed remains under 2.
+// UNKNOWN + stopped: finish after 180s only when GPS drift is under 8m.
 ```
 
 Native `recordLocation()` maintains `stoppedAnchorLat`, `stoppedAnchorLng`, and `maxDriftSinceStopM`. Moving at or above `5 km/h` resets the anchor, max GPS drift, and stop timers; dropping below `5 km/h` anchors the stop position and tracks maximum drift from that point.
@@ -4198,7 +4220,7 @@ Local trip repository rules:
 
 - Primary web store is IndexedDB database `drivesense_mobile`, version `1`, object store `trips`, key path `id`.
 - Fallback store is JSON under `drivesense_trips`.
-- `TRIP_SCHEMA_VERSION` is `7`.
+- `TRIP_SCHEMA_VERSION` is `8`.
 - Completed trips with missing advanced fields, `needs_rescore`, or old schema version are rescored before being returned. Version 8 refreshes false-positive-sensitive metrics and preserves phone-use display evidence across rescoring and OSM context refreshes.
 - Android native completed trips are imported before list/get operations on Android.
 - Imported native trips are recalculated by JS, keep their full GPS route detail, are marked `imported_from_native: true`, and then native completed trips are cleared.
@@ -4353,7 +4375,10 @@ Native auto tracking service:
 - Runs as a foreground service with channel `drivesense_native_auto_tracking`.
 - Starts activity updates through Google Activity Recognition.
 - Starts fused location updates when trip capture is active.
-- Starts a trip when confident `IN_VEHICLE` activity is detected.
+- Starts a hidden candidate when confident `IN_VEHICLE` activity and 2 seconds of movement at or above `5 km/h` are detected.
+- Confirms a normal candidate after at least `4` stable GPS points, `150 m`, and `10 km/h` max speed.
+- Confirms a candidate near a recently parked location after at least `5` stable GPS points, `250 m`, and `10 km/h` max speed.
+- Discards a candidate when strong walking/running/cycling activity is detected at or below `10 km/h`, or when the 180-second review window ends without vehicle-like proof.
 - Records GPS points below `MAX_ACCURACY_M = 75`.
 - Filters noise using accuracy-aware distance floors and speed plausibility.
 - Tracks stopped anchor and max drift while speed is below `5 km/h`.
@@ -4363,14 +4388,15 @@ Native auto tracking service:
 
 Native auto-stop timing:
 
-- Foot activity with stopped speed: 15 seconds.
+- Foot activity with speed at or below `10 km/h`: 10 seconds.
 - STILL with stable GPS: 90 seconds.
 - STILL with drift: 150 seconds.
-- IN_VEHICLE while stopped and GPS very stable under 5 m drift: 240 seconds.
-- IN_VEHICLE while stopped with relaxed urban GPS drift under 20 m: 360 seconds.
-- IN_VEHICLE while stopped at under 2 km/h with parked-like GPS drift under 20 m: 420 seconds.
-- IN_VEHICLE while stopped at under 2 km/h with no recent movement: 600 seconds safety net.
-- UNKNOWN while stopped and GPS stable: 300 seconds.
+- IN_VEHICLE at speed below `2 km/h` and GPS very stable under `5 m` drift: 90 seconds.
+- IN_VEHICLE at speed below `2 km/h` with relaxed GPS drift under `20 m`: 300 seconds.
+- IN_VEHICLE at speed below `5 km/h` and GPS very stable under `5 m` drift: 120 seconds.
+- IN_VEHICLE at speed below `5 km/h`, speed below `2 km/h`, and relaxed drift under `20 m`: 300 seconds.
+- IN_VEHICLE at speed below `2 km/h`: 420 seconds absolute near-zero-speed timeout.
+- UNKNOWN while stopped and GPS stable: 180 seconds.
 
 If activity recognition reports STILL or walking after the last GPS update becomes stale for 30 seconds, the native service treats the speed as stopped. This handles the common parked-car case where Android stops sending fresh location points because the phone is no longer moving.
 
@@ -4506,12 +4532,20 @@ All calculation details known from the current source are included in section 27
 - `src/lib/dangerZoneEngine.js`
 - `src/lib/dailyFatigueEngine.js`
 - `src/lib/preTripRisk.js`
+- `src/lib/predictiveRouteRisk.js`
 - `src/lib/routeRiskIndex.js`
+- `src/lib/speedLimitSource.js`
+- `src/lib/weatherContext.js`
+- `src/lib/phoneUsageAccess.js`
+- `src/lib/sensorFusionModel.js`
 - `src/lib/thresholdCalibration.js`
+- `src/lib/privacyZones.js`
+- `src/lib/driverAnomaly.js`
 - `src/lib/ubiReport.js`
+- `src/lib/obdBluetooth.js`
 - `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java`
 
-It includes GPS formulas, cleaning, route simplification, stats, all event detectors, all score formulas, all insight formulas, all vehicle/economics formulas, danger-zone clustering, route-risk indexing, calibration, daily fatigue, pre-trip risk, UBI reporting, export formatting, JavaScript auto-start/auto-stop, native Android auto-stop, native stats, and native GPS noise filtering.
+It includes GPS formulas, cleaning, route simplification, stats, all event detectors, all score formulas, all insight formulas, all vehicle/economics formulas, weather context, OpenStreetMap speed-limit annotation, phone-use evidence merging, danger-zone clustering, route-risk indexing, predictive route risk, calibration, daily fatigue, pre-trip risk, sensor fusion, privacy-zone masking, driver anomaly scoring, UBI reporting, OBD-II PID parsing, export formatting, JavaScript auto-start/auto-stop, native Android candidate validation, native auto-stop, native stats, and native GPS noise filtering.
 ## Advanced Analysis Update
 
 Trip schema version 3 adds these completed-trip fields:
@@ -4576,3 +4610,22 @@ New tests cover:
 - Pre-trip readiness signals.
 - Map playback timeline, segment inspection, route comparison, and optional downsampling helpers.
 - Route-risk segment indexing, storage round trip, and storage trimming.
+
+## May 20, 2026 Documentation Sync
+
+The current implementation includes these latest details that must stay aligned when future code changes are made:
+
+- App identity in user-facing copy is Road Sage; several storage keys and native plugin classes still use the historical `DriveSense` name for compatibility.
+- Current local trip schema is `TRIP_SCHEMA_VERSION = 8`.
+- Foreground auto-start requires `in_vehicle` confidence at least `65`, speed at least `5 km/h`, and at least `2` seconds of movement. GPS fallback also uses `5 km/h` for `2` seconds when activity is missing, unknown, or uncertain.
+- Native background auto-start creates a hidden candidate first. A normal candidate confirms at `4` stable GPS points, `150 m`, and `10 km/h`; a candidate inside the 5-minute, 75 m parking cooldown confirms at `5` stable GPS points, `250 m`, and `10 km/h`.
+- Native candidate trips are discarded for strong walking/running/cycling evidence at or below `10 km/h`, or after `180` seconds when stable GPS, distance, or vehicle-speed proof is missing.
+- Native stop timing is now `10` seconds for on-foot exit, `90/150` seconds for STILL stable/drifting GPS, `90/300/120/300/420` seconds for the current in-vehicle parked paths, and `180` seconds for UNKNOWN with stable GPS.
+- Default harsh braking is `3.5 m/s2`, rapid acceleration is `3.0 m/s2`, tailgate deceleration is `2.5 m/s2`, known-limit speed margin is `5 km/h`, JavaScript GPS accuracy limit is `50 m`, and native GPS accuracy limit is `75 m`.
+- Phone-use evidence merges GPS behavior, Android Usage Access sessions, stored historical phone-use events, and summary-only legacy trip fields. Passive packages such as launchers, keyboards, Android system UI, maps, music, Waze, and Android Auto are ignored.
+- OpenStreetMap speed limits come from Overpass `maxspeed`; when missing, `highway=*` defaults are living street `20`, service `30`, residential `40`, tertiary/unclassified/road `50`, primary/secondary `60`, motorway/trunk links `80`, and motorway/trunk `100` km/h.
+- Pre-trip readiness weights are time of day `0.14`, day of week `0.10`, recent trend `0.18`, daily fatigue `0.20`, last trip outcome `0.12`, weather `0.08`, danger zones `0.06`, route forecast `0.08`, and recent rest `0.04`.
+- UBI category weights are mileage `0.15`, time of day `0.20`, hard braking `0.25`, acceleration `0.20`, cornering `0.10`, and speed compliance `0.10`.
+- Route risk segment keys round endpoints to `4` decimals and combine both travel directions into one key; score is `eventRate * 20 + harshRate * 40 + 10` when average speed is at least `100 km/h`, capped at `100`.
+- Adaptive calibration needs at least `15` completed trips and `200 km`, unless at least `3` reviewed event feedback items exist.
+- Sensor fusion marks harsh motion at `5.5 m/s2` linear acceleration, impact-like samples at `14 m/s2` plus `120 deg/s`, and possible crash incidents at recent speed at least `20 km/h`, peak linear at least `18 m/s2`, peak rotation at least `90 deg/s`, and stopped/still evidence.
