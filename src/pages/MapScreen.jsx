@@ -357,35 +357,6 @@ export default function MapScreen() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
-        <div className="mb-2 flex items-center gap-2 font-semibold text-foreground">
-          <Layers className="h-3.5 w-3.5 text-primary" />
-          Map legend
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { label: 'Start', detail: 'green pin', color: 'bg-green-500' },
-            { label: 'End', detail: 'red pin', color: 'bg-red-500' },
-            { label: 'Current location', detail: 'blue marker', color: 'bg-blue-500' },
-            { label: 'Driving event', detail: 'tap marker for context', color: 'bg-orange-400' },
-            ...(dangerZones.length > 0 ? [{ label: 'Risk hotspot', detail: 'repeated local events', color: 'bg-red-500 opacity-70' }] : []),
-            ...(showRouteRisk && selectedTrip ? [{ label: 'Route risk', detail: 'orange/red route segments', color: 'bg-orange-500' }] : []),
-            ...(showSpeedLimits && selectedHasSpeedLimits ? [
-              { label: 'Within limit', detail: 'green route line', color: 'bg-emerald-500' },
-              { label: 'Over limit', detail: 'orange/red route line', color: 'bg-orange-500' },
-            ] : []),
-          ].map((item) => (
-            <div key={`${item.label}-${item.detail}`} className="flex items-start gap-2 rounded-xl bg-secondary/40 p-2">
-              <span className={`mt-0.5 h-3 w-3 flex-shrink-0 rounded-full ${item.color}`} />
-              <span>
-                <span className="font-semibold text-foreground">{item.label}</span>
-                <span className="block text-[11px]">{item.detail}</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {showLayerPanel && (
         <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
           <div className="mb-3 flex items-center gap-2">

@@ -912,16 +912,24 @@ export default function Dashboard() {
       },
       {
         label: 'Location',
-        ready: mode === 'manual' || settings.location_permission_granted === true,
+        ready: settings.location_permission_granted === true,
         action: 'location',
-        detail: settings.location_permission_granted ? 'Location permission is recorded as granted.' : 'Location permission is needed before automatic tracking can start.',
+        detail: settings.location_permission_granted
+          ? 'Location permission is recorded as granted.'
+          : mode === 'manual'
+            ? 'Location permission is needed before a manual trip can record GPS.'
+            : 'Location permission is needed before automatic tracking can start.',
       },
       {
         label: 'Activity',
-        ready: !isAndroid() || mode === 'manual' || settings.activity_permission_granted === true,
+        ready: !isAndroid() || settings.activity_permission_granted === true,
         action: 'activity',
         detail: isAndroid()
-          ? settings.activity_permission_granted ? 'Physical Activity is ready.' : 'Physical Activity helps auto tracking tell driving from walking or still time.'
+          ? settings.activity_permission_granted
+            ? 'Physical Activity is ready.'
+            : mode === 'manual'
+              ? 'Physical Activity improves trip context and keeps setup honest for switching to auto later.'
+              : 'Physical Activity helps auto tracking tell driving from walking or still time.'
           : 'Activity permission is not required on this platform.',
       },
       {
@@ -964,7 +972,7 @@ export default function Dashboard() {
       ready: blockers.length === 0,
       headline: blockers.length === 0 ? 'Tracking is ready' : `${blockers.length} tracking setup item${blockers.length === 1 ? '' : 's'} need attention`,
       detail: blockers.length === 0
-        ? mode === 'manual' ? 'Manual trips can start anytime.' : 'Auto tracking has the recorded permissions it needs.'
+        ? mode === 'manual' ? 'Manual trips can start with GPS recording.' : 'Auto tracking has the recorded permissions it needs.'
         : blockers[0].detail,
     };
   })();

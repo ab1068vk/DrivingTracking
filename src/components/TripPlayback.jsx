@@ -21,6 +21,19 @@ const EVENT_COLORS = {
   possible_crash: '#991b1b',
 };
 
+const EVENT_LABELS = {
+  harsh_brake: '!',
+  rapid_acceleration: '+',
+  sharp_turn: '<',
+  speeding: '>',
+  idle: 'P',
+  lane_change: '<>',
+  aggressive_overtake: '>>',
+  near_miss: '!',
+  phone_use: 'P',
+  possible_crash: '!!',
+};
+
 const titleCase = (value) => String(value || '')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (char) => char.toUpperCase());
@@ -94,6 +107,23 @@ const carIconHtml = (color, heading, label = '') => `
   </div>
 `;
 
+const eventMarkerHtml = (event, color) => {
+  const label = EVENT_LABELS[event.type] || '!';
+  const halo = event.severity === 'high' || event.type === 'near_miss' || event.type === 'possible_crash'
+    ? 'rgba(220,38,38,.24)'
+    : 'rgba(15,23,42,.14)';
+  return `
+    <div style="position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center">
+      <div style="position:absolute;inset:0;border-radius:999px;background:${color};opacity:.16"></div>
+      <div style="width:23px;height:23px;border-radius:999px;background:${color};border:2px solid white;color:white;box-shadow:0 5px 16px ${halo};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;line-height:1">${escapeHtml(label)}</div>
+    </div>
+  `;
+};
+
+const endpointIconHtml = (label, color) => `
+  <div style="width:24px;height:24px;border-radius:999px;background:${color};border:3px solid white;box-shadow:0 5px 14px rgba(15,23,42,.28);color:white;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900">${label}</div>
+`;
+
 export default function TripPlayback({ trip, secondaryTrip = null, height = '380px' }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
@@ -158,10 +188,26 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
       if (points.length > 1) {
         const latLngs = points.map(p => [p.lat, p.lng]);
 
+        window.L.polyline(latLngs, {
+          color: '#0f172a',
+          weight: 10,
+          opacity: 0.18,
+          smoothFactor: 1.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(map);
+
         speedSegments.forEach((segment) => {
           window.L.polyline(
             [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-            { color: segment.color, weight: 4, opacity: 0.45 }
+            {
+              color: segment.color,
+              weight: 6,
+              opacity: 0.62,
+              smoothFactor: 1.5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }
           )
             .bindPopup(`${segment.band.label}: ${Math.round(segment.speedKmh)} km/h${segment.speedLimitKmh ? `<br>Limit: ${Math.round(segment.speedLimitKmh)} km/h` : ''}`)
             .on('click', () => setSelectedSegmentId(segment.id))
@@ -169,10 +215,26 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         });
 
         if (secondaryPoints.length > 1) {
+          window.L.polyline(secondaryPoints.map((point) => [point.lat, point.lng]), {
+            color: '#0f172a',
+            weight: 8,
+            opacity: 0.12,
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }).addTo(map);
           secondarySegments.forEach((segment) => {
             window.L.polyline(
             [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-            { color: '#f97316', weight: 4, opacity: 0.35, dashArray: '6 6' }
+            {
+              color: '#f97316',
+              weight: 5,
+              opacity: 0.55,
+              dashArray: '7 7',
+              smoothFactor: 1.5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }
           )
               .bindPopup(`Comparison: ${Math.round(segment.speedKmh)} km/h`)
               .addTo(map);
@@ -184,12 +246,27 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
 
         progressLayersRef.current = window.L.layerGroup().addTo(map);
 
+        const startIcon = window.L.divIcon({
+          html: endpointIconHtml('S', '#16a34a'),
+          className: '',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        });
+        const endIcon = window.L.divIcon({
+          html: endpointIconHtml('E', '#ef4444'),
+          className: '',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        });
+        window.L.marker(latLngs[0], { icon: startIcon }).bindPopup('<b>Start</b>').addTo(map);
+        window.L.marker(latLngs[points.length - 1], { icon: endIcon }).bindPopup('<b>End</b>').addTo(map);
+
         events.forEach(evt => {
           if (!evt.lat || !evt.lng) return;
           const color = EVENT_COLORS[evt.type] || '#6b7280';
           const icon = window.L.divIcon({
-            html: `<div style="width:16px;height:16px;background:${color};border:2px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.25)"></div>`,
-            className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+            html: eventMarkerHtml(evt, color),
+            className: '', iconSize: [32, 32], iconAnchor: [16, 16],
           });
           window.L.marker([evt.lat, evt.lng], { icon })
             .bindPopup(eventPopupHtml(evt))
@@ -266,13 +343,28 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
       speedSegments.slice(0, currentIdx).forEach((segment) => {
         window.L.polyline(
           [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-          { color: segment.color, weight: 6, opacity: 0.95 }
+          {
+            color: segment.color,
+            weight: 8,
+            opacity: 0.98,
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }
         ).addTo(progressLayersRef.current);
       });
       secondarySegments.slice(0, secondaryIdx).forEach((segment) => {
         window.L.polyline(
           [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-          { color: '#f97316', weight: 6, opacity: 0.85, dashArray: '6 6' }
+          {
+            color: '#f97316',
+            weight: 7,
+            opacity: 0.90,
+            dashArray: '7 7',
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }
         ).addTo(progressLayersRef.current);
       });
     }
@@ -391,8 +483,11 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         {currentEvent && (
           <div className="absolute bottom-3 left-3 right-3 z-10 bg-black/70 backdrop-blur text-white rounded-xl px-3 py-2 text-xs font-medium flex items-center gap-2"
             style={{ borderLeft: `3px solid ${EVENT_COLORS[currentEvent.type] || '#6b7280'}` }}>
-            <span style={{ color: EVENT_COLORS[currentEvent.type] }}>!</span>
-            {currentEvent.type?.replace(/_/g, ' ')} - {currentEvent.severity} severity
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-white/15" style={{ color: EVENT_COLORS[currentEvent.type] }}>
+              {EVENT_LABELS[currentEvent.type] || '!'}
+            </span>
+            <span className="capitalize">{currentEvent.type?.replace(/_/g, ' ')}</span>
+            <span className="text-white/70">- {currentEvent.severity || 'medium'} severity</span>
           </div>
         )}
       </div>
