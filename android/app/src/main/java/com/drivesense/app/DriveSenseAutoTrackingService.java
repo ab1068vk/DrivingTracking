@@ -82,8 +82,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double PARKING_COOLDOWN_RADIUS_M = 75.0d;
     private static final double CANDIDATE_CONFIRM_DISTANCE_M = 150.0d;
     private static final double CANDIDATE_CONFIRM_DISTANCE_COOLDOWN_M = 250.0d;
-    private static final double CANDIDATE_CONFIRM_SPEED_KMH = 15.0d;
-    private static final double CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH = 20.0d;
+    private static final double CANDIDATE_CONFIRM_SPEED_KMH = 10.0d;
+    private static final double CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH = 10.0d;
     private static final double WALKING_SPEED_CUTOFF_KMH = 10.0d;
     private static final int CANDIDATE_MIN_STABLE_POINTS = 4;
     private static final int CANDIDATE_MIN_STABLE_POINTS_COOLDOWN = 5;

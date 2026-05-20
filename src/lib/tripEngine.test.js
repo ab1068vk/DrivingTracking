@@ -658,20 +658,20 @@ describe('tripEngine', () => {
     expect(decision.confirmed).toBe(false);
   });
 
-  it('requires a vehicle-speed segment near parking even if slow movement passes 250 meters', () => {
+  it('requires the 10 km/h vehicle-speed segment near parking even if movement passes 250 meters', () => {
     const start = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString();
     const slowPoints = [
-      point(43.6532, -79.3832, 0, 12),
-      point(43.6540, -79.3832, 40, 12),
-      point(43.6550, -79.3832, 90, 12),
-      point(43.6560, -79.3832, 190, 12),
+      point(43.6532, -79.3832, 0, 9),
+      point(43.6540, -79.3832, 40, 9),
+      point(43.6550, -79.3832, 90, 9),
+      point(43.6560, -79.3832, 190, 9),
     ];
 
     const decision = validateCandidateTrip({
       points: slowPoints,
       startTime: start,
       now: slowPoints.at(-1).timestamp,
-      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 95 },
+      activity: null,
       nearParkedLocation: true,
       forceFinal: true,
     });
@@ -679,6 +679,29 @@ describe('tripEngine', () => {
     expect(decision.state).toBe(TRIP_STATES.DISCARDED);
     expect(decision.reason).toBe('no_vehicle_speed_segment');
     expect(decision.confirmed).toBe(false);
+  });
+
+  it('allows 10 km/h vehicle-speed proof near parking when walking is not detected', () => {
+    const start = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString();
+    const slowDrivePoints = [
+      point(43.6532, -79.3832, 0, 10),
+      point(43.6540, -79.3832, 40, 10),
+      point(43.6550, -79.3832, 90, 10),
+      point(43.6560, -79.3832, 190, 10),
+      point(43.6570, -79.3832, 220, 10),
+    ];
+
+    const decision = validateCandidateTrip({
+      points: slowDrivePoints,
+      startTime: start,
+      now: slowDrivePoints.at(-1).timestamp,
+      activity: null,
+      nearParkedLocation: true,
+    });
+
+    expect(decision.state).toBe(TRIP_STATES.CONFIRMED);
+    expect(decision.metrics.required_speed_kmh).toBe(10);
+    expect(decision.confirmed).toBe(true);
   });
 
   it('detects recent parked cooldown and trims walking after parking from saved routes', () => {
