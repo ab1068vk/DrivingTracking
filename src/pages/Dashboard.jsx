@@ -119,7 +119,7 @@ export default function Dashboard() {
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
   const lastProximityAlertRef = useRef(0);
-  const settings = localSettings.get();
+  const [settings, setSettings] = useState(() => localSettings.get());
   const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
   const [pendingStartOptions, setPendingStartOptions] = useState(null);
   const [hazardMessage, setHazardMessage] = useState(null);
@@ -134,12 +134,16 @@ export default function Dashboard() {
   });
 
   const refreshTrackingStatusContext = useCallback(async () => {
+    const latestSettings = await localSettings.hydrateFromNative();
     const diagnostics = getTrackingDiagnostics();
     const [permissionStatus, nativeStatus, batteryStatus] = await Promise.all([
       getPermissionStatus().catch(() => null),
       isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
       isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
     ]);
+    setSettings((current) => (
+      JSON.stringify(current) === JSON.stringify(latestSettings) ? current : latestSettings
+    ));
     setTrackingStatusContext({
       permissionStatus,
       nativeStatus,
@@ -158,9 +162,13 @@ export default function Dashboard() {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') refreshTrackingStatusContext();
     };
+    const interval = isAndroid()
+      ? window.setInterval(refreshTrackingStatusContext, 2000)
+      : null;
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
+      if (interval) window.clearInterval(interval);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibility);
     };

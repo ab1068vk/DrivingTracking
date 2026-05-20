@@ -55,7 +55,7 @@
             android:name=".DriveSenseAutoTrackingTileService"
             android:enabled="true"
             android:exported="true"
-            android:icon="@drawable/ic_stat_drivesense"
+            android:icon="@mipmap/ic_launcher"
             android:label="@string/quick_settings_resume_auto_tracking"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
