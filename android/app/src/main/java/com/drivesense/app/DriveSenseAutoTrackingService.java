@@ -495,7 +495,7 @@ public class DriveSenseAutoTrackingService extends Service {
         double bearing = Double.NaN;
         if (location.hasBearing()) bearing = location.getBearing();
         else if (previousLocation != null) bearing = previousLocation.bearingTo(location);
-        if (!Double.isNaN(bearing)) updatePhoneUseProxy(bearing, speedKmh, location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
+        if (!candidateTrip && !Double.isNaN(bearing)) updatePhoneUseProxy(bearing, speedKmh, location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
 
         activePoints.put(locationToJson(location, speedKmh));
         previousLocation = location;
@@ -1200,7 +1200,7 @@ public class DriveSenseAutoTrackingService extends Service {
         long now = System.currentTimeMillis();
         if (!force && now - lastLiveNotificationMs < LIVE_NOTIFICATION_MIN_INTERVAL_MS) return;
         lastLiveNotificationMs = now;
-        checkAndroidUsageAccessPhoneUse(now);
+        if (!candidateTrip) checkAndroidUsageAccessPhoneUse(now);
         updateNotification(buildLiveTripStatus(now));
     }
 

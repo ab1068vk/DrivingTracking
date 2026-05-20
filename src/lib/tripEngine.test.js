@@ -670,7 +670,7 @@ describe('auto tracking decision logic', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 82 },
       currentSpeedKmh: 5,
-      recentMovingSeconds: 5,
+      recentMovingSeconds: 2,
     })).toBe(true);
 
     expect(shouldAutoStartTracking({

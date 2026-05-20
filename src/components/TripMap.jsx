@@ -292,6 +292,7 @@ export default function TripMap({
   routeRiskSegments = [],
   showSpeedLimits = false,
   rawPointCount = null,
+  smoothRoute = true,
   height = '350px',
   className = '',
 }) {
@@ -314,8 +315,8 @@ export default function TripMap({
     return routeSets.find((route) => route.selected) || routeSets[0] || {};
   }, [routePoints, routes]);
   const selectedRoutePoints = useMemo(
-    () => prepareMapRoutePoints(selectedRoute.route_points || [], { maxPoints: null }),
-    [selectedRoute]
+    () => prepareMapRoutePoints(selectedRoute.route_points || [], { maxPoints: null, smooth: smoothRoute }),
+    [selectedRoute, smoothRoute]
   );
   const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
   const recordedPointCount = Number(
@@ -406,7 +407,10 @@ export default function TripMap({
           ...route,
           color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
           opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-          route_points: prepareMapRoutePoints(maskedPoints, { maxPoints: route.selected ? 900 : 450 }),
+          route_points: prepareMapRoutePoints(maskedPoints, {
+            maxPoints: route.selected ? 900 : 450,
+            smooth: smoothRoute,
+          }),
         };
       })
       .filter((route) => route.route_points.length > 1);
@@ -680,7 +684,7 @@ export default function TripMap({
         .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;

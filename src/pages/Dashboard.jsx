@@ -256,6 +256,7 @@ export default function Dashboard() {
     return () => {
       stopTimer();
       locationService.current?.stop();
+      activityStopRef.current?.();
     };
   }, []);
 
@@ -278,6 +279,9 @@ export default function Dashboard() {
     locationService.current?.stop();
     locationService.current = null;
     sensorFusionRef.current?.stop();
+    await activityStopRef.current?.();
+    activityStopRef.current = null;
+    latestActivityRef.current = null;
     stopTimer();
     await cancelLongTripReminder();
     recordTrackingDiagnostic({
@@ -622,6 +626,14 @@ export default function Dashboard() {
       sensorFusionRef.current = createMotionSensorFusion();
       sensorFusionRef.current.start().catch(() => {});
     }
+    if (isAndroid() && !activityStopRef.current && (candidate || autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual')) {
+      activityStopRef.current = await startActivityRecognition(
+        (activity) => {
+          latestActivityRef.current = activity;
+        },
+        (err) => setLocationError(err.message)
+      );
+    }
     startTimer(new Date(startTime));
     startGPS();
     if (!candidate) {
@@ -699,6 +711,9 @@ export default function Dashboard() {
           stable_points: decision.metrics?.stable_points ?? null,
           near_parked_location: tripToEnd.candidate_near_parked === true,
         });
+        await activityStopRef.current?.();
+        activityStopRef.current = null;
+        latestActivityRef.current = null;
         activeTripStore.clear();
         activeTripRef.current = null;
         trackingRef.current = false;
@@ -779,6 +794,9 @@ export default function Dashboard() {
         duration_seconds: Math.round(preliminaryStats.duration_seconds || 0),
         distance_km: preliminaryStats.distance_km || 0,
       });
+      await activityStopRef.current?.();
+      activityStopRef.current = null;
+      latestActivityRef.current = null;
       activeTripStore.clear();
       activeTripRef.current = null;
       trackingRef.current = false;
@@ -924,6 +942,9 @@ export default function Dashboard() {
     if (newDailyFatigue.fatigueLevel === 'high' || newDailyFatigue.fatigueLevel === 'critical') {
       notifyDailyFatigueWarning(newDailyFatigue).catch(() => {});
     }
+    await activityStopRef.current?.();
+    activityStopRef.current = null;
+    latestActivityRef.current = null;
     activeTripStore.clear();
     activeTripRef.current = null;
     trackingRef.current = false;
@@ -989,15 +1010,16 @@ export default function Dashboard() {
         : 0;
       const activity = latestActivityRef.current;
       const activitySaysDrive = shouldAutoStartTracking({ activity, currentSpeedKmh: speed, recentMovingSeconds });
-      const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= AUTO_START_TRIGGER_SECONDS;
+      const speedTriggerDrive = speed >= 5 && recentMovingSeconds >= AUTO_START_TRIGGER_SECONDS;
 
-      if (activitySaysDrive || speedOnlyDrive) {
+      if (activitySaysDrive || speedTriggerDrive) {
         const gpsFallback = activitySaysDrive && (!activity || activity.type === 'unknown' || activity.confidence < 65);
         const lastParked = await getLastParkedLocation().catch(() => null);
         const nearParkedLocation = isNearRecentParkedLocation(point, lastParked);
-        const triggerReason = gpsFallback ? 'sustained_gps_movement' : activitySaysDrive ? 'activity_in_vehicle' : 'speed_only_drive';
+        const triggerReason = gpsFallback || !activitySaysDrive ? 'sustained_gps_movement' : 'activity_in_vehicle';
         refreshTrackingStatusContext();
         await stopAutoWatchers();
+        latestActivityRef.current = activity || null;
         await handleStartTrip({
           autoStarted: true,
           candidate: true,
@@ -1472,6 +1494,7 @@ export default function Dashboard() {
                   currentLocation={currentLocation}
                   showCurrentLocation
                   parkedLocation={activeTripIsCandidate ? parkedLocation : null}
+                  smoothRoute={false}
                   height="220px"
                 />
               </div>

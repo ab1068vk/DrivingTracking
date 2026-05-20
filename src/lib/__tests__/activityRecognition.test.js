@@ -7,17 +7,17 @@ import {
 } from '@/lib/activityRecognition';
 
 describe('activityRecognition auto-stop logic', () => {
-  it('auto-starts after a one-second confirmed in-vehicle movement window', () => {
+  it('auto-starts after a two-second confirmed in-vehicle movement window', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 66 },
       currentSpeedKmh: 5,
-      recentMovingSeconds: 1,
+      recentMovingSeconds: 2,
     })).toBe(true);
 
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 66 },
       currentSpeedKmh: 5,
-      recentMovingSeconds: 0.5,
+      recentMovingSeconds: 1,
     })).toBe(false);
   });
 
