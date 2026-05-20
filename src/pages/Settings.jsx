@@ -158,6 +158,16 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
 ];
 
+const PRIVACY_RADIUS_MIN_M = 50;
+const PRIVACY_RADIUS_MAX_M = 1000;
+const PRIVACY_RADIUS_DEFAULT_M = 180;
+
+function normalizePrivacyRadius(value, fallback = PRIVACY_RADIUS_DEFAULT_M) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Math.round(number)));
+}
+
 export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
@@ -167,7 +177,8 @@ export default function Settings() {
   const [calibProfile, setCalibProfile] = useState(null);
   const [calibLoading, setCalibLoading] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
-  const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: 180 });
+  const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: String(PRIVACY_RADIUS_DEFAULT_M) });
+  const [privacyRadiusDrafts, setPrivacyRadiusDrafts] = useState({});
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
@@ -405,6 +416,13 @@ export default function Settings() {
 
   const privacyZones = getPrivacyZones(cfg);
 
+  const commitPrivacyDraftRadius = () => {
+    setPrivacyDraft((draft) => ({
+      ...draft,
+      radius_m: String(normalizePrivacyRadius(draft.radius_m)),
+    }));
+  };
+
   const savePrivacyZone = (location, sourceLabel) => {
     if (!location?.lat || !location?.lng) {
       toast({
@@ -416,7 +434,7 @@ export default function Settings() {
     }
     const updated = upsertPrivacyZone({
       label: privacyDraft.label || sourceLabel,
-      radius_m: privacyDraft.radius_m,
+      radius_m: normalizePrivacyRadius(privacyDraft.radius_m),
       lat: location.lat,
       lng: location.lng,
     }, cfg);
@@ -441,6 +459,20 @@ export default function Settings() {
   const deletePrivacyZone = (id) => {
     const updated = removePrivacyZone(id, cfg);
     setCfg(updated);
+    setPrivacyRadiusDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[id];
+      return next;
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+
+  const updatePrivacyZoneRadius = (zone, rawValue) => {
+    const radius = normalizePrivacyRadius(rawValue, zone.radius_m);
+    const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
+    setCfg(updated);
+    setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -1662,17 +1694,23 @@ export default function Settings() {
               />
               <input
                 type="number"
-                min="50"
-                max="1000"
+                inputMode="numeric"
+                min={PRIVACY_RADIUS_MIN_M}
+                max={PRIVACY_RADIUS_MAX_M}
                 step="10"
                 value={privacyDraft.radius_m}
                 onChange={(event) => setPrivacyDraft((draft) => {
-                  const radius = Number(event.target.value);
                   return {
                     ...draft,
-                    radius_m: Number.isFinite(radius) ? Math.max(50, Math.min(1000, radius)) : 180,
+                    radius_m: event.target.value,
                   };
                 })}
+                onBlur={commitPrivacyDraftRadius}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.currentTarget.blur();
+                  }
+                }}
                 className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
                 aria-label="Privacy zone radius in meters"
               />
@@ -1710,14 +1748,36 @@ export default function Settings() {
                       <div className="truncate font-semibold">{zone.label}</div>
                       <div className="text-muted-foreground">{Math.round(zone.radius_m)} m mask radius</div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => deletePrivacyZone(zone.id)}
-                      className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-red-500"
-                      aria-label={`Delete ${zone.label} privacy zone`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={PRIVACY_RADIUS_MIN_M}
+                        max={PRIVACY_RADIUS_MAX_M}
+                        step="10"
+                        value={privacyRadiusDrafts[zone.id] ?? String(Math.round(zone.radius_m))}
+                        onChange={(event) => {
+                          const { value } = event.target;
+                          setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: value }));
+                        }}
+                        onBlur={(event) => updatePrivacyZoneRadius(zone, event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-right text-xs font-semibold"
+                        aria-label={`Radius in meters for ${zone.label}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => deletePrivacyZone(zone.id)}
+                        className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-red-500"
+                        aria-label={`Delete ${zone.label} privacy zone`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
