@@ -223,3 +223,167 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
   ];
   return checks;
 }
+
+function formatDecisionTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'recently';
+  return date.toLocaleString();
+}
+
+function humanReason(reason) {
+  return reason ? String(reason).replace(/_/g, ' ') : null;
+}
+
+function latestTrackingDecision(events = []) {
+  const decisionTypes = new Set([
+    'auto_blocked',
+    'auto_start',
+    'trip_started',
+    'trip_discarded',
+    'auto_stop',
+    'trip_ended',
+    'service_armed',
+    'armed_location_watch',
+  ]);
+  return asArray(events)
+    .filter((event) => decisionTypes.has(event.type))
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] || null;
+}
+
+export function buildDashboardTrackingExplanation(/** @type {any} */ {
+  settings = {},
+  permissionStatus = {},
+  nativeStatus = {},
+  batteryStatus = {},
+  diagnostics = {},
+  latestTrip = null,
+  tracking = false,
+  currentSpeedKmh = null,
+  currentActivity = null,
+  isAndroidPlatform = false,
+} = {}) {
+  const mode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+  const autoEnabled = !settings.tracking_paused && (
+    settings.auto_tracking_enabled ||
+    mode === 'auto_detect' ||
+    mode === 'background_auto'
+  );
+  const backgroundAuto = mode === 'background_auto';
+  const foregroundLocation = permissionStatus?.foregroundLocation || (settings.location_permission_granted ? 'granted' : 'unknown');
+  const backgroundLocation = permissionStatus?.backgroundLocation || (settings.background_location_granted ? 'granted' : 'unknown');
+  const activityRecognition = permissionStatus?.activityRecognition || (settings.activity_permission_granted ? 'granted' : 'unknown');
+  const notifications = permissionStatus?.notifications || (settings.notification_permission_granted ? 'granted' : 'unknown');
+  const blockerDetails = [];
+
+  if (mode === 'paused') {
+    blockerDetails.push('Tracking is paused in Settings.');
+  }
+  if (autoEnabled && foregroundLocation !== 'granted') {
+    blockerDetails.push('Location permission is not granted, so Road Sage cannot confirm speed or route movement.');
+  }
+  if (autoEnabled && isAndroidPlatform && activityRecognition !== 'granted') {
+    blockerDetails.push('Physical Activity permission is not granted, so Android cannot tell the app you are in a vehicle.');
+  }
+  if (backgroundAuto && backgroundLocation !== 'granted') {
+    blockerDetails.push('Background location is not granted, so trips may not start while the app is closed.');
+  }
+  if (backgroundAuto && notifications !== 'granted') {
+    blockerDetails.push('Notifications are not granted, so Android may block the persistent background tracking service.');
+  }
+  if (backgroundAuto && isAndroidPlatform && nativeStatus && nativeStatus.enabled === false) {
+    blockerDetails.push('The Android background tracking service is not armed.');
+  }
+  if (backgroundAuto && batteryStatus && batteryStatus.batteryOptimizationIgnored === false) {
+    blockerDetails.push('Battery optimization may delay or stop background auto-start checks.');
+  }
+
+  const lastDecision = latestTrackingDecision(diagnostics?.events);
+  const speedText = Number.isFinite(Number(currentSpeedKmh))
+    ? `${Math.round(Number(currentSpeedKmh))} km/h`
+    : 'no current speed';
+  const activityLabel = currentActivity?.type || currentActivity?.activity || null;
+  const reason = humanReason(lastDecision?.reason);
+  const facts = [
+    autoEnabled ? `Mode: ${backgroundAuto ? 'Background auto' : mode === 'auto_detect' ? 'Auto-detect' : 'Auto enabled'}` : `Mode: ${mode === 'manual' ? 'Manual' : mode}`,
+    `Location: ${foregroundLocation}`,
+    isAndroidPlatform ? `Activity: ${activityRecognition}` : null,
+    backgroundAuto ? `Background: ${backgroundLocation}` : null,
+    backgroundAuto ? `Notifications: ${notifications}` : null,
+    Number.isFinite(Number(currentSpeedKmh)) ? `Current speed: ${speedText}` : null,
+    activityLabel ? `Current activity: ${activityLabel}` : null,
+  ].filter(Boolean);
+
+  if (tracking) {
+    return {
+      status: 'good',
+      headline: 'Tracking started',
+      detail: 'Road Sage is recording this trip now.',
+      facts,
+      lastDecision,
+    };
+  }
+
+  if (!autoEnabled) {
+    return {
+      status: mode === 'paused' ? 'bad' : 'warn',
+      headline: mode === 'paused' ? 'Tracking will not start' : 'Auto tracking is off',
+      detail: mode === 'paused'
+        ? 'Unpause tracking in Settings before manual or automatic trips can start.'
+        : 'Manual mode will not start trips by itself. Tap Start Trip or switch to auto-detect/background auto.',
+      facts,
+      lastDecision,
+    };
+  }
+
+  if (blockerDetails.length > 0) {
+    return {
+      status: blockerDetails.some((detail) => detail.includes('not granted') || detail.includes('paused')) ? 'bad' : 'warn',
+      headline: 'Auto tracking did not start',
+      detail: blockerDetails[0],
+      facts: [...facts, ...blockerDetails.slice(1)],
+      lastDecision,
+    };
+  }
+
+  if (lastDecision?.type === 'trip_discarded') {
+    return {
+      status: 'warn',
+      headline: 'Last auto trip was ignored',
+      detail: reason === 'auto too short'
+        ? 'Road Sage detected movement, but the trip was too short to save as real driving.'
+        : `The last trip was discarded${reason ? ` because ${reason}` : ''}.`,
+      facts,
+      lastDecision,
+    };
+  }
+
+  if (lastDecision?.type === 'auto_start' || (lastDecision?.type === 'trip_started' && lastDecision?.reason === 'auto_detection')) {
+    return {
+      status: 'good',
+      headline: 'Last auto start succeeded',
+      detail: `Auto tracking started ${formatDecisionTime(lastDecision.timestamp)}${reason ? ` because ${reason}` : ''}.`,
+      facts,
+      lastDecision,
+    };
+  }
+
+  if (latestTrip?.start_source === 'auto' || latestTrip?.start_source === 'native_auto') {
+    return {
+      status: 'good',
+      headline: 'Latest trip auto-started',
+      detail: `The latest saved trip started from ${latestTrip.start_source === 'native_auto' ? 'Android background auto tracking' : 'in-app auto detection'}.`,
+      facts,
+      lastDecision,
+    };
+  }
+
+  return {
+    status: 'warn',
+    headline: 'Waiting for a drive signal',
+    detail: isAndroidPlatform
+      ? `Auto tracking is armed. It starts when Android reports in-vehicle activity or sustained GPS movement. Current reading: ${speedText}.`
+      : `Auto tracking is armed. It starts after sustained GPS movement. Current reading: ${speedText}.`,
+    facts,
+    lastDecision,
+  };
+}

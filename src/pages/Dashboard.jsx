@@ -30,11 +30,13 @@ import {
   notifyStyleShift,
   notifyDailyFatigueWarning,
 } from '@/lib/notificationService';
-import { requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
+import { getPermissionStatus, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
 import {
   startActivityRecognition,
   startNativeAutoTracking,
   stopNativeAutoTracking,
+  getAndroidBatteryOptimizationStatus,
+  getNativeAutoTrackingStatus,
   computeGpsPositionDrift,
   shouldAutoStartTracking,
   shouldAutoStopTracking,
@@ -66,7 +68,11 @@ import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } 
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { computePreTripRisk } from '@/lib/preTripRisk';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
-import { recordTrackingDiagnostic } from '@/lib/trackingDiagnostics';
+import {
+  buildDashboardTrackingExplanation,
+  getTrackingDiagnostics,
+  recordTrackingDiagnostic,
+} from '@/lib/trackingDiagnostics';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
@@ -114,10 +120,45 @@ export default function Dashboard() {
   const [readinessDismissed, setReadinessDismissed] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [dangerZones, setDangerZones] = useState([]);
+  const [trackingStatusContext, setTrackingStatusContext] = useState({
+    permissionStatus: null,
+    nativeStatus: null,
+    batteryStatus: null,
+    diagnostics: getTrackingDiagnostics(),
+  });
+
+  const refreshTrackingStatusContext = useCallback(async () => {
+    const diagnostics = getTrackingDiagnostics();
+    const [permissionStatus, nativeStatus, batteryStatus] = await Promise.all([
+      getPermissionStatus().catch(() => null),
+      isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
+      isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
+    ]);
+    setTrackingStatusContext({
+      permissionStatus,
+      nativeStatus,
+      batteryStatus,
+      diagnostics,
+    });
+  }, []);
 
   useEffect(() => {
     activeTripRef.current = activeTrip;
   }, [activeTrip]);
+
+  useEffect(() => {
+    refreshTrackingStatusContext();
+    const handleFocus = () => refreshTrackingStatusContext();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshTrackingStatusContext();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [refreshTrackingStatusContext]);
 
   useEffect(() => {
     trackingRef.current = tracking;
@@ -382,6 +423,12 @@ export default function Dashboard() {
       return;
     }
     if (cfg.tracking_paused) {
+      recordTrackingDiagnostic({
+        type: 'auto_blocked',
+        title: autoStarted ? 'Auto tracking blocked' : 'Trip start blocked',
+        reason: 'tracking_paused',
+      });
+      refreshTrackingStatusContext();
       setLocationError('Tracking is paused in Settings.');
       return;
     }
@@ -397,6 +444,12 @@ export default function Dashboard() {
       const activityGranted = await requestActivityRecognitionPermission();
       if (!activityGranted) {
         if (pausedNativeAuto) await startNativeAutoTracking().catch(() => {});
+        recordTrackingDiagnostic({
+          type: 'auto_blocked',
+          title: autoStarted ? 'Auto tracking blocked' : 'Trip start blocked',
+          reason: 'activity_permission_denied',
+        });
+        refreshTrackingStatusContext();
         setLocationError('Physical activity permission is required for auto trip detection.');
         return;
       }
@@ -408,6 +461,12 @@ export default function Dashboard() {
 
     if (!granted) {
       if (pausedNativeAuto) await startNativeAutoTracking().catch(() => {});
+      recordTrackingDiagnostic({
+        type: 'auto_blocked',
+        title: autoStarted ? 'Auto tracking blocked' : 'Trip start blocked',
+        reason: useBackground ? 'background_location_or_notification_denied' : 'location_permission_denied',
+      });
+      refreshTrackingStatusContext();
       setLocationError(useBackground
         ? 'Background tracking needs location and notification permission before a trip can start.'
         : 'Location permission denied. Please enable location to start a trip.');
@@ -431,6 +490,7 @@ export default function Dashboard() {
       reason: autoStarted ? 'auto_detection' : 'manual_button',
       background_tracking: useBackground,
     });
+    refreshTrackingStatusContext();
     activeTripRef.current = tripData;
     trackingRef.current = true;
     setActiveTrip(tripData);
@@ -443,7 +503,7 @@ export default function Dashboard() {
     startGPS();
     notifyTripStarted();
     scheduleLongTripReminder(tripData.start_time);
-  }, [dailyFatigue.shouldWarnBeforeTrip, startGPS]);
+  }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
 
   const acknowledgeEmergencyWorkflow = (action = 'ok') => {
     const current = activeTripRef.current || activeTrip;
@@ -520,6 +580,7 @@ export default function Dashboard() {
       if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
         await startNativeAutoTracking().catch(() => {});
       }
+      refreshTrackingStatusContext();
       setLocationError(isManualTrip
         ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
@@ -651,6 +712,7 @@ export default function Dashboard() {
     if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
       await startNativeAutoTracking().catch(() => {});
     }
+    refreshTrackingStatusContext();
     refetch();
   };
 
@@ -715,6 +777,7 @@ export default function Dashboard() {
           speed_kmh: Math.round(speed),
           recent_moving_seconds: Math.round(recentMovingSeconds),
         });
+        refreshTrackingStatusContext();
         await stopAutoWatchers();
         await handleStartTrip({ autoStarted: true });
       } else if (shouldAutoStopTracking({ activity, currentSpeedKmh: speed, stillSeconds })) {
@@ -729,6 +792,12 @@ export default function Dashboard() {
         const activityGranted = await requestActivityRecognitionPermission();
         if (cancelled) return;
         if (!activityGranted) {
+          recordTrackingDiagnostic({
+            type: 'auto_blocked',
+            title: 'Auto tracking blocked',
+            reason: 'activity_permission_denied',
+          });
+          refreshTrackingStatusContext();
           setLocationError('Physical activity permission is required for auto trip detection.');
           return;
         }
@@ -747,6 +816,12 @@ export default function Dashboard() {
       if (cancelled) return;
 
       if (!locationGranted) {
+        recordTrackingDiagnostic({
+          type: 'auto_blocked',
+          title: 'Auto tracking blocked',
+          reason: useBackground ? 'background_location_or_notification_denied' : 'location_permission_denied',
+        });
+        refreshTrackingStatusContext();
         setLocationError(useBackground
           ? 'Background auto tracking needs background location and notification permission.'
           : 'Auto tracking needs location permission.');
@@ -770,7 +845,7 @@ export default function Dashboard() {
       cancelled = true;
       stopAutoWatchers();
     };
-  }, [tracking, handleStartTrip]);
+  }, [tracking, handleStartTrip, refreshTrackingStatusContext]);
 
   // Stats
   const totalTrips = completedTrips.length;
@@ -861,6 +936,28 @@ export default function Dashboard() {
         : blockers[0].detail,
     };
   })();
+  const trackingExplanation = buildDashboardTrackingExplanation({
+    settings,
+    permissionStatus: trackingStatusContext.permissionStatus,
+    nativeStatus: trackingStatusContext.nativeStatus,
+    batteryStatus: trackingStatusContext.batteryStatus,
+    diagnostics: trackingStatusContext.diagnostics,
+    latestTrip,
+    tracking,
+    currentSpeedKmh: currentLocation?.speed_kmh,
+    currentActivity: latestActivityRef.current,
+    isAndroidPlatform: isAndroid(),
+  });
+  const explanationTone = {
+    good: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20',
+    warn: 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20',
+    bad: 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/20',
+  }[trackingExplanation.status] || 'border-border bg-card';
+  const explanationIconTone = {
+    good: 'text-emerald-600 dark:text-emerald-300',
+    warn: 'text-amber-600 dark:text-amber-300',
+    bad: 'text-red-600 dark:text-red-300',
+  }[trackingExplanation.status] || 'text-primary';
 
   return (
     <div className="space-y-6 pb-4">
@@ -889,6 +986,46 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <div className={`rounded-3xl border p-4 shadow-sm ${explanationTone}`}>
+        <div className="flex items-start gap-3">
+          {trackingExplanation.status === 'good' ? (
+            <CheckCircle2 className={`mt-0.5 h-5 w-5 flex-shrink-0 ${explanationIconTone}`} />
+          ) : (
+            <AlertTriangle className={`mt-0.5 h-5 w-5 flex-shrink-0 ${explanationIconTone}`} />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Why tracking did or did not start</div>
+                <div className="mt-1 text-sm font-semibold">{trackingExplanation.headline}</div>
+              </div>
+              <button
+                type="button"
+                onClick={refreshTrackingStatusContext}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/70 px-2.5 py-1.5 text-xs font-semibold hover:bg-background"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
+              </button>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{trackingExplanation.detail}</div>
+            {trackingExplanation.lastDecision && (
+              <div className="mt-2 text-[11px] text-muted-foreground">
+                Last decision: {trackingExplanation.lastDecision.title || trackingExplanation.lastDecision.type}
+                {trackingExplanation.lastDecision.reason ? ` - ${String(trackingExplanation.lastDecision.reason).replace(/_/g, ' ')}` : ''}
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {trackingExplanation.facts.slice(0, 7).map((fact) => (
+                <span key={fact} className="rounded-full border border-border bg-background/70 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                  {fact}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {!tracking && (
         <div className={`rounded-3xl border p-4 shadow-sm ${

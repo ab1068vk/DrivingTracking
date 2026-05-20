@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildParkingTimeline, buildTrackingHealth, normalizeNativeDiagnosticEvents } from '@/lib/trackingDiagnostics';
+import {
+  buildDashboardTrackingExplanation,
+  buildParkingTimeline,
+  buildTrackingHealth,
+  normalizeNativeDiagnosticEvents,
+} from '@/lib/trackingDiagnostics';
 
 describe('tracking diagnostics', () => {
   it('builds a real parking timeline from trip fields and native events', () => {
@@ -59,5 +64,48 @@ describe('tracking diagnostics', () => {
     expect(health.find((item) => item.id === 'motion')?.status).toBe('good');
     expect(health.find((item) => item.id === 'notifications')?.status).toBe('good');
     expect(health.find((item) => item.id === 'bluetooth')?.detail).toContain('OBD-II');
+  });
+
+  it('explains why dashboard auto tracking did not start from real permission state', () => {
+    const explanation = buildDashboardTrackingExplanation({
+      settings: { tracking_mode: 'background_auto', auto_tracking_enabled: true },
+      permissionStatus: {
+        foregroundLocation: 'granted',
+        backgroundLocation: 'denied',
+        activityRecognition: 'denied',
+        notifications: 'granted',
+      },
+      nativeStatus: { enabled: false },
+      batteryStatus: { batteryOptimizationIgnored: false },
+      isAndroidPlatform: true,
+    });
+
+    expect(explanation.status).toBe('bad');
+    expect(explanation.headline).toBe('Auto tracking did not start');
+    expect(explanation.detail).toContain('Physical Activity');
+    expect(explanation.facts.join(' ')).toContain('Background');
+  });
+
+  it('surfaces the last successful auto-start decision on dashboard', () => {
+    const explanation = buildDashboardTrackingExplanation({
+      settings: { tracking_mode: 'auto_detect', auto_tracking_enabled: true },
+      permissionStatus: {
+        foregroundLocation: 'granted',
+        activityRecognition: 'granted',
+      },
+      diagnostics: {
+        events: [{
+          type: 'auto_start',
+          title: 'In-app auto-start triggered',
+          reason: 'activity_in_vehicle',
+          timestamp: '2026-01-01T12:00:00.000Z',
+        }],
+      },
+      isAndroidPlatform: true,
+    });
+
+    expect(explanation.status).toBe('good');
+    expect(explanation.headline).toBe('Last auto start succeeded');
+    expect(explanation.detail).toContain('activity in vehicle');
   });
 });
