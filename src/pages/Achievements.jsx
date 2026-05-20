@@ -23,6 +23,17 @@ const progressValue = (badge) => {
   return 0;
 };
 
+const nextStepLabel = (badge) => {
+  if (badge.earned) return null;
+  if (badge.target) {
+    const remaining = Math.max(0, (badge.target || 0) - (badge.current || 0));
+    const unit = badge.unit ? ` ${badge.unit}` : '';
+    return remaining > 0 ? `${remaining}${unit} to unlock` : 'Almost unlocked';
+  }
+  if (badge.progress !== undefined) return `${Math.max(0, 100 - Math.round(badge.progress))}% left`;
+  return 'Keep completing tracked trips';
+};
+
 export default function Achievements() {
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['achievement-trips'],
@@ -111,6 +122,11 @@ export default function Achievements() {
                       </div>
                     )}
                     <p className="text-xs text-muted-foreground mt-1">{badge.description}</p>
+                    {nextStepLabel(badge) && (
+                      <div className="mt-2 rounded-lg bg-secondary/60 px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+                        Next: {nextStepLabel(badge)}
+                      </div>
+                    )}
                     <div className="h-2 rounded-full bg-secondary overflow-hidden mt-3">
                       <div
                         className={`h-full rounded-full ${badge.earned ? 'bg-emerald-500' : 'bg-primary'}`}

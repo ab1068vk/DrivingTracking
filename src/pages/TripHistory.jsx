@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -43,6 +43,8 @@ const SCORE_SPARKLINES = [
   { key: 'score_eco', label: 'Eco' },
 ];
 
+const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
+
 const startOfWeek = () => {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
@@ -76,6 +78,14 @@ export default function TripHistory() {
   const [filterBy, setFilterBy] = useState('all');
   const [selectedTag, setSelectedTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [savedFilters, setSavedFilters] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  });
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const qc = useQueryClient();
@@ -153,6 +163,38 @@ export default function TripHistory() {
     setFilterBy('all');
     setSelectedTag('all');
     setSortBy('date_desc');
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
+    } catch {}
+  }, [savedFilters]);
+
+  const saveCurrentFilter = () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const preset = {
+      id: `filter_${Date.now()}`,
+      name,
+      search,
+      sortBy,
+      filterBy,
+      selectedTag,
+    };
+    setSavedFilters((current) => [preset, ...current.filter((item) => item.name.toLowerCase() !== name.toLowerCase())].slice(0, 8));
+    setPresetName('');
+  };
+
+  const applySavedFilter = (preset) => {
+    setSearch(preset.search || '');
+    setSortBy(preset.sortBy || 'date_desc');
+    setFilterBy(preset.filterBy || 'all');
+    setSelectedTag(preset.selectedTag || 'all');
+  };
+
+  const removeSavedFilter = (id) => {
+    setSavedFilters((current) => current.filter((item) => item.id !== id));
   };
 
   return (
@@ -256,7 +298,7 @@ export default function TripHistory() {
       </div>
 
       {showFilters && (
-        <div className="rounded-2xl border border-border bg-card p-3">
+        <div className="space-y-4 rounded-2xl border border-border bg-card p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
             <Tag className="h-3.5 w-3.5" />
             Tags
@@ -281,6 +323,43 @@ export default function TripHistory() {
                 {option.label}
               </button>
             ))}
+          </div>
+
+          <div className="border-t border-border pt-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <Star className="h-3.5 w-3.5" />
+              Saved filters
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={presetName}
+                onChange={(event) => setPresetName(event.target.value)}
+                placeholder="Name this filter"
+                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={saveCurrentFilter}
+                disabled={!presetName.trim()}
+                className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+            {savedFilters.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {savedFilters.map((preset) => (
+                  <span key={preset.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2 py-1 text-xs">
+                    <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">
+                      {preset.name}
+                    </button>
+                    <button type="button" onClick={() => removeSavedFilter(preset.id)} className="text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
+                      x
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

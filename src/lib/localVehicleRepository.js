@@ -20,6 +20,8 @@ const normalizeVehicle = (vehicle) => ({
   color: vehicle.color || '#3b82f6',
   plate: String(vehicle.plate || '').trim().toUpperCase(),
   odometer_km: Number(vehicle.odometer_km) || 0,
+  odometer_trip_distance_anchor_km: Number(vehicle.odometer_trip_distance_anchor_km) || 0,
+  auto_odometer_last_sync_at: vehicle.auto_odometer_last_sync_at || null,
   fuel_efficiency_l_per_100km: Number(vehicle.fuel_efficiency_l_per_100km) || 8.5,
   fuel_price_per_liter: Number(vehicle.fuel_price_per_liter) || 1.65,
   maintenance_reserve_per_km: Number(vehicle.maintenance_reserve_per_km) || 0.08,

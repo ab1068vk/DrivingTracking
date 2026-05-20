@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
-import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm } from '@/lib/tripInsights';
+import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
 
@@ -206,6 +206,33 @@ export default function Vehicles() {
     invalidate();
   };
 
+  useEffect(() => {
+    if (!vehicles.length || !trips.length) return;
+    let cancelled = false;
+    const syncOdometers = async () => {
+      let changed = false;
+      for (const vehicle of vehicles) {
+        const tripDistance = getVehicleTripDistanceKm(vehicle, trips);
+        const anchorDistance = Number(vehicle.odometer_trip_distance_anchor_km) || 0;
+        if (tripDistance <= anchorDistance + 0.1) continue;
+
+        const odometerKm = getVehicleOdometerKm(vehicle, trips);
+        await vehicleService.update(vehicle.id, {
+          odometer_km: odometerKm,
+          odometer_trip_distance_anchor_km: tripDistance,
+          auto_odometer_last_sync_at: new Date().toISOString(),
+        });
+        changed = true;
+      }
+      if (!cancelled && changed) invalidate();
+    };
+
+    syncOdometers().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicles, trips]);
+
   const handleRenewalDone = async (vehicle, reminder) => {
     const nextDate = new Date();
     nextDate.setFullYear(nextDate.getFullYear() + 1);
@@ -354,6 +381,11 @@ export default function Vehicles() {
                         )}
                         <span>{odometerKm.toLocaleString()} km</span>
                       </div>
+                      {v.auto_odometer_last_sync_at && (
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          Odometer auto-synced from trips {new Date(v.auto_odometer_last_sync_at).toLocaleDateString()}.
+                        </div>
+                      )}
                     </div>
                     {/* Actions */}
                     <div className="flex items-center gap-1.5 flex-shrink-0">

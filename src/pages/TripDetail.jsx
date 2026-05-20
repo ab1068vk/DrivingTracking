@@ -139,6 +139,29 @@ export default function TripDetail() {
       setEditingMetadata(false);
     },
   });
+  const feedbackMutation = useMutation({
+    mutationFn: (/** @type {{eventKey:string, event:any, verdict:string}} */ vars) => {
+      const existing = trip?.event_feedback || {};
+      return tripService.update(id, {
+        event_feedback: {
+          ...existing,
+          [vars.eventKey]: {
+            verdict: vars.verdict,
+            type: vars.event?.type || 'unknown',
+            timestamp: vars.event?.timestamp || null,
+            value: vars.event?.value ?? null,
+            reviewed_at: new Date().toISOString(),
+          },
+        },
+      });
+    },
+    onSuccess: (updatedTrip) => {
+      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+      qc.invalidateQueries({ queryKey: ['trip', id] });
+      qc.invalidateQueries({ queryKey: ['all-trips'] });
+      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+    },
+  });
   const contextMutation = useMutation({
     mutationFn: async () => {
       setOsmFetchStatus('Preparing route context');
@@ -333,6 +356,17 @@ export default function TripDetail() {
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse);
+  const eventFeedback = trip.event_feedback || {};
+  const eventFeedbackKey = (event, index) => [
+    event.type || 'event',
+    event.timestamp || index,
+    Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(2) : '',
+  ].join('|');
+  const feedbackCounts = Object.values(eventFeedback).reduce((counts, item) => {
+    if (item?.verdict === 'accurate') counts.accurate += 1;
+    if (item?.verdict === 'wrong') counts.wrong += 1;
+    return counts;
+  }, { accurate: 0, wrong: 0 });
   const mapEvents = settings.phone_use_show_on_map === false
     ? displayEvents.filter((event) => event.type !== 'phone_use')
     : displayEvents;
@@ -1280,6 +1314,13 @@ export default function TripDetail() {
               {displayEvents.length} detected
             </span>
           </h2>
+          {(feedbackCounts.accurate > 0 || feedbackCounts.wrong > 0) && (
+            <div className="mb-4 rounded-2xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+              Detection feedback: <span className="font-semibold text-emerald-600 dark:text-emerald-300">{feedbackCounts.accurate} accurate</span>
+              <span className="mx-1">/</span>
+              <span className="font-semibold text-red-600 dark:text-red-300">{feedbackCounts.wrong} needs review</span>
+            </div>
+          )}
 
           {/* Summary counts */}
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -1308,6 +1349,8 @@ export default function TripDetail() {
           {/* Event list */}
           <div className="space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
             {displayEvents.map((evt, i) => {
+              const key = eventFeedbackKey(evt, i);
+              const feedback = eventFeedback[key]?.verdict || null;
               const labels = {
                 harsh_brake: { label: 'Harsh Brake', icon: '🛑', color: 'text-red-600' },
                 rapid_acceleration: { label: 'Rapid Acceleration', icon: '⚡', color: 'text-yellow-600' },
@@ -1337,7 +1380,7 @@ export default function TripDetail() {
                     ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
                     : 'Measured from GPS motion';
               return (
-                <div key={i} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+                <div key={i} className="flex flex-col gap-2 py-2 border-b border-border/50 last:border-0 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2.5">
                     <span className="text-lg">{cfg.icon}</span>
                     <div>
@@ -1348,12 +1391,29 @@ export default function TripDetail() {
                       <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
                     </div>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize
-                    ${evt.severity === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400' :
-                      evt.severity === 'medium' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400' :
-                      'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
-                    {evt.severity}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize
+                      ${evt.severity === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400' :
+                        evt.severity === 'medium' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400' :
+                        'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
+                      {evt.severity}
+                    </span>
+                    {[
+                      { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
+                      { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
+                    ].map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
+                        className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                          feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               );
             })}

@@ -140,7 +140,10 @@ export function getVehicleTripDistanceKm(vehicle, trips = []) {
 }
 
 export function getVehicleOdometerKm(vehicle, trips = []) {
-  return Math.round((Number(vehicle?.odometer_km) || 0) + getVehicleTripDistanceKm(vehicle, trips));
+  const baseOdometer = Number(vehicle?.odometer_km) || 0;
+  const tripDistance = getVehicleTripDistanceKm(vehicle, trips);
+  const anchoredDistance = Number(vehicle?.odometer_trip_distance_anchor_km) || 0;
+  return Math.round(baseOdometer + Math.max(0, tripDistance - anchoredDistance));
 }
 
 export function getMaintenanceItems(vehicle) {

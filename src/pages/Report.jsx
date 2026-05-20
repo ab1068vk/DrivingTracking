@@ -245,6 +245,33 @@ export default function Reports() {
 
   const { color: bestColor } = getScoreColor(summary.best_trip?.score_overall || 0);
   const { color: worstColor } = getScoreColor(summary.worst_trip?.score_overall || 0);
+  const previousTrips = (() => {
+    if (period === 'all') return [];
+    const previousCutoff = cutoff - periodDays * 24 * 3600 * 1000;
+    return completed.filter((trip) => {
+      const time = new Date(trip.start_time).getTime();
+      return time >= previousCutoff && time < cutoff;
+    });
+  })();
+  const previousSummary = generateReportSummary(previousTrips);
+  const topRisk = Object.entries(riskLabels)
+    .map(([type, label]) => ({
+      type,
+      label,
+      count: trips.reduce((sum, trip) => sum + (trip.driving_events || []).filter((event) => event.type === type).length, 0),
+    }))
+    .sort((a, b) => b.count - a.count)[0];
+  const reportTakeaways = [
+    summary.total_trips > 0
+      ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${summary.avg_score}.`
+      : 'No trips were recorded in this report period.',
+    previousTrips.length > 0
+      ? `Compared with the previous period, score ${summary.avg_score >= previousSummary.avg_score ? 'improved' : 'dropped'} by ${Math.abs(summary.avg_score - previousSummary.avg_score)} points.`
+      : 'Complete another matching period to unlock period-over-period comparison.',
+    topRisk?.count > 0
+      ? `Main thing to work on: ${topRisk.label.toLowerCase()} (${topRisk.count} event${topRisk.count === 1 ? '' : 's'}).`
+      : 'No dominant risk event stood out in this period.',
+  ];
 
   return (
     <div className="space-y-6 pb-4">
@@ -309,6 +336,23 @@ export default function Reports() {
         </div>
       ) : (
         <>
+          <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">What changed</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Plain-English summary for the selected period</p>
+              </div>
+              <TrendingUp className="h-5 w-5 text-primary" />
+            </div>
+            <div className="space-y-2">
+              {reportTakeaways.map((takeaway) => (
+                <div key={takeaway} className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">
+                  {takeaway}
+                </div>
+              ))}
+            </div>
+          </section>
+
           {/* Summary cards */}
           <div className="grid grid-cols-2 gap-3">
             {[

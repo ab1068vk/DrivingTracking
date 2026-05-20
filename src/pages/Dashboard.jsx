@@ -30,13 +30,14 @@ import {
   notifyStyleShift,
   notifyDailyFatigueWarning,
 } from '@/lib/notificationService';
-import { getPermissionStatus, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission } from '@/lib/permissions';
+import { getPermissionStatus, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission } from '@/lib/permissions';
 import {
   startActivityRecognition,
   startNativeAutoTracking,
   stopNativeAutoTracking,
   getAndroidBatteryOptimizationStatus,
   getNativeAutoTrackingStatus,
+  openAndroidBatteryOptimizationSettings,
   computeGpsPositionDrift,
   shouldAutoStartTracking,
   shouldAutoStopTracking,
@@ -884,12 +885,22 @@ export default function Dashboard() {
   })();
 
   const units = settings.units || 'metric';
+  const handleTrackingSetupAction = async (action) => {
+    if (action === 'location') await requestForegroundLocationPermission();
+    if (action === 'activity') await requestActivityRecognitionPermission();
+    if (action === 'background') await requestBackgroundLocationPermission();
+    if (action === 'notifications') await requestNotificationPermission();
+    if (action === 'battery') await openAndroidBatteryOptimizationSettings();
+    if (action === 'native') await startNativeAutoTracking().catch(() => {});
+    await refreshTrackingStatusContext();
+  };
   const trackingReadiness = (() => {
     const mode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
     const checks = [
       {
         label: 'Tracking mode',
         ready: mode !== 'paused',
+        action: null,
         detail: mode === 'paused'
           ? 'All tracking is paused in Settings.'
           : mode === 'manual'
@@ -901,11 +912,13 @@ export default function Dashboard() {
       {
         label: 'Location',
         ready: mode === 'manual' || settings.location_permission_granted === true,
+        action: 'location',
         detail: settings.location_permission_granted ? 'Location permission is recorded as granted.' : 'Location permission is needed before automatic tracking can start.',
       },
       {
         label: 'Activity',
         ready: !isAndroid() || mode === 'manual' || settings.activity_permission_granted === true,
+        action: 'activity',
         detail: isAndroid()
           ? settings.activity_permission_granted ? 'Physical Activity is ready.' : 'Physical Activity helps auto tracking tell driving from walking or still time.'
           : 'Activity permission is not required on this platform.',
@@ -913,6 +926,7 @@ export default function Dashboard() {
       {
         label: 'Background',
         ready: mode !== 'background_auto' || settings.background_location_granted === true,
+        action: 'background',
         detail: mode === 'background_auto'
           ? settings.background_location_granted ? 'Background location is ready.' : 'Allow all-the-time location for background auto tracking.'
           : 'Background location is not needed for this mode.',
@@ -920,9 +934,26 @@ export default function Dashboard() {
       {
         label: 'Notifications',
         ready: mode !== 'background_auto' || settings.notification_permission_granted === true,
+        action: 'notifications',
         detail: mode === 'background_auto'
           ? settings.notification_permission_granted ? 'Foreground service notifications are ready.' : 'Android background tracking needs notifications for its persistent status.'
           : 'Notifications improve trip summaries and safety alerts.',
+      },
+      {
+        label: 'Battery',
+        ready: !isAndroid() || mode !== 'background_auto' || trackingStatusContext.batteryStatus?.batteryOptimizationIgnored === true,
+        action: 'battery',
+        detail: isAndroid() && mode === 'background_auto'
+          ? trackingStatusContext.batteryStatus?.batteryOptimizationIgnored ? 'Battery optimization is unrestricted.' : 'Unrestricted battery helps Android keep background auto tracking alive.'
+          : 'Battery setup is only needed for Android background auto.',
+      },
+      {
+        label: 'Native service',
+        ready: !isAndroid() || mode !== 'background_auto' || trackingStatusContext.nativeStatus?.enabled === true,
+        action: 'native',
+        detail: isAndroid() && mode === 'background_auto'
+          ? trackingStatusContext.nativeStatus?.enabled ? 'Native auto tracking is armed.' : 'Start the native service so Android can detect drives while the app sleeps.'
+          : 'Native service is only used for Android background auto.',
       },
     ];
     const blockers = checks.filter((item) => !item.ready);
@@ -1042,7 +1073,7 @@ export default function Dashboard() {
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold">{trackingReadiness.headline}</div>
               <div className="mt-1 text-xs text-muted-foreground">{trackingReadiness.detail}</div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {trackingReadiness.checks.map((item) => (
                   <div key={item.label} className="rounded-xl bg-background/60 px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
@@ -1050,6 +1081,15 @@ export default function Dashboard() {
                       <span className={`h-2 w-2 rounded-full ${item.ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                     </div>
                     <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</div>
+                    {!item.ready && item.action && (
+                      <button
+                        type="button"
+                        onClick={() => handleTrackingSetupAction(item.action)}
+                        className="mt-2 rounded-lg bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground"
+                      >
+                        Fix
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1297,6 +1337,14 @@ export default function Dashboard() {
                   <div className="mt-1 break-words text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
                 </>
               )}
+              <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-3 text-xs">
+                <div className="font-semibold">Recommended before starting</div>
+                <div className="mt-1 text-muted-foreground">
+                  {preTripRisk.riskLevel === 'low'
+                    ? 'Conditions look steady. Start when your phone is mounted and GPS has a clear signal.'
+                    : preTripRisk.tipText || 'Take a short reset before driving, then start when you feel focused.'}
+                </div>
+              </div>
               {preTripRisk.topSignals?.length > 0 && (
                 <div className="mt-3 space-y-2">
                   {preTripRisk.topSignals.map((signal) => (
@@ -1320,6 +1368,11 @@ export default function Dashboard() {
                   </div>
                   <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
                   <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
+                  {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
+                    <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
+                      {predictiveRouteRisk.nearbyDangerZoneCount} nearby hotspot{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history
+                    </div>
+                  )}
                 </div>
               )}
             </div>

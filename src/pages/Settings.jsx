@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search
 } from 'lucide-react';
 import {
   Dialog,
@@ -170,6 +170,7 @@ export default function Settings() {
   const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: 180 });
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
+  const [settingsSearch, setSettingsSearch] = useState('');
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -565,6 +566,21 @@ export default function Settings() {
   const motionSupport = getMotionSensorSupport();
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
+  const settingSearchResults = [
+    { label: 'Tracking mode', section: 'Tracking', keywords: 'manual auto detect background pause' },
+    { label: 'Android permissions', section: 'Android Permissions', keywords: 'location activity notification battery bluetooth phone usage' },
+    { label: 'Notifications', section: 'Notifications', keywords: 'quiet hours trip summary coaching maintenance nudges' },
+    { label: 'Driving goals', section: 'Driving Goals', keywords: 'weekly score harsh brake speeding night' },
+    { label: 'Detection thresholds', section: 'Detection Thresholds', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy' },
+    { label: 'Advanced models', section: 'Advanced Models', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash' },
+    { label: 'Phone use detection', section: 'Phone Use Detection', keywords: 'distraction usage access phone score map' },
+    { label: 'Speed warning', section: 'Speed Warning', keywords: 'speed limits overpass osm warning margin' },
+    { label: 'Privacy zones and backup', section: 'Privacy & Data', keywords: 'privacy export import backup retention delete data' },
+  ].filter((item) => {
+    const query = settingsSearch.trim().toLowerCase();
+    if (!query) return false;
+    return `${item.label} ${item.section} ${item.keywords}`.toLowerCase().includes(query);
+  });
 
   return (
     <div className="space-y-4 pb-6">
@@ -586,6 +602,29 @@ export default function Settings() {
           </motion.div>
         )}
       </motion.div>
+
+      <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={settingsSearch}
+            onChange={(event) => setSettingsSearch(event.target.value)}
+            placeholder="Search settings"
+            className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-sm outline-none focus:border-primary"
+          />
+        </div>
+        {settingsSearch.trim() && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
+              <span key={`${item.section}-${item.label}`} className="rounded-full bg-secondary px-2.5 py-1 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">{item.label}</span> in {item.section}
+              </span>
+            )) : (
+              <span className="text-xs text-muted-foreground">No matching settings found.</span>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
 
