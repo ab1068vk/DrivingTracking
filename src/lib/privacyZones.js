@@ -70,7 +70,10 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones()) {
 export function privacyZonesForRoute(routePoints = [], settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   if (!zones.length || !Array.isArray(routePoints) || !routePoints.length) return [];
-  return zones.filter((zone) => routePoints.some((point) => isPointInPrivacyZone(point, [zone])));
+  return zones.filter((zone) => routePoints.some((point) => (
+    point?.privacy_zone_id === zone.id ||
+    isPointInPrivacyZone(point, [zone])
+  )));
 }
 
 export function privacyBoundaryPoint(insidePoint, outsidePoint, zone) {

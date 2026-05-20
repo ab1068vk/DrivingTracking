@@ -1666,10 +1666,19 @@ export default function Settings() {
                 max="1000"
                 step="10"
                 value={privacyDraft.radius_m}
-                onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, radius_m: Number(event.target.value) || 180 }))}
+                onChange={(event) => setPrivacyDraft((draft) => {
+                  const radius = Number(event.target.value);
+                  return {
+                    ...draft,
+                    radius_m: Number.isFinite(radius) ? Math.max(50, Math.min(1000, radius)) : 180,
+                  };
+                })}
                 className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
                 aria-label="Privacy zone radius in meters"
               />
+            </div>
+            <div className="mt-1 flex justify-end text-[11px] font-medium text-muted-foreground">
+              Min 50 m · Max 1000 m
             </div>
             <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
               Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.

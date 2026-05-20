@@ -64,4 +64,13 @@ describe('privacyZones', () => {
 
     expect(privacyZonesForRoute(route, { privacy_zones: [zone, work] })).toEqual([zone]);
   });
+
+  it('returns privacy zones referenced by already-masked route metadata', () => {
+    const route = [
+      { lat: null, lng: null, privacy_zone_id: zone.id, masked_for_privacy: true },
+      point(43.6522, -79.38, 20),
+    ];
+
+    expect(privacyZonesForRoute(route, { privacy_zones: [zone] })).toEqual([zone]);
+  });
 });
