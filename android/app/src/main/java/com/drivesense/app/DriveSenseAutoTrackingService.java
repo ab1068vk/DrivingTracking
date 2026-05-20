@@ -52,7 +52,9 @@ public class DriveSenseAutoTrackingService extends Service {
 
     private static final int NOTIFICATION_ID = 4101;
     private static final int ACTIVITY_REQUEST_CODE = 4102;
+    private static final int AUTO_STATUS_NOTIFICATION_ID = 4103;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
+    private static final String AUTO_STATUS_CHANNEL_ID = "drivesense_auto_status";
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
     private static final int MIN_STILL_CONFIDENCE = 70;
     private static final int MIN_POINTS_TO_SAVE = 2;
@@ -220,6 +222,7 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     static void start(Context context) {
+        cancelAutoTrackingOffNotification(context);
         Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
         intent.setAction(ACTION_START);
         try {
@@ -236,6 +239,52 @@ public class DriveSenseAutoTrackingService extends Service {
         } catch (Exception ignored) {
             DriveSenseNativeTripStore.setServiceEnabled(context, false);
         }
+        showAutoTrackingOffNotification(context);
+    }
+
+    static void showAutoTrackingOffNotification(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        ensureAutoStatusChannel(context);
+        Intent intent = new Intent(context, MainActivity.class);
+        intent.putExtra("deeplink", "drivesense://settings");
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            context,
+            3,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+        );
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, AUTO_STATUS_CHANNEL_ID)
+            .setSmallIcon(context.getResources().getIdentifier("ic_stat_drivesense", "drawable", context.getPackageName()))
+            .setContentTitle("Auto tracking off")
+            .setContentText("Road Sage will not start trips until auto tracking is turned back on.")
+            .setStyle(new NotificationCompat.BigTextStyle().bigText("Road Sage will not start trips until auto tracking is turned back on."))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent);
+
+        NotificationManagerCompat.from(context).notify(AUTO_STATUS_NOTIFICATION_ID, builder.build());
+    }
+
+    private static void cancelAutoTrackingOffNotification(Context context) {
+        NotificationManagerCompat.from(context).cancel(AUTO_STATUS_NOTIFICATION_ID);
+    }
+
+    private static void ensureAutoStatusChannel(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+            AUTO_STATUS_CHANNEL_ID,
+            "Auto Tracking Status",
+            NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Status updates when Road Sage auto tracking is turned on or off.");
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.createNotificationChannel(channel);
     }
 
     static void handleActivityBroadcast(Context context, DetectedActivity activity) {

@@ -162,10 +162,22 @@ const PRIVACY_RADIUS_MIN_M = 50;
 const PRIVACY_RADIUS_MAX_M = 1000;
 const PRIVACY_RADIUS_DEFAULT_M = 180;
 
-function normalizePrivacyRadius(value, fallback = PRIVACY_RADIUS_DEFAULT_M) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Math.round(number)));
+function validatePrivacyRadius(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return { valid: false, error: `Enter a radius between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.` };
+  }
+
+  const number = Number(raw);
+  if (!Number.isFinite(number)) {
+    return { valid: false, error: 'Radius must be a number in meters.' };
+  }
+
+  if (number < PRIVACY_RADIUS_MIN_M || number > PRIVACY_RADIUS_MAX_M) {
+    return { valid: false, error: `Radius must be between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.` };
+  }
+
+  return { valid: true, radius: Math.round(number), error: '' };
 }
 
 export default function Settings() {
@@ -179,6 +191,8 @@ export default function Settings() {
   const [parkedLocation, setParkedLocation] = useState(null);
   const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: String(PRIVACY_RADIUS_DEFAULT_M) });
   const [privacyRadiusDrafts, setPrivacyRadiusDrafts] = useState({});
+  const [privacyDraftRadiusError, setPrivacyDraftRadiusError] = useState('');
+  const [privacyZoneRadiusErrors, setPrivacyZoneRadiusErrors] = useState({});
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
@@ -302,19 +316,50 @@ export default function Settings() {
     });
   };
 
+  const stopNativeAutoTrackingSafely = async (title = 'Auto tracking could not be turned off') => {
+    if (!isAndroid()) return true;
+
+    try {
+      const stopped = await stopNativeAutoTracking();
+      await refreshPermissions();
+      if (stopped !== true) {
+        throw new Error('Android did not confirm that native auto tracking stopped.');
+      }
+      return true;
+    } catch (error) {
+      toast({
+        title,
+        description: error.message || 'Check Android permissions and try again.',
+        variant: 'destructive',
+      });
+      await refreshPermissions();
+      return false;
+    }
+  };
+
   const updateTrackingPaused = async (paused) => {
     const updated = updateCfg({ tracking_paused: paused });
     if (!isAndroid()) return;
 
     if (paused) {
-      await stopNativeAutoTracking();
+      const stopped = await stopNativeAutoTrackingSafely('Auto tracking could not be paused');
+      if (!stopped) updateCfg({ tracking_paused: false });
       return;
     }
 
     if (updated.tracking_mode === 'background_auto') {
       try {
         await startNativeAutoTracking();
-      } catch {}
+        await refreshPermissions();
+      } catch (error) {
+        updateCfg({ tracking_paused: true });
+        toast({
+          title: 'Background tracking could not resume',
+          description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
+          variant: 'destructive',
+        });
+        await refreshPermissions();
+      }
     }
   };
 
@@ -324,7 +369,8 @@ export default function Settings() {
     }
 
     if (mode === 'manual') {
-      if (isAndroid()) await stopNativeAutoTracking();
+      const stopped = await stopNativeAutoTrackingSafely('Manual mode could not stop background tracking');
+      if (!stopped) return;
       updateCfg({
         tracking_mode: 'manual',
         auto_tracking_enabled: false,
@@ -384,13 +430,16 @@ export default function Settings() {
       }
     }
 
+    if (mode !== 'background_auto') {
+      const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
+      if (!stopped) return;
+    }
     updateCfg({
       tracking_mode: mode,
       auto_tracking_enabled: mode !== 'manual',
       background_tracking_enabled: mode === 'background_auto',
       tracking_paused: false,
     });
-    if (mode !== 'background_auto' && isAndroid()) await stopNativeAutoTracking();
     await refreshPermissions();
   };
 
@@ -433,14 +482,35 @@ export default function Settings() {
   const privacyZones = getPrivacyZones(cfg);
 
   const commitPrivacyDraftRadius = () => {
+    const validation = validatePrivacyRadius(privacyDraft.radius_m);
+    if (!validation.valid) {
+      setPrivacyDraftRadiusError(validation.error);
+      return false;
+    }
+
+    setPrivacyDraftRadiusError('');
     setPrivacyDraft((draft) => ({
       ...draft,
-      radius_m: String(normalizePrivacyRadius(draft.radius_m)),
+      radius_m: String(validation.radius),
     }));
+    return true;
   };
 
   const savePrivacyZone = (location, sourceLabel) => {
-    if (!location?.lat || !location?.lng) {
+    const validation = validatePrivacyRadius(privacyDraft.radius_m);
+    if (!validation.valid) {
+      setPrivacyDraftRadiusError(validation.error);
+      toast({
+        title: 'Privacy zone radius needs fixing',
+        description: validation.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       toast({
         title: 'No location available',
         description: 'Try again after Road Sage has a current or parked location.',
@@ -448,11 +518,12 @@ export default function Settings() {
       });
       return;
     }
+    setPrivacyDraftRadiusError('');
     const updated = upsertPrivacyZone({
       label: privacyDraft.label || sourceLabel,
-      radius_m: normalizePrivacyRadius(privacyDraft.radius_m),
-      lat: location.lat,
-      lng: location.lng,
+      radius_m: validation.radius,
+      lat,
+      lng,
     }, cfg);
     setCfg(updated);
     setSaved(true);
@@ -480,15 +551,36 @@ export default function Settings() {
       delete next[id];
       return next;
     });
+    setPrivacyZoneRadiusErrors((errors) => {
+      const next = { ...errors };
+      delete next[id];
+      return next;
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
 
   const updatePrivacyZoneRadius = (zone, rawValue) => {
-    const radius = normalizePrivacyRadius(rawValue, zone.radius_m);
+    const validation = validatePrivacyRadius(rawValue);
+    if (!validation.valid) {
+      setPrivacyZoneRadiusErrors((errors) => ({ ...errors, [zone.id]: validation.error }));
+      toast({
+        title: 'Privacy zone radius needs fixing',
+        description: validation.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const radius = validation.radius;
     const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
     setCfg(updated);
     setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
+    setPrivacyZoneRadiusErrors((errors) => {
+      const next = { ...errors };
+      delete next[zone.id];
+      return next;
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -756,7 +848,8 @@ export default function Settings() {
                 await enableTrackingMode('auto_detect');
                 return;
               }
-              if (isAndroid()) await stopNativeAutoTracking();
+              const stopped = await stopNativeAutoTrackingSafely('Auto tracking could not be turned off');
+              if (!stopped) return;
               updateCfg({ auto_tracking_enabled: false, tracking_mode: 'manual' });
             }} />
           </SettingRow>
@@ -770,7 +863,8 @@ export default function Settings() {
                 await enableTrackingMode('background_auto');
                 return;
               }
-              if (isAndroid()) await stopNativeAutoTracking();
+              const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
+              if (!stopped) return;
               updateCfg({ background_tracking_enabled: false, auto_tracking_enabled: false, tracking_mode: 'manual' });
               await refreshPermissions();
             }} />
@@ -1710,25 +1804,32 @@ export default function Settings() {
                 max={PRIVACY_RADIUS_MAX_M}
                 step="10"
                 value={privacyDraft.radius_m}
-                onChange={(event) => setPrivacyDraft((draft) => {
-                  return {
+                onChange={(event) => {
+                  const { value } = event.target;
+                  setPrivacyDraftRadiusError('');
+                  setPrivacyDraft((draft) => ({
                     ...draft,
-                    radius_m: event.target.value,
-                  };
-                })}
+                    radius_m: value,
+                  }));
+                }}
                 onBlur={commitPrivacyDraftRadius}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.currentTarget.blur();
                   }
                 }}
-                className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
+                className={`min-w-0 rounded-xl border bg-card px-3 py-2 text-sm ${privacyDraftRadiusError ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
                 aria-label="Privacy zone radius in meters"
               />
             </div>
-            <div className="mt-1 flex justify-end text-[11px] font-medium text-muted-foreground">
+            <div className={`mt-1 flex justify-end text-[11px] font-medium ${privacyDraftRadiusError ? 'text-red-500' : 'text-muted-foreground'}`}>
               Min 50 m · Max 1000 m
             </div>
+            {privacyDraftRadiusError && (
+              <div className="mt-1 text-right text-[11px] font-medium text-red-500">
+                {privacyDraftRadiusError}
+              </div>
+            )}
             <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
               Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.
             </div>
@@ -1754,7 +1855,7 @@ export default function Settings() {
             {privacyZones.length > 0 && (
               <div className="mt-3 space-y-2">
                 {privacyZones.map((zone) => (
-                  <div key={zone.id} className="flex items-center justify-between gap-2 rounded-xl bg-card px-3 py-2 text-xs">
+                  <div key={zone.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-card px-3 py-2 text-xs">
                     <div className="min-w-0">
                       <div className="truncate font-semibold">{zone.label}</div>
                       <div className="text-muted-foreground">{Math.round(zone.radius_m)} m mask radius</div>
@@ -1770,6 +1871,12 @@ export default function Settings() {
                         onChange={(event) => {
                           const { value } = event.target;
                           setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: value }));
+                          setPrivacyZoneRadiusErrors((errors) => {
+                            if (!errors[zone.id]) return errors;
+                            const next = { ...errors };
+                            delete next[zone.id];
+                            return next;
+                          });
                         }}
                         onBlur={(event) => updatePrivacyZoneRadius(zone, event.target.value)}
                         onKeyDown={(event) => {
@@ -1777,7 +1884,7 @@ export default function Settings() {
                             event.currentTarget.blur();
                           }
                         }}
-                        className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-right text-xs font-semibold"
+                        className={`h-8 w-20 rounded-lg border bg-background px-2 text-right text-xs font-semibold ${privacyZoneRadiusErrors[zone.id] ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
                         aria-label={`Radius in meters for ${zone.label}`}
                       />
                       <button
@@ -1789,6 +1896,11 @@ export default function Settings() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
+                    {privacyZoneRadiusErrors[zone.id] && (
+                      <div className="basis-full text-right text-[11px] font-medium text-red-500">
+                        {privacyZoneRadiusErrors[zone.id]}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
