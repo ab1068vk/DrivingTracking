@@ -13,6 +13,7 @@ import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
 import { buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
+import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -67,6 +68,7 @@ export default function MapScreen() {
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const settings = localSettings.get();
   const units = settings.units || 'metric';
+  const privacyZones = getPrivacyZones(settings);
 
   const { data: trips = [] } = useQuery({
     queryKey: ['map-trips'],
@@ -129,6 +131,11 @@ export default function MapScreen() {
   const selectedRiskSegments = useMemo(() => (
     selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
   ), [routeRiskIndex, selectedTrip]);
+  const visibleDangerZones = useMemo(
+    () => dangerZones.filter((zone) => !isPointInPrivacyZone(zone, privacyZones)),
+    [dangerZones, privacyZones]
+  );
+  const parkedLocationIsPrivate = parkedLocation && isPointInPrivacyZone(parkedLocation, privacyZones);
   const commutePatterns = useMemo(() => identifyCommutePatterns(allCompleted), [allCompleted]);
   const compareOptions = useMemo(() => {
     if (!selectedTrip) return [];
@@ -300,7 +307,7 @@ export default function MapScreen() {
               currentLocation={currentLocation}
               parkedLocation={parkedLocation}
               showDangerZones={showDangerZones}
-              dangerZones={dangerZones}
+              dangerZones={visibleDangerZones}
               showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
               routeRiskSegments={selectedRiskSegments}
               showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
@@ -323,7 +330,9 @@ export default function MapScreen() {
               <div className="absolute bottom-3 right-3 left-3 z-10 rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
                 <div className="font-semibold text-foreground">📍 Parked here · {relativeTime(parkedLocation.timestamp)}</div>
                 <div className="mt-1 line-clamp-2 text-muted-foreground">
-                  {parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}
+                  {parkedLocationIsPrivate
+                    ? 'Inside privacy zone'
+                    : parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}
                 </div>
               </div>
             )}
@@ -409,7 +418,7 @@ export default function MapScreen() {
               }`}
             >
               Risk hotspots
-              <div className="mt-1 font-normal">{dangerZones.length} local zones</div>
+              <div className="mt-1 font-normal">{visibleDangerZones.length} local zones</div>
             </button>
           </div>
           {selectedTrip && (
@@ -456,19 +465,19 @@ export default function MapScreen() {
           </div>
           <button
             onClick={() => setShowDangerZones(true)}
-            disabled={dangerZones.length === 0}
+            disabled={visibleDangerZones.length === 0}
             className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
           >
             Show on map
           </button>
         </div>
-        {dangerZones.length === 0 ? (
+        {visibleDangerZones.length === 0 ? (
           <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
             No risk hotspots yet. The app will highlight a place here after the same area has repeated harsh brakes, speeding, or sharp turns.
           </div>
         ) : (
           <div className="grid gap-2 md:grid-cols-3">
-            {dangerZones.slice(0, 6).map((zone) => (
+            {visibleDangerZones.slice(0, 6).map((zone) => (
               <div key={zone.id} className="rounded-2xl bg-secondary/50 p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold capitalize">{String(zone.dominantType || 'risk').replace(/_/g, ' ')}</span>

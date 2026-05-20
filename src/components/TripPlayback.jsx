@@ -178,11 +178,17 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const currentHeading = currentPt && previousPt && currentIdx > 0
     ? playbackPosition.heading || calculateBearing(previousPt.lat, previousPt.lng, currentPt.lat, currentPt.lng)
     : Number(currentPt?.heading ?? currentPt?.bearing ?? 0) || 0;
-  const currentDistanceKm = useMemo(() => {
-    const segment = speedSegments.find((item) => item.toIndex === playbackPosition.toIndex);
-    if (!segment) return timeline.cumulativeDistancesKm[Math.min(currentIdx, timeline.cumulativeDistancesKm.length - 1)] || 0;
-    return (timeline.cumulativeDistancesKm[segment.fromIndex] || 0) + segment.distanceKm * (playbackPosition.ratio ?? 1);
-  }, [currentIdx, playbackPosition.ratio, playbackPosition.toIndex, speedSegments, timeline.cumulativeDistancesKm]);
+  const savedDistanceKm = Number(trip?.distance_km);
+  const savedDurationSeconds = Number(trip?.duration_seconds);
+  const savedMaxSpeedKmh = Number(trip?.max_speed_kmh);
+  const displayRouteDistanceKm = Number.isFinite(savedDistanceKm) && savedDistanceKm > 0 ? savedDistanceKm : stats.distanceKm;
+  const displayDurationSeconds = Number.isFinite(savedDurationSeconds) && savedDurationSeconds > 0 ? savedDurationSeconds : stats.durationSeconds;
+  const displayMaxSpeedKmh = Number.isFinite(savedMaxSpeedKmh) && savedMaxSpeedKmh > 0 ? savedMaxSpeedKmh : stats.maxSpeedKmh;
+  const displayCurrentDistanceKm = displayRouteDistanceKm * (
+    playbackDurationSeconds > 0
+      ? Math.max(0, Math.min(1, playbackElapsedSeconds / playbackDurationSeconds))
+      : totalPoints > 1 ? Math.max(0, Math.min(1, currentIdx / (totalPoints - 1))) : 0
+  );
   const elapsedSeconds = Math.round(playbackElapsedSeconds);
   const nextEvent = timelineEvents.find((event) => event.playbackIndex > currentIdx);
   const selectedSegment = speedSegments.find((segment) => segment.id === selectedSegmentId);
@@ -532,7 +538,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               <Route className="h-3 w-3" /> Traveled
             </div>
-            <div className="font-grotesk text-lg font-bold">{formatDistance(currentDistanceKm)}</div>
+            <div className="font-grotesk text-lg font-bold">{formatDistance(displayCurrentDistanceKm)}</div>
           </div>
           <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow backdrop-blur">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
@@ -672,15 +678,15 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
       <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-card p-3 text-xs sm:grid-cols-4">
         <div>
           <div className="text-muted-foreground">Route</div>
-          <div className="font-semibold">{formatDistance(stats.distanceKm)}</div>
+          <div className="font-semibold">{formatDistance(displayRouteDistanceKm)}</div>
         </div>
         <div>
           <div className="text-muted-foreground">Duration</div>
-          <div className="font-semibold">{stats.durationSeconds ? formatDuration(stats.durationSeconds) : '-'}</div>
+          <div className="font-semibold">{displayDurationSeconds ? formatDuration(displayDurationSeconds) : '-'}</div>
         </div>
         <div>
           <div className="text-muted-foreground">Max speed</div>
-          <div className="font-semibold">{stats.maxSpeedKmh} km/h</div>
+          <div className="font-semibold">{Math.round(displayMaxSpeedKmh)} km/h</div>
         </div>
         <div>
           <div className="text-muted-foreground">Route data</div>

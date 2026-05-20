@@ -6,7 +6,7 @@ import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackI
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -423,6 +423,18 @@ export default function TripMap({
       })
       .filter((route) => route.route_points.length > 1);
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
+    const isPrivatePoint = (point) => Boolean(isPointInPrivacyZone(point, visiblePrivacyZones));
+    const segmentTouchesPrivacy = (segment) => {
+      const midpoint = segment?.from && segment?.to
+        ? {
+          lat: (Number(segment.from.lat) + Number(segment.to.lat)) / 2,
+          lng: (Number(segment.from.lng) + Number(segment.to.lng)) / 2,
+        }
+        : null;
+      return [segment?.from, segment?.to, midpoint].some((point) => point && isPrivatePoint(point));
+    };
+    const safeCurrentLocation = currentLocation && !isPrivatePoint(currentLocation) ? currentLocation : null;
+    const safeParkedLocation = parkedLocation && !isPrivatePoint(parkedLocation) ? parkedLocation : null;
     const drawPrivacyZones = (bounds = null) => {
       visiblePrivacyZones.forEach((zone) => {
         const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
@@ -633,8 +645,8 @@ export default function TripMap({
       drawPrivacyZones(bounds);
       lastBoundsRef.current = bounds;
       map.fitBounds(bounds, { padding: [20, 20] });
-    } else if (currentLocation) {
-      map.setView([currentLocation.lat, currentLocation.lng], 15);
+    } else if (safeCurrentLocation) {
+      map.setView([safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
     } else {
       map.setView(TORONTO_CENTER, 12);
     }
@@ -663,7 +675,7 @@ export default function TripMap({
 
     if (showRouteRisk && Array.isArray(routeRiskSegments)) {
       routeRiskSegments
-        .filter((segment) => segment.riskLevel !== 'low')
+        .filter((segment) => segment.riskLevel !== 'low' && !segmentTouchesPrivacy(segment))
         .forEach((segment) => {
           const color = segment.riskLevel === 'high' ? '#ef4444' : '#f97316';
           const perPass = segment.tripCount ? segment.totalEvents / segment.tripCount : 0;
@@ -677,7 +689,7 @@ export default function TripMap({
     }
 
     if (showDangerZones && Array.isArray(dangerZones)) {
-      dangerZones.forEach((zone) => {
+      dangerZones.filter((zone) => !isPrivatePoint(zone)).forEach((zone) => {
         if (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng))) return;
         const color = RISK_COLORS[zone.riskLevel] || RISK_COLORS.low;
         const lastSeen = zone.lastSeen ? new Date(zone.lastSeen).toLocaleDateString() : 'Unknown';
@@ -694,37 +706,39 @@ export default function TripMap({
       });
     }
 
-    if (showCurrentLocation && currentLocation) {
+    if (showCurrentLocation && safeCurrentLocation) {
       const locIcon = window.L.divIcon({
         html: '<div style="width:16px;height:16px;background:#3b82f6;border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px rgba(59,130,246,0.2),0 2px 6px rgba(0,0,0,0.2)"></div>',
         className: '',
         iconSize: [16, 16],
         iconAnchor: [8, 8],
       });
-      window.L.marker([currentLocation.lat, currentLocation.lng], { icon: locIcon })
+      window.L.marker([safeCurrentLocation.lat, safeCurrentLocation.lng], { icon: locIcon })
         .bindPopup('<b>You are here</b>')
         .addTo(layers);
     }
-    if (parkedLocation?.lat && parkedLocation?.lng) {
+    if (safeParkedLocation?.lat && safeParkedLocation?.lng) {
       const parkedIcon = window.L.divIcon({
         html: '<div style="width:22px;height:22px;background:#f97316;border:3px solid white;border-radius:50%;box-shadow:0 0 0 8px rgba(249,115,22,0.24),0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:700">P</div>',
         className: '',
         iconSize: [22, 22],
         iconAnchor: [11, 11],
       });
-      window.L.marker([parkedLocation.lat, parkedLocation.lng], { icon: parkedIcon })
-        .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
+      window.L.marker([safeParkedLocation.lat, safeParkedLocation.lng], { icon: parkedIcon })
+        .bindPopup(`<b>Parked here</b><br>${safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`}`)
         .addTo(layers);
     }
   }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
+    if (isPointInPrivacyZone(currentLocation, getPrivacyZones(localSettings.get()))) return;
     leafletMapRef.current.panTo([currentLocation.lat, currentLocation.lng]);
   }, [currentLocation, showCurrentLocation]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !parkedLocation?.lat || !parkedLocation?.lng) return;
+    if (isPointInPrivacyZone(parkedLocation, getPrivacyZones(localSettings.get()))) return;
     leafletMapRef.current.setView([parkedLocation.lat, parkedLocation.lng], 17);
   }, [parkedLocation]);
 
