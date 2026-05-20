@@ -51,15 +51,20 @@ export const NOTIFICATION_IDS = {
 };
 const LONG_TRIP_REMINDER_ID = NOTIFICATION_IDS.LONG_TRIP_REMINDER;
 const TRIP_STARTED_ID = NOTIFICATION_IDS.TRIP_STARTED;
+const TRIP_COMPLETED_ID = 2002;
 const WEEKLY_REPORT_ID = 2101;
 const SAFE_DRIVING_ID = 2102;
 const STAY_ALERT_ID = NOTIFICATION_IDS.STAY_ALERT;
 const ACHIEVEMENT_BASE_ID = 3000;
+const ACHIEVEMENT_GROUP_ID = 3099;
 const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
+const NOTIFICATION_DEDUPE_KEY = 'drivesense_notification_dedupe_v1';
 const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
 const DROWSY_NOTIF_LAST_KEY = 'drivesense_drowsy_notif_last_ms';
 const SPEEDING_NOTIF_LAST_KEY = 'drivesense_speeding_notif_last_ms';
 const FATIGUE_NOTIF_TRIP_KEY = 'drivesense_fatigue_notif_trip_id';
+const DEDUPE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+const TRIP_NOTIFICATION_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 const SAFE_DRIVING_TIPS = [
   'Leave extra space ahead so you can brake once, early, and smoothly.',
   'Ease into acceleration for the first few seconds after every stop.',
@@ -111,14 +116,62 @@ const writeNumber = (key, value) => {
   } catch {}
 };
 
-const scheduleNotification = async (notification, { requestPermission = true } = {}) => {
+const readDedupeState = () => {
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_DEDUPE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => (
+      value && now - Number(value.at || 0) < DEDUPE_RETENTION_MS
+    )));
+  } catch {
+    return {};
+  }
+};
+
+const writeDedupeState = (state) => {
+  try {
+    localStorage.setItem(NOTIFICATION_DEDUPE_KEY, JSON.stringify(state));
+  } catch {}
+};
+
+const wasRecentlySent = (key, cooldownMs) => {
+  if (!key || !cooldownMs) return false;
+  const state = readDedupeState();
+  const last = Number(state[key]?.at || 0);
+  return last > 0 && Date.now() - last < cooldownMs;
+};
+
+const markSent = (key) => {
+  if (!key) return;
+  const state = readDedupeState();
+  state[key] = { at: Date.now() };
+  writeDedupeState(state);
+};
+
+const cancelNotificationIds = async (ids = []) => {
+  if (!isNativePlatform()) return;
+  const notifications = ids
+    .filter((id) => Number.isFinite(Number(id)))
+    .map((id) => ({ id: Number(id) }));
+  if (!notifications.length) return;
+  await LocalNotifications.cancel({ notifications }).catch(() => {});
+};
+
+const scheduleNotification = async (
+  notification,
+  { requestPermission = true, dedupeKey = null, cooldownMs = 0, replaceIds = [] } = {},
+) => {
   if (!notification) return null;
+  if (wasRecentlySent(dedupeKey, cooldownMs)) return null;
+  if (isNativePlatform()) await cancelNotificationIds([notification.id, ...replaceIds]);
   if (!isNativePlatform()) return notification;
 
   const permission = await LocalNotifications.checkPermissions();
   const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
   if (!granted) return null;
   await LocalNotifications.schedule({ notifications: [notification] });
+  markSent(dedupeKey);
   return notification;
 };
 
@@ -221,6 +274,10 @@ export async function scheduleLongTripReminder(startTime) {
   if (!notificationsEnabled('safe_driving_reminder')) return;
   const granted = await requestNotificationPermission();
   if (!granted) return;
+  const originalReminderAt = new Date(startTime).getTime() + 2 * 60 * 60 * 1000;
+  const reminderAt = Number.isFinite(originalReminderAt)
+    ? Math.max(originalReminderAt, Date.now() + 15 * 60 * 1000)
+    : Date.now() + 2 * 60 * 60 * 1000;
 
   await LocalNotifications.schedule({
     notifications: [{
@@ -228,7 +285,7 @@ export async function scheduleLongTripReminder(startTime) {
       title: 'Road Sage is still tracking',
       body: 'Your trip has been active for a while. Stop tracking when you are done driving.',
       channelId: SUMMARY_CHANNEL_ID,
-      schedule: { at: new Date(new Date(startTime).getTime() + 2 * 60 * 60 * 1000), allowWhileIdle: true },
+      schedule: { at: new Date(reminderAt), allowWhileIdle: true },
     }],
   });
 }
@@ -238,23 +295,26 @@ export async function cancelLongTripReminder() {
   await LocalNotifications.cancel({ notifications: [{ id: LONG_TRIP_REMINDER_ID }] });
 }
 
-export async function notifyTripStarted() {
+export async function notifyTripStarted(trip = {}) {
   if (!isNativePlatform()) return;
   if (!notificationsEnabled('trip_start_notification')) return;
   const granted = await requestNotificationPermission();
   if (!granted) return;
 
-  await LocalNotifications.schedule({
-    notifications: [{
+  const tripKey = trip?.id || trip?.start_time || 'active';
+  return scheduleNotification({
       id: TRIP_STARTED_ID,
       title: 'Trip started',
       body: 'Road Sage is recording your route.',
       channelId: SUMMARY_CHANNEL_ID,
-    }],
-  });
+      extra: { type: 'trip_started', tripId: trip?.id || null },
+    }, {
+      dedupeKey: `trip_started:${tripKey}`,
+      cooldownMs: 5 * 60 * 1000,
+    });
 }
 
-export async function notifyTripCompleted(trip) {
+export async function notifyTripCompleted(trip, { dedupeKey = null, replaceIds = [] } = {}) {
   if (!isNativePlatform()) return;
   if (!notificationsEnabled('trip_end_notification')) return;
   const granted = await requestNotificationPermission();
@@ -267,14 +327,17 @@ export async function notifyTripCompleted(trip) {
   const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`;
   const body = [baseBody, ...additions].join(' ').slice(0, 160);
 
-  await LocalNotifications.schedule({
-    notifications: [{
-      id: 2002,
+  return scheduleNotification({
+      id: TRIP_COMPLETED_ID,
       title: 'Trip saved',
       body,
       channelId: SUMMARY_CHANNEL_ID,
-    }],
-  });
+      extra: { tripId: trip?.id || null, type: 'trip_completed_basic' },
+    }, {
+      dedupeKey: dedupeKey || `trip_completed:${trip?.id || trip?.end_time || Date.now()}`,
+      cooldownMs: TRIP_NOTIFICATION_DEDUPE_MS,
+      replaceIds,
+    });
 }
 
 export async function notifyExportSaved(/** @type {any} */ { filename, uri, mimeType, label = 'Export' } = {}) {
@@ -304,16 +367,17 @@ export async function notifyStayAlert(opts = {}) {
   const granted = await requestNotificationPermission();
   if (!granted) return;
 
-  await LocalNotifications.schedule({
-    notifications: [{
+  return scheduleNotification({
       id: opts.id || STAY_ALERT_ID,
       title: opts.title || 'Stay Alert',
       body: opts.body || 'Heading drift detected - take a break if you can.',
       channelId: opts.channelId || SAFETY_ALERTS_CHANNEL_ID,
       schedule: opts.schedule,
       extra: opts.extra,
-    }],
-  });
+    }, {
+      dedupeKey: opts.dedupeKey || `safety:${opts.id || STAY_ALERT_ID}:${opts.extra?.type || opts.title || 'stay_alert'}`,
+      cooldownMs: opts.cooldownMs ?? 60 * 1000,
+    });
 }
 
 export async function notifyDailyFatigueWarning(fatigueState) {
@@ -541,6 +605,27 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   return scheduleNotification(notification);
 }
 
+export async function dispatchTripCompletedNotification(trip, recentTrips = [], settings = localSettings.get()) {
+  const tripKey = trip?.id || trip?.end_time || trip?.start_time;
+  if (!tripKey) return null;
+  const dedupeKey = `trip_finished:${tripKey}`;
+  if (wasRecentlySent(dedupeKey, TRIP_NOTIFICATION_DEDUPE_MS)) return null;
+
+  const smart = await dispatchPostTripNotification(trip, recentTrips, settings).catch(() => null);
+  if (smart) {
+    markSent(dedupeKey);
+    await cancelNotificationIds([TRIP_COMPLETED_ID]);
+    return smart;
+  }
+
+  if (settings.trip_end_notification === false) return null;
+  const basic = await notifyTripCompleted(trip, {
+    dedupeKey,
+    replaceIds: Object.values(NOTIFICATION_IDS).filter((id) => id >= 4010 && id <= 4019),
+  }).catch(() => null);
+  return basic;
+}
+
 export async function scheduleWeeklyPatternNotification(lastWeekTrips = [], settings = localSettings.get()) {
   if (settings.notifications_enabled === false || settings.notif_weekly_pattern_enabled === false || isQuietHours(settings)) return null;
   const trips = lastWeekTrips.filter((trip) => trip.status === 'completed');
@@ -630,7 +715,10 @@ export async function notifyMaintenanceDue(vehicleName, dueItems = [], settings 
     channelId: VEHICLE_CHANNEL_ID,
     extra: { type: 'maintenance' },
   };
-  return scheduleNotification(notification);
+  return scheduleNotification(notification, {
+    dedupeKey: `maintenance:${vehicleName}:${item.item || item.label || 'service'}:${due ? 'due' : 'soon'}`,
+    cooldownMs: 7 * 24 * 60 * 60 * 1000,
+  });
 }
 
 export async function scheduleInactiveDriverNudge(daysSinceLastTrip = 0, settings = localSettings.get()) {
@@ -644,6 +732,9 @@ export async function scheduleInactiveDriverNudge(daysSinceLastTrip = 0, setting
     channelId: VEHICLE_CHANNEL_ID,
     schedule: { at: new Date(Date.now() + 60000), allowWhileIdle: true },
     extra: { type: 'inactive_nudge' },
+  }, {
+    dedupeKey: 'inactive_nudge',
+    cooldownMs: 24 * 60 * 60 * 1000,
   });
 }
 
@@ -722,14 +813,23 @@ export async function syncAchievementNotifications(achievements = [], { requestP
   const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
   if (!granted) return [];
 
-  await LocalNotifications.schedule({
-    notifications: newAchievements.map((achievement) => ({
-      id: achievementNotificationId(achievement.id),
+  const notifications = newAchievements.length === 1
+    ? [{
+      id: achievementNotificationId(newAchievements[0].id),
       title: 'Achievement unlocked',
-      body: `${achievement.label}: ${achievement.description}`,
+      body: `${newAchievements[0].label}: ${newAchievements[0].description}`,
       channelId: ACHIEVEMENT_CHANNEL_ID,
-    })),
-  });
+      extra: { type: 'achievement', achievementId: newAchievements[0].id },
+    }]
+    : [{
+      id: ACHIEVEMENT_GROUP_ID,
+      title: `${newAchievements.length} achievements unlocked`,
+      body: newAchievements.slice(0, 3).map((achievement) => achievement.label).join(', '),
+      channelId: ACHIEVEMENT_CHANNEL_ID,
+      extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },
+    }];
+
+  await LocalNotifications.schedule({ notifications });
 
   newAchievements.forEach((achievement) => notifiedIds.add(achievement.id));
   writeNotifiedAchievementIds(notifiedIds);

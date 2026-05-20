@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.location.Location;
@@ -92,6 +93,9 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String SETTINGS_KEY = "drivesense_settings";
+    private static final String NOTIFICATION_PREFS = "drivesense_native_notification_state";
+    private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
+    private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
     private static final int TRIP_COMPLETED_NOTIFICATION_ID = 2002;
     private static final int PHONE_MICRO_STEER_WINDOW_MS = 10_000;
@@ -1045,6 +1049,10 @@ public class DriveSenseAutoTrackingService extends Service {
             !isSettingEnabled("phone_use_live_alert_enabled", true)) {
             return;
         }
+        long now = System.currentTimeMillis();
+        if (now - notificationPrefs().getLong(KEY_LAST_PHONE_USE_NOTIFICATION_MS, 0L) < PHONE_NOTIFY_COOLDOWN_MS) {
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             return;
@@ -1068,20 +1076,30 @@ public class DriveSenseAutoTrackingService extends Service {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .setOnlyAlertOnce(true)
             .setVibrate(new long[]{ 0, 300, 100, 300 });
 
         NotificationManagerCompat.from(this).notify(PHONE_USE_NOTIFICATION_ID, builder.build());
+        notificationPrefs().edit().putLong(KEY_LAST_PHONE_USE_NOTIFICATION_MS, now).apply();
     }
 
     private void sendTripCompletedNotification(JSONObject trip, TripStats stats) {
+        if (!isSettingEnabled("notifications_enabled", true) ||
+            !isSettingEnabled("trip_end_notification", true)) {
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        String tripId = trip.optString("id", "");
+        if (!tripId.isEmpty() && tripId.equals(notificationPrefs().getString(KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID, ""))) {
             return;
         }
 
         ensureSummaryChannel();
         Intent intent = new Intent(this, MainActivity.class);
-        intent.putExtra("deeplink", "drivesense://trips/" + trip.optString("id", ""));
+        intent.putExtra("deeplink", "drivesense://trips/" + tripId);
         PendingIntent pendingIntent = PendingIntent.getActivity(
             this,
             1,
@@ -1108,6 +1126,9 @@ public class DriveSenseAutoTrackingService extends Service {
             .setContentIntent(pendingIntent);
 
         NotificationManagerCompat.from(this).notify(TRIP_COMPLETED_NOTIFICATION_ID, builder.build());
+        if (!tripId.isEmpty()) {
+            notificationPrefs().edit().putString(KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID, tripId).apply();
+        }
     }
 
     private void ensureSafetyAlertsChannel() {
@@ -1155,6 +1176,8 @@ public class DriveSenseAutoTrackingService extends Service {
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(contentIntent)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW);
 
         if (isTripActive() && candidateTrip) {
@@ -1239,6 +1262,10 @@ public class DriveSenseAutoTrackingService extends Service {
         } catch (Exception ignored) {
             return defaultValue;
         }
+    }
+
+    private SharedPreferences notificationPrefs() {
+        return getSharedPreferences(NOTIFICATION_PREFS, Context.MODE_PRIVATE);
     }
 
     private String buildLiveTripStatus(long nowMs) {

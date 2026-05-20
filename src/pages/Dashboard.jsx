@@ -25,11 +25,10 @@ import { createDrivingTrackingService } from '@/lib/trackingService';
 import {
   scheduleLongTripReminder,
   cancelLongTripReminder,
-  notifyTripCompleted,
   notifyStayAlert,
   notifyTripStarted,
   syncAchievementNotifications,
-  dispatchPostTripNotification,
+  dispatchTripCompletedNotification,
   checkAndNotifyPhoneUsePattern,
   notifyStyleShift,
   notifyDailyFatigueWarning,
@@ -338,7 +337,7 @@ export default function Dashboard() {
       speed_kmh: Math.round(decision?.metrics?.max_speed_kmh || 0),
     });
     refreshTrackingStatusContext();
-    notifyTripStarted().catch(() => {});
+    notifyTripStarted(promoted).catch(() => {});
     scheduleLongTripReminder(promoted.start_time);
   }, [refreshTrackingStatusContext]);
 
@@ -637,7 +636,7 @@ export default function Dashboard() {
     startTimer(new Date(startTime));
     startGPS();
     if (!candidate) {
-      notifyTripStarted();
+      notifyTripStarted(tripData);
       scheduleLongTripReminder(tripData.start_time);
     }
   }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
@@ -930,8 +929,7 @@ export default function Dashboard() {
       });
       setParkedLocation(savedParkedLocation);
     }
-    if (settings.trip_end_notification) await notifyTripCompleted(completedTrip);
-    await dispatchPostTripNotification(completedTrip, completedTrips, settings).catch(() => {});
+    await dispatchTripCompletedNotification(completedTrip, completedTrips, settings).catch(() => {});
     checkAndNotifyPhoneUsePattern([completedTrip, ...completedTrips], settings).catch(() => {});
     const driverSignature = buildDriverSignature([completedTrip, ...completedTrips].slice(0, 20));
     if (driverSignature?.style_shifts?.length > 0) {
