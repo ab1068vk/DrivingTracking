@@ -67,6 +67,12 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones()) {
   return zones.find((zone) => distanceM(point, zone) <= Number(zone.radius_m || 150)) || null;
 }
 
+export function privacyZonesForRoute(routePoints = [], settings = localSettings.get()) {
+  const zones = getPrivacyZones(settings);
+  if (!zones.length || !Array.isArray(routePoints) || !routePoints.length) return [];
+  return zones.filter((zone) => routePoints.some((point) => isPointInPrivacyZone(point, [zone])));
+}
+
 export function privacyBoundaryPoint(insidePoint, outsidePoint, zone) {
   if (!insidePoint || !outsidePoint || !zone) return null;
   if (isPointInPrivacyZone(outsidePoint, [zone])) return null;

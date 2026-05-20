@@ -5,7 +5,7 @@ import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack
 import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyZonesForRoute } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -39,6 +39,10 @@ const EVENT_LABELS = {
 const titleCase = (value) => String(value || '')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const privacyZonePopupHtml = (zone) => (
+  `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.radius_m) || 150)} m radius<br>Playback starts at the circle edge to hide the exact private location.`
+);
 
 const escapeHtml = (value) => String(value ?? '')
   .replaceAll('&', '&amp;')
@@ -155,6 +159,12 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     { maxPoints: 700 }
   ), [privacySettings, secondaryTrip?.route_points]);
   const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
+  const visiblePrivacyZones = useMemo(() => ([
+    ...new Map([
+      ...privacyZonesForRoute(trip?.route_points || [], privacySettings),
+      ...privacyZonesForRoute(secondaryTrip?.route_points || [], privacySettings),
+    ].map((zone) => [zone.id, zone])).values(),
+  ]), [privacySettings, secondaryTrip?.route_points, trip?.route_points]);
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
   const pointCountSummary = rawPointCount !== totalPoints
@@ -303,7 +313,24 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
           secondaryMarkerRef.current = window.L.marker([secondaryPoints[0].lat, secondaryPoints[0].lng], { icon: secondaryIcon }).addTo(map);
         }
 
-        map.fitBounds(window.L.latLngBounds(latLngs), { padding: [24, 24] });
+        const bounds = window.L.latLngBounds(latLngs);
+        visiblePrivacyZones.forEach((zone) => {
+          const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
+          const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
+            radius,
+            color: '#2563eb',
+            fillColor: '#3b82f6',
+            fillOpacity: 0.08,
+            opacity: 0.72,
+            weight: 2,
+            dashArray: '8 6',
+          })
+            .bindPopup(privacyZonePopupHtml(zone))
+            .addTo(map);
+          bounds.extend(circle.getBounds());
+        });
+
+        map.fitBounds(bounds, { padding: [24, 24] });
       } else {
         map.setView([51.505, -0.09], 13);
       }
@@ -318,7 +345,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
       secondaryMarkerRef.current = null;
       progressLayersRef.current = null;
     };
-  }, [trip?.id, secondaryTrip?.id]);
+  }, [events, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !points[currentIdx]) return;

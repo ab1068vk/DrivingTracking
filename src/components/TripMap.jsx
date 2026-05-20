@@ -6,7 +6,7 @@ import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackI
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyZonesForRoute } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -58,6 +58,10 @@ const RISK_COLORS = {
   medium: '#eab308',
   low: '#3b82f6',
 };
+
+const privacyZonePopupHtml = (zone) => (
+  `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.radius_m) || 150)} m radius<br>Route coordinates inside this circle are hidden.`
+);
 
 const CORNERING_HEATMAP_BANDS = [
   { min: 0.40, label: 'Hard', color: '#dc2626', weight: 8 },
@@ -403,6 +407,12 @@ export default function TripMap({
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+    const visiblePrivacyZones = [
+      ...new Map(routeSets
+        .flatMap((route) => privacyZonesForRoute(route.route_points || [], privacySettings))
+        .map((zone) => [zone.id, zone]))
+        .values(),
+    ];
     const validRoutes = routeSets
       .map((route) => {
         const maskedPoints = maskRoutePointsForPrivacy(route.route_points || [], privacySettings);
@@ -560,6 +570,22 @@ export default function TripMap({
             .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
             .addTo(layers);
         }
+      });
+
+      visiblePrivacyZones.forEach((zone) => {
+        const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
+        const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
+          radius,
+          color: '#2563eb',
+          fillColor: '#3b82f6',
+          fillOpacity: 0.08,
+          opacity: 0.72,
+          weight: 2,
+          dashArray: '8 6',
+        })
+          .bindPopup(privacyZonePopupHtml(zone))
+          .addTo(layers);
+        bounds.extend(circle.getBounds());
       });
 
       lastBoundsRef.current = bounds;

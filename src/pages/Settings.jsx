@@ -1671,6 +1671,9 @@ export default function Settings() {
                 aria-label="Privacy zone radius in meters"
               />
             </div>
+            <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
+              Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.
+            </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 type="button"

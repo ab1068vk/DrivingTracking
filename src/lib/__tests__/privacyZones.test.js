@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { haversineDistance } from '@/lib/tripEngine';
-import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyBoundaryPoint } from '@/lib/privacyZones';
+import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyBoundaryPoint, privacyZonesForRoute } from '@/lib/privacyZones';
 
 const zone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
 const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
@@ -53,5 +53,15 @@ describe('privacyZones', () => {
     const masked = maskEventsForPrivacy(events, { privacy_zones: [zone] });
 
     expect(masked).toEqual([events[1]]);
+  });
+
+  it('returns only privacy zones touched by a route', () => {
+    const work = { id: 'work', label: 'Work', lat: 43.72, lng: -79.42, radius_m: 100 };
+    const route = [
+      point(43.65, -79.38, 0),
+      point(43.6522, -79.38, 20),
+    ];
+
+    expect(privacyZonesForRoute(route, { privacy_zones: [zone, work] })).toEqual([zone]);
   });
 });
