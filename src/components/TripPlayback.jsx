@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
-import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed } from '@/lib/mapPlaybackInsights';
+import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
@@ -141,10 +141,14 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
 
   const privacySettings = useMemo(() => localSettings.get(), [trip?.id, secondaryTrip?.id]);
-  const points = useMemo(() => maskRoutePointsForPrivacy(trip?.route_points || [], privacySettings)
-    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)), [privacySettings, trip?.route_points]);
-  const secondaryPoints = useMemo(() => maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], privacySettings)
-    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)), [privacySettings, secondaryTrip?.route_points]);
+  const points = useMemo(() => prepareMapRoutePoints(
+    maskRoutePointsForPrivacy(trip?.route_points || [], privacySettings),
+    { maxPoints: 900 }
+  ), [privacySettings, trip?.route_points]);
+  const secondaryPoints = useMemo(() => prepareMapRoutePoints(
+    maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], privacySettings),
+    { maxPoints: 700 }
+  ), [privacySettings, secondaryTrip?.route_points]);
   const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
@@ -157,13 +161,18 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const secondarySegments = secondaryTimeline.segments;
   const stats = timeline.stats;
   const timelineEvents = timeline.events;
+  const playbackDurationSeconds = stats.durationSeconds || Math.max(1, totalPoints - 1);
   const playbackPosition = useMemo(() => playbackPositionAtElapsed(points, playbackElapsedSeconds), [playbackElapsedSeconds, points]);
   const currentPt = playbackPosition.point || points[currentIdx];
   const previousPt = points[Math.max(0, currentIdx - 1)];
   const currentHeading = currentPt && previousPt && currentIdx > 0
     ? playbackPosition.heading || calculateBearing(previousPt.lat, previousPt.lng, currentPt.lat, currentPt.lng)
     : Number(currentPt?.heading ?? currentPt?.bearing ?? 0) || 0;
-  const currentDistanceKm = timeline.cumulativeDistancesKm[Math.min(currentIdx, timeline.cumulativeDistancesKm.length - 1)] || 0;
+  const currentDistanceKm = useMemo(() => {
+    const segment = speedSegments.find((item) => item.toIndex === playbackPosition.toIndex);
+    if (!segment) return timeline.cumulativeDistancesKm[Math.min(currentIdx, timeline.cumulativeDistancesKm.length - 1)] || 0;
+    return (timeline.cumulativeDistancesKm[segment.fromIndex] || 0) + segment.distanceKm * (playbackPosition.ratio ?? 1);
+  }, [currentIdx, playbackPosition.ratio, playbackPosition.toIndex, speedSegments, timeline.cumulativeDistancesKm]);
   const elapsedSeconds = Math.round(playbackElapsedSeconds);
   const nextEvent = timelineEvents.find((event) => event.playbackIndex > currentIdx);
   const selectedSegment = speedSegments.find((segment) => segment.id === selectedSegmentId);
@@ -421,6 +430,14 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     setPlaybackElapsedSeconds(elapsedForIndex(safeIndex));
   };
 
+  const seekToElapsed = (seconds) => {
+    const safeElapsed = clamp(seconds, 0, playbackDurationSeconds);
+    const position = playbackPositionAtElapsed(points, safeElapsed);
+    setPlaying(false);
+    setCurrentIdx(position.index);
+    setPlaybackElapsedSeconds(safeElapsed);
+  };
+
   const jumpToNextEvent = () => {
     const event = timelineEvents.find((item) => item.playbackIndex > currentIdx);
     if (event) {
@@ -437,7 +454,9 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     }
   };
 
-  const progress = totalPoints > 1 ? (currentIdx / (totalPoints - 1)) * 100 : 0;
+  const progress = playbackDurationSeconds > 0
+    ? Math.max(0, Math.min(100, (playbackElapsedSeconds / playbackDurationSeconds) * 100))
+    : totalPoints > 1 ? (currentIdx / (totalPoints - 1)) * 100 : 0;
   const comparisonRows = secondaryTrip ? routeComparison.rows : [];
 
   if (!points.length) {
@@ -504,7 +523,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const pct = (e.clientX - rect.left) / rect.width;
-          seekToIndex(Math.round(pct * (totalPoints - 1)));
+          seekToElapsed(pct * playbackDurationSeconds);
         }}>
         {speedSegments.map((segment) => (
           <button
@@ -513,8 +532,8 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             aria-label={`Inspect ${segment.band.label} segment`}
             className="absolute inset-y-0 rounded-full"
             style={{
-              left: `${segment.progressStart}%`,
-              width: `${Math.max(0.8, segment.progressEnd - segment.progressStart)}%`,
+              left: `${segment.timeProgressStart ?? segment.progressStart}%`,
+              width: `${Math.max(0.8, (segment.timeProgressEnd ?? segment.progressEnd) - (segment.timeProgressStart ?? segment.progressStart))}%`,
               backgroundColor: segment.color,
               opacity: selectedSegmentId === segment.id ? 1 : 0.42,
             }}
@@ -530,8 +549,8 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             key={stop.id}
             className="absolute bottom-0 top-0 rounded-full bg-slate-900/60"
             style={{
-              left: `${stop.progressStart}%`,
-              width: `${Math.max(1, stop.progressEnd - stop.progressStart)}%`,
+              left: `${stop.timeProgressStart ?? stop.progressStart}%`,
+              width: `${Math.max(1, (stop.timeProgressEnd ?? stop.progressEnd) - (stop.timeProgressStart ?? stop.progressStart))}%`,
             }}
           />
         ))}
@@ -541,7 +560,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             key={`${event.timestamp || event.type}-${index}`}
             className="absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full"
             style={{
-              left: `${totalPoints > 1 ? (event.playbackIndex / (totalPoints - 1)) * 100 : 0}%`,
+              left: `${playbackDurationSeconds > 0 ? Math.max(0, Math.min(100, (event.offsetSeconds / playbackDurationSeconds) * 100)) : event.progress}%`,
               backgroundColor: EVENT_COLORS[event.type] || '#6b7280',
             }}
           />

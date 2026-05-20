@@ -4,6 +4,7 @@ import {
   buildRouteComparison,
   downsampleRoutePoints,
   playbackPositionAtElapsed,
+  prepareMapRoutePoints,
 } from '@/lib/mapPlaybackInsights';
 
 const point = (index, speed = 40, extra = {}) => ({
@@ -53,6 +54,25 @@ describe('mapPlaybackInsights', () => {
     expect(sampled).toHaveLength(10);
     expect(sampled[0].lat).toBe(points[0].lat);
     expect(sampled.at(-1).lat).toBe(points.at(-1).lat);
+  });
+
+  it('prepares map points by dropping poor GPS fixes while keeping untimed routes drawable', () => {
+    const noisyPoints = [
+      point(0, 20, { accuracy: 8 }),
+      point(1, 20, { accuracy: 180 }),
+      point(2, 20, { accuracy: 8 }),
+    ];
+    const prepared = prepareMapRoutePoints(noisyPoints, { maxPoints: null, smooth: false });
+
+    expect(prepared).toHaveLength(2);
+    expect(prepared[1].lat).toBe(noisyPoints[2].lat);
+
+    const untimed = prepareMapRoutePoints([
+      { lat: 43.65, lng: -79.38 },
+      { lat: 43.66, lng: -79.39 },
+    ], { maxPoints: null });
+
+    expect(untimed).toHaveLength(2);
   });
 
   it('summarizes comparison deltas for repeated routes', () => {

@@ -2,6 +2,11 @@ import { calculateBearing, haversineDistance } from '@/lib/tripEngine';
 
 const IDLE_SPEED_KMH = 5;
 const MIN_STOP_SECONDS = 60;
+const MAX_VISUAL_ACCURACY_M = 100;
+const MAX_VISUAL_SPEED_KMH = 230;
+const MAX_SEGMENT_JUMP_SPEED_KMH = 240;
+const MAX_SMOOTHING_ACCURACY_M = 45;
+const DEFAULT_RENDER_POINTS = 700;
 
 export const SPEED_BANDS = [
   { id: 'slow', label: 'Slow', min: 0, color: '#94a3b8' },
@@ -17,17 +22,90 @@ const finiteNumber = (value) => {
 };
 
 export const pointTimeMs = (point) => {
-  const ms = new Date(point?.timestamp || 0).getTime();
+  const value = point?.timestamp ?? point?.time;
+  if (value == null) return null;
+  const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : null;
 };
 
-export const cleanRoutePoints = (points = []) => (Array.isArray(points) ? points : [])
-  .map((point) => ({
+const normalizeRoutePoint = (point) => {
+  const speed = finiteNumber(point?.speed_kmh);
+  const accuracy = finiteNumber(point?.accuracy);
+  return {
     ...point,
     lat: finiteNumber(point?.lat),
     lng: finiteNumber(point?.lng),
-  }))
-  .filter((point) => point.lat != null && point.lng != null);
+    speed_kmh: speed != null ? Math.max(0, speed) : point?.speed_kmh,
+    accuracy: accuracy != null ? Math.max(0, accuracy) : point?.accuracy,
+  };
+};
+
+const segmentImpliedSpeedKmh = (prev, curr) => {
+  const prevMs = pointTimeMs(prev);
+  const currMs = pointTimeMs(curr);
+  if (prevMs == null || currMs == null || currMs <= prevMs) return null;
+  const distanceKm = haversineDistance(prev.lat, prev.lng, curr.lat, curr.lng);
+  return (distanceKm / ((currMs - prevMs) / 1000)) * 3600;
+};
+
+const shouldKeepVisualPoint = (point, previous) => {
+  if (point.lat == null || point.lng == null) return false;
+  if (point.accuracy != null && !point.map_matched && point.accuracy > MAX_VISUAL_ACCURACY_M) return false;
+  if (Number.isFinite(point.speed_kmh) && point.speed_kmh > MAX_VISUAL_SPEED_KMH) return false;
+  if (!previous) return true;
+
+  const prevMs = pointTimeMs(previous);
+  const currMs = pointTimeMs(point);
+  if (prevMs != null && currMs != null && currMs <= prevMs) return false;
+
+  const impliedSpeedKmh = segmentImpliedSpeedKmh(previous, point);
+  if (impliedSpeedKmh == null) return true;
+
+  const reportedSpeed = finiteNumber(point.speed_kmh ?? previous.speed_kmh);
+  const reportedAllowsJump = reportedSpeed != null && reportedSpeed > 120;
+  if (impliedSpeedKmh > MAX_SEGMENT_JUMP_SPEED_KMH && !reportedAllowsJump) return false;
+  if (point.accuracy != null && point.accuracy > 60 && impliedSpeedKmh > 140) return false;
+  return true;
+};
+
+export const cleanRoutePoints = (points = []) => {
+  const accepted = [];
+  (Array.isArray(points) ? points : [])
+    .map(normalizeRoutePoint)
+    .forEach((point) => {
+      if (shouldKeepVisualPoint(point, accepted.at(-1))) accepted.push(point);
+    });
+  return accepted;
+};
+
+const smoothRoutePoints = (points = []) => {
+  if (points.length < 3 || points.some((point) => point.map_matched)) return points;
+
+  return points.map((point, index) => {
+    if (index === 0 || index === points.length - 1) return point;
+    const prev = points[index - 1];
+    const next = points[index + 1];
+    const prevSpeed = segmentImpliedSpeedKmh(prev, point);
+    const nextSpeed = segmentImpliedSpeedKmh(point, next);
+    const accuracy = finiteNumber(point.accuracy) ?? 12;
+    const reportedSpeed = finiteNumber(point.speed_kmh) ?? Math.max(prevSpeed || 0, nextSpeed || 0);
+
+    if (accuracy > MAX_SMOOTHING_ACCURACY_M || reportedSpeed > 120) return point;
+    if ((prevSpeed != null && prevSpeed > MAX_SEGMENT_JUMP_SPEED_KMH) || (nextSpeed != null && nextSpeed > MAX_SEGMENT_JUMP_SPEED_KMH)) return point;
+
+    const strength = accuracy >= 25 ? 0.34 : accuracy >= 12 ? 0.22 : 0.12;
+    const midLat = (prev.lat + next.lat) / 2;
+    const midLng = (prev.lng + next.lng) / 2;
+    return {
+      ...point,
+      original_lat: point.original_lat ?? point.lat,
+      original_lng: point.original_lng ?? point.lng,
+      lat: point.lat + (midLat - point.lat) * strength,
+      lng: point.lng + (midLng - point.lng) * strength,
+      gps_smoothed: true,
+    };
+  });
+};
 
 export function speedBandForKmh(speedKmh = 0) {
   const speed = Number(speedKmh) || 0;
@@ -50,6 +128,17 @@ export function downsampleRoutePoints(points = [], maxPoints = 250) {
   }
   result.push(clean[clean.length - 1]);
   return result;
+}
+
+export function prepareMapRoutePoints(points = [], options = {}) {
+  const {
+    maxPoints = DEFAULT_RENDER_POINTS,
+    smooth = true,
+  } = options;
+  const clean = cleanRoutePoints(points);
+  const visualPoints = smooth ? smoothRoutePoints(clean) : clean;
+  if (!maxPoints || visualPoints.length <= maxPoints) return visualPoints;
+  return downsampleRoutePoints(visualPoints, maxPoints);
 }
 
 export function eventIndexForRoute(event, points = []) {
@@ -162,6 +251,12 @@ export function buildPlaybackTimeline(points = [], events = []) {
       startOffsetSeconds: firstMs != null && prevMs != null ? Math.max(0, (prevMs - firstMs) / 1000) : 0,
       endOffsetSeconds: firstMs != null && currMs != null ? Math.max(0, (currMs - firstMs) / 1000) : 0,
     };
+    segment.timeProgressStart = totalDurationSeconds > 0
+      ? Math.max(0, Math.min(100, (segment.startOffsetSeconds / totalDurationSeconds) * 100))
+      : segment.progressStart;
+    segment.timeProgressEnd = totalDurationSeconds > 0
+      ? Math.max(0, Math.min(100, (segment.endOffsetSeconds / totalDurationSeconds) * 100))
+      : segment.progressEnd;
     segments.push(segment);
     cumulativeDistancesKm.push(totalDistanceKm);
   }
@@ -185,12 +280,18 @@ export function buildPlaybackTimeline(points = [], events = []) {
     .sort((a, b) => a.playbackIndex - b.playbackIndex);
 
   const stops = collectStops(segments).map((stop, index) => ({
-    ...stop,
-    id: `stop-${index}`,
-    progressStart: progressForIndex(stop.startIndex, clean.length),
-    progressEnd: progressForIndex(stop.endIndex, clean.length),
-    point: clean[stop.startIndex],
-  }));
+      ...stop,
+      id: `stop-${index}`,
+      progressStart: progressForIndex(stop.startIndex, clean.length),
+      progressEnd: progressForIndex(stop.endIndex, clean.length),
+      timeProgressStart: totalDurationSeconds > 0
+        ? Math.max(0, Math.min(100, ((segments.find((segment) => segment.fromIndex === stop.startIndex)?.startOffsetSeconds || 0) / totalDurationSeconds) * 100))
+        : progressForIndex(stop.startIndex, clean.length),
+      timeProgressEnd: totalDurationSeconds > 0
+        ? Math.max(0, Math.min(100, ((segments.find((segment) => segment.toIndex === stop.endIndex)?.endOffsetSeconds || 0) / totalDurationSeconds) * 100))
+        : progressForIndex(stop.endIndex, clean.length),
+      point: clean[stop.startIndex],
+    }));
 
   const violations = segments.filter((segment) => segment.overLimitKmh > 0);
   const avgSpeedKmh = totalDurationSeconds > 0 ? (totalDistanceKm / totalDurationSeconds) * 3600 : 0;
@@ -229,13 +330,23 @@ export function buildPlaybackTimeline(points = [], events = []) {
 
 export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
   const clean = cleanRoutePoints(points);
-  if (!clean.length) return { index: 0, point: null, heading: 0 };
-  if (clean.length === 1) return { index: 0, point: clean[0], heading: Number(clean[0].heading ?? clean[0].bearing ?? 0) || 0 };
+  if (!clean.length) return { index: 0, point: null, heading: 0, ratio: 0, fromIndex: 0, toIndex: 0 };
+  if (clean.length === 1) return { index: 0, point: clean[0], heading: Number(clean[0].heading ?? clean[0].bearing ?? 0) || 0, ratio: 0, fromIndex: 0, toIndex: 0 };
 
   const firstMs = pointTimeMs(clean[0]);
   if (firstMs == null) {
     const fallbackIndex = Math.max(0, Math.min(clean.length - 1, Math.round(elapsedSeconds)));
-    return { index: fallbackIndex, point: clean[fallbackIndex], heading: 0 };
+    return { index: fallbackIndex, point: clean[fallbackIndex], heading: 0, ratio: 0, fromIndex: Math.max(0, fallbackIndex - 1), toIndex: fallbackIndex };
+  }
+  if (elapsedSeconds <= 0) {
+    return {
+      index: 0,
+      point: clean[0],
+      heading: Number(clean[0].heading ?? clean[0].bearing ?? 0) || 0,
+      ratio: 0,
+      fromIndex: 0,
+      toIndex: 0,
+    };
   }
 
   const targetMs = firstMs + Math.max(0, elapsedSeconds) * 1000;
@@ -267,6 +378,9 @@ export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
     index,
     point,
     heading: calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng),
+    ratio,
+    fromIndex: Math.max(0, index - 1),
+    toIndex: index,
   };
 }
 

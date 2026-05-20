@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
-import { buildPlaybackTimeline } from '@/lib/mapPlaybackInsights';
+import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -313,7 +313,10 @@ export default function TripMap({
       : [{ id: 'selected', route_points: routePoints, selected: true }];
     return routeSets.find((route) => route.selected) || routeSets[0] || {};
   }, [routePoints, routes]);
-  const selectedRoutePoints = selectedRoute.route_points || [];
+  const selectedRoutePoints = useMemo(
+    () => prepareMapRoutePoints(selectedRoute.route_points || [], { maxPoints: null }),
+    [selectedRoute]
+  );
   const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
   const recordedPointCount = Number(
     rawPointCount ?? selectedRoute.rawPointCount ?? selectedRoute.route_points_raw_count
@@ -397,13 +400,15 @@ export default function TripMap({
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
     const validRoutes = routeSets
-      .map((route) => ({
-        ...route,
-        color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
-        opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-        route_points: maskRoutePointsForPrivacy(route.route_points || [], privacySettings)
-          .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
-      }))
+      .map((route) => {
+        const maskedPoints = maskRoutePointsForPrivacy(route.route_points || [], privacySettings);
+        return {
+          ...route,
+          color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
+          opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
+          route_points: prepareMapRoutePoints(maskedPoints, { maxPoints: route.selected ? 900 : 450 }),
+        };
+      })
       .filter((route) => route.route_points.length > 1);
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
 
@@ -843,8 +848,10 @@ function OfflineRoutePreview({ routePoints = [], routes = null, events = [], hei
     : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
   const maskedRoutes = routeSets.map((route) => ({
     ...route,
-    route_points: maskRoutePointsForPrivacy(route.route_points || [], settings)
-      .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+    route_points: prepareMapRoutePoints(
+      maskRoutePointsForPrivacy(route.route_points || [], settings),
+      { maxPoints: route.selected ? 900 : 450 }
+    ),
   })).filter((route) => route.route_points.length > 1);
   const allPoints = maskedRoutes.flatMap((route) => route.route_points);
   const minLat = Math.min(...allPoints.map((point) => point.lat));
