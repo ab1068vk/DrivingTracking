@@ -76,7 +76,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
     private static final double MAX_SPEED_KMH = 220d;
     private static final double AUTO_START_SPEED_KMH = 5d;
-    private static final long AUTO_START_MOVING_MS = 1_000L;
+    private static final long AUTO_START_MOVING_MS = 2_000L;
+    private static final long ACTIVITY_UPDATE_INTERVAL_MS = 5_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
@@ -343,7 +344,7 @@ public class DriveSenseAutoTrackingService extends Service {
             return;
         }
 
-        activityClient.requestActivityUpdates(15_000L, activityIntent);
+        activityClient.requestActivityUpdates(ACTIVITY_UPDATE_INTERVAL_MS, activityIntent);
     }
 
     private void removeActivityUpdates() {

@@ -1,3 +1,8 @@
+import {
+  AUTO_START_GPS_FALLBACK_SECONDS,
+  AUTO_START_SPEED_KMH,
+} from '@/lib/activityRecognition';
+
 const DIAGNOSTIC_EVENTS_KEY = 'drivesense_tracking_diagnostics';
 const MAX_EVENTS = 120;
 
@@ -323,7 +328,7 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
     (!backgroundAuto || notifications === 'granted') &&
     nativeArmed &&
     batteryClear;
-  const movingFastEnough = Number(currentSpeedKmh) >= 12;
+  const movingFastEnough = Number(currentSpeedKmh) >= AUTO_START_SPEED_KMH;
   const advancedFacts = [
     allRequiredReady ? 'All required setup checks are green.' : null,
     movingFastEnough ? 'GPS is moving fast enough for fallback detection.' : 'GPS is not showing sustained driving speed yet.',
@@ -399,7 +404,7 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
     status: 'warn',
     headline: allRequiredReady ? 'Ready, but no drive signal yet' : 'Waiting for a drive signal',
     detail: allRequiredReady
-      ? `Permissions and services are ready. Road Sage will start when it sees in-vehicle activity or about 8 seconds of sustained GPS movement above 12 km/h. Current reading: ${speedText}.`
+      ? `Permissions and services are ready. Road Sage will start when it sees in-vehicle activity or about ${AUTO_START_GPS_FALLBACK_SECONDS} seconds of sustained GPS movement at or above ${AUTO_START_SPEED_KMH} km/h. Current reading: ${speedText}.`
       : isAndroidPlatform
         ? `Auto tracking is armed. It starts when Android reports in-vehicle activity or sustained GPS movement. Current reading: ${speedText}.`
         : `Auto tracking is armed. It starts after sustained GPS movement. Current reading: ${speedText}.`,

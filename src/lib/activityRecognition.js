@@ -7,6 +7,11 @@ const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
 const VERY_STABLE_PARKED_DRIFT_M = 5;
+export const ACTIVITY_POLL_INTERVAL_MS = 5000;
+export const AUTO_START_IN_VEHICLE_CONFIDENCE = 65;
+export const AUTO_START_SPEED_KMH = 5;
+export const AUTO_START_IN_VEHICLE_SECONDS = 1;
+export const AUTO_START_GPS_FALLBACK_SECONDS = 2;
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -30,7 +35,7 @@ export async function startActivityRecognition(onActivity, onError) {
 
   try {
     const listener = await ActivityRecognition.addListener('activityChanged', onActivity);
-    await ActivityRecognition.start({ intervalMs: 5000 });
+    await ActivityRecognition.start({ intervalMs: ACTIVITY_POLL_INTERVAL_MS });
     return async () => {
       await ActivityRecognition.stop();
       await listener.remove();
@@ -124,12 +129,19 @@ export async function clearNativeCompletedTrips() {
 }
 
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
-  const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
+  const activityType = activity?.type;
+  const vehicleConfidence = activityType === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
   const speed = Number(currentSpeedKmh) || 0;
   const movingSeconds = Number(recentMovingSeconds) || 0;
-  if (vehicleConfidence >= 65 && speed >= 5 && movingSeconds >= 1) return true;
-  const activityMissingOrUncertain = !activity || activity.type === ACTIVITY_TYPES.UNKNOWN || vehicleConfidence < 65;
-  return activityMissingOrUncertain && speed >= 12 && movingSeconds >= 8;
+  if (
+    vehicleConfidence >= AUTO_START_IN_VEHICLE_CONFIDENCE &&
+    speed >= AUTO_START_SPEED_KMH &&
+    movingSeconds >= AUTO_START_IN_VEHICLE_SECONDS
+  ) return true;
+  const activityMissingOrUncertain = !activity ||
+    activityType === ACTIVITY_TYPES.UNKNOWN ||
+    (activityType === ACTIVITY_TYPES.IN_VEHICLE && vehicleConfidence < AUTO_START_IN_VEHICLE_CONFIDENCE);
+  return activityMissingOrUncertain && speed >= AUTO_START_SPEED_KMH && movingSeconds >= AUTO_START_GPS_FALLBACK_SECONDS;
 }
 
 export function computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = []) {

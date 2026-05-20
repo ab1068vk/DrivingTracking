@@ -24,14 +24,20 @@ describe('activityRecognition auto-stop logic', () => {
   it('auto-starts from sustained GPS movement when Android activity is delayed', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.UNKNOWN, confidence: 0 },
-      currentSpeedKmh: 13,
-      recentMovingSeconds: 8,
+      currentSpeedKmh: 5,
+      recentMovingSeconds: 2,
     })).toBe(true);
 
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.UNKNOWN, confidence: 0 },
-      currentSpeedKmh: 13,
-      recentMovingSeconds: 4,
+      currentSpeedKmh: 5,
+      recentMovingSeconds: 1,
+    })).toBe(false);
+
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.UNKNOWN, confidence: 0 },
+      currentSpeedKmh: 4.9,
+      recentMovingSeconds: 3,
     })).toBe(false);
   });
 

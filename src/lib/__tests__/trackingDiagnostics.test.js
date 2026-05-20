@@ -126,7 +126,8 @@ describe('tracking diagnostics', () => {
 
     expect(explanation.status).toBe('warn');
     expect(explanation.headline).toBe('Ready, but no drive signal yet');
-    expect(explanation.detail).toContain('8 seconds');
+    expect(explanation.detail).toContain('2 seconds');
+    expect(explanation.detail).toContain('5 km/h');
     expect(explanation.facts.join(' ')).toContain('All required setup checks are green');
   });
 });
