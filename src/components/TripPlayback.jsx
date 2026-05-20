@@ -205,6 +205,10 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
       const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
       leafletMapRef.current = map;
       window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+      const firstPoint = points.find((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+      if (firstPoint) {
+        map.setView([firstPoint.lat, firstPoint.lng], 15);
+      }
 
       if (points.length > 1) {
         const latLngs = points.map(p => [p.lat, p.lng]);
@@ -326,11 +330,14 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
         });
 
         map.fitBounds(bounds, { padding: [24, 24] });
+        setTimeout(() => map.invalidateSize(), 50);
       } else {
         map.setView([51.505, -0.09], 13);
+        setTimeout(() => map.invalidateSize(), 50);
       }
-    }).catch(() => {
-      if (!cancelled) setMapFailed(true);
+    }).catch((error) => {
+      console.error('Playback map failed to initialize', error);
+      if (!cancelled && !leafletMapRef.current) setMapFailed(true);
     });
     return () => {
       cancelled = true;
