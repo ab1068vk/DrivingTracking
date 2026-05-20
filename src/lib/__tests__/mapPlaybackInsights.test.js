@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPlaybackTimeline,
-  buildGpsQualitySummary,
   buildRouteComparison,
   downsampleRoutePoints,
   playbackPositionAtElapsed,
   prepareMapRoutePoints,
-  snapEventsToRoute,
 } from '@/lib/mapPlaybackInsights';
 
 const point = (index, speed = 40, extra = {}) => ({
@@ -75,27 +73,6 @@ describe('mapPlaybackInsights', () => {
     ], { maxPoints: null });
 
     expect(untimed).toHaveLength(2);
-  });
-
-  it('snaps events to the prepared route and summarizes GPS quality', () => {
-    const points = [
-      point(0, 20, { map_matched: true, map_match_quality: 'high' }),
-      point(1, 20, { gps_smoothed: true }),
-      point(2, 20, { map_match_quality: 'gap' }),
-    ];
-    const [event] = snapEventsToRoute([{
-      type: 'harsh_brake',
-      lat: points[1].lat + 0.00005,
-      lng: points[1].lng,
-      timestamp: points[1].timestamp,
-    }], points);
-    const summary = buildGpsQualitySummary(points);
-
-    expect(event.route_event_snapped).toBe(true);
-    expect(event.lat).toBe(points[1].lat);
-    expect(summary.matched).toBe(1);
-    expect(summary.smoothed).toBe(1);
-    expect(summary.gaps).toBe(1);
   });
 
   it('summarizes comparison deltas for repeated routes', () => {

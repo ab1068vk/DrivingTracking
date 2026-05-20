@@ -70,8 +70,6 @@ export default function TripDetail() {
   const units = settings.units || 'metric';
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
   const [showSpeedLimitsOnMap, setShowSpeedLimitsOnMap] = useState(false);
-  const [showGpsQualityOnMap, setShowGpsQualityOnMap] = useState(false);
-  const [showRoadContextOnMap, setShowRoadContextOnMap] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
@@ -778,25 +776,6 @@ export default function TripDetail() {
             <Route className="h-3.5 w-3.5" />
             Cornering Heatmap
           </button>
-          <button
-            onClick={() => setShowGpsQualityOnMap((value) => !value)}
-            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
-              showGpsQualityOnMap ? 'bg-blue-600 text-white' : 'bg-card border border-border text-muted-foreground'
-            }`}
-          >
-            <MapPin className="h-3.5 w-3.5" />
-            GPS Quality
-          </button>
-          <button
-            onClick={() => setShowRoadContextOnMap((value) => !value)}
-            disabled={!mapMatchingContext}
-            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
-              showRoadContextOnMap ? 'bg-teal-600 text-white' : 'bg-card border border-border text-muted-foreground'
-            }`}
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            OSRM Roads
-          </button>
         </div>
         {!speedLimitContext && (
           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
@@ -823,9 +802,6 @@ export default function TripDetail() {
             events={mapEvents}
             showCorneringHeatmap={showCorneringHeatmap}
             showSpeedLimits={showSpeedLimitsOnMap}
-            showGpsQuality={showGpsQualityOnMap}
-            showRoadContext={showRoadContextOnMap}
-            mapMatchingContext={trip.map_matching_context}
             showRouteRisk={routeRiskSegments.length > 0}
             routeRiskSegments={routeRiskSegments}
             rawPointCount={trip.route_points_raw_count}

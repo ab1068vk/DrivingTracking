@@ -116,34 +116,6 @@ const progressForIndex = (index, total) => (
   total > 1 ? Math.max(0, Math.min(100, (index / (total - 1)) * 100)) : 0
 );
 
-export function gpsQualityForPoint(point = {}) {
-  if (point.map_match_quality === 'gap') return { id: 'gap', label: 'OSRM gap', color: '#ef4444' };
-  if (point.map_match_quality === 'low') return { id: 'low', label: 'Low match', color: '#f97316' };
-  if (point.map_match_quality === 'medium' || point.gps_smoothed) return { id: 'medium', label: 'Smoothed', color: '#eab308' };
-  if (point.map_matched || point.map_match_quality === 'high') return { id: 'matched', label: 'Matched', color: '#22c55e' };
-  const accuracy = finiteNumber(point.accuracy);
-  if (accuracy != null && accuracy > 60) return { id: 'low', label: 'Weak GPS', color: '#f97316' };
-  if (accuracy != null && accuracy > 25) return { id: 'medium', label: 'Fair GPS', color: '#eab308' };
-  return { id: 'raw', label: 'GPS', color: '#3b82f6' };
-}
-
-export function buildGpsQualitySummary(points = []) {
-  const clean = cleanRoutePoints(points);
-  const counts = clean.reduce((result, point) => {
-    const quality = gpsQualityForPoint(point);
-    result[quality.id] = (result[quality.id] || 0) + 1;
-    return result;
-  }, {});
-  return {
-    total: clean.length,
-    matched: counts.matched || 0,
-    smoothed: counts.medium || 0,
-    weak: counts.low || 0,
-    gaps: counts.gap || 0,
-    raw: counts.raw || 0,
-  };
-}
-
 export function downsampleRoutePoints(points = [], maxPoints = 250) {
   const clean = cleanRoutePoints(points);
   if (clean.length <= maxPoints) return clean;
@@ -200,35 +172,6 @@ export function eventIndexForRoute(event, points = []) {
     }
   });
   return bestIndex;
-}
-
-export function snapEventsToRoute(events = [], points = [], maxDistanceM = 90) {
-  const clean = cleanRoutePoints(points);
-  if (!clean.length) return Array.isArray(events) ? events : [];
-  return (Array.isArray(events) ? events : []).map((event) => {
-    const lat = finiteNumber(event?.lat);
-    const lng = finiteNumber(event?.lng);
-    if (lat == null || lng == null) return event;
-    let best = null;
-    clean.forEach((point, index) => {
-      const distanceM = haversineDistance(lat, lng, point.lat, point.lng) * 1000;
-      if (!best || distanceM < best.distanceM) best = { point, index, distanceM };
-    });
-    if (!best || best.distanceM > maxDistanceM) return event;
-    return {
-      ...event,
-      original_lat: event.original_lat ?? event.lat,
-      original_lng: event.original_lng ?? event.lng,
-      lat: best.point.lat,
-      lng: best.point.lng,
-      route_event_snapped: true,
-      route_event_snap_distance_m: Math.round(best.distanceM),
-      playbackIndex: event.playbackIndex ?? best.index,
-      matched_road_name: event.matched_road_name || best.point.speed_limit_road_name || best.point.matched_road_name || null,
-      speed_limit_kmh: event.speed_limit_kmh ?? best.point.speed_limit_kmh,
-      speed_limit_source: event.speed_limit_source || best.point.speed_limit_source || null,
-    };
-  });
 }
 
 const segmentSpeed = (prev, curr, distanceKm, durationSeconds) => {

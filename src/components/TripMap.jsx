@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
-import { buildPlaybackTimeline, gpsQualityForPoint, prepareMapRoutePoints, snapEventsToRoute } from '@/lib/mapPlaybackInsights';
+import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -291,9 +291,6 @@ export default function TripMap({
   showRouteRisk = false,
   routeRiskSegments = [],
   showSpeedLimits = false,
-  showGpsQuality = false,
-  showRoadContext = false,
-  mapMatchingContext = null,
   rawPointCount = null,
   height = '350px',
   className = '',
@@ -413,32 +410,10 @@ export default function TripMap({
         };
       })
       .filter((route) => route.route_points.length > 1);
-    const primaryRouteForEvents = validRoutes.find((route) => route.selected) || validRoutes[0] || null;
-    const mapEvents = primaryRouteForEvents
-      ? snapEventsToRoute(maskEventsForPrivacy(events || [], privacySettings), primaryRouteForEvents.route_points)
-      : maskEventsForPrivacy(events || [], privacySettings);
+    const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
 
     if (validRoutes.length > 0) {
       const bounds = window.L.latLngBounds([]);
-      const matchedGeometry = Array.isArray(mapMatchingContext?.route_geometry)
-        ? mapMatchingContext.route_geometry.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng))
-        : [];
-
-      if (matchedGeometry.length > 1 && showRoadContext) {
-        const geometryLatLngs = matchedGeometry.map((point) => [point.lat, point.lng]);
-        geometryLatLngs.forEach((latLng) => bounds.extend(latLng));
-        window.L.polyline(geometryLatLngs, {
-          color: '#10b981',
-          weight: 4,
-          opacity: 0.30,
-          dashArray: '8 8',
-          smoothFactor: 2,
-          lineCap: 'round',
-          lineJoin: 'round',
-        })
-          .bindPopup(`<b>OSRM matched road geometry</b><br>${mapMatchingContext?.snapped_coverage ?? 0}% snapped coverage<br>${mapMatchingContext?.gap_count ?? 0} trace gaps`)
-          .addTo(layers);
-      }
 
       validRoutes.forEach((route) => {
         const latLngs = route.route_points.map(p => [p.lat, p.lng]);
@@ -578,46 +553,6 @@ export default function TripMap({
             .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
             .addTo(layers);
         }
-
-        if (showRoadContext && route.selected) {
-          const labeled = [];
-          route.route_points.forEach((point, index) => {
-            const roadName = point.speed_limit_road_name || point.matched_road_name || point.matched_road_ref;
-            if (!roadName || index === 0 || index % Math.max(8, Math.round(route.route_points.length / 12)) !== 0) return;
-            if (labeled.some((item) => item.name === roadName && haversineDistance(item.lat, item.lng, point.lat, point.lng) < 0.25)) return;
-            labeled.push({ name: roadName, lat: point.lat, lng: point.lng, highway: point.speed_limit_highway, limit: point.speed_limit_kmh });
-          });
-          labeled.slice(0, 14).forEach((item) => {
-            window.L.circleMarker([item.lat, item.lng], {
-              radius: 5,
-              color: '#0f766e',
-              fillColor: '#ccfbf1',
-              fillOpacity: 0.9,
-              weight: 2,
-            })
-              .bindPopup(`<b>${escapeHtml(item.name)}</b>${item.highway ? `<br>${escapeHtml(titleCase(item.highway))}` : ''}${item.limit ? `<br>Limit: ${Math.round(item.limit)} km/h` : ''}`)
-              .addTo(layers);
-          });
-        }
-
-        if (showGpsQuality && route.selected) {
-          const step = Math.max(1, Math.round(route.route_points.length / 160));
-          route.route_points.forEach((point, index) => {
-            if (index !== 0 && index !== route.route_points.length - 1 && index % step !== 0) return;
-            const quality = gpsQualityForPoint(point);
-            const accuracyText = Number.isFinite(Number(point.accuracy)) ? `<br>GPS accuracy: ${Math.round(Number(point.accuracy))} m` : '';
-            const snapText = Number.isFinite(Number(point.map_match_distance_m)) ? `<br>Snap: ${Math.round(Number(point.map_match_distance_m))} m` : '';
-            window.L.circleMarker([point.lat, point.lng], {
-              radius: quality.id === 'gap' || quality.id === 'low' ? 5 : 3.5,
-              color: quality.color,
-              fillColor: quality.color,
-              fillOpacity: quality.id === 'matched' ? 0.45 : 0.72,
-              weight: 1,
-            })
-              .bindPopup(`<b>${escapeHtml(quality.label)}</b>${accuracyText}${snapText}`)
-              .addTo(layers);
-          });
-        }
       });
 
       lastBoundsRef.current = bounds;
@@ -745,7 +680,7 @@ export default function TripMap({
         .bindPopup(`<b>Parked here</b><br>${parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, showGpsQuality, showRoadContext, mapMatchingContext]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
-import { buildGpsQualitySummary, buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, snapEventsToRoute } from '@/lib/mapPlaybackInsights';
+import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
@@ -149,10 +149,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], privacySettings),
     { maxPoints: 700 }
   ), [privacySettings, secondaryTrip?.route_points]);
-  const events = useMemo(() => snapEventsToRoute(
-    maskEventsForPrivacy(trip?.driving_events || [], privacySettings),
-    points
-  ), [points, privacySettings, trip?.driving_events]);
+  const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
   const pointCountSummary = rawPointCount !== totalPoints
@@ -164,7 +161,6 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const secondarySegments = secondaryTimeline.segments;
   const stats = timeline.stats;
   const timelineEvents = timeline.events;
-  const gpsQuality = useMemo(() => buildGpsQualitySummary(points), [points]);
   const playbackDurationSeconds = stats.durationSeconds || Math.max(1, totalPoints - 1);
   const playbackPosition = useMemo(() => playbackPositionAtElapsed(points, playbackElapsedSeconds), [playbackElapsedSeconds, points]);
   const currentPt = playbackPosition.point || points[currentIdx];
@@ -200,26 +196,6 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
 
       if (points.length > 1) {
         const latLngs = points.map(p => [p.lat, p.lng]);
-        const fitLatLngs = [...latLngs];
-        const matchedGeometry = Array.isArray(trip?.map_matching_context?.route_geometry)
-          ? trip.map_matching_context.route_geometry.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng))
-          : [];
-
-        if (matchedGeometry.length > 1) {
-          const geometryLatLngs = matchedGeometry.map((point) => [point.lat, point.lng]);
-          geometryLatLngs.forEach((latLng) => fitLatLngs.push(latLng));
-          window.L.polyline(geometryLatLngs, {
-            color: '#10b981',
-            weight: 4,
-            opacity: 0.24,
-            dashArray: '8 8',
-            smoothFactor: 2,
-            lineCap: 'round',
-            lineJoin: 'round',
-          })
-            .bindPopup(`OSRM matched road geometry<br>${trip?.map_matching_context?.snapped_coverage ?? 0}% coverage`)
-            .addTo(map);
-        }
 
         window.L.polyline(latLngs, {
           color: '#0f172a',
@@ -320,7 +296,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
           secondaryMarkerRef.current = window.L.marker([secondaryPoints[0].lat, secondaryPoints[0].lng], { icon: secondaryIcon }).addTo(map);
         }
 
-        map.fitBounds(window.L.latLngBounds(fitLatLngs), { padding: [24, 24] });
+        map.fitBounds(window.L.latLngBounds(latLngs), { padding: [24, 24] });
       } else {
         map.setView([51.505, -0.09], 13);
       }
@@ -662,17 +638,6 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
           <div className="font-semibold">{pointCountSummary}</div>
         </div>
       </div>
-      {(gpsQuality.matched > 0 || gpsQuality.weak > 0 || gpsQuality.gaps > 0 || gpsQuality.smoothed > 0) && (
-        <div className="rounded-2xl border border-border bg-card p-3 text-xs">
-          <div className="mb-2 font-semibold">GPS / OSRM quality</div>
-          <div className="grid grid-cols-4 gap-2">
-            <div><div className="text-muted-foreground">Matched</div><div className="font-semibold">{gpsQuality.matched}</div></div>
-            <div><div className="text-muted-foreground">Smoothed</div><div className="font-semibold">{gpsQuality.smoothed}</div></div>
-            <div><div className="text-muted-foreground">Weak</div><div className="font-semibold">{gpsQuality.weak}</div></div>
-            <div><div className="text-muted-foreground">Gaps</div><div className="font-semibold">{gpsQuality.gaps}</div></div>
-          </div>
-        </div>
-      )}
 
       {selectedSegment && (
         <div className="rounded-2xl border border-border bg-card p-3 text-xs">
