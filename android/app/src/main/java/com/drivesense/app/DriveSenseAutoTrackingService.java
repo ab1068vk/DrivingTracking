@@ -409,6 +409,15 @@ public class DriveSenseAutoTrackingService extends Service {
         candidateNearParked = isInParkingCooldown(triggerLocation);
         candidateConfirmedMs = 0L;
         recentHeadings.clear();
+        if (triggerLocation != null) {
+            double triggerSpeedKmh = triggerLocation.hasSpeed()
+                ? Math.max(0d, triggerLocation.getSpeed() * 3.6d)
+                : Math.max(0d, lastKnownSpeedKmh);
+            lastKnownSpeedKmh = triggerSpeedKmh;
+            lastLocationMs = triggerLocation.getTime() > 0L ? triggerLocation.getTime() : triggerMs;
+            activePoints.put(locationToJson(triggerLocation, triggerSpeedKmh));
+            previousLocation = triggerLocation;
+        }
         recordTimeline("candidate_started", "Candidate started: speed >= 5 km/h for 2 seconds", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
         recordDiagnostic("candidate_started", "Candidate started: speed >= 5 km/h for 2 seconds", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
         if (candidateNearParked) {
@@ -538,7 +547,6 @@ public class DriveSenseAutoTrackingService extends Service {
             if (armedMovingSinceMs == 0L) armedMovingSinceMs = now;
             if (now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
                 startCandidateTrip("armed_gps_movement", location);
-                recordLocation(location);
                 return;
             }
         } else if (speedKmh < STATIONARY_SPEED_KMH) {
@@ -585,6 +593,9 @@ public class DriveSenseAutoTrackingService extends Service {
         JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(this);
         if (parked == null) return false;
         long parkedMs = parked.optLong("timestamp_ms", 0L);
+        if (parkedMs <= 0L && parked.has("timestamp")) {
+            parkedMs = parseIso(parked.optString("timestamp", ""));
+        }
         if (parkedMs <= 0L || System.currentTimeMillis() - parkedMs > PARKING_COOLDOWN_MS) return false;
         double lat = parked.optDouble("lat", Double.NaN);
         double lng = parked.optDouble("lng", Double.NaN);

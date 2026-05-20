@@ -407,6 +407,249 @@ export function cleanRoutePoints(points, thresholds = DEFAULT_THRESHOLDS) {
   }, []);
 }
 
+export const TRIP_STATES = {
+  IDLE: 'Idle',
+  CANDIDATE: 'CandidateTrip',
+  CONFIRMED: 'ConfirmedTrip',
+  ENDING_REVIEW: 'EndingReview',
+  SAVED: 'Saved',
+  DISCARDED: 'Discarded',
+};
+
+export const CANDIDATE_TRIP_DEFAULTS = {
+  REVIEW_TIMEOUT_MS: 3 * 60 * 1000,
+  DISTANCE_M: 150,
+  DISTANCE_PARKING_COOLDOWN_M: 250,
+  MAX_SPEED_KMH: 15,
+  MAX_SPEED_PARKING_COOLDOWN_KMH: 20,
+  STABLE_POINTS: 4,
+  STABLE_POINTS_PARKING_COOLDOWN: 5,
+  MAX_ACCURACY_M: DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M,
+  PARKING_COOLDOWN_MS: 5 * 60 * 1000,
+  PARKING_COOLDOWN_RADIUS_M: 75,
+};
+
+function activityTypeOf(activity) {
+  return String(activity?.type || activity?.activity || '').toLowerCase();
+}
+
+function activityConfidenceOf(activity) {
+  const confidence = Number(activity?.confidence);
+  return Number.isFinite(confidence) ? confidence : 0;
+}
+
+function isStrongFootActivity(activity) {
+  const type = activityTypeOf(activity);
+  return ['walking', 'running', 'on_foot', 'cycling', 'on_bicycle'].includes(type) &&
+    activityConfidenceOf(activity) >= 75;
+}
+
+function isVehicleActivity(activity) {
+  return activityTypeOf(activity) === 'in_vehicle' && activityConfidenceOf(activity) >= 65;
+}
+
+function countStableGpsPoints(points = [], maxAccuracyM = DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M) {
+  return (points || []).filter((point) => {
+    const accuracy = Number(point?.accuracy);
+    return !Number.isFinite(accuracy) || accuracy <= maxAccuracyM;
+  }).length;
+}
+
+export function isNearRecentParkedLocation(point, parkedLocation, options = {}) {
+  if (!point || !parkedLocation) return false;
+  const pointLat = Number(point.lat);
+  const pointLng = Number(point.lng);
+  const parkedLat = Number(parkedLocation.lat);
+  const parkedLng = Number(parkedLocation.lng);
+  if (![pointLat, pointLng, parkedLat, parkedLng].every(Number.isFinite)) return false;
+
+  const parkedMs = parseTimestampMs(parkedLocation.timestamp) ?? Number(parkedLocation.timestamp_ms);
+  if (!Number.isFinite(parkedMs)) return false;
+
+  const nowMs = options.nowMs ?? Date.now();
+  const cooldownMs = options.cooldownMs ?? CANDIDATE_TRIP_DEFAULTS.PARKING_COOLDOWN_MS;
+  if (nowMs - parkedMs > cooldownMs) return false;
+
+  const radiusM = options.radiusM ?? CANDIDATE_TRIP_DEFAULTS.PARKING_COOLDOWN_RADIUS_M;
+  return haversineMeters(parkedLat, parkedLng, pointLat, pointLng) <= radiusM;
+}
+
+export function validateCandidateTrip({
+  points = [],
+  startTime,
+  now = new Date().toISOString(),
+  activity = null,
+  nearParkedLocation = false,
+  forceFinal = false,
+  thresholds = DEFAULT_THRESHOLDS,
+  options = {},
+} = {}) {
+  const config = { ...CANDIDATE_TRIP_DEFAULTS, ...options };
+  const cleanPoints = cleanRoutePoints(points, thresholds);
+  const stats = calculateTripStats(cleanPoints, startTime, now, thresholds);
+  const stablePoints = countStableGpsPoints(cleanPoints, config.MAX_ACCURACY_M);
+  const requiredDistanceM = nearParkedLocation ? config.DISTANCE_PARKING_COOLDOWN_M : config.DISTANCE_M;
+  const requiredSpeedKmh = nearParkedLocation ? config.MAX_SPEED_PARKING_COOLDOWN_KMH : config.MAX_SPEED_KMH;
+  const requiredStablePoints = nearParkedLocation ? config.STABLE_POINTS_PARKING_COOLDOWN : config.STABLE_POINTS;
+  const strongFootSignal = isStrongFootActivity(activity);
+  const vehicleActivity = isVehicleActivity(activity);
+  const enoughGps = stablePoints >= requiredStablePoints;
+  const enoughDistance = (stats.distance_km || 0) * 1000 >= requiredDistanceM;
+  const vehicleSpeedSegment = (stats.max_speed_kmh || 0) >= requiredSpeedKmh;
+  const startMs = parseTimestampMs(startTime);
+  const nowMs = parseTimestampMs(now) ?? Date.now();
+  const candidateAgeMs = startMs == null ? 0 : Math.max(0, nowMs - startMs);
+
+  const result = {
+    state: TRIP_STATES.CANDIDATE,
+    confirmed: false,
+    discarded: false,
+    reason: null,
+    title: null,
+    cleanPoints,
+    metrics: {
+      distance_m: Math.round((stats.distance_km || 0) * 1000),
+      max_speed_kmh: stats.max_speed_kmh || 0,
+      stable_points: stablePoints,
+      required_distance_m: requiredDistanceM,
+      required_speed_kmh: requiredSpeedKmh,
+      required_stable_points: requiredStablePoints,
+      candidate_age_ms: candidateAgeMs,
+      near_parked_location: nearParkedLocation,
+      vehicle_activity: vehicleActivity,
+      strong_foot_signal: strongFootSignal,
+    },
+  };
+
+  if (strongFootSignal && !vehicleSpeedSegment) {
+    return {
+      ...result,
+      state: TRIP_STATES.DISCARDED,
+      discarded: true,
+      reason: 'movement_looked_like_walking',
+      title: 'Candidate discarded: walking/running signal detected',
+    };
+  }
+
+  if (enoughGps && enoughDistance && vehicleSpeedSegment && !strongFootSignal) {
+    return {
+      ...result,
+      state: TRIP_STATES.CONFIRMED,
+      confirmed: true,
+      reason: vehicleActivity ? 'activity_in_vehicle' : 'vehicle_speed_distance',
+      title: 'Candidate confirmed: vehicle-like movement detected',
+    };
+  }
+
+  if (forceFinal || candidateAgeMs >= config.REVIEW_TIMEOUT_MS) {
+    if (!vehicleSpeedSegment) {
+      return {
+        ...result,
+        state: TRIP_STATES.DISCARDED,
+        discarded: true,
+        reason: 'no_vehicle_speed_segment',
+        title: 'Candidate discarded: no vehicle-speed segment',
+      };
+    }
+    if (!enoughGps) {
+      return {
+        ...result,
+        state: TRIP_STATES.DISCARDED,
+        discarded: true,
+        reason: 'unstable_gps_drift',
+        title: 'Candidate discarded: unstable GPS drift',
+      };
+    }
+    return {
+      ...result,
+      state: TRIP_STATES.DISCARDED,
+      discarded: true,
+      reason: 'gps_movement_too_short',
+      title: 'Candidate discarded: GPS movement too short',
+    };
+  }
+
+  return result;
+}
+
+export function trimParkedTail(points = [], {
+  endTime = new Date().toISOString(),
+  reason = '',
+  activity = null,
+  thresholds = DEFAULT_THRESHOLDS,
+} = {}) {
+  const cleanPoints = cleanRoutePoints(points, thresholds);
+  const originalEndTime = endTime;
+  if (cleanPoints.length < 4) {
+    return {
+      points: cleanPoints,
+      endTime: originalEndTime,
+      removedPoints: 0,
+      trimmed: false,
+      reason: null,
+    };
+  }
+
+  const stopLikeReason = /park|still|foot|walking|gps|auto/i.test(String(reason || ''));
+  const strongFootSignal = isStrongFootActivity(activity);
+  if (!stopLikeReason && !strongFootSignal) {
+    return {
+      points: cleanPoints,
+      endTime: originalEndTime,
+      removedPoints: 0,
+      trimmed: false,
+      reason: null,
+    };
+  }
+
+  const vehicleSpeed = CANDIDATE_TRIP_DEFAULTS.MAX_SPEED_KMH;
+  let lastVehicleIndex = -1;
+  for (let i = cleanPoints.length - 1; i >= 0; i--) {
+    if ((Number(cleanPoints[i].speed_kmh) || 0) >= vehicleSpeed) {
+      lastVehicleIndex = i;
+      break;
+    }
+  }
+
+  if (lastVehicleIndex < 0 || lastVehicleIndex >= cleanPoints.length - 1) {
+    return {
+      points: cleanPoints,
+      endTime: originalEndTime,
+      removedPoints: 0,
+      trimmed: false,
+      reason: null,
+    };
+  }
+
+  let keepThrough = Math.min(lastVehicleIndex + 1, cleanPoints.length - 1);
+  for (let i = lastVehicleIndex + 1; i < cleanPoints.length; i++) {
+    if ((Number(cleanPoints[i].speed_kmh) || 0) < (thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH)) {
+      keepThrough = i;
+      break;
+    }
+  }
+
+  const removedPoints = cleanPoints.length - (keepThrough + 1);
+  if (removedPoints <= 0) {
+    return {
+      points: cleanPoints,
+      endTime: originalEndTime,
+      removedPoints: 0,
+      trimmed: false,
+      reason: null,
+    };
+  }
+
+  const trimmedPoints = cleanPoints.slice(0, keepThrough + 1);
+  return {
+    points: trimmedPoints,
+    endTime: trimmedPoints[trimmedPoints.length - 1]?.timestamp || originalEndTime,
+    removedPoints,
+    trimmed: true,
+    reason: strongFootSignal ? 'walking_after_parking' : 'parked_tail_review',
+  };
+}
+
 function perpendicularDistanceMeters(point, lineStart, lineEnd) {
   const dx = lineEnd.lng - lineStart.lng;
   const dy = lineEnd.lat - lineStart.lat;

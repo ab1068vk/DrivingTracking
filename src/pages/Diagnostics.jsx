@@ -46,7 +46,12 @@ const statusStyle = {
 const typeIcon = {
   service_armed: Shield,
   armed_location_watch: Satellite,
+  candidate_started: Activity,
+  candidate_confirmed: Car,
+  candidate_hidden_parking_cooldown: MapPin,
   auto_start: Car,
+  ending_review: Clock,
+  tail_trimmed: MapPin,
   trip_started: Car,
   trip_ended: MapPin,
   auto_stop: MapPin,

@@ -10,11 +10,15 @@ import {
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
+  TRIP_STATES,
   buildDrivingThresholds,
   calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
-  formatDistance, formatDuration, formatSpeed
+  formatDistance, formatDuration, formatSpeed,
+  isNearRecentParkedLocation,
+  trimParkedTail,
+  validateCandidateTrip
 } from '@/lib/tripEngine';
 import { activeTripStore, getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
@@ -52,6 +56,7 @@ import {
 import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
+import TripMap from '@/components/TripMap';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import {
@@ -89,6 +94,7 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
+const AUTO_START_TRIGGER_SECONDS = 2;
 
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
@@ -267,6 +273,71 @@ export default function Dashboard() {
     }
   };
 
+  const discardCandidateTrip = useCallback(async (trip, decision) => {
+    const cfg = localSettings.get();
+    locationService.current?.stop();
+    locationService.current = null;
+    sensorFusionRef.current?.stop();
+    stopTimer();
+    await cancelLongTripReminder();
+    recordTrackingDiagnostic({
+      type: 'trip_discarded',
+      title: decision?.title || 'Candidate discarded',
+      reason: decision?.reason || 'candidate_not_confirmed',
+      trip_state: TRIP_STATES.DISCARDED,
+      duration_seconds: Math.round((decision?.metrics?.candidate_age_ms || 0) / 1000),
+      distance_m: decision?.metrics?.distance_m ?? null,
+      max_speed_kmh: Math.round(decision?.metrics?.max_speed_kmh || 0),
+      stable_points: decision?.metrics?.stable_points ?? null,
+      near_parked_location: trip?.candidate_near_parked === true,
+    });
+    activeTripStore.clear();
+    activeTripRef.current = null;
+    trackingRef.current = false;
+    autoEndingTripRef.current = false;
+    setActiveTrip(null);
+    setTracking(false);
+    setElapsed(0);
+    if (isAndroid() && !cfg.tracking_paused && (trip?.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+      await startNativeAutoTracking().catch(() => {});
+    }
+    refreshTrackingStatusContext();
+    setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
+  }, [refreshTrackingStatusContext]);
+
+  const promoteCandidateTrip = useCallback((trip, decision) => {
+    const promoted = {
+      ...trip,
+      trip_state: TRIP_STATES.CONFIRMED,
+      candidate_confirmed_at: new Date().toISOString(),
+      candidate_confirmation_reason: decision?.reason || 'vehicle_like_movement',
+      candidate_validation: decision?.metrics || null,
+      route_points: decision?.cleanPoints?.length ? decision.cleanPoints : trip.route_points,
+    };
+    activeTripStore.set(promoted);
+    activeTripRef.current = promoted;
+    setActiveTrip(promoted);
+    recordTrackingDiagnostic({
+      type: 'candidate_confirmed',
+      title: 'Candidate confirmed: vehicle-like movement detected',
+      reason: decision?.reason || 'vehicle_like_movement',
+      trip_state: TRIP_STATES.CONFIRMED,
+      distance_m: decision?.metrics?.distance_m ?? null,
+      max_speed_kmh: Math.round(decision?.metrics?.max_speed_kmh || 0),
+      stable_points: decision?.metrics?.stable_points ?? null,
+      near_parked_location: promoted.candidate_near_parked === true,
+    });
+    recordTrackingDiagnostic({
+      type: 'auto_start',
+      title: 'In-app auto trip confirmed',
+      reason: decision?.reason || 'vehicle_like_movement',
+      speed_kmh: Math.round(decision?.metrics?.max_speed_kmh || 0),
+    });
+    refreshTrackingStatusContext();
+    notifyTripStarted().catch(() => {});
+    scheduleLongTripReminder(promoted.start_time);
+  }, [refreshTrackingStatusContext]);
+
   const startGPS = useCallback(() => {
     const cfg = localSettings.get();
     const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
@@ -278,7 +349,9 @@ export default function Dashboard() {
         setCurrentLocation(point);
         setLocationError(null);
         const latestSettings = localSettings.get();
-        if (latestSettings.danger_zone_alerts_enabled !== false) {
+        const tripBeforePoint = activeTripRef.current;
+        const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
+        if (!isCandidateTrip && latestSettings.danger_zone_alerts_enabled !== false) {
           const zones = await loadDangerZones();
           const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
           if (nearby.length > 0 && Date.now() - lastProximityAlertRef.current > 60 * 1000) {
@@ -296,11 +369,11 @@ export default function Dashboard() {
             speakSafetyAlert(`Danger zone ahead. ${typeLabel} reported nearby.`, latestSettings).catch(() => {});
           }
         }
-        activeTripStore.addPoint(point);
         const speed = Number(point.speed_kmh) || 0;
         const speedLimitKmh = Number(point.speed_limit_kmh) || Number(latestSettings.threshold_speeding_kmh) || 100;
         const speedMarginKmh = Number(latestSettings.threshold_speed_over_kmh ?? 5);
         if (
+          !isCandidateTrip &&
           latestSettings.speed_warning_enabled !== false &&
           latestSettings.voice_alerts_enabled !== false &&
           speed > speedLimitKmh + speedMarginKmh
@@ -312,17 +385,32 @@ export default function Dashboard() {
             60 * 1000
           ).catch(() => {});
         }
-        setActiveTrip(prev => {
-          if (!prev) return prev;
-          const updated = { ...prev, route_points: [...(prev.route_points || []), point] };
+        if (tripBeforePoint) {
+          const updated = { ...tripBeforePoint, route_points: [...(tripBeforePoint.route_points || []), point] };
           activeTripStore.set(updated);
           activeTripRef.current = updated;
-          return updated;
-        });
+          setActiveTrip(updated);
+        }
         const trip = activeTripRef.current;
         if (!trip || !trackingRef.current || autoEndingTripRef.current) return;
+        if (trip.trip_state === TRIP_STATES.CANDIDATE) {
+          const decision = validateCandidateTrip({
+            points: trip.route_points || [],
+            startTime: trip.start_time,
+            now: point.timestamp || new Date().toISOString(),
+            activity: latestActivityRef.current,
+            nearParkedLocation: trip.candidate_near_parked === true,
+            thresholds: buildDrivingThresholds(latestSettings),
+          });
+          if (decision.confirmed) {
+            promoteCandidateTrip(trip, decision);
+          } else if (decision.discarded) {
+            await discardCandidateTrip(trip, decision);
+          }
+          return;
+        }
         const incident = detectCrashIncident({
-          routePoints: [...(trip.route_points || []), point],
+          routePoints: trip.route_points || [],
           motionSamples: sensorFusionRef.current?.getSamples?.() || [],
           activity: latestActivityRef.current,
           settings: latestSettings,
@@ -374,7 +462,7 @@ export default function Dashboard() {
         stillSinceRef.current ??= nowMs;
         stoppedAnchorRef.current ??= { lat: point.lat, lng: point.lng };
         const stillSeconds = (nowMs - stillSinceRef.current) / 1000;
-        const recentPoints = [...(trip.route_points || []), point].filter((routePoint) => (
+        const recentPoints = (trip.route_points || []).filter((routePoint) => (
           new Date(routePoint.timestamp).getTime() >= stillSinceRef.current - 5000
         ));
         const gpsPositionDriftM = computeGpsPositionDrift(
@@ -411,9 +499,16 @@ export default function Dashboard() {
       },
       (err) => setLocationError(err.message)
     );
-  }, []);
+  }, [discardCandidateTrip, promoteCandidateTrip]);
 
-  const handleStartTrip = useCallback(async ({ autoStarted = false, bypassFatigueWarning = false } = {}) => {
+  const handleStartTrip = useCallback(async ({
+    autoStarted = false,
+    bypassFatigueWarning = false,
+    candidate = false,
+    initialPoint = null,
+    nearParkedLocation = false,
+    triggerReason = null,
+  } = {}) => {
     if (trackingRef.current) return;
     autoEndingTripRef.current = false;
 
@@ -474,23 +569,50 @@ export default function Dashboard() {
       return;
     }
 
+    const startTime = initialPoint?.timestamp || new Date().toISOString();
     const tripData = {
-      start_time: new Date().toISOString(),
+      start_time: startTime,
       status: 'active',
-      route_points: [],
+      trip_state: candidate ? TRIP_STATES.CANDIDATE : TRIP_STATES.CONFIRMED,
+      route_points: initialPoint ? [initialPoint] : [],
       driving_events: [],
       background_tracking: useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
       resume_native_auto: !autoStarted && useBackground && isAndroid(),
+      candidate_started_at: candidate ? startTime : null,
+      candidate_first_point: candidate && initialPoint ? initialPoint : null,
+      candidate_near_parked: candidate ? nearParkedLocation === true : false,
+      candidate_trigger_reason: triggerReason,
     };
 
     activeTripStore.set(tripData);
-    recordTrackingDiagnostic({
-      type: 'trip_started',
-      title: autoStarted ? 'In-app auto trip started' : 'Manual trip started',
-      reason: autoStarted ? 'auto_detection' : 'manual_button',
-      background_tracking: useBackground,
-    });
+    if (candidate) {
+      recordTrackingDiagnostic({
+        type: 'candidate_started',
+        title: 'Candidate started: speed >= 5 km/h for 2 seconds',
+        reason: triggerReason || 'sustained_gps_movement',
+        trip_state: TRIP_STATES.CANDIDATE,
+        speed_kmh: Math.round(initialPoint?.speed_kmh || 0),
+        background_tracking: useBackground,
+      });
+      if (nearParkedLocation) {
+        recordTrackingDiagnostic({
+          type: 'candidate_hidden_parking_cooldown',
+          title: 'Candidate hidden due to parking cooldown zone',
+          reason: 'near_last_parked_location',
+          trip_state: TRIP_STATES.CANDIDATE,
+          speed_kmh: Math.round(initialPoint?.speed_kmh || 0),
+        });
+      }
+    } else {
+      recordTrackingDiagnostic({
+        type: 'trip_started',
+        title: autoStarted ? 'In-app auto trip started' : 'Manual trip started',
+        reason: autoStarted ? 'auto_detection' : 'manual_button',
+        trip_state: TRIP_STATES.CONFIRMED,
+        background_tracking: useBackground,
+      });
+    }
     refreshTrackingStatusContext();
     activeTripRef.current = tripData;
     trackingRef.current = true;
@@ -500,10 +622,12 @@ export default function Dashboard() {
       sensorFusionRef.current = createMotionSensorFusion();
       sensorFusionRef.current.start().catch(() => {});
     }
-    startTimer(new Date());
+    startTimer(new Date(startTime));
     startGPS();
-    notifyTripStarted();
-    scheduleLongTripReminder(tripData.start_time);
+    if (!candidate) {
+      notifyTripStarted();
+      scheduleLongTripReminder(tripData.start_time);
+    }
   }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
 
   const acknowledgeEmergencyWorkflow = (action = 'ok') => {
@@ -538,7 +662,7 @@ export default function Dashboard() {
   };
 
   const handleEndTrip = async () => {
-    const tripToEnd = activeTripRef.current || activeTrip;
+    let tripToEnd = activeTripRef.current || activeTrip;
     if (!tripToEnd) return;
 
     locationService.current?.stop();
@@ -547,11 +671,95 @@ export default function Dashboard() {
     stopTimer();
     await cancelLongTripReminder();
 
-    const endTime = new Date().toISOString();
+    let endTime = new Date().toISOString();
     const cfg = localSettings.get();
     const thresholds = buildDrivingThresholds(cfg);
     const rawPoints = tripToEnd.route_points || [];
-    const cleanedPoints = cleanRoutePoints(rawPoints, thresholds);
+    let cleanedPoints = cleanRoutePoints(rawPoints, thresholds);
+
+    if (tripToEnd.trip_state === TRIP_STATES.CANDIDATE) {
+      const decision = validateCandidateTrip({
+        points: cleanedPoints,
+        startTime: tripToEnd.start_time,
+        now: endTime,
+        activity: latestActivityRef.current,
+        nearParkedLocation: tripToEnd.candidate_near_parked === true,
+        forceFinal: true,
+        thresholds,
+      });
+      if (!decision.confirmed) {
+        recordTrackingDiagnostic({
+          type: 'trip_discarded',
+          title: decision.title || 'Candidate discarded',
+          reason: decision.reason || 'candidate_not_confirmed',
+          trip_state: TRIP_STATES.DISCARDED,
+          duration_seconds: Math.round((decision.metrics?.candidate_age_ms || 0) / 1000),
+          distance_m: decision.metrics?.distance_m ?? null,
+          max_speed_kmh: Math.round(decision.metrics?.max_speed_kmh || 0),
+          stable_points: decision.metrics?.stable_points ?? null,
+          near_parked_location: tripToEnd.candidate_near_parked === true,
+        });
+        activeTripStore.clear();
+        activeTripRef.current = null;
+        trackingRef.current = false;
+        autoEndingTripRef.current = false;
+        setActiveTrip(null);
+        setTracking(false);
+        setElapsed(0);
+        if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+          await startNativeAutoTracking().catch(() => {});
+        }
+        refreshTrackingStatusContext();
+        setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
+        return;
+      }
+      tripToEnd = {
+        ...tripToEnd,
+        trip_state: TRIP_STATES.CONFIRMED,
+        candidate_confirmed_at: new Date().toISOString(),
+        candidate_confirmation_reason: decision.reason,
+        candidate_validation: decision.metrics,
+        route_points: decision.cleanPoints,
+      };
+      cleanedPoints = decision.cleanPoints;
+      recordTrackingDiagnostic({
+        type: 'candidate_confirmed',
+        title: 'Candidate confirmed: vehicle-like movement detected',
+        reason: decision.reason || 'vehicle_speed_distance',
+        trip_state: TRIP_STATES.CONFIRMED,
+        distance_m: decision.metrics?.distance_m ?? null,
+        max_speed_kmh: Math.round(decision.metrics?.max_speed_kmh || 0),
+        stable_points: decision.metrics?.stable_points ?? null,
+      });
+    }
+
+    recordTrackingDiagnostic({
+      type: 'ending_review',
+      title: 'Ending review started',
+      reason: autoEndingTripRef.current ? 'auto_stop_review' : 'manual_end_review',
+      trip_state: TRIP_STATES.ENDING_REVIEW,
+      route_points_raw_count: rawPoints.length,
+      route_points_clean_count: cleanedPoints.length,
+    });
+
+    const tailTrim = trimParkedTail(cleanedPoints, {
+      endTime,
+      reason: autoEndingTripRef.current ? 'auto_stop_parked_review' : 'manual_end_review',
+      activity: latestActivityRef.current,
+      thresholds,
+    });
+    if (tailTrim.trimmed) {
+      cleanedPoints = tailTrim.points;
+      endTime = tailTrim.endTime;
+      recordTrackingDiagnostic({
+        type: 'tail_trimmed',
+        title: 'Trip tail trimmed: walking detected after parking',
+        reason: tailTrim.reason,
+        trip_state: TRIP_STATES.ENDING_REVIEW,
+        trimmed_points: tailTrim.removedPoints,
+      });
+    }
+
     let pts = cleanedPoints;
     const preliminaryStats = calculateTripStats(cleanedPoints, tripToEnd.start_time, endTime, thresholds);
 
@@ -654,8 +862,21 @@ export default function Dashboard() {
       anomaly_level: anomaly.anomaly_level,
       co2_saved_kg: economics.co2_saved_kg,
       status: 'completed',
+      trip_state: TRIP_STATES.SAVED,
       background_tracking: tripToEnd.background_tracking,
       start_source: tripToEnd.start_source || 'manual',
+      candidate_started_at: tripToEnd.candidate_started_at || null,
+      candidate_confirmed_at: tripToEnd.candidate_confirmed_at || null,
+      candidate_first_point: tripToEnd.candidate_first_point || null,
+      candidate_near_parked: tripToEnd.candidate_near_parked === true,
+      candidate_confirmation_reason: tripToEnd.candidate_confirmation_reason || null,
+      candidate_validation: tripToEnd.candidate_validation || null,
+      ending_review: {
+        status: 'cleaned',
+        tail_trimmed: tailTrim.trimmed === true,
+        trimmed_points: tailTrim.removedPoints || 0,
+        reason: tailTrim.reason || null,
+      },
       emergency_workflow_pending: tripToEnd.emergency_workflow_pending === true,
       emergency_workflow_acknowledged_at: tripToEnd.emergency_workflow_acknowledged_at || null,
       emergency_workflow_acknowledged_action: tripToEnd.emergency_workflow_acknowledged_action || null,
@@ -768,20 +989,22 @@ export default function Dashboard() {
         : 0;
       const activity = latestActivityRef.current;
       const activitySaysDrive = shouldAutoStartTracking({ activity, currentSpeedKmh: speed, recentMovingSeconds });
-      const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= 1;
+      const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= AUTO_START_TRIGGER_SECONDS;
 
       if (activitySaysDrive || speedOnlyDrive) {
         const gpsFallback = activitySaysDrive && (!activity || activity.type === 'unknown' || activity.confidence < 65);
-        recordTrackingDiagnostic({
-          type: 'auto_start',
-          title: 'In-app auto-start triggered',
-          reason: gpsFallback ? 'sustained_gps_movement' : activitySaysDrive ? 'activity_in_vehicle' : 'speed_only_drive',
-          speed_kmh: Math.round(speed),
-          recent_moving_seconds: Math.round(recentMovingSeconds),
-        });
+        const lastParked = await getLastParkedLocation().catch(() => null);
+        const nearParkedLocation = isNearRecentParkedLocation(point, lastParked);
+        const triggerReason = gpsFallback ? 'sustained_gps_movement' : activitySaysDrive ? 'activity_in_vehicle' : 'speed_only_drive';
         refreshTrackingStatusContext();
         await stopAutoWatchers();
-        await handleStartTrip({ autoStarted: true });
+        await handleStartTrip({
+          autoStarted: true,
+          candidate: true,
+          initialPoint: point,
+          nearParkedLocation,
+          triggerReason,
+        });
       } else if (shouldAutoStopTracking({ activity, currentSpeedKmh: speed, stillSeconds })) {
         recentMovingSinceRef.current = null;
       }
@@ -886,6 +1109,7 @@ export default function Dashboard() {
   })();
 
   const units = settings.units || 'metric';
+  const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;
   const handleTrackingSetupAction = async (action) => {
     if (action === 'location') await requestForegroundLocationPermission();
     if (action === 'activity') await requestActivityRecognitionPermission();
@@ -1195,11 +1419,17 @@ export default function Dashboard() {
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse" />
-                  <span className="text-white/80 text-sm font-medium">Trip Active</span>
+                  <span className="text-white/80 text-sm font-medium">
+                    {activeTripIsCandidate ? 'Checking Movement' : 'Trip Active'}
+                  </span>
                 </div>
                 <div className="font-grotesk font-bold text-4xl">{formatDuration(elapsed)}</div>
                 <div className="text-white/70 text-sm mt-1">
-                  {activeTrip?.route_points?.length ? (
+                  {activeTripIsCandidate ? (
+                    activeTrip?.candidate_near_parked
+                      ? 'Hidden candidate near parked car'
+                      : 'Hidden candidate validating movement'
+                  ) : activeTrip?.route_points?.length ? (
                     (() => {
                       const stats = calculateTripStats(
                         activeTrip.route_points,
@@ -1234,6 +1464,18 @@ export default function Dashboard() {
                 </div>
               );
             })()}
+
+            {(activeTrip?.route_points?.length > 0 || currentLocation) && (
+              <div className="mb-4 overflow-hidden rounded-2xl border border-white/15 bg-white/10">
+                <TripMap
+                  routePoints={activeTrip?.route_points || []}
+                  currentLocation={currentLocation}
+                  showCurrentLocation
+                  parkedLocation={activeTripIsCandidate ? parkedLocation : null}
+                  height="220px"
+                />
+              </div>
+            )}
 
             {activeFatigueAlert && (
               <div className="mb-4 rounded-xl bg-white/15 px-3 py-2 text-sm font-medium text-red-100">
@@ -1644,7 +1886,7 @@ export default function Dashboard() {
         {trackingExplanationPanel}
         {trackingReadinessPanel}
       </div>
-      {tracking && settings.live_coaching_enabled !== false && (
+      {tracking && !activeTripIsCandidate && settings.live_coaching_enabled !== false && (
         <LiveCoachOverlay
           currentRoutePoints={activeTrip?.route_points || []}
           currentEvents={activeTrip?.driving_events || []}

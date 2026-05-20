@@ -23,11 +23,15 @@ import {
   detectTailgateCycles,
   DEFAULT_THRESHOLDS,
   EVENT_TYPES,
+  TRIP_STATES,
   haversineDistance,
+  isNearRecentParkedLocation,
   isNightDrivingTime,
   shouldAcceptLocationPoint,
   simplifyRoute,
   splitTripAtStops,
+  trimParkedTail,
+  validateCandidateTrip,
 } from '@/lib/tripEngine';
 import { getLastParkedLocation, saveLastParkedLocation } from '@/lib/trackingStore';
 import {
@@ -586,6 +590,78 @@ describe('tripEngine', () => {
     expect(loaded.lat).toBe(43.6532);
     expect(loaded.lng).toBe(-79.3832);
     expect(loaded.address).toBe('Toronto City Hall');
+  });
+
+  it('keeps auto-start responsive while requiring vehicle-like proof before confirmation', () => {
+    const start = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString();
+    const candidatePoints = [
+      point(43.6532, -79.3832, 0, 5),
+      point(43.6538, -79.3832, 10, 18),
+      point(43.6546, -79.3832, 20, 24),
+      point(43.6554, -79.3832, 30, 26),
+    ];
+
+    const decision = validateCandidateTrip({
+      points: candidatePoints,
+      startTime: start,
+      now: candidatePoints.at(-1).timestamp,
+      activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 82 },
+    });
+
+    expect(decision.state).toBe(TRIP_STATES.CONFIRMED);
+    expect(decision.confirmed).toBe(true);
+    expect(decision.reason).toBe('activity_in_vehicle');
+  });
+
+  it('discards hidden candidates that look like walking near a parked location', () => {
+    const start = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString();
+    const walkingPoints = [
+      point(43.6532, -79.3832, 0, 5),
+      point(43.65325, -79.3832, 10, 6),
+      point(43.6533, -79.3832, 20, 6),
+      point(43.65335, -79.3832, 190, 6),
+    ];
+
+    const decision = validateCandidateTrip({
+      points: walkingPoints,
+      startTime: start,
+      now: walkingPoints.at(-1).timestamp,
+      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 95 },
+      nearParkedLocation: true,
+      forceFinal: true,
+    });
+
+    expect(decision.state).toBe(TRIP_STATES.DISCARDED);
+    expect(decision.reason).toBe('movement_looked_like_walking');
+  });
+
+  it('detects recent parked cooldown and trims walking after parking from saved routes', () => {
+    const parked = {
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString(),
+    };
+    expect(isNearRecentParkedLocation(
+      point(43.65325, -79.3832, 120, 5),
+      parked,
+      { nowMs: Date.UTC(2026, 0, 1, 12, 2, 0) }
+    )).toBe(true);
+
+    const route = [
+      point(43.6532, -79.3832, 0, 35),
+      point(43.6542, -79.3832, 20, 35),
+      point(43.6552, -79.3832, 40, 0),
+      point(43.65532, -79.3832, 60, 4),
+      point(43.65544, -79.3832, 80, 4),
+    ];
+    const trimmed = trimParkedTail(route, {
+      endTime: route.at(-1).timestamp,
+      reason: 'auto_stop_parked_review',
+    });
+
+    expect(trimmed.trimmed).toBe(true);
+    expect(trimmed.removedPoints).toBe(2);
+    expect(trimmed.points.at(-1).timestamp).toBe(route[2].timestamp);
   });
 });
 
