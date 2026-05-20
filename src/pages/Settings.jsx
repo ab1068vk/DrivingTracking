@@ -408,8 +408,22 @@ export default function Settings() {
     }
   };
 
+  const refreshSettingsFromNative = async ({ restartIfReady = false } = {}) => {
+    const latest = await localSettings.hydrateFromNative();
+    setCfg(latest);
+    await refreshPermissions();
+
+    if (restartIfReady && isAndroid() && latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
+      try {
+        await startNativeAutoTracking();
+        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+      } catch {}
+    }
+    return latest;
+  };
+
   useEffect(() => {
-    refreshPermissions();
+    refreshSettingsFromNative();
     loadCalibrationProfile().then(setCalibProfile);
     getLastParkedLocation().then(setParkedLocation);
   }, []);
@@ -481,14 +495,7 @@ export default function Settings() {
     if (!isAndroid()) return undefined;
 
     const refreshAndRestartIfReady = async () => {
-      await refreshPermissions();
-      const latest = localSettings.get();
-      if (latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
-        try {
-          await startNativeAutoTracking();
-          setNativeTrackingStatus(await getNativeAutoTrackingStatus());
-        } catch {}
-      }
+      await refreshSettingsFromNative({ restartIfReady: true });
     };
 
     const onVisibility = () => {

@@ -25,6 +25,13 @@ public class DriveSenseAutoTrackingTileService extends TileService {
     @Override
     public void onClick() {
         super.onClick();
+        if (isBackgroundAutoActive()) {
+            setBackgroundAutoPaused();
+            DriveSenseAutoTrackingService.stop(this);
+            updateTile("Auto off", Tile.STATE_INACTIVE);
+            return;
+        }
+
         if (!hasNativeAutoTrackingPermissions()) {
             updateTile("Setup needed", Tile.STATE_INACTIVE);
             return;
@@ -36,11 +43,8 @@ public class DriveSenseAutoTrackingTileService extends TileService {
     }
 
     private void updateTile() {
-        JSONObject settings = getSettings();
-        boolean backgroundAuto = "background_auto".equals(settings.optString("tracking_mode", "manual"));
-        boolean paused = settings.optBoolean("tracking_paused", false);
-        boolean enabled = backgroundAuto && !paused && DriveSenseNativeTripStore.isServiceEnabled(this);
-        updateTile(enabled ? "Auto on" : "Resume auto", enabled ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
+        boolean enabled = isBackgroundAutoActive();
+        updateTile(enabled ? "Auto on" : "Auto off", enabled ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
     }
 
     private void updateTile(String label, int state) {
@@ -74,6 +78,27 @@ public class DriveSenseAutoTrackingTileService extends TileService {
                 .putString(SETTINGS_KEY, settings.toString())
                 .apply();
         } catch (Exception ignored) {}
+    }
+
+    private void setBackgroundAutoPaused() {
+        JSONObject settings = getSettings();
+        try {
+            settings.put("tracking_mode", "background_auto");
+            settings.put("auto_tracking_enabled", true);
+            settings.put("background_tracking_enabled", true);
+            settings.put("tracking_paused", true);
+            getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(SETTINGS_KEY, settings.toString())
+                .apply();
+        } catch (Exception ignored) {}
+    }
+
+    private boolean isBackgroundAutoActive() {
+        JSONObject settings = getSettings();
+        boolean backgroundAuto = "background_auto".equals(settings.optString("tracking_mode", "manual"));
+        boolean paused = settings.optBoolean("tracking_paused", false);
+        return backgroundAuto && !paused && DriveSenseNativeTripStore.isServiceEnabled(this);
     }
 
     private boolean hasNativeAutoTrackingPermissions() {
