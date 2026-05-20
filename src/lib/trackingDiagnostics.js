@@ -70,7 +70,12 @@ function nativeEventTitle(type) {
   const labels = {
     service_armed: 'Native service armed',
     armed_location_watch: 'Movement watcher armed',
+    candidate_started: 'Candidate trip started',
+    candidate_confirmed: 'Candidate trip confirmed',
+    candidate_hidden_parking_cooldown: 'Candidate hidden near parked location',
     auto_start: 'Trip auto-started',
+    ending_review: 'Trip ending reviewed',
+    tail_trimmed: 'Trip tail trimmed',
     trip_ended: 'Trip ended',
     trip_discarded: 'Trip discarded',
     phone_usage_access: 'Phone usage access checked',
@@ -242,10 +247,15 @@ function humanReason(reason) {
 function latestTrackingDecision(events = []) {
   const decisionTypes = new Set([
     'auto_blocked',
+    'candidate_started',
+    'candidate_confirmed',
+    'candidate_hidden_parking_cooldown',
     'auto_start',
     'trip_started',
     'trip_discarded',
     'auto_stop',
+    'ending_review',
+    'tail_trimmed',
     'trip_ended',
     'service_armed',
     'armed_location_watch',
@@ -374,7 +384,31 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
       headline: 'Last auto trip was ignored',
       detail: reason === 'auto too short'
         ? 'Road Sage detected movement, but the trip was too short to save as real driving.'
+        : reason
+          ? `The last candidate was discarded because ${reason}.`
         : `The last trip was discarded${reason ? ` because ${reason}` : ''}.`,
+      facts,
+      lastDecision,
+    };
+  }
+
+  if (lastDecision?.type === 'candidate_started' || lastDecision?.type === 'candidate_hidden_parking_cooldown') {
+    return {
+      status: 'warn',
+      headline: 'Checking movement',
+      detail: lastDecision.type === 'candidate_hidden_parking_cooldown'
+        ? 'Road Sage started a hidden candidate near the parked location and is waiting for stronger vehicle-like proof before saving it.'
+        : 'Road Sage started a hidden candidate and will save it only if the movement proves vehicle-like.',
+      facts,
+      lastDecision,
+    };
+  }
+
+  if (lastDecision?.type === 'tail_trimmed') {
+    return {
+      status: 'good',
+      headline: 'Parked tail trimmed',
+      detail: 'Road Sage removed likely walking or GPS drift after parking before saving the trip map and score.',
       facts,
       lastDecision,
     };

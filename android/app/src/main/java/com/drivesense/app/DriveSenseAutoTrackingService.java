@@ -78,6 +78,15 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double AUTO_START_SPEED_KMH = 5d;
     private static final long AUTO_START_MOVING_MS = 2_000L;
     private static final long ACTIVITY_UPDATE_INTERVAL_MS = 5_000L;
+    private static final long PARKING_COOLDOWN_MS = 5 * 60_000L;
+    private static final double PARKING_COOLDOWN_RADIUS_M = 75.0d;
+    private static final double CANDIDATE_CONFIRM_DISTANCE_M = 150.0d;
+    private static final double CANDIDATE_CONFIRM_DISTANCE_COOLDOWN_M = 250.0d;
+    private static final double CANDIDATE_CONFIRM_SPEED_KMH = 15.0d;
+    private static final double CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH = 20.0d;
+    private static final int CANDIDATE_MIN_STABLE_POINTS = 4;
+    private static final int CANDIDATE_MIN_STABLE_POINTS_COOLDOWN = 5;
+    private static final long CANDIDATE_MAX_REVIEW_MS = 180_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
@@ -119,6 +128,11 @@ public class DriveSenseAutoTrackingService extends Service {
     private boolean textToSpeechReady = false;
     private String nativeAutoStartReason = "";
     private String lastNativeAutoStopReason = "";
+    private boolean candidateTrip = false;
+    private boolean candidateNearParked = false;
+    private long candidateConfirmedMs = 0L;
+    private int lastActivityType = DetectedActivity.UNKNOWN;
+    private int lastActivityConfidence = 0;
 
     @Override
     public void onCreate() {
@@ -233,6 +247,8 @@ public class DriveSenseAutoTrackingService extends Service {
 
     private void handleActivity(int type, int confidence) {
         long now = System.currentTimeMillis();
+        lastActivityType = type;
+        lastActivityConfidence = confidence;
         double speedKmh = lastKnownSpeedKmh;
         boolean onFoot = (type == DetectedActivity.WALKING ||
             type == DetectedActivity.RUNNING ||
@@ -257,7 +273,14 @@ public class DriveSenseAutoTrackingService extends Service {
                 lastKnownSpeedKmh >= AUTO_START_SPEED_KMH &&
                 armedMovingSinceMs > 0L &&
                 now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
-                startTripIfNeeded("activity_in_vehicle_moving");
+                startCandidateTrip("activity_in_vehicle_moving", armedPreviousLocation);
+            }
+            return;
+        }
+
+        if (candidateTrip && onFoot) {
+            if (speedKmh < CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH) {
+                discardCandidate("movement_looked_like_walking", "Candidate discarded: walking/running signal detected", keepServiceArmed());
             }
             return;
         }
@@ -352,12 +375,19 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void startTripIfNeeded() {
-        startTripIfNeeded("activity_in_vehicle");
+        startCandidateTrip("activity_in_vehicle", null);
     }
 
     private void startTripIfNeeded(String reason) {
+        startCandidateTrip(reason, null);
+    }
+
+    private void startCandidateTrip(String reason, @Nullable Location triggerLocation) {
         if (isTripActive()) return;
-        activeStartMs = System.currentTimeMillis();
+        long triggerMs = triggerLocation != null && triggerLocation.getTime() > 0L
+            ? triggerLocation.getTime()
+            : System.currentTimeMillis();
+        activeStartMs = triggerMs;
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         previousLocation = null;
@@ -375,10 +405,17 @@ public class DriveSenseAutoTrackingService extends Service {
         lastLiveNotificationMs = 0L;
         nativeAutoStartReason = reason;
         lastNativeAutoStopReason = "";
+        candidateTrip = true;
+        candidateNearParked = isInParkingCooldown(triggerLocation);
+        candidateConfirmedMs = 0L;
         recentHeadings.clear();
-        recordTimeline("auto_start", "Native trip started.", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
-        recordDiagnostic("auto_start", "Native trip started.", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
-        updateLiveTripNotification(true);
+        recordTimeline("candidate_started", "Candidate started: speed >= 5 km/h for 2 seconds", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
+        recordDiagnostic("candidate_started", "Candidate started: speed >= 5 km/h for 2 seconds", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
+        if (candidateNearParked) {
+            recordTimeline("candidate_hidden_parking_cooldown", "Candidate hidden due to parking cooldown zone", "near_last_parked_location", lastKnownSpeedKmh, 0L, 0d);
+            recordDiagnostic("candidate_hidden_parking_cooldown", "Candidate hidden due to parking cooldown zone", "near_last_parked_location", lastKnownSpeedKmh, 0L, 0d);
+        }
+        updateNotification(candidateNearParked ? "Checking movement near parked car" : "Checking movement");
         startTripLocationUpdates();
     }
 
@@ -453,6 +490,10 @@ public class DriveSenseAutoTrackingService extends Service {
 
         activePoints.put(locationToJson(location, speedKmh));
         previousLocation = location;
+        if (candidateTrip) {
+            reviewCandidate(false);
+            if (!isTripActive()) return;
+        }
 
         if (speedKmh >= STATIONARY_SPEED_KMH) {
             stoppedAnchorLat = Double.NaN;
@@ -496,7 +537,7 @@ public class DriveSenseAutoTrackingService extends Service {
         if (speedKmh >= AUTO_START_SPEED_KMH) {
             if (armedMovingSinceMs == 0L) armedMovingSinceMs = now;
             if (now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
-                startTripIfNeeded("armed_gps_movement");
+                startCandidateTrip("armed_gps_movement", location);
                 recordLocation(location);
                 return;
             }
@@ -524,6 +565,162 @@ public class DriveSenseAutoTrackingService extends Service {
         return point;
     }
 
+    private boolean keepServiceArmed() {
+        return DriveSenseNativeTripStore.isServiceEnabled(this);
+    }
+
+    private boolean isStrongOnFootSignal() {
+        return (lastActivityType == DetectedActivity.WALKING ||
+            lastActivityType == DetectedActivity.RUNNING ||
+            lastActivityType == DetectedActivity.ON_BICYCLE) &&
+            lastActivityConfidence >= 75;
+    }
+
+    private boolean isVehicleSignal() {
+        return lastActivityType == DetectedActivity.IN_VEHICLE && lastActivityConfidence >= MIN_VEHICLE_CONFIDENCE;
+    }
+
+    private boolean isInParkingCooldown(@Nullable Location triggerLocation) {
+        if (triggerLocation == null) return false;
+        JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(this);
+        if (parked == null) return false;
+        long parkedMs = parked.optLong("timestamp_ms", 0L);
+        if (parkedMs <= 0L || System.currentTimeMillis() - parkedMs > PARKING_COOLDOWN_MS) return false;
+        double lat = parked.optDouble("lat", Double.NaN);
+        double lng = parked.optDouble("lng", Double.NaN);
+        if (Double.isNaN(lat) || Double.isNaN(lng)) return false;
+        double distanceM = haversineKm(lat, lng, triggerLocation.getLatitude(), triggerLocation.getLongitude()) * 1000d;
+        return distanceM <= PARKING_COOLDOWN_RADIUS_M;
+    }
+
+    private void reviewCandidate(boolean forceFinal) {
+        if (!candidateTrip || activePoints == null) return;
+        long now = System.currentTimeMillis();
+        TripStats stats = calculateStats(activePoints, activeStartMs, now);
+        int stablePoints = countStablePoints(activePoints);
+        double requiredDistanceM = candidateNearParked ? CANDIDATE_CONFIRM_DISTANCE_COOLDOWN_M : CANDIDATE_CONFIRM_DISTANCE_M;
+        double requiredSpeedKmh = candidateNearParked ? CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH : CANDIDATE_CONFIRM_SPEED_KMH;
+        int requiredStablePoints = candidateNearParked ? CANDIDATE_MIN_STABLE_POINTS_COOLDOWN : CANDIDATE_MIN_STABLE_POINTS;
+
+        if (isStrongOnFootSignal() && stats.maxSpeedKmh < requiredSpeedKmh) {
+            discardCandidate("movement_looked_like_walking", "Candidate discarded: walking/running signal detected", keepServiceArmed());
+            return;
+        }
+
+        boolean enoughGps = stablePoints >= requiredStablePoints;
+        boolean enoughDistance = stats.distanceKm * 1000d >= requiredDistanceM;
+        boolean vehicleSpeedSegment = stats.maxSpeedKmh >= requiredSpeedKmh;
+        boolean vehicleActivity = isVehicleSignal();
+
+        if (enoughGps && enoughDistance && vehicleSpeedSegment && !isStrongOnFootSignal()) {
+            candidateTrip = false;
+            candidateConfirmedMs = now;
+            recordTimeline("candidate_confirmed", "Candidate confirmed: vehicle-like movement detected", vehicleActivity ? "activity_in_vehicle" : "vehicle_speed_distance", stats.maxSpeedKmh, 0L, 0d);
+            recordDiagnostic("candidate_confirmed", "Candidate confirmed: vehicle-like movement detected", vehicleActivity ? "activity_in_vehicle" : "vehicle_speed_distance", stats.maxSpeedKmh, 0L, 0d);
+            recordTimeline("auto_start", "Native trip started.", nativeAutoStartReason, stats.maxSpeedKmh, 0L, 0d);
+            recordDiagnostic("auto_start", "Native trip started.", nativeAutoStartReason, stats.maxSpeedKmh, 0L, 0d);
+            updateLiveTripNotification(true);
+            return;
+        }
+
+        long candidateAgeMs = Math.max(0L, now - activeStartMs);
+        if (forceFinal || candidateAgeMs >= CANDIDATE_MAX_REVIEW_MS) {
+            String discardReason = "gps_movement_too_short";
+            String title = "Candidate discarded: GPS movement too short";
+            if (!vehicleSpeedSegment) {
+                discardReason = "no_vehicle_speed_segment";
+                title = "Candidate discarded: no vehicle-speed segment";
+            } else if (!enoughGps) {
+                discardReason = "unstable_gps_drift";
+                title = "Candidate discarded: unstable GPS drift";
+            }
+            discardCandidate(discardReason, title, keepServiceArmed());
+        }
+    }
+
+    private int countStablePoints(JSONArray points) {
+        int count = 0;
+        if (points == null) return count;
+        for (int i = 0; i < points.length(); i++) {
+            JSONObject point = points.optJSONObject(i);
+            if (point == null) continue;
+            double accuracy = point.optDouble("accuracy", MAX_ACCURACY_M);
+            if (accuracy <= MAX_ACCURACY_M) count++;
+        }
+        return count;
+    }
+
+    private void discardCandidate(String reason, String title, boolean keepArmed) {
+        if (!isTripActive()) return;
+        long now = System.currentTimeMillis();
+        TripStats stats = calculateStats(activePoints, activeStartMs, now);
+        recordTimeline("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
+        recordDiagnostic("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
+        activePoints = null;
+        activeTimeline = null;
+        activeStartMs = 0L;
+        previousLocation = null;
+        armedPreviousLocation = null;
+        armedMovingSinceMs = 0L;
+        stillSinceMs = 0L;
+        nonVehicleSinceMs = 0L;
+        lastKnownSpeedKmh = 0.0d;
+        lastLocationMs = 0L;
+        stoppedAnchorLat = Double.NaN;
+        stoppedAnchorLng = Double.NaN;
+        maxDriftSinceStopM = 0.0d;
+        candidateTrip = false;
+        candidateNearParked = false;
+        candidateConfirmedMs = 0L;
+        lastLiveNotificationMs = 0L;
+        recentHeadings.clear();
+        stopLocationUpdates();
+        if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
+            startArmedLocationUpdates();
+        }
+        updateNotification("Ready when you start moving");
+    }
+
+    private TailTrimResult trimParkedTail(JSONArray points, String reason, long endMs) {
+        TailTrimResult result = new TailTrimResult();
+        result.points = points != null ? points : new JSONArray();
+        result.endMs = endMs;
+        if (points == null || points.length() < 4 || !isParkedStopReason(reason)) return result;
+
+        int lastVehicleIndex = -1;
+        for (int i = points.length() - 1; i >= 0; i--) {
+            JSONObject point = points.optJSONObject(i);
+            if (point != null && point.optDouble("speed_kmh", 0d) >= CANDIDATE_CONFIRM_SPEED_KMH) {
+                lastVehicleIndex = i;
+                break;
+            }
+        }
+        if (lastVehicleIndex < 0 || lastVehicleIndex >= points.length() - 1) return result;
+
+        int keepThrough = Math.min(lastVehicleIndex + 1, points.length() - 1);
+        for (int i = lastVehicleIndex + 1; i < points.length(); i++) {
+            JSONObject point = points.optJSONObject(i);
+            if (point != null && point.optDouble("speed_kmh", 0d) < STATIONARY_SPEED_KMH) {
+                keepThrough = i;
+                break;
+            }
+        }
+
+        int removed = points.length() - (keepThrough + 1);
+        if (removed <= 0) return result;
+
+        JSONArray trimmed = new JSONArray();
+        for (int i = 0; i <= keepThrough; i++) {
+            JSONObject point = points.optJSONObject(i);
+            if (point != null) trimmed.put(point);
+        }
+        JSONObject finalPoint = trimmed.optJSONObject(trimmed.length() - 1);
+        result.points = trimmed;
+        result.removedPoints = removed;
+        if (finalPoint != null) result.endMs = parseIso(finalPoint.optString("timestamp"));
+        return result;
+    }
+
     private void finishTrip() {
         finishTrip("service_finish", true);
     }
@@ -534,13 +731,27 @@ public class DriveSenseAutoTrackingService extends Service {
 
     private void finishTrip(String reason, boolean keepArmed) {
         if (!isTripActive()) return;
+        if (candidateTrip) {
+            reviewCandidate(true);
+            if (!isTripActive() || candidateTrip) return;
+        }
 
         long endMs = System.currentTimeMillis();
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
         long startMs = activeStartMs;
+        boolean startedNearParked = candidateNearParked;
+        long confirmedMs = candidateConfirmedMs;
         long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;
         lastNativeAutoStopReason = reason;
+        recordTimeline("ending_review", "Ending review started.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        TailTrimResult tailTrim = trimParkedTail(points, reason, endMs);
+        points = tailTrim.points;
+        endMs = tailTrim.endMs;
+        if (tailTrim.removedPoints > 0) {
+            recordTimeline("tail_trimmed", "Trip tail trimmed: walking detected after parking", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+            recordDiagnostic("tail_trimmed", "Trip tail trimmed: walking detected after parking", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        }
         recordTimeline("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         recordDiagnostic("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         activePoints = null;
@@ -556,6 +767,7 @@ public class DriveSenseAutoTrackingService extends Service {
         stoppedAnchorLat = Double.NaN;
         stoppedAnchorLng = Double.NaN;
         maxDriftSinceStopM = 0.0d;
+        candidateTrip = false;
         lastLiveNotificationMs = 0L;
         recentHeadings.clear();
         stopLocationUpdates();
@@ -571,9 +783,10 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         JSONObject trip = new JSONObject();
+        String tripId = DriveSenseNativeTripStore.newTripId();
         try {
             JSONObject phoneUsage = DriveSensePhoneUsageTracker.queryTripUsage(this, startMs, endMs);
-            trip.put("id", DriveSenseNativeTripStore.newTripId());
+            trip.put("id", tripId);
             trip.put("start_time", iso(startMs));
             trip.put("end_time", iso(endMs));
             trip.put("duration_seconds", stats.durationSeconds);
@@ -596,6 +809,11 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("status", "completed");
             trip.put("background_tracking", true);
             trip.put("start_source", "native_auto");
+            trip.put("native_trip_state", "confirmed");
+            trip.put("native_candidate_started_at", iso(startMs));
+            if (confirmedMs > 0L) trip.put("native_candidate_confirmed_at", iso(confirmedMs));
+            trip.put("native_candidate_near_parked", startedNearParked);
+            trip.put("native_tail_trimmed_points", tailTrim.removedPoints);
             trip.put("native_auto_start_reason", nativeAutoStartReason);
             trip.put("native_auto_stop_reason", lastNativeAutoStopReason);
             trip.put("native_tracking_timeline", timeline);
@@ -609,6 +827,19 @@ public class DriveSenseAutoTrackingService extends Service {
         } catch (JSONException ignored) {}
 
         DriveSenseNativeTripStore.addCompletedTrip(this, trip);
+        JSONObject finalPoint = points.optJSONObject(points.length() - 1);
+        if (finalPoint != null && isParkedStopReason(reason)) {
+            DriveSenseNativeTripStore.saveLastParkedLocation(
+                this,
+                finalPoint.optDouble("lat"),
+                finalPoint.optDouble("lng"),
+                endMs,
+                tripId,
+                tailTrim.removedPoints > 0 ? "native_trimmed_parked_tail" : "native_parking_stop"
+            );
+        }
+        candidateConfirmedMs = 0L;
+        candidateNearParked = false;
         sendTripCompletedNotification(trip, stats);
     }
 
@@ -914,7 +1145,12 @@ public class DriveSenseAutoTrackingService extends Service {
             .setContentIntent(contentIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW);
 
-        if (isTripActive()) {
+        if (isTripActive() && candidateTrip) {
+            builder
+                .setContentTitle("Road Sage checking movement")
+                .setContentText(text)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(text));
+        } else if (isTripActive()) {
             Intent stopIntent = new Intent(this, DriveSenseAutoTrackingService.class);
             stopIntent.setAction(ACTION_END_TRIP);
             PendingIntent stopPendingIntent = PendingIntent.getService(
@@ -994,6 +1230,15 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private String buildLiveTripStatus(long nowMs) {
+        if (candidateTrip) {
+            TripStats stats = calculateStats(activePoints, activeStartMs, nowMs);
+            return String.format(
+                Locale.US,
+                "Checking movement - %.1f km - %.0f km/h",
+                stats.distanceKm,
+                lastKnownSpeedKmh
+            );
+        }
         TripStats stats = calculateStats(activePoints, activeStartMs, nowMs);
         long durationMinutes = Math.max(0L, stats.durationSeconds / 60L);
         String base = String.format(
@@ -1092,5 +1337,11 @@ public class DriveSenseAutoTrackingService extends Service {
         long durationSeconds = 0L;
         int speedSamples = 0;
         boolean nightDriving = false;
+    }
+
+    private static class TailTrimResult {
+        JSONArray points = new JSONArray();
+        long endMs = 0L;
+        int removedPoints = 0;
     }
 }

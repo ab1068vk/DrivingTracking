@@ -11,9 +11,12 @@ import java.util.UUID;
 
 class DriveSenseNativeTripStore {
     private static final String PREFS = "drivesense_native_tracking";
+    private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
     private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
+    private static final String KEY_LAST_PARKED = "last_parked_location";
+    private static final String SHARED_LAST_PARKED_KEY = "drivesense_last_parked";
     private static final int MAX_DIAGNOSTIC_EVENTS = 120;
 
     static SharedPreferences prefs(Context context) {
@@ -69,6 +72,32 @@ class DriveSenseNativeTripStore {
 
     static void clearDiagnosticEvents(Context context) {
         prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, "[]").apply();
+    }
+
+    static JSONObject getLastParkedLocation(Context context) {
+        String raw = prefs(context).getString(KEY_LAST_PARKED, null);
+        if (raw == null || raw.trim().isEmpty()) {
+            raw = context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SHARED_LAST_PARKED_KEY, null);
+        }
+        if (raw == null || raw.trim().isEmpty()) return null;
+        try {
+            return new JSONObject(raw);
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    static void saveLastParkedLocation(Context context, double lat, double lng, long timestampMs, String tripId, String source) {
+        JSONObject parked = new JSONObject();
+        try {
+            parked.put("lat", lat);
+            parked.put("lng", lng);
+            parked.put("timestamp", DriveSenseAutoTrackingService.iso(timestampMs));
+            parked.put("timestamp_ms", timestampMs);
+            parked.put("tripId", tripId);
+            parked.put("source", source);
+            prefs(context).edit().putString(KEY_LAST_PARKED, parked.toString()).apply();
+        } catch (JSONException ignored) {}
     }
 
     static String newTripId() {
