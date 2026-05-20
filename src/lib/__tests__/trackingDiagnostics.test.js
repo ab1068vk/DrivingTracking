@@ -108,4 +108,25 @@ describe('tracking diagnostics', () => {
     expect(explanation.headline).toBe('Last auto start succeeded');
     expect(explanation.detail).toContain('activity in vehicle');
   });
+
+  it('explains the all-green-but-not-started state with next detection signals', () => {
+    const explanation = buildDashboardTrackingExplanation({
+      settings: { tracking_mode: 'background_auto', auto_tracking_enabled: true },
+      permissionStatus: {
+        foregroundLocation: 'granted',
+        backgroundLocation: 'granted',
+        activityRecognition: 'granted',
+        notifications: 'granted',
+      },
+      nativeStatus: { enabled: true },
+      batteryStatus: { batteryOptimizationIgnored: true },
+      currentSpeedKmh: 0,
+      isAndroidPlatform: true,
+    });
+
+    expect(explanation.status).toBe('warn');
+    expect(explanation.headline).toBe('Ready, but no drive signal yet');
+    expect(explanation.detail).toContain('8 seconds');
+    expect(explanation.facts.join(' ')).toContain('All required setup checks are green');
+  });
 });

@@ -91,6 +91,19 @@ const phoneUseIconHtml = (color) => `
   </div>
 `;
 
+const eventMarkerHtml = (event, color) => {
+  const label = EVENT_LABELS[event.type] || '!';
+  const border = event.severity === 'high' || event.type === 'possible_crash' || event.type === 'near_miss'
+    ? 'rgba(220,38,38,0.34)'
+    : 'rgba(15,23,42,0.18)';
+  return `
+    <div style="position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center">
+      <div style="position:absolute;inset:0;border-radius:999px;background:${color};opacity:.18"></div>
+      <div style="width:22px;height:22px;background:${color};color:white;border:2px solid white;border-radius:999px;box-shadow:0 5px 14px ${border};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;line-height:1">${escapeHtml(label)}</div>
+    </div>
+  `;
+};
+
 const corneringBandForG = (lateralG) => (
   CORNERING_HEATMAP_BANDS.find((band) => lateralG >= band.min) || null
 );
@@ -412,10 +425,12 @@ export default function TripMap({
 
         if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
           window.L.polyline(latLngs, {
-            color: '#64748b',
-            weight: 3,
-            opacity: Math.min(route.opacity, 0.35),
+            color: '#0f172a',
+            weight: 7,
+            opacity: 0.16,
             smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
           }).addTo(layers);
 
           for (let i = 1; i < route.route_points.length - 1; i++) {
@@ -438,19 +453,39 @@ export default function TripMap({
             const lateralG = ((speed / 3.6) * ((headingChange * Math.PI / 180) / Math.max(1.5, (dtPrev + dtNext) / 2))) / 9.81;
             const band = corneringBandForG(lateralG);
             if (!band) continue;
+            const intensityWeight = band.weight + Math.min(5, Math.max(0, (lateralG - band.min) * 10));
             window.L.polyline(
               [[prev.lat, prev.lng], [curr.lat, curr.lng], [next.lat, next.lng]],
               {
                 color: band.color,
-                weight: band.weight,
-                opacity: Math.max(route.opacity, 0.82),
+                weight: intensityWeight,
+                opacity: Math.max(route.opacity, 0.72),
                 smoothFactor: 1.5,
+                lineCap: 'round',
+                lineJoin: 'round',
               }
-            )
-              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${band.label} cornering<br>${lateralG.toFixed(2)}g at ${Math.round(speed)} km/h<br>${Math.round(headingChange)}&deg; heading change`)
-              .addTo(layers);
+            ).addTo(layers);
+            if (lateralG >= 0.28) {
+              window.L.circleMarker([curr.lat, curr.lng], {
+                radius: Math.min(14, 4 + lateralG * 12),
+                color: band.color,
+                fillColor: band.color,
+                fillOpacity: 0.20,
+                opacity: 0.34,
+                weight: 1,
+                interactive: false,
+              }).addTo(layers);
+            }
           }
         } else if (speedSegments.length > 0) {
+          window.L.polyline(latLngs, {
+            color: '#0f172a',
+            weight: route.selected ? 9 : 6,
+            opacity: route.selected ? 0.18 : 0.10,
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }).addTo(layers);
           speedSegments.forEach((segment) => {
             const from = segment.from;
             const to = segment.to;
@@ -462,9 +497,11 @@ export default function TripMap({
               [[from.lat, from.lng], [to.lat, to.lng]],
               {
                 color,
-                weight: route.selected ? 5 : 3,
+                weight: route.selected ? 6 : 4,
                 opacity: route.opacity,
                 smoothFactor: 1.5,
+                lineCap: 'round',
+                lineJoin: 'round',
               }
             )
               .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${label}: ${Math.round(speedKmh)} km/h${limitText}`)
@@ -491,6 +528,8 @@ export default function TripMap({
                   weight: route.selected ? 8 : 5,
                   opacity: 0.48,
                   smoothFactor: 1.5,
+                  lineCap: 'round',
+                  lineJoin: 'round',
                 }
               )
                 .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${escapeHtml(roadName)}<br>Limit: ${Math.round(limit)} km/h (${escapeHtml(source)})<br>Speed: ${Math.round(speed)} km/h`)
@@ -500,9 +539,11 @@ export default function TripMap({
         } else {
           window.L.polyline(latLngs, {
             color: route.color,
-            weight: route.selected ? 5 : 3,
+            weight: route.selected ? 6 : 4,
             opacity: route.opacity,
             smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
           })
             .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
             .addTo(layers);
@@ -565,13 +606,13 @@ export default function TripMap({
         const isCluster = cluster.count > 1;
         const icon = window.L.divIcon({
           html: isCluster
-            ? `<div style="width:30px;height:30px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 3px 12px rgba(0,0,0,0.28);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">${cluster.count}</div>`
+            ? `<div style="position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center"><div style="position:absolute;inset:0;border-radius:999px;background:${color};opacity:.18"></div><div style="width:28px;height:28px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 5px 16px rgba(15,23,42,0.28);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">${cluster.count}</div></div>`
             : isPhoneUse
             ? phoneUseIconHtml(color)
-            : `<div style="width:20px;height:20px;background:${color};color:white;border:2px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${EVENT_LABELS[evt.type] || '!'}</div>`,
+            : eventMarkerHtml(evt, color),
           className: '',
-          iconSize: isCluster ? [30, 30] : isPhoneUse ? [28, 28] : [20, 20],
-          iconAnchor: isCluster ? [15, 15] : isPhoneUse ? [14, 14] : [10, 10],
+          iconSize: isCluster ? [34, 34] : isPhoneUse ? [28, 28] : [30, 30],
+          iconAnchor: isCluster ? [17, 17] : isPhoneUse ? [14, 14] : [15, 15],
         });
         window.L.marker([cluster.lat, cluster.lng], { icon })
           .bindPopup(isCluster ? clusterPopupHtml(cluster.events) : eventPopupHtml(evt))
@@ -741,22 +782,6 @@ export default function TripMap({
               {selectedSegment.overLimitKmh > 0 ? ` - ${Math.round(selectedSegment.overLimitKmh)} km/h over` : ''}
             </div>
           )}
-        </div>
-      )}
-      {showCorneringHeatmap && hasRoute && !selectedSegment && (
-        <div className="absolute left-3 top-3 z-10 w-[min(260px,calc(100%-5.5rem))] rounded-xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
-          <div className="mb-2 font-semibold">Cornering heatmap</div>
-          <div className="space-y-1.5">
-            {CORNERING_HEATMAP_BANDS.map((band) => (
-              <div key={band.label} className="flex items-center justify-between gap-3">
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  <span className="h-2.5 w-6 rounded-full" style={{ backgroundColor: band.color }} />
-                  {band.label}
-                </span>
-                <span className="font-medium">{band.min.toFixed(2)}g+</span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
       {showInsights && hasRoute && (

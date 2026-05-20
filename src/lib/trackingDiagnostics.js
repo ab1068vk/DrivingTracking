@@ -274,6 +274,8 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
   const activityRecognition = permissionStatus?.activityRecognition || (settings.activity_permission_granted ? 'granted' : 'unknown');
   const notifications = permissionStatus?.notifications || (settings.notification_permission_granted ? 'granted' : 'unknown');
   const blockerDetails = [];
+  const nativeArmed = !backgroundAuto || !isAndroidPlatform || nativeStatus?.enabled === true;
+  const batteryClear = !backgroundAuto || !isAndroidPlatform || batteryStatus?.batteryOptimizationIgnored === true;
 
   if (mode === 'paused') {
     blockerDetails.push('Tracking is paused in Settings.');
@@ -309,8 +311,24 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
     isAndroidPlatform ? `Activity: ${activityRecognition}` : null,
     backgroundAuto ? `Background: ${backgroundLocation}` : null,
     backgroundAuto ? `Notifications: ${notifications}` : null,
+    backgroundAuto && isAndroidPlatform ? `Native service: ${nativeStatus?.enabled ? 'armed' : 'not armed'}` : null,
+    backgroundAuto && isAndroidPlatform ? `Battery: ${batteryStatus?.batteryOptimizationIgnored ? 'unrestricted' : 'may restrict'}` : null,
     Number.isFinite(Number(currentSpeedKmh)) ? `Current speed: ${speedText}` : null,
     activityLabel ? `Current activity: ${activityLabel}` : null,
+  ].filter(Boolean);
+  const allRequiredReady = autoEnabled &&
+    foregroundLocation === 'granted' &&
+    (!isAndroidPlatform || activityRecognition === 'granted') &&
+    (!backgroundAuto || backgroundLocation === 'granted') &&
+    (!backgroundAuto || notifications === 'granted') &&
+    nativeArmed &&
+    batteryClear;
+  const movingFastEnough = Number(currentSpeedKmh) >= 12;
+  const advancedFacts = [
+    allRequiredReady ? 'All required setup checks are green.' : null,
+    movingFastEnough ? 'GPS is moving fast enough for fallback detection.' : 'GPS is not showing sustained driving speed yet.',
+    isAndroidPlatform && !activityLabel ? 'Waiting for Android activity callback; GPS fallback can still start after sustained movement.' : null,
+    backgroundAuto ? 'If the app was force-stopped by Android or the phone was rebooted, open Road Sage once to re-arm background detection.' : null,
   ].filter(Boolean);
 
   if (tracking) {
@@ -379,11 +397,13 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
 
   return {
     status: 'warn',
-    headline: 'Waiting for a drive signal',
-    detail: isAndroidPlatform
-      ? `Auto tracking is armed. It starts when Android reports in-vehicle activity or sustained GPS movement. Current reading: ${speedText}.`
-      : `Auto tracking is armed. It starts after sustained GPS movement. Current reading: ${speedText}.`,
-    facts,
+    headline: allRequiredReady ? 'Ready, but no drive signal yet' : 'Waiting for a drive signal',
+    detail: allRequiredReady
+      ? `Permissions and services are ready. Road Sage will start when it sees in-vehicle activity or about 8 seconds of sustained GPS movement above 12 km/h. Current reading: ${speedText}.`
+      : isAndroidPlatform
+        ? `Auto tracking is armed. It starts when Android reports in-vehicle activity or sustained GPS movement. Current reading: ${speedText}.`
+        : `Auto tracking is armed. It starts after sustained GPS movement. Current reading: ${speedText}.`,
+    facts: [...facts, ...advancedFacts],
     lastDecision,
   };
 }

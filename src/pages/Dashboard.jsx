@@ -771,10 +771,11 @@ export default function Dashboard() {
       const speedOnlyDrive = !isAndroid() && speed >= 5 && recentMovingSeconds >= 1;
 
       if (activitySaysDrive || speedOnlyDrive) {
+        const gpsFallback = activitySaysDrive && (!activity || activity.type === 'unknown' || activity.confidence < 65);
         recordTrackingDiagnostic({
           type: 'auto_start',
           title: 'In-app auto-start triggered',
-          reason: activitySaysDrive ? 'activity_in_vehicle' : 'speed_only_drive',
+          reason: gpsFallback ? 'sustained_gps_movement' : activitySaysDrive ? 'activity_in_vehicle' : 'speed_only_drive',
           speed_kmh: Math.round(speed),
           recent_moving_seconds: Math.round(recentMovingSeconds),
         });
@@ -989,6 +990,87 @@ export default function Dashboard() {
     warn: 'text-amber-600 dark:text-amber-300',
     bad: 'text-red-600 dark:text-red-300',
   }[trackingExplanation.status] || 'text-primary';
+  const trackingExplanationPanel = (
+    <div className={`rounded-3xl border p-4 shadow-sm ${explanationTone}`}>
+      <div className="flex items-start gap-3">
+        {trackingExplanation.status === 'good' ? (
+          <CheckCircle2 className={`mt-0.5 h-5 w-5 flex-shrink-0 ${explanationIconTone}`} />
+        ) : (
+          <AlertTriangle className={`mt-0.5 h-5 w-5 flex-shrink-0 ${explanationIconTone}`} />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Why tracking did or did not start</div>
+              <div className="mt-1 text-sm font-semibold">{trackingExplanation.headline}</div>
+            </div>
+            <button
+              type="button"
+              onClick={refreshTrackingStatusContext}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/70 px-2.5 py-1.5 text-xs font-semibold hover:bg-background"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh
+            </button>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{trackingExplanation.detail}</div>
+          {trackingExplanation.lastDecision && (
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              Last decision: {trackingExplanation.lastDecision.title || trackingExplanation.lastDecision.type}
+              {trackingExplanation.lastDecision.reason ? ` - ${String(trackingExplanation.lastDecision.reason).replace(/_/g, ' ')}` : ''}
+            </div>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {trackingExplanation.facts.slice(0, 9).map((fact) => (
+              <span key={fact} className="rounded-full border border-border bg-background/70 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                {fact}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+  const trackingReadinessPanel = !tracking ? (
+    <div className={`rounded-3xl border p-4 shadow-sm ${
+      trackingReadiness.ready
+        ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20'
+        : 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20'
+    }`}>
+      <div className="flex items-start gap-3">
+        {trackingReadiness.ready ? (
+          <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-600 dark:text-emerald-300" />
+        ) : (
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-300" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">{trackingReadiness.headline}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{trackingReadiness.detail}</div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {trackingReadiness.checks.map((item) => (
+              <div key={item.label} className="rounded-xl bg-background/60 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">{item.label}</span>
+                  <span className={`h-2 w-2 rounded-full ${item.ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                </div>
+                <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</div>
+                {!item.ready && item.action && (
+                  <button
+                    type="button"
+                    onClick={() => handleTrackingSetupAction(item.action)}
+                    aria-label={`Fix ${item.label} tracking setup`}
+                    className="mt-2 rounded-lg bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground"
+                  >
+                    Fix
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-6 pb-4">
@@ -1017,87 +1099,6 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      <div className={`rounded-3xl border p-4 shadow-sm ${explanationTone}`}>
-        <div className="flex items-start gap-3">
-          {trackingExplanation.status === 'good' ? (
-            <CheckCircle2 className={`mt-0.5 h-5 w-5 flex-shrink-0 ${explanationIconTone}`} />
-          ) : (
-            <AlertTriangle className={`mt-0.5 h-5 w-5 flex-shrink-0 ${explanationIconTone}`} />
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold">Why tracking did or did not start</div>
-                <div className="mt-1 text-sm font-semibold">{trackingExplanation.headline}</div>
-              </div>
-              <button
-                type="button"
-                onClick={refreshTrackingStatusContext}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/70 px-2.5 py-1.5 text-xs font-semibold hover:bg-background"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Refresh
-              </button>
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">{trackingExplanation.detail}</div>
-            {trackingExplanation.lastDecision && (
-              <div className="mt-2 text-[11px] text-muted-foreground">
-                Last decision: {trackingExplanation.lastDecision.title || trackingExplanation.lastDecision.type}
-                {trackingExplanation.lastDecision.reason ? ` - ${String(trackingExplanation.lastDecision.reason).replace(/_/g, ' ')}` : ''}
-              </div>
-            )}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {trackingExplanation.facts.slice(0, 7).map((fact) => (
-                <span key={fact} className="rounded-full border border-border bg-background/70 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                  {fact}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {!tracking && (
-        <div className={`rounded-3xl border p-4 shadow-sm ${
-          trackingReadiness.ready
-            ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20'
-            : 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20'
-        }`}>
-          <div className="flex items-start gap-3">
-            {trackingReadiness.ready ? (
-              <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-600 dark:text-emerald-300" />
-            ) : (
-              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-300" />
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold">{trackingReadiness.headline}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{trackingReadiness.detail}</div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {trackingReadiness.checks.map((item) => (
-                  <div key={item.label} className="rounded-xl bg-background/60 px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold">{item.label}</span>
-                      <span className={`h-2 w-2 rounded-full ${item.ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                    </div>
-                    <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{item.detail}</div>
-                    {!item.ready && item.action && (
-                      <button
-                        type="button"
-                        onClick={() => handleTrackingSetupAction(item.action)}
-                        aria-label={`Fix ${item.label} tracking setup`}
-                        className="mt-2 rounded-lg bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground"
-                      >
-                        Fix
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {(brakingImprovement || parkingReminder) && (
         <div className="grid gap-3 md:grid-cols-2">
@@ -1630,6 +1631,10 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+      </div>
+      <div className="space-y-3">
+        {trackingExplanationPanel}
+        {trackingReadinessPanel}
       </div>
       {tracking && settings.live_coaching_enabled !== false && (
         <LiveCoachOverlay

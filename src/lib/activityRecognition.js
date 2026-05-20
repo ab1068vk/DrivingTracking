@@ -30,7 +30,7 @@ export async function startActivityRecognition(onActivity, onError) {
 
   try {
     const listener = await ActivityRecognition.addListener('activityChanged', onActivity);
-    await ActivityRecognition.start({ intervalMs: 15000 });
+    await ActivityRecognition.start({ intervalMs: 5000 });
     return async () => {
       await ActivityRecognition.stop();
       await listener.remove();
@@ -125,7 +125,11 @@ export async function clearNativeCompletedTrips() {
 
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {
   const vehicleConfidence = activity?.type === ACTIVITY_TYPES.IN_VEHICLE ? activity.confidence || 0 : 0;
-  return vehicleConfidence >= 65 && currentSpeedKmh >= 5 && recentMovingSeconds >= 1;
+  const speed = Number(currentSpeedKmh) || 0;
+  const movingSeconds = Number(recentMovingSeconds) || 0;
+  if (vehicleConfidence >= 65 && speed >= 5 && movingSeconds >= 1) return true;
+  const activityMissingOrUncertain = !activity || activity.type === ACTIVITY_TYPES.UNKNOWN || vehicleConfidence < 65;
+  return activityMissingOrUncertain && speed >= 12 && movingSeconds >= 8;
 }
 
 export function computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = []) {

@@ -116,6 +116,26 @@ const mergedPhoneUseForTrip = (trip, routePoints, stats, detectionPhoneUse) => {
   return buildPhoneUseFromTripEvidence(trip, routePoints, stats.duration_seconds, detectionPhoneUse);
 };
 
+const eventFeedbackKey = (event, index) => [
+  event?.type || 'event',
+  event?.timestamp || index,
+  Number.isFinite(Number(event?.value)) ? Number(event.value).toFixed(2) : '',
+].join('|');
+
+export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
+  const reviewed = feedback && typeof feedback === 'object' ? feedback : {};
+  let removed = 0;
+  const filtered = events.filter((event, index) => {
+    const verdict = reviewed[eventFeedbackKey(event, index)]?.verdict;
+    if (verdict === 'wrong') {
+      removed += 1;
+      return false;
+    }
+    return true;
+  });
+  return { events: filtered, removed };
+};
+
 const rescoreTrip = (trip) => {
   if (!trip || trip.status !== 'completed') return trip;
   const routePoints = trip.route_points || [];
@@ -124,16 +144,21 @@ const rescoreTrip = (trip) => {
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
   const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const events = Reflect.get(detection, 'events') ?? detection;
+  const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
   const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, Reflect.get(detection, 'phoneUse') ?? {});
-  const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
+  const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
-  const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
+  const drivingEvents = applyEventFeedbackToEvents(
+    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse),
+    trip.event_feedback
+  );
   return {
     ...trip,
     ...stats,
     ...scores,
     co2_saved_kg: economics.co2_saved_kg,
-    driving_events: drivingEvents,
+    driving_events: drivingEvents.events,
+    feedback_adjusted_events_count: feedbackAdjusted.removed + drivingEvents.removed,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),

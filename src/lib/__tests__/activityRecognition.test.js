@@ -21,6 +21,20 @@ describe('activityRecognition auto-stop logic', () => {
     })).toBe(false);
   });
 
+  it('auto-starts from sustained GPS movement when Android activity is delayed', () => {
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.UNKNOWN, confidence: 0 },
+      currentSpeedKmh: 13,
+      recentMovingSeconds: 8,
+    })).toBe(true);
+
+    expect(shouldAutoStartTracking({
+      activity: { type: ACTIVITY_TYPES.UNKNOWN, confidence: 0 },
+      currentSpeedKmh: 13,
+      recentMovingSeconds: 4,
+    })).toBe(false);
+  });
+
   it('does not stop at a red light with still activity and GPS drift', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.STILL, confidence: 90 },

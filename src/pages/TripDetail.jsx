@@ -74,6 +74,7 @@ export default function TripDetail() {
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
+  const [feedbackStatus, setFeedbackStatus] = useState('');
   const metadataSectionRef = useRef(null);
 
   const { data: trip, isLoading } = useQuery({
@@ -140,9 +141,9 @@ export default function TripDetail() {
     },
   });
   const feedbackMutation = useMutation({
-    mutationFn: (/** @type {{eventKey:string, event:any, verdict:string}} */ vars) => {
+    mutationFn: async (/** @type {{eventKey:string, event:any, verdict:string}} */ vars) => {
       const existing = trip?.event_feedback || {};
-      return tripService.update(id, {
+      await tripService.update(id, {
         event_feedback: {
           ...existing,
           [vars.eventKey]: {
@@ -153,13 +154,20 @@ export default function TripDetail() {
             reviewed_at: new Date().toISOString(),
           },
         },
+        needs_rescore: true,
+        feedback_reviewed_at: new Date().toISOString(),
       });
+      return tripService.getById(id);
     },
-    onSuccess: (updatedTrip) => {
+    onSuccess: (updatedTrip, vars) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      setFeedbackStatus(vars.verdict === 'wrong'
+        ? 'Marked wrong. This event is removed from scoring on rescore and used to raise future thresholds.'
+        : 'Marked accurate. This event stays in scoring and helps keep calibration from becoming too loose.');
+      setTimeout(() => setFeedbackStatus(''), 6000);
     },
   });
   const contextMutation = useMutation({
@@ -1319,6 +1327,14 @@ export default function TripDetail() {
               Detection feedback: <span className="font-semibold text-emerald-600 dark:text-emerald-300">{feedbackCounts.accurate} accurate</span>
               <span className="mx-1">/</span>
               <span className="font-semibold text-red-600 dark:text-red-300">{feedbackCounts.wrong} needs review</span>
+              {trip.feedback_adjusted_events_count > 0 && (
+                <span className="ml-1">/ {trip.feedback_adjusted_events_count} removed from scoring</span>
+              )}
+            </div>
+          )}
+          {feedbackStatus && (
+            <div className="mb-4 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
+              {feedbackStatus}
             </div>
           )}
 

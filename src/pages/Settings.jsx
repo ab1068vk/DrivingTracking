@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X
 } from 'lucide-react';
 import {
   Dialog,
@@ -577,21 +577,29 @@ export default function Settings() {
   const motionSupport = getMotionSensorSupport();
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
+  const settingsSearchQuery = settingsSearch.trim().toLowerCase();
   const settingSearchResults = [
-    { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', keywords: 'manual auto detect background pause' },
-    { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', keywords: 'location activity notification battery bluetooth phone usage' },
-    { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', keywords: 'quiet hours trip summary coaching maintenance nudges' },
-    { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', keywords: 'weekly score harsh brake speeding night' },
-    { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback' },
-    { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash' },
-    { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', keywords: 'distraction usage access phone score map' },
-    { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', keywords: 'speed limits overpass osm warning margin' },
-    { label: 'Privacy zones and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
-  ].filter((item) => {
-    const query = settingsSearch.trim().toLowerCase();
-    if (!query) return false;
-    return `${item.label} ${item.section} ${item.keywords}`.toLowerCase().includes(query);
-  });
+    { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', detail: 'Manual, foreground auto-detect, background auto, and pause controls.', keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement' },
+    { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', detail: 'Location, background location, activity, battery, and native auto service setup.', keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt' },
+    { label: 'Feature permissions', section: 'Feature Permissions', sectionId: 'settings-feature-permissions', detail: 'See which features are blocked by missing permissions.', keywords: 'blocked unavailable permission feature status' },
+    { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
+    { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },
+    { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive' },
+    { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
+    { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },
+    { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },
+    { label: 'Privacy zones and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', detail: 'Privacy zones, backup, import, export, saved filters, and feedback data.', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
+  ].map((item) => {
+    if (!settingsSearchQuery) return { ...item, score: 0 };
+    const haystack = `${item.label} ${item.section} ${item.detail} ${item.keywords}`.toLowerCase();
+    const terms = settingsSearchQuery.split(/\s+/).filter(Boolean);
+    const score = terms.reduce((sum, term) => (
+      sum + (item.label.toLowerCase().includes(term) ? 6 : 0)
+      + (item.section.toLowerCase().includes(term) ? 4 : 0)
+      + (haystack.includes(term) ? 1 : 0)
+    ), 0);
+    return { ...item, score };
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6);
   const scrollSettingSection = (sectionId) => {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setSettingsSearch('');
@@ -624,20 +632,32 @@ export default function Settings() {
           <input
             value={settingsSearch}
             onChange={(event) => setSettingsSearch(event.target.value)}
-            placeholder="Search settings"
-            className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-sm outline-none focus:border-primary"
+            placeholder="Search settings, permissions, auto start, map, feedback..."
+            className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-10 text-sm outline-none focus:border-primary"
           />
+          {settingsSearch && (
+            <button
+              type="button"
+              onClick={() => setSettingsSearch('')}
+              aria-label="Clear settings search"
+              className="absolute right-2 top-1/2 rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground -translate-y-1/2"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
         {settingsSearch.trim() && (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
             {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
               <button
                 key={`${item.section}-${item.label}`}
                 type="button"
                 onClick={() => scrollSettingSection(item.sectionId)}
-                className="rounded-full bg-secondary px-2.5 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+                className="rounded-xl border border-border bg-secondary/60 px-3 py-2 text-left text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
               >
-                <span className="font-semibold text-foreground">{item.label}</span> in {item.section}
+                <span className="font-semibold text-foreground">{item.label}</span>
+                <span className="ml-1">in {item.section}</span>
+                <span className="mt-1 block">{item.detail}</span>
               </button>
             )) : (
               <span className="text-xs text-muted-foreground">No matching settings found.</span>
