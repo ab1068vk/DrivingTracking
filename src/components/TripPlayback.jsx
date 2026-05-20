@@ -5,7 +5,7 @@ import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack
 import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyZonesForRoute } from '@/lib/privacyZones';
+import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -159,12 +159,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     { maxPoints: 700 }
   ), [privacySettings, secondaryTrip?.route_points]);
   const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
-  const visiblePrivacyZones = useMemo(() => ([
-    ...new Map([
-      ...privacyZonesForRoute(trip?.route_points || [], privacySettings),
-      ...privacyZonesForRoute(secondaryTrip?.route_points || [], privacySettings),
-    ].map((zone) => [zone.id, zone])).values(),
-  ]), [privacySettings, secondaryTrip?.route_points, trip?.route_points]);
+  const visiblePrivacyZones = useMemo(() => getPrivacyZones(privacySettings), [privacySettings]);
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
   const pointCountSummary = rawPointCount !== totalPoints
@@ -512,6 +507,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
             points={points}
             secondaryPoints={secondaryPoints}
             events={events}
+            privacyZones={visiblePrivacyZones}
             height={height}
           />
         ) : (
@@ -776,10 +772,29 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   );
 }
 
-function PlaybackRoutePreview({ points = [], secondaryPoints = [], events = [], height = '380px' }) {
+function PlaybackRoutePreview({ points = [], secondaryPoints = [], events = [], privacyZones = [], height = '380px' }) {
   const allPoints = [...points, ...secondaryPoints]
     .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
-  if (!allPoints.length) {
+  const validPrivacyZones = privacyZones
+    .map((zone) => ({
+      ...zone,
+      lat: Number(zone.lat),
+      lng: Number(zone.lng),
+      radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
+    }))
+    .filter((zone) => Number.isFinite(zone.lat) && Number.isFinite(zone.lng));
+  const zoneBounds = validPrivacyZones.flatMap((zone) => {
+    const latDelta = zone.radius_m / 111320;
+    const lngDelta = zone.radius_m / (111320 * Math.max(0.2, Math.cos(zone.lat * Math.PI / 180)));
+    return [
+      { lat: zone.lat - latDelta, lng: zone.lng },
+      { lat: zone.lat + latDelta, lng: zone.lng },
+      { lat: zone.lat, lng: zone.lng - lngDelta },
+      { lat: zone.lat, lng: zone.lng + lngDelta },
+    ];
+  });
+  const referencePoints = [...allPoints, ...zoneBounds];
+  if (!referencePoints.length) {
     return (
       <div className="flex items-center justify-center bg-secondary/40 text-sm text-muted-foreground" style={{ height }}>
         Offline playback preview unavailable.
@@ -787,20 +802,55 @@ function PlaybackRoutePreview({ points = [], secondaryPoints = [], events = [], 
     );
   }
 
-  const minLat = Math.min(...allPoints.map((point) => point.lat));
-  const maxLat = Math.max(...allPoints.map((point) => point.lat));
-  const minLng = Math.min(...allPoints.map((point) => point.lng));
-  const maxLng = Math.max(...allPoints.map((point) => point.lng));
-  const scale = (point) => {
+  const minLat = Math.min(...referencePoints.map((point) => point.lat));
+  const maxLat = Math.max(...referencePoints.map((point) => point.lat));
+  const minLng = Math.min(...referencePoints.map((point) => point.lng));
+  const maxLng = Math.max(...referencePoints.map((point) => point.lng));
+  const scalePoint = (point) => {
     const x = ((point.lng - minLng) / Math.max(0.00001, maxLng - minLng)) * 92 + 4;
     const y = 96 - (((point.lat - minLat) / Math.max(0.00001, maxLat - minLat)) * 92 + 4);
+    return { x, y };
+  };
+  const scale = (point) => {
+    const { x, y } = scalePoint(point);
     return `${x},${y}`;
+  };
+  const zoneEllipse = (zone) => {
+    const center = scalePoint(zone);
+    const latDelta = zone.radius_m / 111320;
+    const lngDelta = zone.radius_m / (111320 * Math.max(0.2, Math.cos(zone.lat * Math.PI / 180)));
+    const latEdge = scalePoint({ lat: zone.lat + latDelta, lng: zone.lng });
+    const lngEdge = scalePoint({ lat: zone.lat, lng: zone.lng + lngDelta });
+    return {
+      cx: center.x,
+      cy: center.y,
+      rx: Math.max(1, Math.abs(lngEdge.x - center.x)),
+      ry: Math.max(1, Math.abs(latEdge.y - center.y)),
+    };
   };
 
   return (
     <div className="relative bg-secondary/40" style={{ height }}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
         <rect width="100" height="100" fill="hsl(var(--secondary))" opacity="0.45" />
+        {validPrivacyZones.map((zone) => {
+          const ellipse = zoneEllipse(zone);
+          return (
+            <ellipse
+              key={zone.id || `${zone.lat}-${zone.lng}`}
+              cx={ellipse.cx}
+              cy={ellipse.cy}
+              rx={ellipse.rx}
+              ry={ellipse.ry}
+              fill="#3b82f6"
+              fillOpacity="0.08"
+              stroke="#2563eb"
+              strokeDasharray="3 2"
+              strokeWidth="1.2"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
         <polyline
           points={points.map(scale).join(' ')}
           fill="none"

@@ -6,7 +6,7 @@ import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackI
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyZonesForRoute } from '@/lib/privacyZones';
+import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -407,12 +407,7 @@ export default function TripMap({
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
-    const visiblePrivacyZones = [
-      ...new Map(routeSets
-        .flatMap((route) => privacyZonesForRoute(route.route_points || [], privacySettings))
-        .map((zone) => [zone.id, zone]))
-        .values(),
-    ];
+    const visiblePrivacyZones = getPrivacyZones(privacySettings);
     const validRoutes = routeSets
       .map((route) => {
         const maskedPoints = maskRoutePointsForPrivacy(route.route_points || [], privacySettings);
@@ -428,6 +423,23 @@ export default function TripMap({
       })
       .filter((route) => route.route_points.length > 1);
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
+    const drawPrivacyZones = (bounds = null) => {
+      visiblePrivacyZones.forEach((zone) => {
+        const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
+        const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
+          radius,
+          color: '#2563eb',
+          fillColor: '#3b82f6',
+          fillOpacity: 0.08,
+          opacity: 0.72,
+          weight: 2,
+          dashArray: '8 6',
+        })
+          .bindPopup(privacyZonePopupHtml(zone))
+          .addTo(layers);
+        bounds?.extend(circle.getBounds());
+      });
+    };
 
     if (validRoutes.length > 0) {
       const bounds = window.L.latLngBounds([]);
@@ -572,21 +584,7 @@ export default function TripMap({
         }
       });
 
-      visiblePrivacyZones.forEach((zone) => {
-        const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
-        const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
-          radius,
-          color: '#2563eb',
-          fillColor: '#3b82f6',
-          fillOpacity: 0.08,
-          opacity: 0.72,
-          weight: 2,
-          dashArray: '8 6',
-        })
-          .bindPopup(privacyZonePopupHtml(zone))
-          .addTo(layers);
-        bounds.extend(circle.getBounds());
-      });
+      drawPrivacyZones(bounds);
 
       lastBoundsRef.current = bounds;
       map.fitBounds(bounds, { padding: [20, 20] });
@@ -630,6 +628,11 @@ export default function TripMap({
       window.L.marker(latLngs[latLngs.length - 1], { icon: endIcon })
         .bindPopup(endedStopped ? '<b>Parked / trip ended</b>' : '<b>End</b>')
         .addTo(layers);
+    } else if (visiblePrivacyZones.length > 0) {
+      const bounds = window.L.latLngBounds([]);
+      drawPrivacyZones(bounds);
+      lastBoundsRef.current = bounds;
+      map.fitBounds(bounds, { padding: [20, 20] });
     } else if (currentLocation) {
       map.setView([currentLocation.lat, currentLocation.lng], 15);
     } else {
@@ -887,19 +890,30 @@ function OfflineRoutePreview({ routePoints = [], routes = null, events = [], hei
     ),
   })).filter((route) => route.route_points.length > 1);
   const allPoints = maskedRoutes.flatMap((route) => route.route_points);
-  const minLat = Math.min(...allPoints.map((point) => point.lat));
-  const maxLat = Math.max(...allPoints.map((point) => point.lat));
-  const minLng = Math.min(...allPoints.map((point) => point.lng));
-  const maxLng = Math.max(...allPoints.map((point) => point.lng));
-  const scale = (point) => {
-    const x = ((point.lng - minLng) / Math.max(0.00001, maxLng - minLng)) * 92 + 4;
-    const y = 96 - (((point.lat - minLat) / Math.max(0.00001, maxLat - minLat)) * 92 + 4);
-    return `${x},${y}`;
-  };
+  const visiblePrivacyZones = getPrivacyZones(settings);
+  const validPrivacyZones = visiblePrivacyZones
+    .map((zone) => ({
+      ...zone,
+      lat: Number(zone.lat),
+      lng: Number(zone.lng),
+      radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
+    }))
+    .filter((zone) => Number.isFinite(zone.lat) && Number.isFinite(zone.lng));
+  const zoneBounds = validPrivacyZones.flatMap((zone) => {
+    const latDelta = zone.radius_m / 111320;
+    const lngDelta = zone.radius_m / (111320 * Math.max(0.2, Math.cos(zone.lat * Math.PI / 180)));
+    return [
+      { lat: zone.lat - latDelta, lng: zone.lng },
+      { lat: zone.lat + latDelta, lng: zone.lng },
+      { lat: zone.lat, lng: zone.lng - lngDelta },
+      { lat: zone.lat, lng: zone.lng + lngDelta },
+    ];
+  });
+  const referencePoints = [...allPoints, ...zoneBounds];
   const safeEvents = maskEventsForPrivacy(events, settings)
     .filter((event) => Number.isFinite(event.lat) && Number.isFinite(event.lng));
 
-  if (!allPoints.length) {
+  if (!referencePoints.length) {
     return (
       <div className={`map-container relative flex items-center justify-center bg-secondary/40 text-sm text-muted-foreground ${className}`} style={{ height }}>
         Offline route preview unavailable.
@@ -907,10 +921,55 @@ function OfflineRoutePreview({ routePoints = [], routes = null, events = [], hei
     );
   }
 
+  const minLat = Math.min(...referencePoints.map((point) => point.lat));
+  const maxLat = Math.max(...referencePoints.map((point) => point.lat));
+  const minLng = Math.min(...referencePoints.map((point) => point.lng));
+  const maxLng = Math.max(...referencePoints.map((point) => point.lng));
+  const scalePoint = (point) => {
+    const x = ((point.lng - minLng) / Math.max(0.00001, maxLng - minLng)) * 92 + 4;
+    const y = 96 - (((point.lat - minLat) / Math.max(0.00001, maxLat - minLat)) * 92 + 4);
+    return { x, y };
+  };
+  const scale = (point) => {
+    const { x, y } = scalePoint(point);
+    return `${x},${y}`;
+  };
+  const zoneEllipse = (zone) => {
+    const center = scalePoint(zone);
+    const latDelta = zone.radius_m / 111320;
+    const lngDelta = zone.radius_m / (111320 * Math.max(0.2, Math.cos(zone.lat * Math.PI / 180)));
+    const latEdge = scalePoint({ lat: zone.lat + latDelta, lng: zone.lng });
+    const lngEdge = scalePoint({ lat: zone.lat, lng: zone.lng + lngDelta });
+    return {
+      cx: center.x,
+      cy: center.y,
+      rx: Math.max(1, Math.abs(lngEdge.x - center.x)),
+      ry: Math.max(1, Math.abs(latEdge.y - center.y)),
+    };
+  };
+
   return (
     <div className={`map-container relative bg-secondary/40 ${className}`} style={{ height }}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
         <rect width="100" height="100" fill="hsl(var(--secondary))" opacity="0.45" />
+        {validPrivacyZones.map((zone) => {
+          const ellipse = zoneEllipse(zone);
+          return (
+            <ellipse
+              key={zone.id || `${zone.lat}-${zone.lng}`}
+              cx={ellipse.cx}
+              cy={ellipse.cy}
+              rx={ellipse.rx}
+              ry={ellipse.ry}
+              fill="#3b82f6"
+              fillOpacity="0.08"
+              stroke="#2563eb"
+              strokeDasharray="3 2"
+              strokeWidth="1.2"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
         {maskedRoutes.map((route) => (
           <polyline
             key={route.id || route.label || route.color}
