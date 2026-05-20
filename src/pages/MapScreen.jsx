@@ -63,6 +63,8 @@ export default function MapScreen() {
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [showRouteRisk, setShowRouteRisk] = useState(false);
   const [showSpeedLimits, setShowSpeedLimits] = useState(false);
+  const [showGpsQuality, setShowGpsQuality] = useState(false);
+  const [showRoadContext, setShowRoadContext] = useState(false);
   const [showLayerPanel, setShowLayerPanel] = useState(true);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const settings = localSettings.get();
@@ -304,6 +306,9 @@ export default function MapScreen() {
               showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
               routeRiskSegments={selectedRiskSegments}
               showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
+              showGpsQuality={showGpsQuality && Boolean(selectedTrip)}
+              showRoadContext={showRoadContext && Boolean(selectedTrip)}
+              mapMatchingContext={selectedTrip?.map_matching_context}
               rawPointCount={selectedTrip?.route_points_raw_count}
               height="400px"
             />
@@ -411,6 +416,39 @@ export default function MapScreen() {
               Risk hotspots
               <div className="mt-1 font-normal">{dangerZones.length} local zones</div>
             </button>
+            <button
+              onClick={() => setShowGpsQuality(value => !value)}
+              disabled={!selectedTrip}
+              className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
+                showGpsQuality ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300' : 'border-border bg-secondary/40 text-muted-foreground'
+              }`}
+            >
+              GPS quality
+              <div className="mt-1 font-normal">{selectedTrip ? 'Snapped, smoothed, weak, and gap points' : 'Select a trip first'}</div>
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedTrip) return;
+                if (selectedMapMatchingStatus === 'not_fetched') {
+                  contextMutation.mutate();
+                  return;
+                }
+                setShowRoadContext(value => !value);
+              }}
+              disabled={!selectedTrip || contextMutation.isPending}
+              className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
+                showRoadContext ? 'border-teal-500 bg-teal-50 text-teal-700 dark:bg-teal-950/30 dark:text-teal-300' : 'border-border bg-secondary/40 text-muted-foreground'
+              }`}
+            >
+              OSRM roads
+              <div className="mt-1 font-normal">
+                {selectedTrip
+                  ? selectedMapMatchingStatus === 'not_fetched'
+                    ? 'Tap to fetch OSRM matching'
+                    : `${selectedTrip.map_matching_context?.snapped_coverage ?? 0}% snapped - ${selectedTrip.map_matching_context?.gap_count ?? 0} gaps`
+                  : 'Select a trip first'}
+              </div>
+            </button>
           </div>
           {selectedTrip && (
             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
@@ -424,6 +462,8 @@ export default function MapScreen() {
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
                 <span>Map matching: {selectedMapMatchingStatus.replace(/_/g, ' ')}</span>
+                <span>Trace gaps: {selectedTrip.map_matching_context?.gap_count ?? 0}</span>
+                <span>Weak matches: {selectedTrip.map_matching_context?.low_confidence_points ?? 0}</span>
               </div>
             </div>
           )}
@@ -538,6 +578,31 @@ export default function MapScreen() {
                 }`}
               >
                 Speed limits
+              </button>
+              <button
+                onClick={() => setShowGpsQuality(value => !value)}
+                disabled={!selectedTrip}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
+                  showGpsQuality ? 'bg-blue-500 text-white border-blue-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                GPS quality
+              </button>
+              <button
+                onClick={() => {
+                  if (!selectedTrip) return;
+                  if (selectedMapMatchingStatus === 'not_fetched') {
+                    contextMutation.mutate();
+                    return;
+                  }
+                  setShowRoadContext(value => !value);
+                }}
+                disabled={!selectedTrip || contextMutation.isPending}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
+                  showRoadContext ? 'bg-teal-500 text-white border-teal-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                OSRM roads
               </button>
             </div>
           </div>
