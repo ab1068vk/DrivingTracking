@@ -11,7 +11,7 @@ import {
 } from '@/lib/permissions';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { isAndroid } from '@/lib/nativePlatform';
-import { openAndroidUsageAccessSettings, startNativeAutoTracking } from '@/lib/activityRecognition';
+import { getAndroidBatteryOptimizationStatus, openAndroidBatteryOptimizationSettings, openAndroidUsageAccessSettings, startNativeAutoTracking } from '@/lib/activityRecognition';
 import { useNavigate } from 'react-router-dom';
 
 const STEPS = [
@@ -123,6 +123,7 @@ export default function Onboarding({ onComplete }) {
   const [activityGranted, setActivityGranted] = useState(false);
   const [notificationsGranted, setNotificationsGranted] = useState(false);
   const [backgroundGranted, setBackgroundGranted] = useState(false);
+  const [batteryReady, setBatteryReady] = useState(!isAndroid());
   const [usageAccessGranted, setUsageAccessGranted] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [setupStatus, setSetupStatus] = useState('');
@@ -133,11 +134,13 @@ export default function Onboarding({ onComplete }) {
 
   const refreshSetupStatus = async () => {
     const status = await getPermissionStatus();
+    const battery = isAndroid() ? await getAndroidBatteryOptimizationStatus().catch(() => null) : null;
     setLocationGranted(status.foregroundLocation === 'granted');
     setNotificationsGranted(status.notifications === 'granted');
     setMotionGranted(status.motionSensors === 'granted');
     setActivityGranted(!isAndroid() || status.activityRecognition === 'granted');
     setBackgroundGranted(!isAndroid() || status.backgroundLocation === 'granted');
+    setBatteryReady(!isAndroid() || battery?.batteryOptimizationIgnored === true);
     setUsageAccessGranted(!isAndroid() || status.phoneUsageAccess === 'granted');
     return status;
   };
@@ -177,6 +180,11 @@ export default function Onboarding({ onComplete }) {
     setBackgroundGranted(granted);
     await refreshSetupStatus().catch(() => {});
     setRequesting(false);
+  };
+
+  const handleBatterySetup = async () => {
+    await openAndroidBatteryOptimizationSettings();
+    await refreshSetupStatus().catch(() => {});
   };
 
   const requestTrackingModePermissions = async (mode = trackingMode) => {
@@ -455,13 +463,23 @@ export default function Onboarding({ onComplete }) {
                   disabled={requesting}
                 />
                 {isAndroid() && trackingMode === 'background_auto' && (
-                  <SetupChecklistRow
-                    label="Background location"
-                    detail="Needed for automatic trip capture while the app sleeps."
-                    ready={backgroundGranted}
-                    onAction={handleBackgroundLocationRequest}
-                    disabled={requesting}
-                  />
+                  <>
+                    <SetupChecklistRow
+                      label="Background location"
+                      detail="Needed for automatic trip capture while the app sleeps."
+                      ready={backgroundGranted}
+                      onAction={handleBackgroundLocationRequest}
+                      disabled={requesting}
+                    />
+                    <SetupChecklistRow
+                      label="Battery unrestricted"
+                      detail="Helps Android keep background auto tracking alive."
+                      ready={batteryReady}
+                      onAction={handleBatterySetup}
+                      actionLabel="Open"
+                      disabled={requesting}
+                    />
+                  </>
                 )}
                 {isAndroid() && (
                   <SetupChecklistRow

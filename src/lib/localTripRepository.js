@@ -327,4 +327,16 @@ export const localTripRepository = {
     await pruneExpiredTrips();
     return normalized;
   },
+
+  async markCompletedForRescore() {
+    const trips = await getAllTrips();
+    const updated = trips.map((trip) => (
+      trip.status === 'completed'
+        ? { ...trip, needs_rescore: true, updated_at: new Date().toISOString() }
+        : trip
+    ));
+    await putTrips(updated);
+    await invalidateTripDerivedCaches();
+    return updated.filter((trip) => trip.status === 'completed').length;
+  },
 };

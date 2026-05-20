@@ -134,11 +134,18 @@ export default function MapScreen() {
     if (!selectedTrip) return [];
     const selectedKey = routeKeyForTrip(selectedTrip);
     if (!selectedKey || !commutePatterns.some((pattern) => pattern.route_key === selectedKey)) return [];
-    return allCompleted
+    const routeRuns = allCompleted
       .filter((trip) => String(trip.id) !== String(selectedTrip.id) && routeKeyForTrip(trip) === selectedKey)
-      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
-      .slice(0, 5);
-  }, [allCompleted, commutePatterns, selectedTrip]);
+      .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+    const bestRun = [...routeRuns].sort((a, b) => (b.score_overall || 0) - (a.score_overall || 0))[0];
+    const recentRuns = routeRuns.slice(0, 5);
+    return [
+      ...(bestRun ? [{ ...bestRun, compareLabel: `Best run - score ${bestRun.score_overall ?? '-'}` }] : []),
+      ...recentRuns
+        .filter((trip) => String(trip.id) !== String(bestRun?.id))
+        .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
+    ].slice(0, 6);
+  }, [allCompleted, commutePatterns, selectedTrip, units]);
   const mapRoutes = selectedTrip
     ? [{
       id: selectedTrip.id,
@@ -261,16 +268,21 @@ export default function MapScreen() {
           selectedTrip ? (
             <>
               {compareOptions.length > 0 && (
-                <select
-                  value={secondaryTripId}
-                  onChange={(event) => setSecondaryTripId(event.target.value)}
-                  className="mb-3 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-muted-foreground outline-none"
-                >
-                  <option value="">Compare with previous run</option>
-                  {compareOptions.map((trip) => (
-                    <option key={trip.id} value={trip.id}>{formatDate(trip.start_time)} · {formatDistance(trip.distance_km || 0, units)}</option>
-                  ))}
-                </select>
+                <>
+                  <select
+                    value={secondaryTripId}
+                    onChange={(event) => setSecondaryTripId(event.target.value)}
+                    className="mb-3 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-muted-foreground outline-none"
+                  >
+                    <option value="">Compare with another run</option>
+                    {compareOptions.map((trip) => (
+                      <option key={trip.id} value={trip.id}>{trip.compareLabel || `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}`}</option>
+                    ))}
+                  </select>
+                  <div className="-mt-2 mb-3 text-xs text-muted-foreground">
+                    The best-scoring matching route appears first, followed by recent runs.
+                  </div>
+                </>
               )}
               <TripPlayback trip={selectedTrip} secondaryTrip={secondaryTrip} height="380px" />
             </>

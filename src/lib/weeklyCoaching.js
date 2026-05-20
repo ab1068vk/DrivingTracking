@@ -51,11 +51,20 @@ export function buildWeeklyCoachSummary(trips = []) {
       : biggest[0] === 'phone distraction'
         ? ['Enable Do Not Disturb while driving.', 'Keep the phone out of reach.', 'Use voice navigation before moving.']
         : ['Keep throttle inputs gradual.', 'Brake before turns, then accelerate out.', 'Protect a calm first five minutes.'];
+  const plan = actions.map((action, index) => ({
+    id: `weekly-plan-${index + 1}`,
+    title: index === 0 ? 'Primary habit' : index === 1 ? 'During each drive' : 'Review after driving',
+    action,
+    target: biggest[1] > 0
+      ? `Reduce ${biggest[0]} events this week`
+      : `Hold average score near ${avgScore}`,
+  }));
 
   return {
     headline,
     insight: `Local rules analyzed ${scope.length} trip${scope.length === 1 ? '' : 's'} with average score ${avgScore}. No AI service was used.`,
     actions,
+    plan,
     focus: biggest[0],
     confidence: scope.length >= 6 ? 'high' : 'medium',
   };

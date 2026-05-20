@@ -55,4 +55,15 @@ export const tripService = {
         : apiClient.post("/trips", trip)
     )));
   },
+
+  markCompletedForRescore: async () => {
+    const local = repository();
+    if (local?.markCompletedForRescore) return local.markCompletedForRescore();
+    const trips = await apiClient.get("/trips", { query: { sort: "-start_time", limit: 5000 } });
+    const completed = trips.filter((trip) => trip.status === "completed");
+    await Promise.all(completed.map((trip) => (
+      apiClient.patch(`/trips/${encodeURIComponent(trip.id)}`, { needs_rescore: true })
+    )));
+    return completed.length;
+  },
 };

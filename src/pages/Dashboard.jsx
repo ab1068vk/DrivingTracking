@@ -1085,6 +1085,7 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => handleTrackingSetupAction(item.action)}
+                        aria-label={`Fix ${item.label} tracking setup`}
                         className="mt-2 rounded-lg bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground"
                       >
                         Fix

@@ -262,9 +262,10 @@ export default function TripHistory() {
       )}
 
       <div className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            aria-expanded={showFilters}
+            className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
             showFilters ? 'bg-primary text-primary-foreground border-primary' : 'bg-card text-muted-foreground border-border hover:border-primary/50'
           }`}
         >

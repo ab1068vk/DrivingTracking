@@ -94,6 +94,7 @@ export default function Layout() {
         <button
           className="md:hidden p-2 rounded-lg hover:bg-secondary transition-colors"
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
         >
           {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
@@ -174,6 +175,7 @@ export default function Layout() {
           <button
             type="button"
             onClick={() => setMobileMenuOpen(true)}
+            aria-label="Open more navigation"
             className="flex min-h-12 flex-col items-center justify-center gap-1 rounded-xl text-[11px] font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground"
           >
             <Menu className="h-4 w-4" />

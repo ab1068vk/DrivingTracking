@@ -50,8 +50,8 @@ import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 
-function SectionTitle({ children }) {
-  return <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
+function SectionTitle({ children, id }) {
+  return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
 }
 
 function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false }) {
@@ -171,6 +171,7 @@ export default function Settings() {
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
+  const [rescoreStatus, setRescoreStatus] = useState('');
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -234,10 +235,20 @@ export default function Settings() {
       localSettings.set(next);
       setCfg(next);
     });
+    const count = await tripService.markCompletedForRescore().catch(() => 0);
+    await qc.invalidateQueries();
+    setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
     setCfg(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     setCalibProfile(await loadCalibrationProfile());
+  };
+
+  const rescoreTrips = async () => {
+    const count = await tripService.markCompletedForRescore();
+    await qc.invalidateQueries();
+    setRescoreStatus(`${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
+    setTimeout(() => setRescoreStatus(''), 5000);
   };
 
   const dismissCalibration = async () => {
@@ -550,7 +561,7 @@ export default function Settings() {
       await qc.invalidateQueries();
       toast({
         title: 'Import complete',
-        description: `${result.trips} trips and ${result.vehicles} vehicles merged.`,
+        description: `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
       });
     } catch (error) {
       toast({
@@ -567,20 +578,24 @@ export default function Settings() {
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
   const settingSearchResults = [
-    { label: 'Tracking mode', section: 'Tracking', keywords: 'manual auto detect background pause' },
-    { label: 'Android permissions', section: 'Android Permissions', keywords: 'location activity notification battery bluetooth phone usage' },
-    { label: 'Notifications', section: 'Notifications', keywords: 'quiet hours trip summary coaching maintenance nudges' },
-    { label: 'Driving goals', section: 'Driving Goals', keywords: 'weekly score harsh brake speeding night' },
-    { label: 'Detection thresholds', section: 'Detection Thresholds', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy' },
-    { label: 'Advanced models', section: 'Advanced Models', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash' },
-    { label: 'Phone use detection', section: 'Phone Use Detection', keywords: 'distraction usage access phone score map' },
-    { label: 'Speed warning', section: 'Speed Warning', keywords: 'speed limits overpass osm warning margin' },
-    { label: 'Privacy zones and backup', section: 'Privacy & Data', keywords: 'privacy export import backup retention delete data' },
+    { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', keywords: 'manual auto detect background pause' },
+    { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', keywords: 'location activity notification battery bluetooth phone usage' },
+    { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', keywords: 'quiet hours trip summary coaching maintenance nudges' },
+    { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', keywords: 'weekly score harsh brake speeding night' },
+    { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback' },
+    { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash' },
+    { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', keywords: 'distraction usage access phone score map' },
+    { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', keywords: 'speed limits overpass osm warning margin' },
+    { label: 'Privacy zones and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
   ].filter((item) => {
     const query = settingsSearch.trim().toLowerCase();
     if (!query) return false;
     return `${item.label} ${item.section} ${item.keywords}`.toLowerCase().includes(query);
   });
+  const scrollSettingSection = (sectionId) => {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setSettingsSearch('');
+  };
 
   return (
     <div className="space-y-4 pb-6">
@@ -616,9 +631,14 @@ export default function Settings() {
         {settingsSearch.trim() && (
           <div className="mt-3 flex flex-wrap gap-2">
             {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
-              <span key={`${item.section}-${item.label}`} className="rounded-full bg-secondary px-2.5 py-1 text-xs text-muted-foreground">
+              <button
+                key={`${item.section}-${item.label}`}
+                type="button"
+                onClick={() => scrollSettingSection(item.sectionId)}
+                className="rounded-full bg-secondary px-2.5 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+              >
                 <span className="font-semibold text-foreground">{item.label}</span> in {item.section}
-              </span>
+              </button>
             )) : (
               <span className="text-xs text-muted-foreground">No matching settings found.</span>
             )}
@@ -629,7 +649,7 @@ export default function Settings() {
       <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
 
         {/* Tracking */}
-        <SectionTitle>Tracking</SectionTitle>
+        <SectionTitle id="settings-tracking">Tracking</SectionTitle>
         <div className="space-y-1">
           <div>
             <div className="text-sm font-medium mb-2 px-1">Tracking Mode</div>
@@ -695,7 +715,7 @@ export default function Settings() {
         </div>
 
         {/* Android Permissions */}
-        <SectionTitle>Android Permissions</SectionTitle>
+        <SectionTitle id="settings-android-permissions">Android Permissions</SectionTitle>
         <div className="space-y-1">
           {isAndroid() && (
             <SettingRow
@@ -749,7 +769,7 @@ export default function Settings() {
         </div>
 
         {/* Feature Permission Check */}
-        <SectionTitle>Feature Permissions</SectionTitle>
+        <SectionTitle id="settings-feature-permissions">Feature Permissions</SectionTitle>
         <div className="space-y-1">
           {[
             {
@@ -819,7 +839,7 @@ export default function Settings() {
         </div>
 
         {/* Appearance */}
-        <SectionTitle>Appearance</SectionTitle>
+        <SectionTitle id="settings-appearance">Appearance</SectionTitle>
         <div className="space-y-1">
           <div>
             <div className="text-sm font-medium mb-2 px-1">Theme</div>
@@ -865,7 +885,7 @@ export default function Settings() {
         </div>
 
         {/* Notifications */}
-        <SectionTitle>Notifications</SectionTitle>
+        <SectionTitle id="settings-notifications">Notifications</SectionTitle>
         <div className="space-y-3">
           <SettingRow
             icon={Bell}
@@ -993,7 +1013,7 @@ export default function Settings() {
         </div>
 
         {/* Driving Goals */}
-        <SectionTitle>Driving Goals</SectionTitle>
+        <SectionTitle id="settings-driving-goals">Driving Goals</SectionTitle>
         <p className="text-xs text-muted-foreground px-1 mb-3">
           Weekly targets used by the Dashboard goals card.
         </p>
@@ -1024,7 +1044,7 @@ export default function Settings() {
         </div>
 
         {/* Night Driving Window */}
-        <SectionTitle>Night Driving Window</SectionTitle>
+        <SectionTitle id="settings-night-window">Night Driving Window</SectionTitle>
         <p className="text-xs text-muted-foreground px-1 mb-3">
           Used for night-trip labels, goals, and safety scoring.
         </p>
@@ -1112,7 +1132,7 @@ export default function Settings() {
         </div>
 
         {/* Detection Thresholds */}
-        <SectionTitle>Detection Thresholds</SectionTitle>
+        <SectionTitle id="settings-detection-thresholds">Detection Thresholds</SectionTitle>
         <SettingRow
           icon={Info}
           label="Driving Pattern Definitions"
@@ -1152,7 +1172,7 @@ export default function Settings() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold">Threshold calibration</div>
-              <div className="mt-1 text-xs text-muted-foreground">Analyse your driving to suggest personalized detection thresholds.</div>
+              <div className="mt-1 text-xs text-muted-foreground">Analyse your driving and event feedback to suggest personalized detection thresholds.</div>
             </div>
             <button
               type="button"
@@ -1179,6 +1199,11 @@ export default function Settings() {
               <span className="inline-flex rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold capitalize text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
                 {calibProfile.confidence} confidence · {calibProfile.tripsAnalyzed} trips · {calibProfile.kmAnalyzed} km
               </span>
+              {calibProfile.feedbackSummary?.total > 0 && (
+                <div className="rounded-xl bg-card p-3 text-xs text-muted-foreground">
+                  Used {calibProfile.feedbackSummary.total} event review{calibProfile.feedbackSummary.total === 1 ? '' : 's'} to nudge thresholds away from events marked wrong.
+                </div>
+              )}
               <div className="overflow-hidden rounded-xl border border-border text-xs">
                 {Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => (
                   <div key={key} className="grid grid-cols-4 gap-2 border-b border-border/50 p-2 last:border-0">
@@ -1200,6 +1225,16 @@ export default function Settings() {
               Calibrated to your driving · applied {new Date(calibProfile.appliedAt).toLocaleDateString()}
             </div>
           )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={rescoreTrips}
+              className="rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary"
+            >
+              Re-score completed trips
+            </button>
+            {rescoreStatus && <span className="text-xs text-muted-foreground">{rescoreStatus}</span>}
+          </div>
         </div>
         <div className="space-y-4">
           {[
@@ -1280,7 +1315,7 @@ export default function Settings() {
         </div>
 
         {/* Advanced Models */}
-        <SectionTitle>Advanced Models</SectionTitle>
+        <SectionTitle id="settings-advanced-models">Advanced Models</SectionTitle>
         <div className="rounded-2xl bg-secondary/40 p-3">
           <SettingRow
             icon={SlidersHorizontal}
@@ -1416,7 +1451,7 @@ export default function Settings() {
         </div>
 
         {/* Phone Use Detection */}
-        <SectionTitle>Phone Use Detection</SectionTitle>
+        <SectionTitle id="settings-phone-use">Phone Use Detection</SectionTitle>
         <div className="rounded-2xl bg-secondary/40 p-3">
           <SettingRow
             icon={Focus}
@@ -1527,7 +1562,7 @@ export default function Settings() {
         </div>
 
         {/* Speed Warning */}
-        <SectionTitle>Speed Warning</SectionTitle>
+        <SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>
         <SettingRow
           icon={Bell}
           label="Live Speed Warning"
@@ -1577,7 +1612,7 @@ export default function Settings() {
         </div>
 
         {/* Privacy */}
-        <SectionTitle>Privacy & Data</SectionTitle>
+        <SectionTitle id="settings-privacy-data">Privacy & Data</SectionTitle>
         <div>
           <SettingRow
             icon={Shield}

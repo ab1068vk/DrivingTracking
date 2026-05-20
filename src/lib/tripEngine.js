@@ -4052,11 +4052,15 @@ export function tripsToCSV(trips) {
     'Road Condition Proxy', 'Safety Condition Bonus',
     'Road Type', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events',
     'Lane Changes', 'Tailgate Cycles', 'Distraction Events', 'Near Misses', 'Overtakes', 'Night Driving',
+    'Event Feedback Accurate', 'Event Feedback Wrong', 'Event Feedback JSON',
     'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];
 
   const rows = trips.map((rawTrip) => {
     const t = /** @type {any} */ (maskTripForPrivacy(rawTrip));
+    const feedbackItems = Object.values(t.event_feedback || {});
+    const accurateFeedback = feedbackItems.filter((item) => item?.verdict === 'accurate').length;
+    const wrongFeedback = feedbackItems.filter((item) => item?.verdict === 'wrong').length;
     return [
     t.id,
     t.start_time,
@@ -4126,6 +4130,9 @@ export function tripsToCSV(trips) {
     t.near_miss_count ?? '',
     t.overtake_event_count ?? '',
     t.night_driving ? 'Yes' : 'No',
+    accurateFeedback,
+    wrongFeedback,
+    JSON.stringify(t.event_feedback || {}),
     t.route_points?.length || 0,
     JSON.stringify(t.route_points || []),
     JSON.stringify(t.driving_events || []),

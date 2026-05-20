@@ -157,6 +157,27 @@ export default function DrivingCoach() {
             </div>
           </div>
 
+          {weeklySummary.plan?.length > 0 && (
+            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+              <div className="flex items-start gap-3">
+                <Target className="mt-0.5 h-5 w-5 text-primary" />
+                <div>
+                  <h2 className="font-semibold">This Week's Plan</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">Three small actions tied to your current driving pattern</p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-2 md:grid-cols-3">
+                {weeklySummary.plan.map((item) => (
+                  <div key={item.id} className="rounded-2xl bg-secondary/50 p-3">
+                    <div className="text-xs font-bold uppercase text-primary">{item.title}</div>
+                    <div className="mt-2 text-sm font-semibold">{item.action}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{item.target}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {latestAnomaly && latestAnomaly.anomaly_level !== 'unknown' && (
             <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">

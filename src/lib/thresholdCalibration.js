@@ -20,16 +20,46 @@ const currentValue = (thresholds, lowerKey, upperKey) => (
   Number(thresholds?.[lowerKey]) || Number(thresholds?.[upperKey]) || 0
 );
 
+const feedbackThresholdMap = {
+  harsh_brake: { key: 'threshold_harsh_brake_ms2', margin: 0.3, min: 3.0, max: 7.0 },
+  rapid_acceleration: { key: 'threshold_rapid_accel_ms2', margin: 0.3, min: 2.0, max: 6.0 },
+  sharp_turn: { key: 'threshold_sharp_turn_g_medium', margin: 0.05, min: 0.25, max: 0.70 },
+};
+
+const summarizeEventFeedback = (trips = []) => {
+  const byType = {};
+  for (const trip of trips) {
+    for (const item of Object.values(trip?.event_feedback || {})) {
+      const type = item?.type;
+      const config = feedbackThresholdMap[type];
+      if (!config) continue;
+      byType[type] ??= { accurate: 0, wrong: 0, wrongValues: [], accurateValues: [] };
+      if (item.verdict === 'wrong') {
+        byType[type].wrong += 1;
+        if (Number.isFinite(Number(item.value))) byType[type].wrongValues.push(Math.abs(Number(item.value)));
+      }
+      if (item.verdict === 'accurate') {
+        byType[type].accurate += 1;
+        if (Number.isFinite(Number(item.value))) byType[type].accurateValues.push(Math.abs(Number(item.value)));
+      }
+    }
+  }
+  const total = Object.values(byType).reduce((sum, item) => sum + item.accurate + item.wrong, 0);
+  return { total, byType };
+};
+
 export function computeCalibrationProfile(trips = [], /** @type {any} */ currentThresholds = {}) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const tripsAnalyzed = completed.length;
   const kmAnalyzedRaw = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const feedbackSummary = summarizeEventFeedback(completed);
 
-  if (tripsAnalyzed < 15 || kmAnalyzedRaw < 200) {
+  if ((tripsAnalyzed < 15 || kmAnalyzedRaw < 200) && feedbackSummary.total < 3) {
     return {
       insufficient: true,
       tripsNeeded: Math.max(0, 15 - tripsAnalyzed),
       kmNeeded: Math.max(0, Math.ceil(200 - kmAnalyzedRaw)),
+      feedbackSummary,
     };
   }
 
@@ -78,6 +108,17 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     threshold_sharp_turn_g_high: currentValue(currentThresholds, 'threshold_sharp_turn_g_high', 'SHARP_TURN_G_HIGH'),
   };
 
+  for (const [type, feedback] of Object.entries(feedbackSummary.byType)) {
+    const config = feedbackThresholdMap[type];
+    if (!config || feedback.wrong < 2 || feedback.wrongValues.length === 0) continue;
+    const wrongTarget = (percentile(feedback.wrongValues, 0.75) || current[config.key]) + config.margin;
+    const accurateCeiling = feedback.accurateValues.length >= 3
+      ? (percentile(feedback.accurateValues, 0.95) || wrongTarget) + config.margin
+      : wrongTarget;
+    const feedbackTarget = round1(clamp(Math.min(wrongTarget, accurateCeiling), config.min, config.max));
+    suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), feedbackTarget);
+  }
+
   const delta = Object.fromEntries(Object.entries(suggested).map(([key, value]) => [
     key,
     value == null ? null : round1(value - current[key]),
@@ -98,6 +139,7 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     suggested,
     current,
     delta,
+    feedbackSummary,
     appliedAt: null,
   };
 }
