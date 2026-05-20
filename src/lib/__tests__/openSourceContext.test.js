@@ -36,16 +36,20 @@ describe('open-source trip context', () => {
     expect(adjusted.weather_score_adjustment).toBeLessThan(0);
   });
 
-  it('masks route and event coordinates inside privacy zones', () => {
+  it('clips route coordinates to privacy-zone boundaries and hides private events', () => {
     const trip = {
+      distance_km: 3.2,
       route_points: [{ lat: 43.65, lng: -79.38 }, { lat: 43.66, lng: -79.39 }],
       driving_events: [{ type: 'harsh_brake', lat: 43.65, lng: -79.38 }],
     };
     const masked = maskTripForPrivacy(trip, {
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 250 }],
     });
-    expect(masked.route_points[0].lat).toBeNull();
-    expect(masked.driving_events[0].masked_for_privacy).toBe(true);
+    expect(masked.distance_km).toBe(3.2);
+    expect(masked.route_points).toHaveLength(2);
+    expect(masked.route_points[0].lat).not.toBeNull();
+    expect(masked.route_points[0].privacy_boundary).toBe(true);
+    expect(masked.driving_events).toHaveLength(0);
     expect(masked.route_points[1].lat).toBe(43.66);
   });
 });
