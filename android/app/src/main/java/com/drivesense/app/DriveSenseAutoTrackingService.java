@@ -142,6 +142,7 @@ public class DriveSenseAutoTrackingService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        startForeground(NOTIFICATION_ID, buildNotification("Ready when you start moving"));
         ensureSafetyAlertsChannel();
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
@@ -1178,6 +1179,7 @@ public class DriveSenseAutoTrackingService extends Service {
             .setContentIntent(contentIntent)
             .setOnlyAlertOnce(true)
             .setSilent(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setPriority(NotificationCompat.PRIORITY_LOW);
 
         if (isTripActive() && candidateTrip) {
