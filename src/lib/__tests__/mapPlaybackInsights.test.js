@@ -3,8 +3,10 @@ import {
   buildPlaybackTimeline,
   buildRouteComparison,
   downsampleRoutePoints,
+  hasRecoverableOriginalRouteGeometry,
   playbackPositionAtElapsed,
   prepareMapRoutePoints,
+  restoreOriginalRouteGeometry,
 } from '@/lib/mapPlaybackInsights';
 
 const point = (index, speed = 40, extra = {}) => ({
@@ -73,6 +75,28 @@ describe('mapPlaybackInsights', () => {
     ], { maxPoints: null });
 
     expect(untimed).toHaveLength(2);
+  });
+
+  it('recovers routes collapsed by old map-matching updates', () => {
+    const damaged = [0, 1, 2].map((index) => ({
+      lat: 43.7,
+      lng: -79.4,
+      original_lat: 43.65 + index * 0.001,
+      original_lng: -79.38,
+      map_matched: true,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, index * 10)).toISOString(),
+      speed_kmh: 40,
+    }));
+
+    expect(hasRecoverableOriginalRouteGeometry(damaged)).toBe(true);
+
+    const restored = restoreOriginalRouteGeometry(damaged);
+    expect(restored[0].lat).toBe(damaged[0].original_lat);
+    expect(restored[2].lat).toBe(damaged[2].original_lat);
+    expect(restored[0].matched_lat).toBe(43.7);
+
+    const timeline = buildPlaybackTimeline(damaged, []);
+    expect(timeline.stats.distanceKm).toBeGreaterThan(0.2);
   });
 
   it('summarizes comparison deltas for repeated routes', () => {

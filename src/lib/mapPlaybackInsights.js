@@ -116,8 +116,52 @@ const progressForIndex = (index, total) => (
   total > 1 ? Math.max(0, Math.min(100, (index / (total - 1)) * 100)) : 0
 );
 
+const distanceForKeys = (points = [], latKey = 'lat', lngKey = 'lng') => {
+  const clean = (Array.isArray(points) ? points : [])
+    .map((point) => ({
+      lat: finiteNumber(point?.[latKey]),
+      lng: finiteNumber(point?.[lngKey]),
+    }))
+    .filter((point) => point.lat != null && point.lng != null);
+
+  let distanceKm = 0;
+  for (let i = 1; i < clean.length; i++) {
+    distanceKm += haversineDistance(clean[i - 1].lat, clean[i - 1].lng, clean[i].lat, clean[i].lng);
+  }
+  return distanceKm;
+};
+
+export function hasRecoverableOriginalRouteGeometry(points = []) {
+  const route = Array.isArray(points) ? points : [];
+  const originalCount = route.filter((point) => (
+    finiteNumber(point?.original_lat) != null && finiteNumber(point?.original_lng) != null
+  )).length;
+  if (originalCount < 2) return false;
+
+  const currentDistanceKm = distanceForKeys(route);
+  const originalDistanceKm = distanceForKeys(route, 'original_lat', 'original_lng');
+  return originalDistanceKm > 0.1 && originalDistanceKm > Math.max(0.1, currentDistanceKm * 2);
+}
+
+export function restoreOriginalRouteGeometry(points = []) {
+  if (!hasRecoverableOriginalRouteGeometry(points)) return Array.isArray(points) ? points : [];
+  return points.map((point) => {
+    const originalLat = finiteNumber(point?.original_lat);
+    const originalLng = finiteNumber(point?.original_lng);
+    if (originalLat == null || originalLng == null) return point;
+    return {
+      ...point,
+      matched_lat: point.matched_lat ?? point.lat,
+      matched_lng: point.matched_lng ?? point.lng,
+      lat: originalLat,
+      lng: originalLng,
+      recovered_map_matching_geometry: true,
+    };
+  });
+}
+
 export function downsampleRoutePoints(points = [], maxPoints = 250) {
-  const clean = cleanRoutePoints(points);
+  const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
   if (clean.length <= maxPoints) return clean;
   if (maxPoints < 3) return clean.slice(0, maxPoints);
 
@@ -135,7 +179,7 @@ export function prepareMapRoutePoints(points = [], options = {}) {
     maxPoints = DEFAULT_RENDER_POINTS,
     smooth = true,
   } = options;
-  const clean = cleanRoutePoints(points);
+  const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
   const visualPoints = smooth ? smoothRoutePoints(clean) : clean;
   if (!maxPoints || visualPoints.length <= maxPoints) return visualPoints;
   return downsampleRoutePoints(visualPoints, maxPoints);
@@ -200,7 +244,7 @@ const collectStops = (segments = []) => {
 };
 
 export function buildPlaybackTimeline(points = [], events = []) {
-  const clean = cleanRoutePoints(points);
+  const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
   const firstMs = pointTimeMs(clean[0]);
   const lastMs = pointTimeMs(clean[clean.length - 1]);
   const totalDurationSeconds = firstMs != null && lastMs != null && lastMs > firstMs
@@ -329,7 +373,7 @@ export function buildPlaybackTimeline(points = [], events = []) {
 }
 
 export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
-  const clean = cleanRoutePoints(points);
+  const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
   if (!clean.length) return { index: 0, point: null, heading: 0, ratio: 0, fromIndex: 0, toIndex: 0 };
   if (clean.length === 1) return { index: 0, point: clean[0], heading: Number(clean[0].heading ?? clean[0].bearing ?? 0) || 0, ratio: 0, fromIndex: 0, toIndex: 0 };
 

@@ -10,6 +10,7 @@ import {
   buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
 } from '@/lib/phoneUsageAccess';
+import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } from '@/lib/mapPlaybackInsights';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
@@ -138,7 +139,7 @@ export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
 
 const rescoreTrip = (trip) => {
   if (!trip || trip.status !== 'completed') return trip;
-  const routePoints = trip.route_points || [];
+  const routePoints = restoreOriginalRouteGeometry(trip.route_points || []);
   const settings = localSettings.get();
   const thresholds = buildDrivingThresholds(settings);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
@@ -157,6 +158,7 @@ const rescoreTrip = (trip) => {
     ...stats,
     ...scores,
     co2_saved_kg: economics.co2_saved_kg,
+    route_points: routePoints,
     driving_events: drivingEvents.events,
     feedback_adjusted_events_count: feedbackAdjusted.removed + drivingEvents.removed,
     needs_rescore: false,
@@ -169,6 +171,7 @@ const needsRescore = (trip) => (
   trip?.status === 'completed' &&
   (
     trip.needs_rescore ||
+    hasRecoverableOriginalRouteGeometry(trip.route_points || []) ||
     trip.defensive_driving_score == null ||
     trip.reaction_score == null ||
     trip.braking_efficiency_grade == null ||

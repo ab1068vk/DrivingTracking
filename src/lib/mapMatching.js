@@ -1,6 +1,6 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 
-const CACHE_KEY = 'drivesense_map_matching_cache_v1';
+const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const DEFAULT_OSRM_URL = 'https://router.project-osrm.org';
 const MAX_MATCH_POINTS = 100;
 const OSRM_TIMEOUT_MS = 12000;
@@ -80,10 +80,10 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       snappedCount++;
       return {
         ...point,
-        original_lat: point.lat,
-        original_lng: point.lng,
-        lat: nearest.lat,
-        lng: nearest.lng,
+        original_lat: point.original_lat ?? point.lat,
+        original_lng: point.original_lng ?? point.lng,
+        matched_lat: nearest.lat,
+        matched_lng: nearest.lng,
         map_matched: true,
         map_matching_provider: 'osrm',
       };
