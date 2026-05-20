@@ -410,7 +410,9 @@ export default function Settings() {
 
   const refreshSettingsFromNative = async ({ restartIfReady = false } = {}) => {
     const latest = await localSettings.hydrateFromNative();
-    setCfg(latest);
+    setCfg((current) => (
+      JSON.stringify(current) === JSON.stringify(latest) ? current : latest
+    ));
     await refreshPermissions();
 
     if (restartIfReady && isAndroid() && latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
@@ -501,9 +503,11 @@ export default function Settings() {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshAndRestartIfReady();
     };
+    const interval = window.setInterval(refreshAndRestartIfReady, 2000);
     window.addEventListener('focus', refreshAndRestartIfReady);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      window.clearInterval(interval);
       window.removeEventListener('focus', refreshAndRestartIfReady);
       document.removeEventListener('visibilitychange', onVisibility);
     };
