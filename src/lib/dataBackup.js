@@ -8,11 +8,30 @@ const BACKUP_VERSION = 5;
 const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
+const filterString = (value, fallback = '') => (
+  typeof value === 'string' ? value.slice(0, 120) : fallback
+);
+
+export const sanitizeSavedTripFilters = (filters) => (
+  Array.isArray(filters)
+    ? filters
+      .filter((item) => item && typeof item === 'object' && filterString(item.name).trim())
+      .slice(0, 8)
+      .map((item, index) => ({
+        id: filterString(item.id, `filter_import_${index}`),
+        name: filterString(item.name).trim(),
+        search: filterString(item.search),
+        sortBy: filterString(item.sortBy, 'date_desc'),
+        filterBy: filterString(item.filterBy, 'all'),
+        selectedTag: filterString(item.selectedTag, 'all'),
+      }))
+    : []
+);
 
 export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = localSettings.get() } = {}) {
   let savedTripFilters = [];
   try {
-    savedTripFilters = JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) || '[]');
+    savedTripFilters = sanitizeSavedTripFilters(JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) || '[]'));
   } catch {}
   const exportSettings = {
     ...settings,
@@ -108,9 +127,10 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
     localSettings.set({ ...localSettings.get(), ...backup.settings });
   }
 
-  if (Array.isArray(backup.ui?.saved_trip_filters)) {
+  const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
+  if (savedFilters.length > 0) {
     try {
-      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(backup.ui.saved_trip_filters));
+      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
     } catch {}
   }
 
@@ -118,6 +138,6 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
     trips: importedTrips.length,
     vehicles: importedVehicles.length,
     settings: includeSettings && Boolean(backup.settings),
-    savedFilters: Array.isArray(backup.ui?.saved_trip_filters) ? backup.ui.saved_trip_filters.length : 0,
+    savedFilters: savedFilters.length,
   };
 }

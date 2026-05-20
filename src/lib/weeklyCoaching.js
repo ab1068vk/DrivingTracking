@@ -7,10 +7,17 @@ export function buildWeeklyCoachSummary(trips = []) {
     .filter((trip) => trip.status === 'completed')
     .sort((a, b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
   if (completed.length < 3) {
+    const actions = ['Record normal trips this week.', 'Keep the phone out of reach before moving.', 'Review each completed trip for any obvious wrong events.'];
     return {
       headline: 'Complete a few more trips to unlock weekly coaching.',
       insight: 'Road Sage needs at least three completed trips for a reliable local summary.',
-      actions: ['Record normal trips this week.'],
+      actions,
+      plan: actions.map((action, index) => ({
+        id: `weekly-plan-starter-${index + 1}`,
+        title: index === 0 ? 'Build baseline' : index === 1 ? 'During each drive' : 'After driving',
+        action,
+        target: 'Unlock a reliable weekly coach',
+      })),
       confidence: 'low',
     };
   }

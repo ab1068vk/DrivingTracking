@@ -68,4 +68,37 @@ describe('thresholdCalibration', () => {
       1
     );
   });
+
+  it('uses repeated wrong event feedback even before the mileage baseline is met', () => {
+    const profile = computeCalibrationProfile([
+      {
+        ...trip(1, 10, [30, 35, 32]),
+        event_feedback: {
+          e1: { type: 'harsh_brake', verdict: 'wrong', value: 4.9 },
+          e2: { type: 'harsh_brake', verdict: 'wrong', value: 5.2 },
+          e3: { type: 'rapid_acceleration', verdict: 'accurate', value: 3.3 },
+        },
+      },
+    ], thresholds);
+
+    expect(profile.insufficient).toBe(false);
+    expect(profile.feedbackSummary.total).toBe(3);
+    expect(profile.suggested.threshold_harsh_brake_ms2).toBeGreaterThan(thresholds.HARSH_BRAKE_MS2);
+  });
+
+  it('keeps turn feedback calibration at two-decimal g precision', () => {
+    const profile = computeCalibrationProfile([
+      {
+        ...trip(1, 10, [30, 35, 32]),
+        event_feedback: {
+          e1: { type: 'sharp_turn', verdict: 'wrong', value: 0.51 },
+          e2: { type: 'sharp_turn', verdict: 'wrong', value: 0.52 },
+          e3: { type: 'sharp_turn', verdict: 'wrong', value: 0.53 },
+        },
+      },
+    ], thresholds);
+
+    expect(profile.suggested.threshold_sharp_turn_g_medium).toBe(0.58);
+    expect(profile.delta.threshold_sharp_turn_g_medium).toBe(0.13);
+  });
 });

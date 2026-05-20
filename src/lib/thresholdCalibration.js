@@ -5,6 +5,14 @@ export const CALIBRATION_PROFILE_KEY = 'drivesense_calibration_profile';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const round1 = (value) => Math.round(value * 10) / 10;
+const round2 = (value) => Math.round(value * 100) / 100;
+const DEFAULT_THRESHOLDS = {
+  threshold_harsh_brake_ms2: 4.5,
+  threshold_rapid_accel_ms2: 3.5,
+  threshold_sharp_turn_g_low: 0.3,
+  threshold_sharp_turn_g_medium: 0.45,
+  threshold_sharp_turn_g_high: 0.6,
+};
 
 const percentile = (values, p) => {
   if (!values.length) return null;
@@ -16,8 +24,16 @@ const percentile = (values, p) => {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 };
 
-const currentValue = (thresholds, lowerKey, upperKey) => (
-  Number(thresholds?.[lowerKey]) || Number(thresholds?.[upperKey]) || 0
+const currentValue = (thresholds, lowerKey, upperKey) => {
+  const localValue = Number(thresholds?.[lowerKey]);
+  if (Number.isFinite(localValue) && localValue > 0) return localValue;
+  const legacyValue = Number(thresholds?.[upperKey]);
+  if (Number.isFinite(legacyValue) && legacyValue > 0) return legacyValue;
+  return DEFAULT_THRESHOLDS[lowerKey] || 0;
+};
+
+const roundThreshold = (key, value) => (
+  key.includes('_g_') ? round2(value) : round1(value)
 );
 
 const feedbackThresholdMap = {
@@ -95,9 +111,9 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
   };
 
   if (lateralGValues.length >= 20) {
-    suggested.threshold_sharp_turn_g_low = round1(clamp(percentile(lateralGValues, 0.70), 0.20, 0.50));
-    suggested.threshold_sharp_turn_g_medium = round1(clamp(percentile(lateralGValues, 0.85), 0.25, 0.70));
-    suggested.threshold_sharp_turn_g_high = round1(clamp(percentile(lateralGValues, 0.95), 0.35, 0.90));
+    suggested.threshold_sharp_turn_g_low = round2(clamp(percentile(lateralGValues, 0.70), 0.20, 0.50));
+    suggested.threshold_sharp_turn_g_medium = round2(clamp(percentile(lateralGValues, 0.85), 0.25, 0.70));
+    suggested.threshold_sharp_turn_g_high = round2(clamp(percentile(lateralGValues, 0.95), 0.35, 0.90));
   }
 
   const current = {
@@ -115,20 +131,22 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     const accurateCeiling = feedback.accurateValues.length >= 3
       ? (percentile(feedback.accurateValues, 0.95) || wrongTarget) + config.margin
       : wrongTarget;
-    const feedbackTarget = round1(clamp(Math.min(wrongTarget, accurateCeiling), config.min, config.max));
+    const feedbackTarget = roundThreshold(config.key, clamp(Math.min(wrongTarget, accurateCeiling), config.min, config.max));
     suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), feedbackTarget);
   }
 
   const delta = Object.fromEntries(Object.entries(suggested).map(([key, value]) => [
     key,
-    value == null ? null : round1(value - current[key]),
+    value == null ? null : roundThreshold(key, value - current[key]),
   ]));
   const kmAnalyzed = Math.round(kmAnalyzedRaw * 10) / 10;
   const confidence = tripsAnalyzed >= 40 && kmAnalyzed >= 500
     ? 'high'
     : tripsAnalyzed >= 20 && kmAnalyzed >= 250
       ? 'medium'
-      : 'low';
+      : feedbackSummary.total >= 6
+        ? 'medium'
+        : 'low';
 
   return {
     insufficient: false,
