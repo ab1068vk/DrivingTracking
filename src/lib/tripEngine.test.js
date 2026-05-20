@@ -635,6 +635,52 @@ describe('tripEngine', () => {
     expect(decision.reason).toBe('movement_looked_like_walking');
   });
 
+  it('does not confirm slow movement near parking even after enough distance', () => {
+    const start = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString();
+    const slowPoints = [
+      point(43.6532, -79.3832, 0, 10),
+      point(43.6540, -79.3832, 40, 10),
+      point(43.6550, -79.3832, 90, 10),
+      point(43.6560, -79.3832, 190, 10),
+    ];
+
+    const decision = validateCandidateTrip({
+      points: slowPoints,
+      startTime: start,
+      now: slowPoints.at(-1).timestamp,
+      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 95 },
+      nearParkedLocation: true,
+      forceFinal: true,
+    });
+
+    expect(decision.state).toBe(TRIP_STATES.DISCARDED);
+    expect(decision.reason).toBe('movement_looked_like_walking');
+    expect(decision.confirmed).toBe(false);
+  });
+
+  it('requires a vehicle-speed segment near parking even if slow movement passes 250 meters', () => {
+    const start = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString();
+    const slowPoints = [
+      point(43.6532, -79.3832, 0, 12),
+      point(43.6540, -79.3832, 40, 12),
+      point(43.6550, -79.3832, 90, 12),
+      point(43.6560, -79.3832, 190, 12),
+    ];
+
+    const decision = validateCandidateTrip({
+      points: slowPoints,
+      startTime: start,
+      now: slowPoints.at(-1).timestamp,
+      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 95 },
+      nearParkedLocation: true,
+      forceFinal: true,
+    });
+
+    expect(decision.state).toBe(TRIP_STATES.DISCARDED);
+    expect(decision.reason).toBe('no_vehicle_speed_segment');
+    expect(decision.confirmed).toBe(false);
+  });
+
   it('detects recent parked cooldown and trims walking after parking from saved routes', () => {
     const parked = {
       lat: 43.6532,

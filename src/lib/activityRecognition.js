@@ -12,6 +12,7 @@ export const AUTO_START_IN_VEHICLE_CONFIDENCE = 65;
 export const AUTO_START_SPEED_KMH = 5;
 export const AUTO_START_IN_VEHICLE_SECONDS = 2;
 export const AUTO_START_GPS_FALLBACK_SECONDS = 2;
+export const WALKING_SPEED_CUTOFF_KMH = 10;
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -178,7 +179,7 @@ export function shouldAutoStopTracking({
     ACTIVITY_TYPES.RUNNING,
     ACTIVITY_TYPES.ON_BICYCLE,
   ].includes(type) && confidence >= 75;
-  if (onFoot && speed < 15 && secondsStopped >= 10) return true;
+  if (onFoot && speed <= WALKING_SPEED_CUTOFF_KMH && secondsStopped >= 10) return true;
 
   const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
   if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;

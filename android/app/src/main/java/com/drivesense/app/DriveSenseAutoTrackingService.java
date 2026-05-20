@@ -84,6 +84,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double CANDIDATE_CONFIRM_DISTANCE_COOLDOWN_M = 250.0d;
     private static final double CANDIDATE_CONFIRM_SPEED_KMH = 15.0d;
     private static final double CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH = 20.0d;
+    private static final double WALKING_SPEED_CUTOFF_KMH = 10.0d;
     private static final int CANDIDATE_MIN_STABLE_POINTS = 4;
     private static final int CANDIDATE_MIN_STABLE_POINTS_COOLDOWN = 5;
     private static final long CANDIDATE_MAX_REVIEW_MS = 180_000L;
@@ -254,7 +255,7 @@ public class DriveSenseAutoTrackingService extends Service {
             type == DetectedActivity.RUNNING ||
             type == DetectedActivity.ON_BICYCLE) &&
             confidence >= 75;
-        boolean leftVehicle = onFoot && speedKmh < 15.0d;
+        boolean leftVehicle = onFoot && speedKmh <= WALKING_SPEED_CUTOFF_KMH;
 
         boolean isStill = type == DetectedActivity.STILL && confidence >= MIN_STILL_CONFIDENCE;
         boolean inVehicle = type == DetectedActivity.IN_VEHICLE && confidence >= MIN_VEHICLE_CONFIDENCE;
@@ -279,7 +280,7 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         if (candidateTrip && onFoot) {
-            if (speedKmh < CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH) {
+            if (speedKmh <= WALKING_SPEED_CUTOFF_KMH) {
                 discardCandidate("movement_looked_like_walking", "Candidate discarded: walking/running signal detected", keepServiceArmed());
             }
             return;
@@ -613,7 +614,7 @@ public class DriveSenseAutoTrackingService extends Service {
         double requiredSpeedKmh = candidateNearParked ? CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH : CANDIDATE_CONFIRM_SPEED_KMH;
         int requiredStablePoints = candidateNearParked ? CANDIDATE_MIN_STABLE_POINTS_COOLDOWN : CANDIDATE_MIN_STABLE_POINTS;
 
-        if (isStrongOnFootSignal() && stats.maxSpeedKmh < requiredSpeedKmh) {
+        if (isStrongOnFootSignal() && stats.maxSpeedKmh <= WALKING_SPEED_CUTOFF_KMH) {
             discardCandidate("movement_looked_like_walking", "Candidate discarded: walking/running signal detected", keepServiceArmed());
             return;
         }

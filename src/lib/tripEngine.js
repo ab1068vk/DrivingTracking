@@ -422,6 +422,7 @@ export const CANDIDATE_TRIP_DEFAULTS = {
   DISTANCE_PARKING_COOLDOWN_M: 250,
   MAX_SPEED_KMH: 15,
   MAX_SPEED_PARKING_COOLDOWN_KMH: 20,
+  WALKING_SPEED_CUTOFF_KMH: 10,
   STABLE_POINTS: 4,
   STABLE_POINTS_PARKING_COOLDOWN: 5,
   MAX_ACCURACY_M: DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M,
@@ -521,7 +522,7 @@ export function validateCandidateTrip({
     },
   };
 
-  if (strongFootSignal && !vehicleSpeedSegment) {
+  if (strongFootSignal && (stats.max_speed_kmh || 0) <= config.WALKING_SPEED_CUTOFF_KMH) {
     return {
       ...result,
       state: TRIP_STATES.DISCARDED,

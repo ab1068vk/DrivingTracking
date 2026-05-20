@@ -72,10 +72,19 @@ describe('activityRecognition auto-stop logic', () => {
   it('stops after parking when walking GPS speed is above the idle cutoff', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.WALKING, confidence: 82 },
-      currentSpeedKmh: 6,
+      currentSpeedKmh: 10,
       stillSeconds: 20,
       gpsPositionDriftM: 18,
     })).toBe(true);
+  });
+
+  it('does not use walking activity alone to end a trip above the walking speed cutoff', () => {
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.WALKING, confidence: 82 },
+      currentSpeedKmh: 11,
+      stillSeconds: 20,
+      gpsPositionDriftM: 18,
+    })).toBe(false);
   });
 
   it('does not stop while in a crawling traffic jam', () => {
