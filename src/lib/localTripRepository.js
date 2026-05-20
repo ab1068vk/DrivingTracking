@@ -17,7 +17,7 @@ const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 8;
+export const TRIP_SCHEMA_VERSION = 9;
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
@@ -44,6 +44,9 @@ export const TRIP_SCHEMA_VERSION = 8;
  *
  * Version 8 preserves and reconstructs phone-use events across rescoring and
  * OpenStreetMap/weather refreshes so historical phone-use trips remain visible.
+ *
+ * Version 9 recalculates trips after privacy-masked coordinates were excluded
+ * from map, playback, segment, and speed-zone distance calculations.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

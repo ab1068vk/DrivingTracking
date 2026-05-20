@@ -77,6 +77,23 @@ describe('mapPlaybackInsights', () => {
     expect(untimed).toHaveLength(2);
   });
 
+  it('drops privacy-masked null coordinates instead of treating them as zero-zero', () => {
+    const maskedRoute = [
+      { lat: null, lng: null, speed_kmh: 20, timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString() },
+      point(1, 30),
+      point(2, 35),
+      { lat: null, lng: null, speed_kmh: 10, timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 30)).toISOString() },
+    ];
+
+    const prepared = prepareMapRoutePoints(maskedRoute, { maxPoints: null, smooth: false });
+    expect(prepared).toHaveLength(2);
+    expect(prepared.some((item) => item.lat === 0 || item.lng === 0)).toBe(false);
+
+    const timeline = buildPlaybackTimeline(maskedRoute, []);
+    expect(timeline.stats.distanceKm).toBeGreaterThan(0.1);
+    expect(timeline.stats.distanceKm).toBeLessThan(0.2);
+  });
+
   it('recovers routes collapsed by old map-matching updates', () => {
     const damaged = [0, 1, 2].map((index) => ({
       lat: 43.7,

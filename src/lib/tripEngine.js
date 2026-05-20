@@ -158,12 +158,18 @@ export function buildDrivingThresholds(settings = {}) {
  * @returns {number} Distance in kilometers
  */
 export function haversineDistance(lat1, lng1, lat2, lng2) {
+  const startLat = finiteCoordinate(lat1);
+  const startLng = finiteCoordinate(lng1);
+  const endLat = finiteCoordinate(lat2);
+  const endLng = finiteCoordinate(lng2);
+  if (startLat == null || startLng == null || endLat == null || endLng == null) return 0;
+
   const R = 6371; // Earth radius in km
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
+  const dLat = toRad(endLat - startLat);
+  const dLng = toRad(endLng - startLng);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    Math.cos(toRad(startLat)) * Math.cos(toRad(endLat)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
   return R * c;
 }
@@ -176,15 +182,31 @@ function toRad(deg) {
   return (deg * Math.PI) / 180;
 }
 
+function finiteCoordinate(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function hasValidCoordinates(point) {
+  return finiteCoordinate(point?.lat) != null && finiteCoordinate(point?.lng) != null;
+}
+
 // ─── Heading Calculation ───────────────────────────────────────────────────────
 /**
  * Calculate bearing (heading) between two GPS points.
  * @returns {number} Bearing in degrees (0-360)
  */
 export function calculateBearing(lat1, lng1, lat2, lng2) {
-  const dLng = toRad(lng2 - lng1);
-  const rlat1 = toRad(lat1);
-  const rlat2 = toRad(lat2);
+  const startLat = finiteCoordinate(lat1);
+  const startLng = finiteCoordinate(lng1);
+  const endLat = finiteCoordinate(lat2);
+  const endLng = finiteCoordinate(lng2);
+  if (startLat == null || startLng == null || endLat == null || endLng == null) return 0;
+
+  const dLng = toRad(endLng - startLng);
+  const rlat1 = toRad(startLat);
+  const rlat2 = toRad(endLat);
   const y = Math.sin(dLng) * Math.cos(rlat2);
   const x = Math.cos(rlat1) * Math.sin(rlat2) - Math.sin(rlat1) * Math.cos(rlat2) * Math.cos(dLng);
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
@@ -296,6 +318,18 @@ export function calculateSegmentMetrics(previousPoint, point, thresholds = DEFAU
     };
   }
 
+  if (!hasValidCoordinates(previousPoint) || !hasValidCoordinates(point)) {
+    return {
+      dt,
+      distanceKm: 0,
+      distanceM: 0,
+      impliedSpeedKmh: 0,
+      reportedSpeedKmh: Number.isFinite(point.speed_kmh) ? Math.max(0, point.speed_kmh) : null,
+      reliableSpeedKmh: 0,
+      isNoise: true,
+    };
+  }
+
   const distanceKm = haversineDistance(previousPoint.lat, previousPoint.lng, point.lat, point.lng);
   const distanceM = distanceKm * 1000;
   const impliedSpeedKmh = calculateSpeedKmh(distanceKm, dt);
@@ -381,7 +415,7 @@ export function normalizeLocationPoint(input) {
 }
 
 export function shouldAcceptLocationPoint(point, previousPoint = null, thresholds = DEFAULT_THRESHOLDS) {
-  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return false;
+  if (!point || !hasValidCoordinates(point)) return false;
   if (point.accuracy != null && point.accuracy > thresholds.MAX_GPS_ACCURACY_M) return false;
   if (!previousPoint) return true;
 
@@ -1002,7 +1036,7 @@ function zoneFromP85(p85Speed) {
 export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const points = (routePoints || [])
     .map((point, index) => ({ point, index, ts: timestampMs(point), speed: reliablePointSpeed(routePoints, index, thresholds) }))
-    .filter((entry) => Number.isFinite(entry.ts));
+    .filter((entry) => Number.isFinite(entry.ts) && hasValidCoordinates(entry.point));
   if (points.length < 2) return [];
 
   const zones = [];
@@ -3606,7 +3640,7 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
  * @returns {Object} Trip statistics
  */
 export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
-  const routePoints = (points || []).filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
+  const routePoints = (points || []).filter(hasValidCoordinates);
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
   const durationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);

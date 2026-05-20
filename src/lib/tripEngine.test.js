@@ -3,6 +3,7 @@ import {
   calculateNightPenalty,
   calculateJerkScore,
   calculateFuelBandScore,
+  calculateSegmentMetrics,
   calculateSmoothBrakingRatio,
   calculateSpeedVariabilityIndex,
   classifyRoadType,
@@ -74,6 +75,28 @@ describe('tripEngine', () => {
     const km = haversineDistance(43.6532, -79.3832, 43.6542, -79.3832);
     expect(km).toBeGreaterThan(0.1);
     expect(km).toBeLessThan(0.12);
+  });
+
+  it('ignores privacy-masked null coordinates in segment and trip distances', () => {
+    const points = [
+      { lat: null, lng: null, speed_kmh: 30, timestamp: point(43.6532, -79.3832, 0).timestamp, masked_for_privacy: true },
+      point(43.6532, -79.3832, 10, 30),
+      point(43.6542, -79.3832, 20, 35),
+      { lat: null, lng: null, speed_kmh: 0, timestamp: point(43.6542, -79.3832, 30).timestamp, masked_for_privacy: true },
+    ];
+
+    const maskedSegment = calculateSegmentMetrics(points[0], points[1]);
+    expect(maskedSegment.distanceKm).toBe(0);
+    expect(maskedSegment.isNoise).toBe(true);
+    expect(haversineDistance(null, null, 43.6532, -79.3832)).toBe(0);
+
+    const stats = calculateTripStats(points, points[0].timestamp, points[3].timestamp);
+    expect(stats.distance_km).toBeGreaterThan(0.1);
+    expect(stats.distance_km).toBeLessThan(0.12);
+
+    const zones = inferSpeedZones(points);
+    expect(zones.length).toBeGreaterThan(0);
+    expect(zones.every((zone) => zone.startIndex > 0 && zone.endIndex < points.length - 1)).toBe(true);
   });
 
   it('rejects inaccurate, duplicate, and impossible GPS points', () => {
