@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
 import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegments } from '@/lib/tripInsights';
@@ -250,6 +252,7 @@ let leafletLoaded = false;
 let loadPromise = null;
 
 function loadLeaflet() {
+  if (typeof window !== 'undefined' && !window.L) window.L = L;
   if (leafletLoaded) return Promise.resolve();
   if (loadPromise) return loadPromise;
 

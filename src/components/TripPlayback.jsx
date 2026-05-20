@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
 import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
@@ -82,9 +84,10 @@ const eventPopupHtml = (event) => {
 let leafletLoaded = false;
 let loadPromise = null;
 function loadLeaflet() {
+  if (typeof window !== 'undefined' && !window.L) window.L = L;
   if (leafletLoaded || window.L) { leafletLoaded = true; return Promise.resolve(); }
   if (loadPromise) return loadPromise;
-  loadPromise = new Promise(resolve => {
+  loadPromise = new Promise((resolve, reject) => {
     const css = document.createElement('link');
     css.rel = 'stylesheet';
     css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -92,6 +95,7 @@ function loadLeaflet() {
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
     script.onload = () => { leafletLoaded = true; resolve(); };
+    script.onerror = () => reject(new Error('Leaflet could not be loaded'));
     document.head.appendChild(script);
   });
   return loadPromise;
@@ -139,6 +143,7 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const [followVehicle, setFollowVehicle] = useState(true);
   const [playbackElapsedSeconds, setPlaybackElapsedSeconds] = useState(0);
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
+  const [mapFailed, setMapFailed] = useState(false);
 
   const privacySettings = useMemo(() => localSettings.get(), [trip?.id, secondaryTrip?.id]);
   const points = useMemo(() => prepareMapRoutePoints(
@@ -185,11 +190,13 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
     setFollowVehicle(true);
     setPlaybackElapsedSeconds(0);
     setSelectedSegmentId(null);
+    setMapFailed(false);
   }, [trip?.id, secondaryTrip?.id]);
 
   useEffect(() => {
+    let cancelled = false;
     loadLeaflet().then(() => {
-      if (!mapRef.current || leafletMapRef.current) return;
+      if (cancelled || !mapRef.current || leafletMapRef.current) return;
       const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
       leafletMapRef.current = map;
       window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
@@ -300,8 +307,11 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
       } else {
         map.setView([51.505, -0.09], 13);
       }
+    }).catch(() => {
+      if (!cancelled) setMapFailed(true);
     });
     return () => {
+      cancelled = true;
       cancelAnimationFrame(animRef.current);
       if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; }
       markerRef.current = null;
@@ -470,7 +480,16 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   return (
     <div className="space-y-3">
       <div className="rounded-2xl overflow-hidden border border-border shadow-sm relative">
-        <div ref={mapRef} style={{ height, width: '100%', zIndex: 0 }} />
+        {mapFailed ? (
+          <PlaybackRoutePreview
+            points={points}
+            secondaryPoints={secondaryPoints}
+            events={events}
+            height={height}
+          />
+        ) : (
+          <div ref={mapRef} style={{ height, width: '100%', zIndex: 0 }} />
+        )}
 
         <div className="absolute left-3 top-3 z-10 grid max-w-[calc(100%-1.5rem)] grid-cols-2 gap-2 sm:grid-cols-4">
           <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow backdrop-blur">
@@ -726,6 +745,61 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function PlaybackRoutePreview({ points = [], secondaryPoints = [], events = [], height = '380px' }) {
+  const allPoints = [...points, ...secondaryPoints]
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (!allPoints.length) {
+    return (
+      <div className="flex items-center justify-center bg-secondary/40 text-sm text-muted-foreground" style={{ height }}>
+        Offline playback preview unavailable.
+      </div>
+    );
+  }
+
+  const minLat = Math.min(...allPoints.map((point) => point.lat));
+  const maxLat = Math.max(...allPoints.map((point) => point.lat));
+  const minLng = Math.min(...allPoints.map((point) => point.lng));
+  const maxLng = Math.max(...allPoints.map((point) => point.lng));
+  const scale = (point) => {
+    const x = ((point.lng - minLng) / Math.max(0.00001, maxLng - minLng)) * 92 + 4;
+    const y = 96 - (((point.lat - minLat) / Math.max(0.00001, maxLat - minLat)) * 92 + 4);
+    return `${x},${y}`;
+  };
+
+  return (
+    <div className="relative bg-secondary/40" style={{ height }}>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
+        <rect width="100" height="100" fill="hsl(var(--secondary))" opacity="0.45" />
+        <polyline
+          points={points.map(scale).join(' ')}
+          fill="none"
+          stroke="#2563eb"
+          strokeWidth="1.8"
+          vectorEffect="non-scaling-stroke"
+        />
+        {secondaryPoints.length > 1 && (
+          <polyline
+            points={secondaryPoints.map(scale).join(' ')}
+            fill="none"
+            stroke="#f97316"
+            strokeDasharray="3 2"
+            strokeWidth="1.4"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+        {events.slice(0, 40).map((event, index) => {
+          if (!Number.isFinite(event.lat) || !Number.isFinite(event.lng)) return null;
+          const [cx, cy] = scale(event).split(',').map(Number);
+          return <circle key={`${event.timestamp || event.type}-${index}`} cx={cx} cy={cy} r="1.3" fill={EVENT_COLORS[event.type] || '#ef4444'} vectorEffect="non-scaling-stroke" />;
+        })}
+      </svg>
+      <div className="pointer-events-none absolute inset-x-3 bottom-3 rounded-xl bg-background/85 px-3 py-2 text-xs font-medium text-muted-foreground shadow-sm">
+        Offline playback preview - map assets unavailable
+      </div>
     </div>
   );
 }
