@@ -429,6 +429,16 @@ export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
   };
 }
 
+export function routeDistanceAtPlaybackPosition(timeline = {}, playbackPosition = {}, fallbackIndex = 0) {
+  const cumulativeDistancesKm = Array.isArray(timeline.cumulativeDistancesKm) ? timeline.cumulativeDistancesKm : [];
+  const segments = Array.isArray(timeline.segments) ? timeline.segments : [];
+  const fromIndex = Math.max(0, playbackPosition.fromIndex ?? Math.max(0, fallbackIndex - 1));
+  const toIndex = Math.max(fromIndex, playbackPosition.toIndex ?? fallbackIndex);
+  const segment = segments.find((item) => item.fromIndex === fromIndex && item.toIndex === toIndex);
+  const baseDistanceKm = cumulativeDistancesKm[fromIndex] || 0;
+  return baseDistanceKm + (segment?.distanceKm || 0) * (playbackPosition.ratio ?? 0);
+}
+
 export function buildRouteComparison(currentTrip = {}, secondaryTrip = {}) {
   if (!secondaryTrip) return { rows: [], notes: [] };
   const currentEvents = currentTrip.driving_events?.length || 0;

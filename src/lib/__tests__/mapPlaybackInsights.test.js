@@ -7,6 +7,7 @@ import {
   playbackPositionAtElapsed,
   prepareMapRoutePoints,
   restoreOriginalRouteGeometry,
+  routeDistanceAtPlaybackPosition,
 } from '@/lib/mapPlaybackInsights';
 
 const point = (index, speed = 40, extra = {}) => ({
@@ -47,6 +48,21 @@ describe('mapPlaybackInsights', () => {
     expect(position.index).toBe(1);
     expect(position.point.lat).toBeCloseTo(43.6505, 4);
     expect(position.point.speed_kmh).toBeCloseTo(30, 0);
+  });
+
+  it('keeps traveled distance tied to route progress during stopped playback time', () => {
+    const points = [
+      point(0, 30, { timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString() }),
+      point(1, 0, { timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 10)).toISOString() }),
+      point(1, 0, { timestamp: new Date(Date.UTC(2026, 0, 1, 12, 1, 10)).toISOString() }),
+      point(2, 30, { timestamp: new Date(Date.UTC(2026, 0, 1, 12, 1, 20)).toISOString() }),
+    ];
+    const timeline = buildPlaybackTimeline(points, []);
+    const beforeStopDistanceKm = timeline.cumulativeDistancesKm[1];
+    const positionDuringStop = playbackPositionAtElapsed(points, 40);
+
+    expect(routeDistanceAtPlaybackPosition(timeline, positionDuringStop, positionDuringStop.index))
+      .toBeCloseTo(beforeStopDistanceKm, 6);
   });
 
   it('downsamples dense routes but preserves the first and last point', () => {

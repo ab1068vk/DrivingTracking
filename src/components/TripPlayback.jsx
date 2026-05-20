@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
-import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
+import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
@@ -184,11 +184,13 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
   const displayRouteDistanceKm = Number.isFinite(savedDistanceKm) && savedDistanceKm > 0 ? savedDistanceKm : stats.distanceKm;
   const displayDurationSeconds = Number.isFinite(savedDurationSeconds) && savedDurationSeconds > 0 ? savedDurationSeconds : stats.durationSeconds;
   const displayMaxSpeedKmh = Number.isFinite(savedMaxSpeedKmh) && savedMaxSpeedKmh > 0 ? savedMaxSpeedKmh : stats.maxSpeedKmh;
-  const displayCurrentDistanceKm = displayRouteDistanceKm * (
-    playbackDurationSeconds > 0
-      ? Math.max(0, Math.min(1, playbackElapsedSeconds / playbackDurationSeconds))
-      : totalPoints > 1 ? Math.max(0, Math.min(1, currentIdx / (totalPoints - 1))) : 0
+  const currentMaskedDistanceKm = useMemo(
+    () => routeDistanceAtPlaybackPosition(timeline, playbackPosition, currentIdx),
+    [currentIdx, playbackPosition, timeline]
   );
+  const displayCurrentDistanceKm = stats.distanceKm > 0
+    ? displayRouteDistanceKm * Math.max(0, Math.min(1, currentMaskedDistanceKm / stats.distanceKm))
+    : currentMaskedDistanceKm;
   const elapsedSeconds = Math.round(playbackElapsedSeconds);
   const nextEvent = timelineEvents.find((event) => event.playbackIndex > currentIdx);
   const selectedSegment = speedSegments.find((segment) => segment.id === selectedSegmentId);
