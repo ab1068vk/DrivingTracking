@@ -147,6 +147,25 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
 
 // ─── Local Settings Store ──────────────────────────────────────────────────────
 export const localSettings = {
+  async hydrateFromNative() {
+    try {
+      const { Capacitor } = await import('@capacitor/core');
+      if (!Capacitor.isNativePlatform()) return this.get();
+
+      const { Preferences } = await import('@capacitor/preferences');
+      const { value } = await Preferences.get({ key: SETTINGS_KEY });
+      if (!value) return this.get();
+
+      const parsed = JSON.parse(value);
+      const merged = { ...DEFAULT_SETTINGS, ...parsed };
+      const serialized = JSON.stringify(merged);
+      localStorage.setItem(SETTINGS_KEY, serialized);
+      lastNativeSettingsSync = serialized;
+      return merged;
+    } catch {
+      return this.get();
+    }
+  },
   get() {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);

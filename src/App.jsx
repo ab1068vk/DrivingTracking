@@ -49,15 +49,18 @@ const AuthenticatedApp = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    configureNotificationChannels().catch(() => {});
-    const settings = localSettings.get();
-    syncReminderNotifications(settings, { requestPermission: false }).catch(() => {});
-    setOnboardingDone(settings.onboarding_completed);
-    if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-      startNativeAutoTracking().catch(() => {});
-    }
+    const bootstrapSettings = async () => {
+      configureNotificationChannels().catch(() => {});
+      const settings = await localSettings.hydrateFromNative();
+      syncReminderNotifications(settings, { requestPermission: false }).catch(() => {});
+      setOnboardingDone(settings.onboarding_completed);
+      if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
+        startNativeAutoTracking().catch(() => {});
+      }
 
-    applyThemeMode(settings.dark_mode);
+      applyThemeMode(settings.dark_mode);
+    };
+    bootstrapSettings();
   }, []);
 
   useEffect(() => {
