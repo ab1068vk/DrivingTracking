@@ -1,6 +1,23 @@
 import { analyzeDayOfWeek, analyzeTimeOfDay, computePersonalBaseline } from '@/lib/tripInsights';
+import { clamp, getFallbackTimeRisk, getTimeBucket } from '@/lib/habitProfile';
 
-export const PRE_TRIP_RISK_WEIGHTS = {
+const RISK_CONSTANTS = {
+  MIN_TRIPS_FOR_BUCKET: 3,
+  MIN_TRIPS_FOR_DAY: 2,
+  MIN_TRIPS_FOR_CALIBRATION: 5,
+  FULL_CALIBRATION_TRIPS: 30,
+  FALLBACK_NIGHT_RISK: 60,
+  FALLBACK_MORNING_RUSH_RISK: 35,
+  FALLBACK_EVENING_RUSH_RISK: 40,
+  FALLBACK_DEFAULT_RISK: 20,
+  HIGH_RISK_FLOOR: 65,
+  MODERATE_RISK_FLOOR: 40,
+  GATE_ADJUSTMENT_MAX: 5,
+  TREND_WINDOW: 20,
+  RECENT_TRIP_DAYS: 90,
+};
+
+const DEFAULT_WEIGHTS = {
   timeOfDay: 0.14,
   dayOfWeek: 0.10,
   recentTrend: 0.18,
@@ -10,6 +27,20 @@ export const PRE_TRIP_RISK_WEIGHTS = {
   dangerZones: 0.06,
   routeForecast: 0.08,
   recentRest: 0.04,
+};
+
+export const PRE_TRIP_RISK_WEIGHTS = DEFAULT_WEIGHTS;
+
+export const PRE_TRIP_RISK_SIGNAL_GATES = {
+  moderateTimeOfDay: 60,
+  highTimeOfDay: 80,
+  moderateRouteForecast: 40,
+  highRouteForecast: 65,
+  moderateDailyFatigue: 70,
+  highDailyFatigue: 90,
+  moderateRecentRest: 80,
+  moderateWeather: 60,
+  moderateDangerZones: 70,
 };
 
 const SIGNAL_LABELS = {
@@ -36,28 +67,21 @@ const SIGNAL_TIPS = {
   recentRest: 'Pause briefly before driving again, especially after a demanding trip.',
 };
 
-const last90Days = (trips = []) => {
-  const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
-  return trips.filter((trip) => new Date(trip.start_time || 0).getTime() >= cutoff);
-};
-
-const currentBucketLabel = (hour) => {
-  if (hour >= 5 && hour < 12) return 'Morning';
-  if (hour >= 12 && hour < 17) return 'Afternoon';
-  if (hour >= 17 && hour < 22) return 'Evening';
-  return 'Night';
+const last90Days = (trips = [], now = new Date()) => {
+  const cutoff = now.getTime() - RISK_CONSTANTS.RECENT_TRIP_DAYS * 24 * 60 * 60 * 1000;
+  return trips.filter((trip) => new Date(trip.start_time || trip.startedAt || 0).getTime() >= cutoff);
 };
 
 const fallbackTimeRisk = (hour) => {
-  if (hour >= 22 || hour < 5) return 60;
-  if (hour >= 7 && hour <= 9) return 35;
-  if (hour >= 16 && hour <= 18) return 40;
-  return 20;
+  if (hour >= 22 || hour < 5) return RISK_CONSTANTS.FALLBACK_NIGHT_RISK;
+  if (hour >= 7 && hour <= 9) return RISK_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
+  if (hour >= 16 && hour <= 18) return RISK_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
+  return RISK_CONSTANTS.FALLBACK_DEFAULT_RISK;
 };
 
 const routeRiskFromContext = (context = {}) => {
   const directScore = Number(context.routeRiskScore ?? context.predictiveRouteRisk?.riskScore);
-  if (Number.isFinite(directScore)) return Math.max(0, Math.min(100, directScore));
+  if (Number.isFinite(directScore)) return clamp(directScore, 0, 100);
 
   const level = context.routeRiskLevel || context.predictiveRouteRisk?.riskLevel;
   if (level === 'high') return 75;
@@ -68,7 +92,7 @@ const routeRiskFromContext = (context = {}) => {
 
 const recentRestRisk = (lastTrip, nowMs) => {
   if (!lastTrip) return 10;
-  const endMs = new Date(lastTrip.end_time || lastTrip.start_time || 0).getTime();
+  const endMs = new Date(lastTrip.end_time || lastTrip.endedAt || lastTrip.start_time || lastTrip.startedAt || 0).getTime();
   if (!Number.isFinite(endMs) || endMs <= 0 || endMs > nowMs) return 10;
 
   const minutesSinceLastTrip = (nowMs - endMs) / 60000;
@@ -78,58 +102,177 @@ const recentRestRisk = (lastTrip, nowMs) => {
   return 5;
 };
 
-export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState = null, context = {}) {
+const dailyFatigueRisk = (dailyFatigueState) => {
+  if (!dailyFatigueState) return 20;
+  if (dailyFatigueState.fatigueLevel === 'critical') return 90;
+  if (dailyFatigueState.fatigueLevel === 'high') return 70;
+  if (dailyFatigueState.fatigueLevel === 'moderate') return 40;
+  return 10;
+};
+
+const normalizeWeights = (weights) => {
+  const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
+  return Object.fromEntries(Object.entries(weights).map(([key, value]) => [key, value / total]));
+};
+
+/**
+ * Derive readiness signal weights from profile confidence and bucket data quality.
+ * @param {object|null} profile - Optional habit profile returned by buildHabitProfile.
+ * @param {Date} now - Clock used to resolve current time and day buckets.
+ * @returns {object} Normalized signal weight map that sums to 1.
+ * @example deriveWeights(habitProfile, new Date())
+ */
+export function deriveWeights(profile = null, now = new Date()) {
+  if (!profile || Number(profile.confidence) < 0.3) {
+    return DEFAULT_WEIGHTS;
+  }
+
+  const adjusted = { ...DEFAULT_WEIGHTS };
+  const currentBucket = getTimeBucket(now.getHours());
+  const currentDow = now.getDay();
+
+  if (profile.timeBuckets?.[currentBucket]?.insufficient) {
+    const freed = adjusted.timeOfDay * 0.5;
+    adjusted.timeOfDay -= freed;
+    adjusted.recentTrend += freed * 0.6;
+    adjusted.dailyFatigue += freed * 0.4;
+  }
+
+  if (profile.dayOfWeek?.[currentDow]?.insufficient) {
+    const freed = adjusted.dayOfWeek * 0.5;
+    adjusted.dayOfWeek -= freed;
+    adjusted.recentTrend += freed * 0.6;
+    adjusted.dailyFatigue += freed * 0.4;
+  }
+
+  return normalizeWeights(adjusted);
+}
+
+/**
+ * Derive signal-gate floors from a driver's calibrated all-time average.
+ * @param {object|null} profile - Optional habit profile returned by buildHabitProfile.
+ * @returns {{highFloor: number, moderateFloor: number}} Adaptive gate floors.
+ * @example deriveSignalGates(habitProfile)
+ */
+export function deriveSignalGates(profile = null) {
+  if (!profile || Number(profile.confidence) < 0.3) {
+    return {
+      highFloor: RISK_CONSTANTS.HIGH_RISK_FLOOR,
+      moderateFloor: RISK_CONSTANTS.MODERATE_RISK_FLOOR,
+    };
+  }
+
+  const baseline = Number.isFinite(Number(profile.allTimeAvgScore)) ? Number(profile.allTimeAvgScore) : 70;
+  const adjustment = clamp((baseline - 70) / 10, -RISK_CONSTANTS.GATE_ADJUSTMENT_MAX, RISK_CONSTANTS.GATE_ADJUSTMENT_MAX);
+
+  return {
+    highFloor: RISK_CONSTANTS.HIGH_RISK_FLOOR - adjustment,
+    moderateFloor: RISK_CONSTANTS.MODERATE_RISK_FLOOR - adjustment,
+  };
+}
+
+const riskFloorFromSignalGates = (signals, profile) => {
+  const gates = PRE_TRIP_RISK_SIGNAL_GATES;
+  const floors = deriveSignalGates(profile);
+  const highSignal =
+    signals.timeOfDay >= gates.highTimeOfDay ||
+    signals.routeForecast >= gates.highRouteForecast ||
+    (signals.dailyFatigue >= gates.highDailyFatigue && signals.lastTripOutcome >= 70);
+
+  if (highSignal) return floors.highFloor;
+
+  const moderateSignal =
+    signals.timeOfDay >= gates.moderateTimeOfDay ||
+    signals.routeForecast >= gates.moderateRouteForecast ||
+    signals.dailyFatigue >= gates.moderateDailyFatigue ||
+    signals.recentRest >= gates.moderateRecentRest ||
+    signals.weather >= gates.moderateWeather ||
+    signals.dangerZones >= gates.moderateDangerZones;
+
+  return moderateSignal ? floors.moderateFloor : 0;
+};
+
+const weightedRisk = (signals, weights) => Math.round(Object.entries(weights).reduce(
+  (sum, [key, weight]) => sum + clamp(signals[key], 0, 100) * weight,
+  0
+));
+
+/**
+ * Compute trip readiness risk from historical trips, current fatigue, and route context.
+ * @param {Array<object>} trips - Completed and recent trip records.
+ * @param {object} settings - User settings object kept for API compatibility.
+ * @param {object|null} dailyFatigueState - Daily fatigue state from computeDailyFatigue.
+ * @param {object} context - Weather, danger-zone, route-risk, and optional now values.
+ * @param {object|null} habitProfile - Optional learned profile returned by buildHabitProfile.
+ * @returns {object} Readiness result with composite risk, score, signals, and data quality.
+ * @example computePreTripRisk(completedTrips, settings, dailyFatigue, context, habitProfile)
+ */
+export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState = null, context = {}, habitProfile = null) {
+  void settings;
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
-  const recent = last90Days(completed);
-  const now = new Date();
+  const now = context?.now instanceof Date
+    ? context.now
+    : context?.now != null
+      ? new Date(context.now)
+      : new Date();
   const nowMs = now.getTime();
+  const recent = last90Days(completed, now);
+  const currentBucket = getTimeBucket(now.getHours());
+  const currentDow = now.getDay();
   const timeData = analyzeTimeOfDay(recent);
   const dayData = analyzeDayOfWeek(recent);
-  const timeBucket = timeData.find((bucket) => bucket.label === currentBucketLabel(now.getHours()));
-  const dayEntry = dayData[now.getDay()];
+  const legacyTimeBucket = timeData.find((bucket) => bucket.label === currentBucket);
+  const legacyDayEntry = dayData[currentDow];
   const baseline = computePersonalBaseline(recent);
   const sorted = [...completed].sort((a, b) => (
-    new Date(b.end_time || b.start_time || 0).getTime() -
-    new Date(a.end_time || a.start_time || 0).getTime()
+    new Date(b.end_time || b.endedAt || b.start_time || b.startedAt || 0).getTime() -
+    new Date(a.end_time || a.endedAt || a.start_time || a.startedAt || 0).getTime()
   ));
   const lastTrip = sorted[0] || null;
+  const profileTimeBucket = habitProfile?.timeBuckets?.[currentBucket];
+  const profileDayEntry = habitProfile?.dayOfWeek?.[currentDow];
 
   const signals = {
-    timeOfDay: timeBucket?.avgScore != null ? Math.max(0, 100 - timeBucket.avgScore) : fallbackTimeRisk(now.getHours()),
-    dayOfWeek: dayEntry?.avgScore != null ? Math.max(0, 100 - dayEntry.avgScore) : 25,
-    recentTrend: baseline.trend === 'declining' ? 65 : baseline.trend === 'improving' ? 10 : 30,
-    dailyFatigue: dailyFatigueState
-      ? dailyFatigueState.fatigueLevel === 'critical'
-        ? 90
-        : dailyFatigueState.fatigueLevel === 'high'
-          ? 70
-          : dailyFatigueState.fatigueLevel === 'moderate'
-            ? 40
-            : 10
-      : 20,
-    lastTripOutcome: lastTrip ? Math.max(0, 100 - (lastTrip.score_overall ?? lastTrip.overall_score ?? 50)) : 25,
+    timeOfDay: habitProfile && profileTimeBucket?.insufficient === false
+      ? profileTimeBucket.riskScore
+      : habitProfile
+        ? getFallbackTimeRisk(now.getHours(), habitProfile)
+        : legacyTimeBucket?.avgScore != null
+          ? 100 - legacyTimeBucket.avgScore
+          : fallbackTimeRisk(now.getHours()),
+    dayOfWeek: habitProfile && profileDayEntry?.insufficient === false
+      ? profileDayEntry.riskScore
+      : habitProfile
+        ? 50
+        : legacyDayEntry?.avgScore != null
+          ? 100 - legacyDayEntry.avgScore
+          : 25,
+    recentTrend: habitProfile
+      ? habitProfile.trendRisk
+      : baseline.trend === 'declining'
+        ? 65
+        : baseline.trend === 'improving'
+          ? 10
+          : 30,
+    dailyFatigue: dailyFatigueRisk(dailyFatigueState),
+    lastTripOutcome: lastTrip ? 100 - (lastTrip.score_overall ?? lastTrip.overall_score ?? lastTrip.score ?? 50) : 25,
     weather: Number(context.weatherRiskScore) || Number(context.weather_context?.riskScore) || 0,
-    dangerZones: Math.min(100, (Number(context.nearbyDangerZoneCount) || 0) * 35),
+    dangerZones: (Number(context.nearbyDangerZoneCount) || 0) * 35,
     routeForecast: routeRiskFromContext(context),
     recentRest: recentRestRisk(lastTrip, nowMs),
   };
 
-  const compositeRisk = Math.round(
-    signals.timeOfDay * PRE_TRIP_RISK_WEIGHTS.timeOfDay +
-    signals.dayOfWeek * PRE_TRIP_RISK_WEIGHTS.dayOfWeek +
-    signals.recentTrend * PRE_TRIP_RISK_WEIGHTS.recentTrend +
-    signals.dailyFatigue * PRE_TRIP_RISK_WEIGHTS.dailyFatigue +
-    signals.lastTripOutcome * PRE_TRIP_RISK_WEIGHTS.lastTripOutcome +
-    signals.weather * PRE_TRIP_RISK_WEIGHTS.weather +
-    signals.dangerZones * PRE_TRIP_RISK_WEIGHTS.dangerZones +
-    signals.routeForecast * PRE_TRIP_RISK_WEIGHTS.routeForecast +
-    signals.recentRest * PRE_TRIP_RISK_WEIGHTS.recentRest
-  );
-  const riskLevel = compositeRisk >= 65 || (signals.dailyFatigue >= 90 && signals.lastTripOutcome >= 70)
+  const clampedSignals = Object.fromEntries(Object.entries(signals).map(([key, value]) => [key, clamp(value, 0, 100)]));
+  const weights = deriveWeights(habitProfile, now);
+  const weightedCompositeRisk = weightedRisk(clampedSignals, weights);
+  const compositeRisk = clamp(Math.round(Math.max(weightedCompositeRisk, riskFloorFromSignalGates(clampedSignals, habitProfile))), 0, 100);
+  const riskLevel = compositeRisk >= RISK_CONSTANTS.HIGH_RISK_FLOOR
     ? 'high'
-    : compositeRisk >= 40 ? 'moderate' : 'low';
-  const primaryKey = Object.entries(signals).sort((a, b) => b[1] - a[1])[0]?.[0] || 'timeOfDay';
-  const topSignals = Object.entries(signals)
+    : compositeRisk >= RISK_CONSTANTS.MODERATE_RISK_FLOOR
+      ? 'moderate'
+      : 'low';
+  const primaryKey = Object.entries(clampedSignals).sort((a, b) => b[1] - a[1])[0]?.[0] || 'timeOfDay';
+  const topSignals = Object.entries(clampedSignals)
     .map(([key, value]) => ({
       key,
       value: Math.round(value),
@@ -147,6 +290,13 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     primaryConcern: SIGNAL_LABELS[primaryKey],
     tipText: SIGNAL_TIPS[primaryKey],
     topSignals,
-    signals,
+    signals: clampedSignals,
+    habitProfile,
+    dataQuality: {
+      confidence: habitProfile?.confidence ?? 0,
+      sufficientTimeData: habitProfile ? profileTimeBucket?.insufficient === false : false,
+      sufficientDayData: habitProfile ? profileDayEntry?.insufficient === false : false,
+      personalised: (habitProfile?.confidence ?? 0) >= 0.3,
+    },
   };
 }

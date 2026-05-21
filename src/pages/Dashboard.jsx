@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
@@ -71,6 +71,7 @@ import {
 } from '@/lib/tripInsights';
 import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } from '@/lib/dangerZoneEngine';
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
+import { buildHabitProfile } from '@/lib/habitProfile';
 import { computePreTripRisk } from '@/lib/preTripRisk';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
@@ -223,18 +224,23 @@ export default function Dashboard() {
   });
 
   const completedTrips = recentTrips.filter(t => t.status === 'completed');
+  const habitProfile = useMemo(
+    () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
+    [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
+  );
   const todayTrips = getTodayTrips(completedTrips);
-  const dailyFatigue = computeDailyFatigue(todayTrips, settings);
+  const dailyFatigue = computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
   const predictiveRouteRisk = estimatePredictiveRouteRisk({
     trips: completedTrips,
     dangerZones,
     weatherRiskScore: 0,
     currentLocation,
+    habitProfile,
   });
   const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue, {
     nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
     predictiveRouteRisk,
-  });
+  }, habitProfile);
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch(() => {});
@@ -1589,9 +1595,9 @@ export default function Dashboard() {
             <div
               className="grid h-14 w-14 flex-shrink-0 place-items-center rounded-full text-sm font-bold text-white"
               style={{
-                background: preTripRisk.readinessScore >= 70
+                background: preTripRisk.riskLevel === 'low'
                   ? '#22c55e'
-                  : preTripRisk.readinessScore >= 45
+                  : preTripRisk.riskLevel === 'moderate'
                     ? '#eab308'
                     : '#ef4444',
               }}
@@ -1612,6 +1618,16 @@ export default function Dashboard() {
               <div className="break-words text-sm font-medium capitalize">
                 {preTripRisk.readinessScore}/100 · {preTripRisk.riskLevel} risk
               </div>
+              {preTripRisk.dataQuality?.personalised === false && (
+                <div className="mt-1 break-words text-xs text-muted-foreground">
+                  Learning your habits - readiness will personalise after a few more trips.
+                </div>
+              )}
+              {preTripRisk.dataQuality?.personalised && preTripRisk.dataQuality.confidence < 1 && (
+                <div className="mt-1 break-words text-xs text-muted-foreground">
+                  Readiness is personalising ({completedTrips.length} trips recorded).
+                </div>
+              )}
               {preTripRisk.riskLevel !== 'low' && (
                 <>
                   <div className="mt-1 break-words text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>

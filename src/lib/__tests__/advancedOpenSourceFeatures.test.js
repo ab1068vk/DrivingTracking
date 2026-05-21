@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { parseObdPidResponse } from '@/lib/obdBluetooth';
 import { buildSensorFusionSummary, detectCrashIncident, enrichEventsWithSensorContext, getMotionSensorSupport } from '@/lib/sensorFusionModel';
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
+import { buildHabitProfile } from '@/lib/habitProfile';
 
 const trip = (score, index = 0, patch = {}) => ({
   status: 'completed',
@@ -69,6 +70,37 @@ describe('advanced open-source features', () => {
     expect(risk.primaryFactor).toBe('Known danger zones nearby');
   });
 
+  it('does not describe late-night route timing as acceptable', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 0, 45));
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1)],
+    });
+
+    expect(risk.safestWindow).toContain('Late night is higher risk');
+    vi.useRealTimers();
+  });
+
+  it('recommends a personal safer window when hourly risk is calibrated', () => {
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1)],
+      now: new Date(2026, 0, 10, 0, 45),
+      habitProfile: {
+        confidence: 0.6,
+        allTimeAvgScore: 85,
+        hourlyRisk: {
+          0: { riskScore: 80, tripCount: 2 },
+          1: { riskScore: 70, tripCount: 2 },
+          2: { riskScore: 50, tripCount: 2 },
+          3: { riskScore: 10, tripCount: 2 },
+          4: { riskScore: 20, tripCount: 2 },
+          5: { riskScore: 30, tripCount: 2 },
+        },
+      },
+    });
+
+    expect(risk.safestWindow).toContain('3:00 AM');
+  });
+
   it('builds a local weekly coaching sentence without AI services', () => {
     const summary = buildWeeklyCoachSummary([
       trip(75, 1, { harsh_brakes_count: 2, road_type: 'urban', duration_seconds: 1200 }),
@@ -77,5 +109,73 @@ describe('advanced open-source features', () => {
     ]);
     expect(summary.headline.toLowerCase()).toContain('late braking');
     expect(summary.insight).toContain('No AI service');
+  });
+});
+
+describe('buildHabitProfile', () => {
+  it('returns safe defaults for an empty trips array', () => {
+    const profile = buildHabitProfile([]);
+
+    expect(profile.confidence).toBe(0);
+    expect(Object.values(profile.timeBuckets).every((bucket) => bucket.insufficient)).toBe(true);
+  });
+
+  it('marks all time buckets insufficient with four spread-out trips', () => {
+    const trips = [
+      trip(90, 1, { start_time: new Date(2026, 0, 1, 6).toISOString() }),
+      trip(90, 2, { start_time: new Date(2026, 0, 2, 13).toISOString() }),
+      trip(90, 3, { start_time: new Date(2026, 0, 3, 18).toISOString() }),
+      trip(90, 4, { start_time: new Date(2026, 0, 4, 23).toISOString() }),
+    ];
+    const profile = buildHabitProfile(trips);
+
+    expect(profile.confidence).toBeLessThan(0.3);
+    expect(Object.values(profile.timeBuckets).every((bucket) => bucket.insufficient)).toBe(true);
+  });
+
+  it('calibrates night risk from thirty night trips', () => {
+    const scores = Array.from({ length: 30 }, (_, index) => 70 + (index % 3) * 5);
+    const trips = scores.map((score, index) => trip(score, index, {
+      start_time: new Date(2026, 0, index + 1, 23).toISOString(),
+    }));
+    const profile = buildHabitProfile(trips);
+    const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+
+    expect(profile.confidence).toBe(1);
+    expect(profile.timeBuckets.Night.insufficient).toBe(false);
+    expect(profile.timeBuckets.Night.riskScore).toBe(Math.round(100 - mean));
+  });
+
+  it('calculates trendRisk from the most recent twenty trips', () => {
+    const trips = Array.from({ length: 25 }, (_, index) => trip(index < 5 ? 50 : 90, index, {
+      start_time: new Date(2026, 0, index + 1, 12).toISOString(),
+    }));
+    const profile = buildHabitProfile(trips);
+
+    expect(profile.recentAvgScore).toBe(90);
+    expect(profile.allTimeAvgScore).toBe(82);
+    expect(profile.trendRisk).toBe(10);
+  });
+
+  it('detects fatigue onset when scores drop after cumulative daily driving', () => {
+    const trips = Array.from({ length: 10 }, (_, index) => {
+      const day = index + 1;
+      return [
+        trip(95, index * 2, {
+          start_time: new Date(2026, 0, day, 8).toISOString(),
+          end_time: new Date(2026, 0, day, 8, 30).toISOString(),
+          duration_seconds: 30 * 60,
+        }),
+        trip(70, index * 2 + 1, {
+          start_time: new Date(2026, 0, day, 9).toISOString(),
+          end_time: new Date(2026, 0, day, 9, 45).toISOString(),
+          duration_seconds: 45 * 60,
+        }),
+      ];
+    }).flat();
+    const profile = buildHabitProfile(trips);
+
+    expect(profile.fatigueOnsetMinutes).toBeGreaterThanOrEqual(60);
+    expect(profile.fatigueOnsetMinutes).toBeLessThanOrEqual(75);
   });
 });

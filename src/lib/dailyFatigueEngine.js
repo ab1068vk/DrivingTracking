@@ -2,6 +2,12 @@ const startOfLocalDay = (date = new Date()) => new Date(date.getFullYear(), date
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
+/**
+ * Return completed trips that started during the current local day.
+ * @param {Array<object>} trips - Trip records to filter.
+ * @returns {Array<object>} Completed trips from today.
+ * @example getTodayTrips(completedTrips)
+ */
 export function getTodayTrips(trips = []) {
   const start = startOfLocalDay();
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
@@ -12,10 +18,26 @@ export function getTodayTrips(trips = []) {
   });
 }
 
-export function computeDailyFatigue(todayTrips = [], settings = {}) {
+/**
+ * Compute cumulative daily fatigue from today's trips and recovery time.
+ * @param {Array<object>} todayTrips - Completed trips from the current local day.
+ * @param {object} settings - User settings; may include a test-only now clock.
+ * @param {number} fatigueOnsetMinutes - Learned minute threshold where fatigue starts rising.
+ * @returns {object} Fatigue totals, level, break recommendation, and warning state.
+ * @example computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes)
+ */
+export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnsetMinutes = 60) {
   const trips = [...(todayTrips || [])]
     .filter((trip) => trip?.status === 'completed')
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  const now = settings?.now instanceof Date
+    ? settings.now
+    : settings?.now != null
+      ? new Date(settings.now)
+      : new Date();
+  const onsetMinutes = Number.isFinite(Number(fatigueOnsetMinutes)) && Number(fatigueOnsetMinutes) > 0
+    ? Number(fatigueOnsetMinutes)
+    : 60;
   const totalDrivingMinutes = Math.max(0, trips.reduce((sum, trip) => {
     const movingSeconds = Math.max(0, (Number(trip.duration_seconds) || 0) - (Number(trip.idle_time_seconds) || 0));
     return sum + movingSeconds / 60;
@@ -34,10 +56,10 @@ export function computeDailyFatigue(todayTrips = [], settings = {}) {
   const lastTrip = trips[trips.length - 1] || null;
   const lastTripEndTime = lastTrip?.end_time || null;
   const minutesSinceLastTrip = lastTripEndTime
-    ? Math.max(0, (Date.now() - Date.parse(lastTripEndTime)) / 60000)
+    ? Math.max(0, (now.getTime() - Date.parse(lastTripEndTime)) / 60000)
     : null;
 
-  const durationFatigue = Math.min(5, totalDrivingMinutes / 60);
+  const durationFatigue = Math.min(5, totalDrivingMinutes / onsetMinutes);
   const tripCountFatigue = Math.min(2, Math.max(0, tripCount - 1) * 0.5);
   const recoveryCredit = minutesSinceLastTrip != null ? Math.min(2, minutesSinceLastTrip / 30) : 2;
   const cumulativeFatigueScore = clamp(
