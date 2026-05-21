@@ -119,7 +119,7 @@ level = critical >= 7, high >= 5, moderate >= 3, else low
 Pre-trip risk in `computePreTripRisk()`:
 
 ```text
-compositeRisk =
+weightedCompositeRisk =
   timeOfDay * 0.14 +
   dayOfWeek * 0.10 +
   recentTrend * 0.18 +
@@ -130,8 +130,13 @@ compositeRisk =
   routeForecast * 0.08 +
   recentRest * 0.04
 
+signalGateFloor = 65 when timeOfDay >= 80, routeForecast >= 65,
+  or dailyFatigue >= 90 and lastTripOutcome >= 70
+signalGateFloor = 40 when timeOfDay >= 60, routeForecast >= 40,
+  dailyFatigue >= 70, recentRest >= 80, weather >= 60, or dangerZones >= 70
+compositeRisk = max(weightedCompositeRisk, signalGateFloor)
 readinessScore = 100 - compositeRisk
-riskLevel = high when compositeRisk >= 65, or when dailyFatigue >= 90 and lastTripOutcome >= 70
+riskLevel = high when compositeRisk >= 65
 riskLevel = moderate when compositeRisk >= 40
 ```
 
@@ -147,6 +152,8 @@ riskScore = clamp(round(
 ), 0, 100)
 
 timeRisk = 18 at 22:00-04:59, 10 at 16:00-18:59, otherwise 0
+safestWindow = late-night rest/daylight message at 22:00-04:59,
+  rush-hour message at 16:00-18:59, otherwise acceptable
 ```
 
 Route risk index in `buildRouteRiskIndex()`:

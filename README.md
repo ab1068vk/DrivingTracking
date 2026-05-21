@@ -159,6 +159,7 @@ Notable report and risk calculations:
 
 - UBI report weights: mileage `15%`, time of day `20%`, hard braking `25%`, acceleration `20%`, cornering `10%`, speed compliance `10%`
 - Pre-trip risk weights: time of day `14%`, day of week `10%`, recent trend `18%`, daily fatigue `20%`, last trip outcome `12%`, weather `8%`, danger zones `6%`, route forecast `8%`, recent rest `4%`
+- Pre-trip readiness applies signal gates after weighting so late-night risk, elevated route risk, high fatigue, short recovery, severe weather, or danger-zone context cannot be averaged down to `low`; full documentation is in [TRIP_READINESS_SYSTEM.md](TRIP_READINESS_SYSTEM.md)
 - Daily fatigue score: `min(5, drivingMinutes / 60) + min(2, (tripCount - 1) * 0.5) - min(2, minutesSinceLastTrip / 30)`, clamped to `0..10`
 - Route risk index: per-segment event rate times `20`, harsh-event rate times `40`, plus `10` when average speed is at least `100 km/h`, capped at `100`
 - Predictive route risk: `(100 - avgRecentScore) * 0.45 + eventDensity * 18 + nearbyDangerZones * 10 + weatherRisk * 0.25 + timeRisk`
