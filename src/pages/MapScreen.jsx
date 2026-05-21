@@ -12,7 +12,7 @@ import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
-import { buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
+import { buildOpenSourceTripContextPatch, describeMapMatchingStatus, describeOsmSpeedLimitStatus, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 
 const MAP_FILTERS = [
@@ -69,6 +69,7 @@ export default function MapScreen() {
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const privacyZones = getPrivacyZones(settings);
+  const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
   const { data: trips = [] } = useQuery({
     queryKey: ['map-trips'],
@@ -397,7 +398,7 @@ export default function MapScreen() {
                   : selectedHasSpeedLimits
                     ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
                     : contextMutation.isPending
-                      ? osmFetchStatus || 'Fetching OSM/OSRM context...'
+                      ? osmFetchStatus || 'Fetching road context...'
                       : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to fetch context`}
               </div>
             </button>
@@ -425,15 +426,20 @@ export default function MapScreen() {
             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
               <div className="font-semibold text-foreground">What the OSM button does</div>
               <div className="mt-1">
-                Fetch context gets OpenStreetMap speed limits and optional OSRM road matching for the selected trip. The layer then colors the route green, orange, or red against the matched/default limit.
+                Fetch context gets OpenStreetMap speed limits and weather for the selected trip. OSRM road matching is skipped unless you add an endpoint in Settings.
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-                {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM/OSRM context...' : selectedLayerEffect}
+                {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : selectedLayerEffect}
               </div>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
-                <span>Map matching: {selectedMapMatchingStatus.replace(/_/g, ' ')}</span>
+                <span>Map matching: {selectedMapMatchingStatus.replace(/_/g, ' ')}{osrmConfigured ? '' : ' (off)'}</span>
               </div>
+              {!osrmConfigured && (
+                <div className="mt-2 rounded-xl bg-background/60 px-3 py-2">
+                  {describeMapMatchingStatus(selectedTrip.map_matching_context || { status: 'disabled' })}
+                </div>
+              )}
             </div>
           )}
           {selectedTrip && !selectedHasSpeedLimits && (
@@ -445,7 +451,7 @@ export default function MapScreen() {
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
-                {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM context...' : 'Fetch OSM Context'}
+                {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : 'Fetch Road Context'}
               </button>
               {contextMutation.isError && (
                 <div className="mt-2 text-orange-600 dark:text-orange-300">

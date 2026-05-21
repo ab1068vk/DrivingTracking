@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T17:35:00.0000000-04:00
+Updated: 2026-05-21T17:50:00.0000000-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -65,6 +65,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - OpenStreetMap, Open-Meteo, and OSRM requests now run through a small retry/circuit-breaker helper for transient failures.
 - Settings updates validate configurable threshold ranges before saving unsafe values.
 - OSRM is blank and disabled by default again. Map matching stays local-off unless the user enables it and enters an endpoint; Settings explains that route GPS coordinates are sent to that endpoint.
+- Map and trip-detail context controls now say Road Context and explain that OpenStreetMap speed limits/weather can still run while OSRM route matching is skipped unless configured.
 - Lightweight production error reporting records sanitized JS errors and unhandled promise rejections into local diagnostics without sending trip data off-device.
 
 ### Verification
@@ -15873,7 +15874,7 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
   772 |             className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
   776 |             <Route className="h-3.5 w-3.5" />
   781 |           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-  782 |             {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
+  782 |             {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh Road Context to run OpenStreetMap speed limits and weather context. OSRM road matching is skipped unless an endpoint is configured in Settings.
   785 |         <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
   786 |           <div className="font-semibold text-foreground">Map data</div>
   787 |           <div className="mt-1 break-words">

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSpeedLimitKmhForOsmHighway, parseMaxspeedKmh } from '@/lib/speedLimitSource';
+import { describeMapMatchingStatus, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
 import { applyWeatherRiskToScores } from '@/lib/weatherContext';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 
@@ -15,6 +16,13 @@ describe('open-source trip context', () => {
     expect(defaultSpeedLimitKmhForOsmHighway('secondary')).toBe(60);
     expect(defaultSpeedLimitKmhForOsmHighway('motorway')).toBe(100);
     expect(defaultSpeedLimitKmhForOsmHighway('unclassified')).toBe(50);
+  });
+
+  it('treats OSRM road matching as explicit opt-in', () => {
+    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: '' })).toBe(false);
+    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
+    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(true);
+    expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('route GPS coordinates');
   });
 
   it('penalizes harsh events more during risky weather', () => {

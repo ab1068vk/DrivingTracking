@@ -19,6 +19,10 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
   promise.then(resolve, reject).finally(() => clearTimeout(id));
 });
 
+export const isOsrmMapMatchingConfigured = (settings = {}) => (
+  settings.map_matching_enabled !== false && Boolean(settings.osrm_map_matching_url)
+);
+
 export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get(), options = {}) {
   if (!trip) throw new Error('Trip not loaded');
   const { onProgress } = options;
@@ -55,7 +59,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     error: error?.message || 'Weather lookup unavailable',
   }));
 
-  stage(onProgress, 'Matching route to roads');
+  const osrmConfigured = isOsrmMapMatchingConfigured(settings);
+  stage(onProgress, osrmConfigured ? 'Matching route with OSRM' : 'Skipping OSRM road matching');
   const mapMatchingContext = await timeout(
     mapMatchRoute(originalPoints, settings),
     16000,
@@ -137,4 +142,23 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (context.status === 'partial_fetched') return `${context.coverage}% of route points have speed limits from partial OpenStreetMap results.`;
   if (context.coverage === 0) return 'OpenStreetMap was checked, but no route points matched usable road-limit data.';
   return `${context.coverage}% of route points have OpenStreetMap maxspeed or road-type default limits.`;
+}
+
+export function describeMapMatchingStatus(context = {}) {
+  if (!context || !context.status || context.status === 'not_fetched') {
+    return 'OSRM road matching has not been run for this trip.';
+  }
+  if (context.status === 'disabled') {
+    return 'OSRM road matching was skipped. Add an endpoint in Settings only if you want route GPS coordinates sent there for road snapping.';
+  }
+  if (context.status === 'matched') {
+    return `OSRM snapped ${context.snapped_coverage ?? 0}% of route points to roads.`;
+  }
+  if (context.status === 'not_enough_points') {
+    return 'OSRM road matching needs at least three GPS points.';
+  }
+  if (context.status === 'unavailable') {
+    return context.error || 'OSRM road matching was unavailable, so the original GPS route was kept.';
+  }
+  return `OSRM road matching status: ${String(context.status).replace(/_/g, ' ')}.`;
 }

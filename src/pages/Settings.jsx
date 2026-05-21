@@ -976,8 +976,8 @@ export default function Settings() {
               action: handleMotionPermission,
             },
             {
-              label: 'Real speed limits, weather, OSRM map matching, and offline route previews',
-              sub: 'Uses open-source map/weather data over the network or cached local route data. Android does not show a runtime prompt for Internet access.',
+              label: 'Real speed limits, weather, optional OSRM matching, and offline route previews',
+              sub: 'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.',
               value: 'none',
             },
             {

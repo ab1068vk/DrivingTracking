@@ -27,7 +27,7 @@ import {
 import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
-import { buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
+import { buildOpenSourceTripContextPatch, describeMapMatchingStatus, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import {
   TRIP_TAG_OPTIONS,
@@ -617,7 +617,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                OSRM snapped coverage {mapMatchingContext.snapped_coverage ?? 0}% · confidence {mapMatchingContext.confidence ?? 'n/a'}.
+                {describeMapMatchingStatus(mapMatchingContext)}
               </div>
             </div>
           )}
@@ -755,7 +755,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM context...' : 'Fetch / Refresh OSM Context'}
+            {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : 'Fetch / Refresh Road Context'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -779,7 +779,7 @@ export default function TripDetail() {
         </div>
         {!speedLimitContext && (
           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh OSM Context to run speed limits, OSRM map matching, and weather context for this route.
+            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh Road Context to run OpenStreetMap speed limits and weather context. OSRM road matching is skipped unless an endpoint is configured in Settings.
           </div>
         )}
         <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
@@ -788,8 +788,13 @@ export default function TripDetail() {
             {tripPointSummary}. OSM context adds road speed limits and names; the speed-limit layer colors matched/default limits green, orange, or red.
           </div>
           <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-            {contextMutation.isPending ? osmFetchStatus || 'Fetching OSM context...' : speedLimitLayerEffect}
+            {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : speedLimitLayerEffect}
           </div>
+          {mapMatchingContext?.status === 'disabled' && (
+            <div className="mt-2 rounded-xl bg-background/60 px-3 py-2">
+              {describeMapMatchingStatus(mapMatchingContext)}
+            </div>
+          )}
         </div>
         {contextMutation.isError && (
           <div className="mb-2 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
