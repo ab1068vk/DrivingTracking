@@ -27,7 +27,12 @@ import {
 import { localSettings } from '@/lib/trackingStore';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
-import { buildOpenSourceTripContextPatch, describeMapMatchingStatus, describeOsmSpeedLimitStatus } from '@/lib/openSourceTripContext';
+import {
+  buildOpenSourceTripContextPatch,
+  buildRoadContextPrivacyMessage,
+  describeMapMatchingStatus,
+  describeOsmSpeedLimitStatus,
+} from '@/lib/openSourceTripContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import {
   TRIP_TAG_OPTIONS,
@@ -199,6 +204,14 @@ export default function TripDetail() {
       return [];
     }
   });
+
+  const confirmAndFetchRoadContext = () => {
+    const latestSettings = localSettings.get();
+    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
+      return;
+    }
+    contextMutation.mutate();
+  };
   const stops = useMemo(() => (
     trip ? detectTripStops(trip.route_points || []) : []
   ), [trip]);
@@ -750,7 +763,7 @@ export default function TripDetail() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
         <div className="mb-2 flex flex-wrap justify-end gap-2">
           <button
-            onClick={() => contextMutation.mutate()}
+            onClick={confirmAndFetchRoadContext}
             disabled={contextMutation.isPending || !trip.route_points?.length}
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
@@ -779,7 +792,7 @@ export default function TripDetail() {
         </div>
         {!speedLimitContext && (
           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh Road Context to run OpenStreetMap speed limits and weather context. OSRM road matching is skipped unless an endpoint is configured in Settings.
+            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh Road Context to run OpenStreetMap speed limits and weather context. OSRM road matching runs only if an endpoint is configured in Settings.
           </div>
         )}
         <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">

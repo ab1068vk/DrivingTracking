@@ -12,7 +12,13 @@ import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
-import { buildOpenSourceTripContextPatch, describeMapMatchingStatus, describeOsmSpeedLimitStatus, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
+import {
+  buildOpenSourceTripContextPatch,
+  buildRoadContextPrivacyMessage,
+  describeMapMatchingStatus,
+  describeOsmSpeedLimitStatus,
+  isOsrmMapMatchingConfigured,
+} from '@/lib/openSourceTripContext';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 
 const MAP_FILTERS = [
@@ -126,7 +132,7 @@ export default function MapScreen() {
       ? 'Turning the layer on recolors the selected route: green is within the matched/default limit, orange is over, red is well over.'
       : selectedSpeedLimitStatus === 'unavailable'
         ? selectedTrip.speed_limit_context?.error || 'The OSM speed-limit lookup failed, so the map is still using GPS speed bands and fallback scoring thresholds.'
-      : selectedSpeedLimitStatus === 'not_fetched'
+      : selectedSpeedLimitStatus === 'not_fetched' || selectedSpeedLimitStatus === 'manual_required'
         ? 'Before fetching, the map shows only GPS speed bands and event markers. Fetch context to look for road limits.'
         : 'No speed-limit layer is available for this trip, so the map will not visibly change until OSM returns matched limits.';
   const selectedRiskSegments = useMemo(() => (
@@ -171,6 +177,15 @@ export default function MapScreen() {
       color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
       label: formatDate(trip.start_time),
     }));
+
+  const confirmAndFetchRoadContext = () => {
+    if (!selectedTrip) return;
+    const latestSettings = localSettings.get();
+    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
+      return;
+    }
+    contextMutation.mutate();
+  };
 
   const handleShowMyLocation = async () => {
     try {
@@ -378,7 +393,7 @@ export default function MapScreen() {
               onClick={() => {
                 if (!selectedTrip) return;
                 if (!selectedHasSpeedLimits) {
-                  contextMutation.mutate();
+                  confirmAndFetchRoadContext();
                   return;
                 }
                 setShowSpeedLimits(value => !value);
@@ -447,7 +462,7 @@ export default function MapScreen() {
               <div>{describeOsmSpeedLimitStatus(selectedTrip.speed_limit_context)}</div>
               <button
                 type="button"
-                onClick={() => contextMutation.mutate()}
+                onClick={confirmAndFetchRoadContext}
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
@@ -542,7 +557,7 @@ export default function MapScreen() {
                 onClick={() => {
                   if (!selectedTrip) return;
                   if (!selectedHasSpeedLimits) {
-                    contextMutation.mutate();
+                    confirmAndFetchRoadContext();
                     return;
                   }
                   setShowSpeedLimits(value => !value);

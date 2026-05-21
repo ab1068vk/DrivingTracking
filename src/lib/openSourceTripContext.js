@@ -19,9 +19,35 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
   promise.then(resolve, reject).finally(() => clearTimeout(id));
 });
 
+export const PUBLIC_OSRM_DEMO_URL = 'https://router.project-osrm.org';
+
 export const isOsrmMapMatchingConfigured = (settings = {}) => (
   settings.map_matching_enabled !== false && Boolean(settings.osrm_map_matching_url)
 );
+
+export const isExternalContextAutoFetchEnabled = (settings = {}) => (
+  settings.external_context_auto_fetch_enabled === true
+);
+
+export function buildRoadContextPrivacyMessage(settings = {}) {
+  const lines = [
+    'Road Context uses external services for this selected trip:',
+    '',
+  ];
+  if (settings.speed_limit_lookup_enabled !== false) {
+    lines.push('- OpenStreetMap Overpass receives route-area boxes near the trip to return road names, maxspeed tags, and road geometry.');
+  }
+  if (settings.weather_context_enabled !== false) {
+    lines.push('- Open-Meteo receives the trip midpoint latitude/longitude rounded to 4 decimals plus the trip date to return hourly weather.');
+  }
+  if (isOsrmMapMatchingConfigured(settings)) {
+    lines.push('- OSRM receives sampled route GPS coordinates to snap the route to roads.');
+  } else {
+    lines.push('- OSRM road matching is off, so route GPS coordinates are not sent to OSRM.');
+  }
+  lines.push('', 'Continue?');
+  return lines.join('\n');
+}
 
 export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get(), options = {}) {
   if (!trip) throw new Error('Trip not loaded');
@@ -133,6 +159,7 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (!context || !context.status) {
     return 'OpenStreetMap speed limits have not been fetched for this trip yet.';
   }
+  if (context.status === 'manual_required') return 'OpenStreetMap speed limits have not been fetched. Use Road Context when you want to send route-area data for lookup.';
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route') return 'This trip does not have enough GPS points to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
@@ -147,6 +174,9 @@ export function describeOsmSpeedLimitStatus(context = {}) {
 export function describeMapMatchingStatus(context = {}) {
   if (!context || !context.status || context.status === 'not_fetched') {
     return 'OSRM road matching has not been run for this trip.';
+  }
+  if (context.status === 'manual_required') {
+    return 'OSRM road matching is configured but waits for a manual Road Context refresh before sending sampled route GPS coordinates.';
   }
   if (context.status === 'disabled') {
     return 'OSRM road matching was skipped. Add an endpoint in Settings only if you want route GPS coordinates sent there for road snapping.';

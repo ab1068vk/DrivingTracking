@@ -80,6 +80,7 @@ export const DEFAULT_SETTINGS = {
   speed_warning_enabled: true,
   speed_limit_lookup_enabled: true,
   weather_context_enabled: true,
+  external_context_auto_fetch_enabled: false,
   min_speed_rapid_accel_kmh: 5,
   min_speed_harsh_brake_kmh: 25,
   weekly_goal_harsh_brakes: 5,

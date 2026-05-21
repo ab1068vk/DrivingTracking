@@ -49,6 +49,7 @@ import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/pri
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
+import { PUBLIC_OSRM_DEMO_URL } from '@/lib/openSourceTripContext';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -229,6 +230,38 @@ export default function Settings() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     return updated;
+  };
+
+  const enableOsrmMapMatching = (enabled) => {
+    if (!enabled) {
+      updateCfg({ map_matching_enabled: false });
+      return;
+    }
+    const ok = typeof window === 'undefined' || window.confirm(
+      'OSRM road matching sends sampled route GPS coordinates to the configured OSRM endpoint when you manually fetch Road Context. Continue?'
+    );
+    if (!ok) return;
+    updateCfg({ map_matching_enabled: true });
+  };
+
+  const usePublicOsrmDemo = () => {
+    const ok = typeof window === 'undefined' || window.confirm(
+      'The public OSRM demo server has no app privacy contract or uptime guarantee. If you use it, sampled route GPS coordinates are sent to router.project-osrm.org only when you manually fetch Road Context. Continue?'
+    );
+    if (!ok) return;
+    updateCfg({ map_matching_enabled: true, osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL });
+  };
+
+  const updateExternalContextAutoFetch = (enabled) => {
+    if (!enabled) {
+      updateCfg({ external_context_auto_fetch_enabled: false });
+      return;
+    }
+    const ok = typeof window === 'undefined' || window.confirm(
+      'Auto-fetch sends route-area data to OpenStreetMap Overpass and the trip midpoint/date to Open-Meteo whenever a trip is saved. OSRM still stays manual. Continue?'
+    );
+    if (!ok) return;
+    updateCfg({ external_context_auto_fetch_enabled: true });
   };
 
   const updateNightMode = (mode) => {
@@ -1540,11 +1573,11 @@ export default function Settings() {
           <SettingRow
             icon={Route}
             label="OSRM map matching"
-            sublabel="Optional road snapping with a user-provided OSRM endpoint"
+            sublabel="Manual road snapping. Sends sampled route GPS coordinates only when you fetch Road Context."
           >
             <Toggle
               value={cfg.map_matching_enabled !== false}
-              onChange={v => updateCfg({ map_matching_enabled: v })}
+              onChange={enableOsrmMapMatching}
             />
           </SettingRow>
           <div className="px-1 py-3 border-b border-border/50">
@@ -1556,7 +1589,25 @@ export default function Settings() {
               placeholder="https://your-osrm.example"
               className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
             />
-            <p className="mt-1 text-xs text-muted-foreground">Leave blank to keep map matching local-only. Adding an endpoint sends route GPS coordinates to that server.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={usePublicOsrmDemo}
+                disabled={cfg.map_matching_enabled === false}
+                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Use public OSRM demo
+              </button>
+              <button
+                type="button"
+                onClick={() => updateCfg({ osrm_map_matching_url: '' })}
+                disabled={cfg.map_matching_enabled === false || !cfg.osrm_map_matching_url}
+                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Clear
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Blank keeps OSRM off. A custom endpoint is best for privacy; the public demo is convenient but receives sampled route coordinates and has no service guarantee.</p>
           </div>
           <SettingRow
             icon={Target}
@@ -1751,7 +1802,7 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="OpenStreetMap speed limits"
-          sublabel="Use Overpass maxspeed tags after trips; OSM road-type defaults and GPS thresholds fill gaps"
+          sublabel="Manual Road Context sends route-area boxes to Overpass for road names, maxspeed tags, and road geometry"
         >
           <Toggle
             value={cfg.speed_limit_lookup_enabled !== false}
@@ -1761,13 +1812,27 @@ export default function Settings() {
         <SettingRow
           icon={Droplets}
           label="Weather-aware scoring"
-          sublabel="Use Open-Meteo rain, snow, fog, and temperature context"
+          sublabel="Manual Road Context sends trip midpoint coordinates and date to Open-Meteo"
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
             onChange={v => updateCfg({ weather_context_enabled: v })}
           />
         </SettingRow>
+        <SettingRow
+          icon={Info}
+          label="Auto-fetch external context"
+          sublabel="Off by default. When on, new saved trips automatically fetch OSM speed limits and Open-Meteo weather; OSRM still stays manual."
+        >
+          <Toggle
+            value={cfg.external_context_auto_fetch_enabled === true}
+            onChange={updateExternalContextAutoFetch}
+          />
+        </SettingRow>
+        <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
+          <div className="font-semibold text-foreground">External data used by Road Context</div>
+          <div className="mt-1">OpenStreetMap Overpass gets route-area boxes near the trip, Open-Meteo gets the trip midpoint and date, and OSRM gets sampled route GPS coordinates only if you enable OSRM, add an endpoint, and manually fetch Road Context.</div>
+        </div>
         <div className="px-1">
           <div className="flex justify-between text-xs mb-1.5">
             <span className="font-medium">Warn when over limit by</span>

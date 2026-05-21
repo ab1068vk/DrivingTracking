@@ -82,7 +82,6 @@ import {
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
-import { mapMatchRoute } from '@/lib/mapMatching';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 import {
   buildSensorFusionSummary,
@@ -92,6 +91,7 @@ import {
 } from '@/lib/sensorFusionModel';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
+import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 const AUTO_START_TRIGGER_SECONDS = 2;
@@ -827,19 +827,41 @@ export default function Dashboard() {
       return;
     }
 
-    const mapMatchingContext = await mapMatchRoute(cleanedPoints, cfg);
-    pts = mapMatchingContext.routePoints || cleanedPoints;
-    const speedLimitContext = await annotateRouteSpeedLimits(pts, cfg);
+    const shouldAutoFetchExternalContext = isExternalContextAutoFetchEnabled(cfg);
+    const mapMatchingContext = {
+      provider: 'osrm',
+      status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url ? 'manual_required' : 'disabled',
+      confidence: null,
+      snapped_coverage: 0,
+    };
+    const speedLimitContext = shouldAutoFetchExternalContext
+      ? await annotateRouteSpeedLimits(pts, cfg)
+      : {
+          routePoints: pts,
+          coverage: 0,
+          status: 'manual_required',
+          source: 'openstreetmap_overpass',
+          query_count: 0,
+          error: null,
+        };
     pts = speedLimitContext.routePoints || pts;
     const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds);
-    const weatherContext = await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
-      provider: 'open-meteo',
-      status: 'unavailable',
-      riskLevel: 'low',
-      riskScore: 0,
-      riskMultiplier: 1,
-      error: error?.message || 'Weather lookup unavailable',
-    }));
+    const weatherContext = shouldAutoFetchExternalContext
+      ? await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
+          provider: 'open-meteo',
+          status: 'unavailable',
+          riskLevel: 'low',
+          riskScore: 0,
+          riskMultiplier: 1,
+          error: error?.message || 'Weather lookup unavailable',
+        }))
+      : {
+          provider: 'open-meteo',
+          status: 'manual_required',
+          riskLevel: 'low',
+          riskScore: 0,
+          riskMultiplier: 1,
+        };
 
     const detection = detectDrivingEvents(pts, thresholds, endTime);
     const detectedEvents = detection.events;

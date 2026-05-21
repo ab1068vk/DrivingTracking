@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSpeedLimitKmhForOsmHighway, parseMaxspeedKmh } from '@/lib/speedLimitSource';
-import { describeMapMatchingStatus, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
+import {
+  buildRoadContextPrivacyMessage,
+  describeMapMatchingStatus,
+  describeOsmSpeedLimitStatus,
+  isExternalContextAutoFetchEnabled,
+  isOsrmMapMatchingConfigured,
+} from '@/lib/openSourceTripContext';
 import { applyWeatherRiskToScores } from '@/lib/weatherContext';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 
@@ -23,6 +29,22 @@ describe('open-source trip context', () => {
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(true);
     expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('route GPS coordinates');
+    expect(describeMapMatchingStatus({ status: 'manual_required' })).toContain('manual');
+    expect(describeOsmSpeedLimitStatus({ status: 'manual_required' })).toContain('Road Context');
+  });
+
+  it('describes external road-context data before manual fetch', () => {
+    expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: false })).toBe(false);
+    expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: true })).toBe(true);
+    const message = buildRoadContextPrivacyMessage({
+      speed_limit_lookup_enabled: true,
+      weather_context_enabled: true,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://example.test',
+    });
+    expect(message).toContain('OpenStreetMap Overpass');
+    expect(message).toContain('Open-Meteo');
+    expect(message).toContain('OSRM receives sampled route GPS coordinates');
   });
 
   it('penalizes harsh events more during risky weather', () => {
