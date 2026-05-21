@@ -177,7 +177,7 @@ export default function TripDetail() {
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
-      setOsmFetchStatus('Preparing route context');
+      setOsmFetchStatus('Preparing road data');
       const patch = await buildOpenSourceTripContextPatch(trip, localSettings.get(), {
         onProgress: setOsmFetchStatus,
       });
@@ -191,7 +191,7 @@ export default function TripDetail() {
       qc.invalidateQueries({ queryKey: ['map-trips'] });
     },
     onError: (error) => {
-      setOsmFetchStatus(error?.message || 'OSM context failed');
+      setOsmFetchStatus(error?.message || 'Could not get road data');
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
@@ -425,8 +425,8 @@ export default function TripDetail() {
     : speedLimitContext?.status === 'unavailable'
       ? speedLimitContext.error || 'The OSM speed-limit lookup failed, so this map is still using GPS speed bands and fallback scoring thresholds.'
     : speedLimitContext
-      ? 'OSM context was checked, but no matched limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
-      : 'Before fetching OSM context, this map shows GPS speed bands and event markers only.';
+      ? 'Road data was checked, but no usable speed limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
+      : 'Before getting road data, this map shows GPS speed bands and event markers only.';
 
   return (
     <div className="space-y-5 pb-4">
@@ -768,7 +768,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : 'Fetch / Refresh Road Context'}
+            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get / Refresh Road Data'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -792,16 +792,21 @@ export default function TripDetail() {
         </div>
         {!speedLimitContext && (
           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh Road Context to run OpenStreetMap speed limits and weather context. OSRM road matching runs only if an endpoint is configured in Settings.
+            {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Get Road Data to add speed limits and weather for this trip. Route snapping runs only if OSRM is enabled in Settings.
           </div>
         )}
         <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
-          <div className="font-semibold text-foreground">Map data</div>
+          <div className="font-semibold text-foreground">Trip map buttons</div>
           <div className="mt-1 break-words">
-            {tripPointSummary}. OSM context adds road speed limits and names; the speed-limit layer colors matched/default limits green, orange, or red.
+            {tripPointSummary}. Get Road Data checks online map/weather services for this trip. Show Speed-Limit Layer only changes the colors after speed limits are available.
+          </div>
+          <div className="mt-2 grid gap-1">
+            <div>Get Road Data: asks OpenStreetMap for speed limits and Open-Meteo for weather. OSRM route snapping runs only when enabled.</div>
+            <div>Show Speed-Limit Layer: colors this route green, orange, or red against the fetched/default limits.</div>
+            <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>
           <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-            {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : speedLimitLayerEffect}
+            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : speedLimitLayerEffect}
           </div>
           {mapMatchingContext?.status === 'disabled' && (
             <div className="mt-2 rounded-xl bg-background/60 px-3 py-2">
@@ -811,7 +816,7 @@ export default function TripDetail() {
         </div>
         {contextMutation.isError && (
           <div className="mb-2 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
-            {contextMutation.error?.message || 'Could not refresh open-source context.'}
+            {contextMutation.error?.message || 'Could not get road data.'}
           </div>
         )}
         <div className="rounded-2xl overflow-hidden border border-border shadow-sm">

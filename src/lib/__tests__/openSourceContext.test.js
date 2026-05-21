@@ -28,9 +28,9 @@ describe('open-source trip context', () => {
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: '' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(true);
-    expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('route GPS coordinates');
-    expect(describeMapMatchingStatus({ status: 'manual_required' })).toContain('manual');
-    expect(describeOsmSpeedLimitStatus({ status: 'manual_required' })).toContain('Road Context');
+    expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('sampled GPS points');
+    expect(describeMapMatchingStatus({ status: 'manual_required' })).toContain('Get Road Data');
+    expect(describeOsmSpeedLimitStatus({ status: 'manual_required' })).toContain('Get Road Data');
   });
 
   it('describes external road-context data before manual fetch', () => {
@@ -44,7 +44,7 @@ describe('open-source trip context', () => {
     });
     expect(message).toContain('OpenStreetMap Overpass');
     expect(message).toContain('Open-Meteo');
-    expect(message).toContain('OSRM receives sampled route GPS coordinates');
+    expect(message).toContain('Snap route to roads');
   });
 
   it('penalizes harsh events more during risky weather', () => {

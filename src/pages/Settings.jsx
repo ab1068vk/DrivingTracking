@@ -238,7 +238,7 @@ export default function Settings() {
       return;
     }
     const ok = typeof window === 'undefined' || window.confirm(
-      'OSRM road matching sends sampled route GPS coordinates to the configured OSRM endpoint when you manually fetch Road Context. Continue?'
+      'Snap route to roads sends sampled GPS points to the configured OSRM endpoint when you tap Get Road Data on a trip. Continue?'
     );
     if (!ok) return;
     updateCfg({ map_matching_enabled: true });
@@ -246,7 +246,7 @@ export default function Settings() {
 
   const usePublicOsrmDemo = () => {
     const ok = typeof window === 'undefined' || window.confirm(
-      'The public OSRM demo server has no app privacy contract or uptime guarantee. If you use it, sampled route GPS coordinates are sent to router.project-osrm.org only when you manually fetch Road Context. Continue?'
+      'The public OSRM demo server has no app privacy contract or uptime guarantee. If you use it, sampled route GPS points are sent to router.project-osrm.org only when you tap Get Road Data on a trip. Continue?'
     );
     if (!ok) return;
     updateCfg({ map_matching_enabled: true, osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL });
@@ -258,7 +258,7 @@ export default function Settings() {
       return;
     }
     const ok = typeof window === 'undefined' || window.confirm(
-      'Auto-fetch sends route-area data to OpenStreetMap Overpass and the trip midpoint/date to Open-Meteo whenever a trip is saved. OSRM still stays manual. Continue?'
+      'Automatic road data sends route-area boxes to OpenStreetMap and the trip midpoint/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
     );
     if (!ok) return;
     updateCfg({ external_context_auto_fetch_enabled: true });
@@ -1572,8 +1572,8 @@ export default function Settings() {
           </SettingRow>
           <SettingRow
             icon={Route}
-            label="OSRM map matching"
-            sublabel="Manual road snapping. Sends sampled route GPS coordinates only when you fetch Road Context."
+            label="Snap route to roads (OSRM)"
+            sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
           >
             <Toggle
               value={cfg.map_matching_enabled !== false}
@@ -1607,7 +1607,7 @@ export default function Settings() {
                 Clear
               </button>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">Blank keeps OSRM off. A custom endpoint is best for privacy; the public demo is convenient but receives sampled route coordinates and has no service guarantee.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. A custom/private OSRM server is best for privacy; the public demo is convenient but receives sampled route points and has no service guarantee.</p>
           </div>
           <SettingRow
             icon={Target}
@@ -1801,8 +1801,8 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Gauge}
-          label="OpenStreetMap speed limits"
-          sublabel="Manual Road Context sends route-area boxes to Overpass for road names, maxspeed tags, and road geometry"
+          label="Get posted speed limits"
+          sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"
         >
           <Toggle
             value={cfg.speed_limit_lookup_enabled !== false}
@@ -1811,8 +1811,8 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Droplets}
-          label="Weather-aware scoring"
-          sublabel="Manual Road Context sends trip midpoint coordinates and date to Open-Meteo"
+          label="Get trip weather"
+          sublabel="When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
@@ -1821,8 +1821,8 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Info}
-          label="Auto-fetch external context"
-          sublabel="Off by default. When on, new saved trips automatically fetch OSM speed limits and Open-Meteo weather; OSRM still stays manual."
+          label="Automatically get speed limits + weather"
+          sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."
         >
           <Toggle
             value={cfg.external_context_auto_fetch_enabled === true}
@@ -1830,8 +1830,12 @@ export default function Settings() {
           />
         </SettingRow>
         <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
-          <div className="font-semibold text-foreground">External data used by Road Context</div>
-          <div className="mt-1">OpenStreetMap Overpass gets route-area boxes near the trip, Open-Meteo gets the trip midpoint and date, and OSRM gets sampled route GPS coordinates only if you enable OSRM, add an endpoint, and manually fetch Road Context.</div>
+          <div className="font-semibold text-foreground">What leaves the app</div>
+          <div className="mt-1 grid gap-1">
+            <div>Speed limits: route-area boxes go to OpenStreetMap Overpass.</div>
+            <div>Weather: trip midpoint and date go to Open-Meteo.</div>
+            <div>Snap route to roads: sampled GPS points go to OSRM only after you enable OSRM and tap Get Road Data.</div>
+          </div>
         </div>
         <div className="px-1">
           <div className="flex justify-between text-xs mb-1.5">

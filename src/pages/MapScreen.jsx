@@ -84,7 +84,7 @@ export default function MapScreen() {
   const contextMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTrip) throw new Error('Select a trip first.');
-      setOsmFetchStatus('Preparing route context');
+      setOsmFetchStatus('Preparing road data');
       const patch = await buildOpenSourceTripContextPatch(selectedTrip, localSettings.get(), {
         onProgress: setOsmFetchStatus,
       });
@@ -104,7 +104,7 @@ export default function MapScreen() {
       setShowSpeedLimits(hasSpeedLimits);
     },
     onError: (error) => {
-      setOsmFetchStatus(error?.message || 'OSM context failed');
+      setOsmFetchStatus(error?.message || 'Could not get road data');
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
@@ -127,13 +127,13 @@ export default function MapScreen() {
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
   const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
   const selectedLayerEffect = !selectedTrip
-    ? 'Select a trip to fetch road context.'
+    ? 'Select a trip to get road data.'
     : selectedHasSpeedLimits
       ? 'Turning the layer on recolors the selected route: green is within the matched/default limit, orange is over, red is well over.'
       : selectedSpeedLimitStatus === 'unavailable'
         ? selectedTrip.speed_limit_context?.error || 'The OSM speed-limit lookup failed, so the map is still using GPS speed bands and fallback scoring thresholds.'
       : selectedSpeedLimitStatus === 'not_fetched' || selectedSpeedLimitStatus === 'manual_required'
-        ? 'Before fetching, the map shows only GPS speed bands and event markers. Fetch context to look for road limits.'
+        ? 'Before fetching, the map shows only GPS speed bands and event markers. Get road data to look for posted limits.'
         : 'No speed-limit layer is available for this trip, so the map will not visibly change until OSM returns matched limits.';
   const selectedRiskSegments = useMemo(() => (
     selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
@@ -413,8 +413,8 @@ export default function MapScreen() {
                   : selectedHasSpeedLimits
                     ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
                     : contextMutation.isPending
-                      ? osmFetchStatus || 'Fetching road context...'
-                      : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to fetch context`}
+                      ? osmFetchStatus || 'Getting road data...'
+                      : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to get road data`}
               </div>
             </button>
             <button
@@ -439,12 +439,15 @@ export default function MapScreen() {
           </div>
           {selectedTrip && (
             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
-              <div className="font-semibold text-foreground">What the OSM button does</div>
-              <div className="mt-1">
-                Fetch context gets OpenStreetMap speed limits and weather for the selected trip. OSRM road matching is skipped unless you add an endpoint in Settings.
+              <div className="font-semibold text-foreground">What Get Road Data does</div>
+              <div className="mt-1">For this selected trip only:</div>
+              <div className="mt-2 grid gap-1">
+                <div>1. Speed limits: asks OpenStreetMap for road names and posted/default limits near the route.</div>
+                <div>2. Weather: asks Open-Meteo for conditions at the trip midpoint and date.</div>
+                <div>3. Snap to roads: only runs if OSRM is enabled in Settings.</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-                {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : selectedLayerEffect}
+                {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : selectedLayerEffect}
               </div>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
@@ -466,11 +469,11 @@ export default function MapScreen() {
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
-                {contextMutation.isPending ? osmFetchStatus || 'Fetching road context...' : 'Fetch Road Context'}
+                {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
               </button>
               {contextMutation.isError && (
                 <div className="mt-2 text-orange-600 dark:text-orange-300">
-                  {contextMutation.error?.message || 'Could not refresh OSM context.'}
+                  {contextMutation.error?.message || 'Could not get road data.'}
                 </div>
               )}
             </div>

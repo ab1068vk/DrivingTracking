@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T18:05:00.0000000-04:00
+Updated: 2026-05-21T18:20:00.0000000-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -54,7 +54,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Driver anomaly z-scores guard zero standard deviation; sensor fusion and cornering peaks use safe fallbacks.
 - Added `tripService.listAll()` / `localTripRepository.listAll()` and switched aggregate/reporting screens to full-history queries.
 - IndexedDB upgrade handling now has an incremental migration shape, and rescore writes are batched in one transaction where IndexedDB is available.
-- OSRM map matching is disabled by default with a blank endpoint. Users must explicitly enable it and provide an endpoint before route coordinates leave the app for road snapping.
+- OSRM route snapping is disabled by default with a blank endpoint. Users must explicitly enable it and provide an endpoint before sampled GPS points leave the app for road snapping.
 - Economics now clamps eco scores, supports fuel-type-specific CO2 factors, and uses configurable CO2 baselines.
 - Phone-use merge results now include `data_sources` provenance for partial-detection transparency.
 - `/android` is gated to dev builds or `VITE_SHOW_DEBUG_ROUTES=true`.
@@ -64,9 +64,10 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Backup export now tells the user when native Downloads export falls back to browser download, and backup import reports saved-filter restore failures.
 - OpenStreetMap, Open-Meteo, and OSRM requests now run through a small retry/circuit-breaker helper for transient failures.
 - Settings updates validate configurable threshold ranges before saving unsafe values.
-- OSRM is manual opt-in. Settings can fill the public OSRM demo endpoint with an explicit warning, but route GPS coordinates are sent only when the user manually fetches Road Context.
-- Road Context now warns before sending data: OpenStreetMap Overpass receives route-area boxes, Open-Meteo receives trip midpoint/date, and OSRM receives sampled route GPS coordinates only when configured.
+- OSRM is manual opt-in. Settings can fill the public OSRM demo endpoint with an explicit warning, but sampled GPS points are sent only when the user taps Get Road Data on a trip.
+- Get Road Data now warns before sending data: OpenStreetMap Overpass receives route-area boxes, Open-Meteo receives trip midpoint/date, and OSRM receives sampled GPS points only when configured.
 - New saved trips stay local by default for external context; auto-fetch for OSM speed limits and Open-Meteo weather is a separate opt-in setting. OSRM remains manual even when auto-fetch is enabled.
+- Trip and Settings labels now use plain "Get Road Data" wording so users can see exactly which buttons fetch speed limits, weather, and optional OSRM route snapping.
 - Lightweight production error reporting records sanitized JS errors and unhandled promise rejections into local diagnostics without sending trip data off-device.
 
 ### Verification
@@ -14668,9 +14669,9 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
   416 |               className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all ${
   421 |               <div className="mt-1 font-normal">{visibleDangerZones.length} local zones</div>
   425 |             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
-  426 |               <div className="font-semibold text-foreground">What the OSM button does</div>
+  426 |               <div className="font-semibold text-foreground">What Get Road Data does</div>
   427 |               <div className="mt-1">
-  428 |                 Fetch context gets OpenStreetMap speed limits and weather for the selected trip. OSRM road matching is skipped unless you add an endpoint in Settings.
+  428 |                 For this selected trip only: speed limits, weather, and optional OSRM route snapping.
   430 |               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
   433 |               <div className="mt-2 grid gap-1 sm:grid-cols-2">
   440 |             <div className="mt-3 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
@@ -15523,7 +15524,7 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
  1503 |             label="Crash / incident detection"
  1504 |             sublabel="Detect impact-like motion followed by little movement"
  1515 |             sublabel="Optional local check-in notice after a possible incident; no SMS or paid emergency service is used"
- 1526 |             sublabel="Manual road snapping. Sends sampled route GPS coordinates only when you fetch Road Context."
+ 1526 |             sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
  1533 |           <div className="px-1 py-3 border-b border-border/50">
  1534 |             <div className="mb-1 text-xs font-medium">OSRM endpoint</div>
  1539 |               className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
@@ -15566,8 +15567,8 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
  1712 |                       className="w-full accent-primary disabled:opacity-45"
  1722 |         <SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>
  1736 |           sublabel="Use Overpass maxspeed tags after trips; OSM road-type defaults and GPS thresholds fill gaps"
- 1745 |           label="Weather-aware scoring"
- 1746 |           sublabel="Manual Road Context sends trip midpoint coordinates and date to Open-Meteo"
+ 1745 |           label="Get trip weather"
+ 1746 |           sublabel="When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"
  1753 |         <div className="px-1">
  1754 |           <div className="flex justify-between text-xs mb-1.5">
  1755 |             <span className="font-medium">Warn when over limit by</span>
@@ -15877,7 +15878,7 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
   772 |             className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
   776 |             <Route className="h-3.5 w-3.5" />
   781 |           <div className="mb-2 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-  782 |             {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Fetch / Refresh Road Context to run OpenStreetMap speed limits and weather context. OSRM road matching runs only if an endpoint is configured in Settings.
+  782 |             {describeOsmSpeedLimitStatus(speedLimitContext)} Tap Get Road Data to add speed limits and weather for this trip. Route snapping runs only if OSRM is enabled in Settings.
   785 |         <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
   786 |           <div className="font-semibold text-foreground">Map data</div>
   787 |           <div className="mt-1 break-words">

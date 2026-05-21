@@ -31,19 +31,19 @@ export const isExternalContextAutoFetchEnabled = (settings = {}) => (
 
 export function buildRoadContextPrivacyMessage(settings = {}) {
   const lines = [
-    'Road Context uses external services for this selected trip:',
+    'Get Road Data will check online services for this selected trip:',
     '',
   ];
   if (settings.speed_limit_lookup_enabled !== false) {
-    lines.push('- OpenStreetMap Overpass receives route-area boxes near the trip to return road names, maxspeed tags, and road geometry.');
+    lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Open-Meteo receives the trip midpoint latitude/longitude rounded to 4 decimals plus the trip date to return hourly weather.');
+    lines.push('- Weather: sends the trip midpoint latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push('- OSRM receives sampled route GPS coordinates to snap the route to roads.');
+    lines.push('- Snap route to roads: sends sampled GPS points to the OSRM endpoint.');
   } else {
-    lines.push('- OSRM road matching is off, so route GPS coordinates are not sent to OSRM.');
+    lines.push('- Snap route to roads is off, so GPS points are not sent to OSRM.');
   }
   lines.push('', 'Continue?');
   return lines.join('\n');
@@ -71,7 +71,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }
 
   const thresholds = buildDrivingThresholds(settings);
-  stage(onProgress, 'Checking weather context');
+  stage(onProgress, 'Getting weather');
   const weatherPromise = timeout(
     fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
     12000,
@@ -86,11 +86,11 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }));
 
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
-  stage(onProgress, osrmConfigured ? 'Matching route with OSRM' : 'Skipping OSRM road matching');
+  stage(onProgress, osrmConfigured ? 'Snapping route to roads with OSRM' : 'Skipping route snapping');
   const mapMatchingContext = await timeout(
     mapMatchRoute(originalPoints, settings),
     16000,
-    'OSRM map matching timed out'
+    'OSRM route snapping timed out'
   ).catch((error) => ({
     routePoints: originalPoints,
     status: 'unavailable',
@@ -100,7 +100,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     snapped_coverage: 0,
   }));
   let routePoints = mapMatchingContext.routePoints || originalPoints;
-  stage(onProgress, 'Fetching OSM speed limits');
+  stage(onProgress, 'Getting speed limits from OpenStreetMap');
   const speedLimitContext = await timeout(
     annotateRouteSpeedLimits(routePoints, settings),
     18000,
@@ -159,7 +159,7 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (!context || !context.status) {
     return 'OpenStreetMap speed limits have not been fetched for this trip yet.';
   }
-  if (context.status === 'manual_required') return 'OpenStreetMap speed limits have not been fetched. Use Road Context when you want to send route-area data for lookup.';
+  if (context.status === 'manual_required') return 'Speed limits have not been fetched. Tap Get Road Data when you want to send route-area boxes to OpenStreetMap.';
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route') return 'This trip does not have enough GPS points to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
@@ -176,10 +176,10 @@ export function describeMapMatchingStatus(context = {}) {
     return 'OSRM road matching has not been run for this trip.';
   }
   if (context.status === 'manual_required') {
-    return 'OSRM road matching is configured but waits for a manual Road Context refresh before sending sampled route GPS coordinates.';
+    return 'Route snapping is configured but waits for Get Road Data before sending sampled GPS points to OSRM.';
   }
   if (context.status === 'disabled') {
-    return 'OSRM road matching was skipped. Add an endpoint in Settings only if you want route GPS coordinates sent there for road snapping.';
+    return 'Route snapping was skipped. Add an OSRM endpoint in Settings only if you want sampled GPS points sent there.';
   }
   if (context.status === 'matched') {
     return `OSRM snapped ${context.snapped_coverage ?? 0}% of route points to roads.`;
