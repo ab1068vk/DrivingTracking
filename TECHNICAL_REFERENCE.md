@@ -6,6 +6,7 @@ This is the readable app reference. It is not a full code dump. It documents the
 
 ## Table Of Contents
 
+- [Coverage Guarantee](#coverage-guarantee)
 - [1. System Overview](#1-system-overview)
 - [2. App Details](#2-app-details)
 - [3. Data Flow And Storage](#3-data-flow-and-storage)
@@ -15,9 +16,14 @@ This is the readable app reference. It is not a full code dump. It documents the
 - [7. Event Detection Calculations](#7-event-detection-calculations)
 - [8. Scoring Calculations](#8-scoring-calculations)
 - [9. Advanced Risk, Readiness, And Reports](#9-advanced-risk-readiness-and-reports)
-- [10. Android Native Tracking Calculations](#10-android-native-tracking-calculations)
-- [11. Complete Calculation Snippet Index](#11-complete-calculation-snippet-index)
-- [12. Tests, Dependencies, And Security](#12-tests-dependencies-and-security)
+- [10. Import, Export, Map Context, And Prediction Support](#10-import-export-map-context-and-prediction-support)
+- [11. Android Native Tracking Calculations](#11-android-native-tracking-calculations)
+- [12. Complete Calculation Snippet Index](#12-complete-calculation-snippet-index)
+- [13. Tests, Dependencies, And Security](#13-tests-dependencies-and-security)
+
+## Coverage Guarantee
+
+The complete snippet index includes every tracked app-source calculation line found in JavaScript, TypeScript, JSX, TSX, MJS, and Android Java files. It intentionally excludes test fixtures from the exhaustive calculation count because tests contain synthetic expected values, not production app calculations. Production import/export, PDF export, native downloads, map playback, map matching, OpenStreetMap speed-limit enrichment, weather scoring, predictive route risk, pre-trip readiness, route risk, UBI, maintenance, and Android native tracking are covered below and in the complete index.
 
 ---
 
@@ -1950,7 +1956,363 @@ Source: `src/lib/habitProfile.js:117` calculation lines only.
 
 ---
 
-## 10. Android Native Tracking Calculations
+
+## 10. Import, Export, Map Context, And Prediction Support
+
+These are not just side utilities. They transform app state, create reports, restore backups, calculate chart positions, annotate speed limits, map-match routes, and apply weather/context penalties. This section keeps them visible instead of burying them only in the complete index.
+
+### Backup payload builder
+
+Source: `src/lib/dataBackup.js:31`
+```javascript
+   31 | export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = localSettings.get() } = {}) {
+   32 |   let savedTripFilters = [];
+   33 |   try {
+   34 |     savedTripFilters = sanitizeSavedTripFilters(JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) || '[]'));
+   35 |   } catch {}
+   36 |   const exportSettings = {
+   37 |     ...settings,
+   38 |     privacy_zones: getPrivacyZones(settings).map((zone) => ({
+   39 |       id: zone.id,
+   40 |       label: zone.label,
+   41 |       radius_m: zone.radius_m,
+   42 |       masked_for_privacy: true,
+   43 |     })),
+   44 |   };
+   45 |   return {
+   46 |     app: 'Road Sage',
+   47 |     version: BACKUP_VERSION,
+   48 |     exported_at: new Date().toISOString(),
+   49 |     settings: exportSettings,
+   50 |     ui: {
+   51 |       saved_trip_filters: savedTripFilters,
+   52 |     },
+   53 |     vehicles,
+   54 |     trips: trips.map((trip) => {
+   55 |       const masked = /** @type {any} */ (maskTripForPrivacy(trip, settings));
+   56 |       return {
+   57 |         ...masked,
+   58 |         route_points: Array.isArray(masked.route_points) ? masked.route_points : [],
+   59 |         driving_events: Array.isArray(masked.driving_events) ? masked.driving_events : [],
+   60 |         event_feedback: masked.event_feedback && typeof masked.event_feedback === 'object' ? masked.event_feedback : {},
+   61 |       };
+   62 |     }),
+   63 |   };
+   64 | }
+```
+
+
+### Backup export flow
+
+Source: `src/lib/dataBackup.js:69`
+```javascript
+   69 | export async function exportDriveSenseBackup({ trips, vehicles, settings, filename } = {}) {
+   70 |   const backup = buildDriveSenseBackup({ trips, vehicles, settings });
+   71 |   const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
+   72 |   const content = JSON.stringify(backup, null, 2);
+   73 |
+   74 |   try {
+   75 |     const { Capacitor } = await import('@capacitor/core');
+   76 |     if (Capacitor.isNativePlatform()) {
+   77 |       const result = await saveExportToDownloads({
+   78 |         filename: outputName,
+   79 |         data: content,
+   80 |         mimeType: 'application/json',
+   81 |       });
+   82 |       return { native: true, filename: outputName, uri: result.uri, backup };
+   83 |     }
+   84 |   } catch (error) {
+   85 |     console.warn('Native JSON export failed, falling back to browser download.', error);
+   86 |   }
+   87 |
+   88 |   const blob = new Blob([content], { type: 'application/json;charset=utf-8;' });
+   89 |   const url = URL.createObjectURL(blob);
+   90 |   const a = document.createElement('a');
+   91 |   a.href = url;
+   92 |   a.download = outputName;
+   93 |   a.style.display = 'none';
+   94 |   document.body.appendChild(a);
+   95 |   a.click();
+   96 |   a.remove();
+   97 |   URL.revokeObjectURL(url);
+   98 |   return { native: false, filename: outputName, backup };
+   99 | }
+```
+
+
+### Backup parse/validation flow
+
+Source: `src/lib/dataBackup.js:101`
+```javascript
+  101 | export function parseDriveSenseBackup(text) {
+  102 |   const parsed = JSON.parse(text);
+  103 |   if (!parsed || !['Road Sage', 'DriveSense'].includes(parsed.app) || !Array.isArray(parsed.trips)) {
+  104 |     throw new Error('This is not a valid Road Sage backup file.');
+  105 |   }
+  106 |
+  107 |   return {
+  108 |     version: parsed.version || 0,
+  109 |     settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : null,
+  110 |     ui: parsed.ui && typeof parsed.ui === 'object' ? parsed.ui : null,
+  111 |     vehicles: Array.isArray(parsed.vehicles) ? parsed.vehicles : [],
+  112 |     trips: parsed.trips,
+  113 |   };
+  114 | }
+```
+
+
+### Backup import flow
+
+Source: `src/lib/dataBackup.js:116`
+```javascript
+  116 | export async function importDriveSenseBackup(file, { includeSettings = true } = {}) {
+  117 |   const text = await file.text();
+  118 |   const backup = parseDriveSenseBackup(text);
+  119 |
+  120 |   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
+  121 |   const tripsToImport = backup.version < 4
+  122 |     ? backup.trips.map((trip) => ({ ...trip, needs_rescore: true }))
+  123 |     : backup.trips;
+  124 |   const importedTrips = await tripService.upsertMany(tripsToImport);
+  125 |
+  126 |   if (includeSettings && backup.settings) {
+  127 |     localSettings.set({ ...localSettings.get(), ...backup.settings });
+  128 |   }
+  129 |
+  130 |   const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
+  131 |   if (savedFilters.length > 0) {
+  132 |     try {
+  133 |       localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
+  134 |     } catch {}
+  135 |   }
+  136 |
+  137 |   return {
+  138 |     trips: importedTrips.length,
+  139 |     vehicles: importedVehicles.length,
+  140 |     settings: includeSettings && Boolean(backup.settings),
+  141 |     savedFilters: savedFilters.length,
+  142 |   };
+  143 | }
+```
+
+
+### Native download/export bridge
+
+Source: `src/lib/nativeDownloads.js:9`
+```javascript
+    9 | export async function saveExportToDownloads({ filename, data, mimeType, base64 }) {
+   10 |   return DriveSenseNative.saveExportToDownloads({ filename, data, mimeType, base64 });
+   11 | }
+```
+
+
+### Monthly PDF report derived values
+
+Source: `src/lib/pdfExport.js:95` focused calculation/derived-value lines.
+```javascript
+  100 |   const filename = `road-sage-monthly-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
+  165 |   const sortedByDistance = [...tripList].sort((a, b) => (b.distance_km ?? 0) - (a.distance_km ?? 0));
+  166 |   const economics = tripList.reduce((totals, trip) => {
+  181 |     ['No-harsh-brake streak', `${streak} day${streak === 1 ? '' : 's'}`],
+```
+
+
+### UBI PDF report derived values
+
+Source: `src/lib/pdfExport.js:214` focused calculation/derived-value lines.
+```javascript
+  217 |   const filename = `road-sage-driver-score-card-${now.toISOString().slice(0, 10)}.pdf`;
+  239 |   const hours = Math.floor((ubiReport.totalDrivingMinutes || 0) / 60);
+  240 |   const minutes = Math.round((ubiReport.totalDrivingMinutes || 0) % 60);
+```
+
+
+### Map playback downsampling
+
+Source: `src/lib/mapPlaybackInsights.js:164` focused calculation/derived-value lines.
+```javascript
+  170 |   const step = (clean.length - 2) / (maxPoints - 2);
+  171 |   for (let i = 1; i < maxPoints - 1; i++) {
+  172 |     result.push(clean[Math.round(i * step)]);
+  174 |   result.push(clean[clean.length - 1]);
+```
+
+
+### Map playback route preparation
+
+Source: `src/lib/mapPlaybackInsights.js:178` focused calculation/derived-value lines.
+```javascript
+  178 | export function prepareMapRoutePoints(points = [], options = {}) {
+  179 |   const {
+  180 |     maxPoints = DEFAULT_RENDER_POINTS,
+  181 |     smooth = true,
+  182 |   } = options;
+  183 |   const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
+  184 |   const visualPoints = smooth ? smoothRoutePoints(clean) : clean;
+  185 |   if (!maxPoints || visualPoints.length <= maxPoints) return visualPoints;
+  186 |   return downsampleRoutePoints(visualPoints, maxPoints);
+  187 | }
+```
+
+
+### Map playback event-to-route matching
+
+Source: `src/lib/mapPlaybackInsights.js:189` focused calculation/derived-value lines.
+```javascript
+  192 |   if (Number.isFinite(eventMs)) {
+  198 |       const delta = Math.abs(pointMs - eventMs);
+  213 |     const distance = Math.abs(lat - point.lat) + Math.abs(lng - point.lng);
+```
+
+
+### Map playback interpolation
+
+Source: `src/lib/mapPlaybackInsights.js:376` focused calculation/derived-value lines.
+```javascript
+  383 |     const fallbackIndex = Math.max(0, Math.min(clean.length - 1, Math.round(elapsedSeconds)));
+  384 |     return { index: fallbackIndex, point: clean[fallbackIndex], heading: 0, ratio: 0, fromIndex: Math.max(0, fallbackIndex - 1), toIndex: fallbackIndex };
+  397 |   const targetMs = firstMs + Math.max(0, elapsedSeconds) * 1000;
+  398 |   let index = clean.length - 1;
+  406 |   const prev = clean[Math.max(0, index - 1)];
+```
+
+
+### Map playback distance interpolation
+
+Source: `src/lib/mapPlaybackInsights.js:432` focused calculation/derived-value lines.
+```javascript
+  435 |   const fromIndex = Math.max(0, playbackPosition.fromIndex ?? Math.max(0, fallbackIndex - 1));
+  436 |   const toIndex = Math.max(fromIndex, playbackPosition.toIndex ?? fallbackIndex);
+  439 |   return baseDistanceKm + (segment?.distanceKm || 0) * (playbackPosition.ratio ?? 0);
+```
+
+
+### Map route comparison metrics
+
+Source: `src/lib/mapPlaybackInsights.js:442` focused calculation/derived-value lines.
+```javascript
+  455 |   const eventDelta = currentEvents - secondaryEvents;
+  456 |   const speedDelta = currentAvg - secondaryAvg;
+  457 |   if (eventDelta < 0) notes.push(`${Math.abs(eventDelta)} fewer recorded events than the comparison trip.`);
+  459 |   if (Math.abs(speedDelta) >= 5) notes.push(`${Math.abs(Math.round(speedDelta))} km/h ${speedDelta > 0 ? 'faster' : 'slower'} average pace.`);
+```
+
+
+### OSRM map-matching enrichment
+
+Source: `src/lib/mapMatching.js:52` focused calculation/derived-value lines.
+```javascript
+   56 |   const valid = (routePoints || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+   77 |     const matched = valid.map((point) => {
+```
+
+
+### OSM maxspeed parser
+
+Source: `src/lib/speedLimitSource.js:20` focused calculation/derived-value lines.
+```javascript
+   25 |   const match = raw.match(/(\d+(?:\.\d+)?)/);
+   28 |   if (!Number.isFinite(parsed) || parsed <= 0) return null;
+   29 |   return Math.round(mph ? parsed * 1.60934 : parsed);
+```
+
+
+### OSM road-type speed defaults
+
+Source: `src/lib/speedLimitSource.js:156` focused calculation/derived-value lines.
+```javascript
+  156 | export function defaultSpeedLimitKmhForOsmHighway(highway) {
+  157 |   const value = String(highway || '').toLowerCase().trim();
+  158 |   if (!value) return null;
+  159 |   if (value === 'living_street') return 20;
+  160 |   if (value === 'service') return 30;
+  161 |   if (value === 'residential') return 40;
+  162 |   if (value === 'tertiary' || value === 'tertiary_link' || value === 'unclassified' || value === 'road') return 50;
+  163 |   if (value === 'primary' || value === 'primary_link' || value === 'secondary' || value === 'secondary_link') return 60;
+  164 |   if (value === 'trunk_link' || value === 'motorway_link') return 80;
+  165 |   if (value === 'motorway' || value === 'trunk') return 100;
+  166 |   return null;
+  167 | }
+```
+
+
+### Route speed-limit annotation
+
+Source: `src/lib/speedLimitSource.js:282` focused calculation/derived-value lines.
+```javascript
+  297 |     const annotated = routePoints.map((point) => {
+  298 |       if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lng)) return point;
+```
+
+
+### Open-source trip context refresh
+
+Source: `src/lib/openSourceTripContext.js:22` focused calculation/derived-value lines.
+```javascript
+   22 | export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get(), options = {}) {
+   23 |   if (!trip) throw new Error('Trip not loaded');
+   24 |   const { onProgress } = options;
+   25 |
+   26 |   const originalPoints = trip.route_points || [];
+   27 |   const recordedPointCount = Number(trip.route_points_raw_count) || originalPoints.length;
+   28 |   if (originalPoints.length < 2) {
+   29 |     return {
+   30 |       speed_limit_context: {
+   31 |         provider: 'openstreetmap_overpass',
+   32 |         status: 'empty_route',
+   33 |         coverage: 0,
+   34 |         source: 'openstreetmap_overpass',
+   35 |         error: 'Trip needs at least two GPS points before OSM speed limits can be matched.',
+   36 |       },
+   37 |       route_points_raw_count: recordedPointCount,
+   38 |       route_points_map_count: originalPoints.length,
+   39 |       needs_rescore: false,
+   40 |     };
+   41 |   }
+   42 |
+   43 |   const thresholds = buildDrivingThresholds(settings);
+   44 |   stage(onProgress, 'Checking weather context');
+   45 |   const weatherPromise = timeout(
+   46 |     fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
+   47 |     12000,
+   48 |     'Weather lookup timed out'
+   49 |   ).catch((error) => ({
+   50 |     provider: 'open-meteo',
+   51 |     status: 'unavailable',
+   52 |     riskLevel: 'low',
+   53 |     riskScore: 0,
+   54 |     riskMultiplier: 1,
+   55 |     error: error?.message || 'Weather lookup unavailable',
+   56 |   }));
+   57 |
+```
+
+
+### Weather context sampling/cache
+
+Source: `src/lib/weatherContext.js:165` focused calculation/derived-value lines.
+```javascript
+  167 |     return { provider: 'open-meteo', status: 'disabled', riskLevel: 'low', riskScore: 0, riskMultiplier: 1 };
+  170 |   if (!center) return { provider: 'open-meteo', status: 'empty_route', riskLevel: 'low', riskScore: 0, riskMultiplier: 1 };
+  179 |   const historical = Number.isFinite(tripDate.getTime()) && tripDate < today;
+  181 |   if (!data || Date.now() - cached.savedAt > maxAge) {
+  191 |   if (!samples.length) return { provider: 'open-meteo', status: 'no_hourly_match', riskLevel: 'low', riskScore: 0, riskMultiplier: 1 };
+```
+
+
+### Weather risk score adjustment
+
+Source: `src/lib/weatherContext.js:201` focused calculation/derived-value lines.
+```javascript
+  208 |   const weatherPenalty = Math.min(12, Math.round(eventCount * ((weatherContext.riskMultiplier || 1) - 1) * 6));
+  218 |   const scoreSafety = clamp((scores.score_safety ?? 100) - weatherPenalty, 0, 100);
+  219 |   const scoreOverall = clamp(Math.round(
+```
+
+
+---
+
+## 11. Android Native Tracking Calculations
 
 ### Native constants and service fields
 
@@ -2083,7 +2445,7 @@ Source: `android/app/src/main/java/com/drivesense/app/DriveSensePhoneUsageTracke
 
 ---
 
-## 11. Complete Calculation Snippet Index
+## 12. Complete Calculation Snippet Index
 
 This is the exhaustive calculation pass for the tracked app source. It is grouped by file and function, and contains only calculation/derived-value lines. Total snippets: 4456.
 
@@ -16153,7 +16515,7 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
 
 ---
 
-## 12. Tests, Dependencies, And Security
+## 13. Tests, Dependencies, And Security
 
 ### Tests
 
