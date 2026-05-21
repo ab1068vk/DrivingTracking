@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T14:11:25.8865580-04:00
+Updated: 2026-05-21T14:23:15.6918012-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -54,7 +54,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Driver anomaly z-scores guard zero standard deviation; sensor fusion and cornering peaks use safe fallbacks.
 - Added `tripService.listAll()` / `localTripRepository.listAll()` and switched aggregate/reporting screens to full-history queries.
 - IndexedDB upgrade handling now has an incremental migration shape, and rescore writes are batched in one transaction where IndexedDB is available.
-- OSRM map matching is disabled by default with a blank endpoint; Settings labels the endpoint as an external GPS-coordinate destination.
+- OSRM map matching has been restored to the legacy default endpoint, `https://router.project-osrm.org`, at user request. Settings still recommends a self-hosted OSRM server for production privacy and reliability.
 - Economics now clamps eco scores, supports fuel-type-specific CO2 factors, and uses configurable CO2 baselines.
 - Phone-use merge results now include `data_sources` provenance for partial-detection transparency.
 - `/android` is gated to dev builds or `VITE_SHOW_DEBUG_ROUTES=true`.
@@ -64,7 +64,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Backup export now tells the user when native Downloads export falls back to browser download, and backup import reports saved-filter restore failures.
 - OpenStreetMap, Open-Meteo, and OSRM requests now run through a small retry/circuit-breaker helper for transient failures.
 - Settings updates validate configurable threshold ranges before saving unsafe values.
-- Onboarding and Settings disclose that configured OSRM map matching sends route GPS coordinates to the configured endpoint.
+- The temporary onboarding/Settings disclosure that blank OSRM disables map matching was reverted with the OSRM default restoration.
 - Lightweight production error reporting records sanitized JS errors and unhandled promise rejections into local diagnostics without sending trip data off-device.
 
 ### Verification
