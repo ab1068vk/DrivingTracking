@@ -801,8 +801,11 @@ export default function TripDetail() {
             {tripPointSummary}. Get Road Data checks online map/weather services for this trip. Show Speed-Limit Layer only changes the colors after speed limits are available.
           </div>
           <div className="mt-2 grid gap-1">
-            <div>Get Road Data: asks OpenStreetMap for speed limits and Open-Meteo for weather. OSRM route snapping runs only when enabled.</div>
-            <div>Show Speed-Limit Layer: colors this route green, orange, or red against the fetched/default limits.</div>
+            <div>Get Road Data: checks the enabled options below for this trip.</div>
+            <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.'}</div>
+            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends trip midpoint and date to Open-Meteo.'}</div>
+            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url ? 'sends sampled GPS points to OSRM to clean up the route line.' : 'skips OSRM until an endpoint is set in Settings.'}</div>
+            <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>
           <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">

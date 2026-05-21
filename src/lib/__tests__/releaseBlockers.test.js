@@ -91,7 +91,7 @@ describe('release blocker regressions', () => {
 
     const result = await mapMatchRoute(route, { map_matching_enabled: true, osrm_map_matching_url: '' });
 
-    expect(result.status).toBe('disabled');
+    expect(result.status).toBe('needs_endpoint');
     expect(result.routePoints).toBe(route);
     expect(fetch).not.toHaveBeenCalled();
   });

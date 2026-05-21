@@ -234,14 +234,14 @@ export default function Settings() {
 
   const enableOsrmMapMatching = (enabled) => {
     if (!enabled) {
-      updateCfg({ map_matching_enabled: false });
+      updateCfg({ map_matching_enabled: false, osrm_map_matching_url: '' });
       return;
     }
     const ok = typeof window === 'undefined' || window.confirm(
-      'Snap route to roads sends sampled GPS points to the configured OSRM endpoint when you tap Get Road Data on a trip. Continue?'
+      'Snap route to roads needs an OSRM link. Road Sage can use the public OSRM demo now. Sampled GPS points are sent there only when you tap Get Road Data on a trip. Continue?'
     );
     if (!ok) return;
-    updateCfg({ map_matching_enabled: true });
+    updateCfg({ map_matching_enabled: true, osrm_map_matching_url: cfg.osrm_map_matching_url || PUBLIC_OSRM_DEMO_URL });
   };
 
   const usePublicOsrmDemo = () => {
@@ -1600,14 +1600,21 @@ export default function Settings() {
               </button>
               <button
                 type="button"
-                onClick={() => updateCfg({ osrm_map_matching_url: '' })}
+                onClick={() => updateCfg({ map_matching_enabled: false, osrm_map_matching_url: '' })}
                 disabled={cfg.map_matching_enabled === false || !cfg.osrm_map_matching_url}
                 className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
-                Clear
+                Turn off + clear
               </button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. A custom/private OSRM server is best for privacy; the public demo is convenient but receives sampled route points and has no service guarantee.</p>
+            <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+              {cfg.map_matching_enabled === false
+                ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
+                : cfg.osrm_map_matching_url
+                  ? 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
+                  : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
+            </div>
           </div>
           <SettingRow
             icon={Target}
@@ -1830,11 +1837,34 @@ export default function Settings() {
           />
         </SettingRow>
         <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
-          <div className="font-semibold text-foreground">What leaves the app</div>
-          <div className="mt-1 grid gap-1">
-            <div>Speed limits: route-area boxes go to OpenStreetMap Overpass.</div>
-            <div>Weather: trip midpoint and date go to Open-Meteo.</div>
-            <div>Snap route to roads: sampled GPS points go to OSRM only after you enable OSRM and tap Get Road Data.</div>
+          <div className="font-semibold text-foreground">What Get Road Data does</div>
+          <div className="mt-2 grid gap-2">
+            <div>
+              <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
+              {cfg.speed_limit_lookup_enabled === false
+                ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
+                : 'sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits.'}
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
+              {cfg.weather_context_enabled === false
+                ? 'skips Open-Meteo; scores do not get weather adjustment.'
+                : 'sends trip midpoint and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}:</span>{' '}
+              {cfg.map_matching_enabled === false
+                ? 'skips OSRM; map/playback keep the original GPS line.'
+                : cfg.osrm_map_matching_url
+                  ? 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'
+                  : 'will be skipped until an OSRM endpoint is added.'}
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">Automatically get speed limits + weather {cfg.external_context_auto_fetch_enabled === true ? 'ON' : 'OFF'}:</span>{' '}
+              {cfg.external_context_auto_fetch_enabled === true
+                ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
+                : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
+            </div>
           </div>
         </div>
         <div className="px-1">

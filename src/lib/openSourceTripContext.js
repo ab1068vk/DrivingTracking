@@ -25,6 +25,10 @@ export const isOsrmMapMatchingConfigured = (settings = {}) => (
   settings.map_matching_enabled !== false && Boolean(settings.osrm_map_matching_url)
 );
 
+export const isOsrmMapMatchingEnabled = (settings = {}) => (
+  settings.map_matching_enabled !== false
+);
+
 export const isExternalContextAutoFetchEnabled = (settings = {}) => (
   settings.external_context_auto_fetch_enabled === true
 );
@@ -42,6 +46,8 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     lines.push('- Snap route to roads: sends sampled GPS points to the OSRM endpoint.');
+  } else if (isOsrmMapMatchingEnabled(settings)) {
+    lines.push('- Snap route to roads is on but has no endpoint, so OSRM will be skipped until a link is added.');
   } else {
     lines.push('- Snap route to roads is off, so GPS points are not sent to OSRM.');
   }
@@ -180,6 +186,9 @@ export function describeMapMatchingStatus(context = {}) {
   }
   if (context.status === 'disabled') {
     return 'Route snapping was skipped. Add an OSRM endpoint in Settings only if you want sampled GPS points sent there.';
+  }
+  if (context.status === 'needs_endpoint') {
+    return context.error || 'Route snapping is on, but no OSRM endpoint is set. Add a link in Settings or use the public OSRM demo.';
   }
   if (context.status === 'matched') {
     return `OSRM snapped ${context.snapped_coverage ?? 0}% of route points to roads.`;

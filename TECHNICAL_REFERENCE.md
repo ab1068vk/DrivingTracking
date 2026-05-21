@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T18:20:00.0000000-04:00
+Updated: 2026-05-21T18:35:00.0000000-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -68,6 +68,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Get Road Data now warns before sending data: OpenStreetMap Overpass receives route-area boxes, Open-Meteo receives trip midpoint/date, and OSRM receives sampled GPS points only when configured.
 - New saved trips stay local by default for external context; auto-fetch for OSM speed limits and Open-Meteo weather is a separate opt-in setting. OSRM remains manual even when auto-fetch is enabled.
 - Trip and Settings labels now use plain "Get Road Data" wording so users can see exactly which buttons fetch speed limits, weather, and optional OSRM route snapping.
+- OSRM route snapping now has an explicit `needs_endpoint` state. Turning snapping on fills the public OSRM demo after a warning, and clearing the link turns snapping off so users do not get a confusing OSRM failure with no URL.
 - Lightweight production error reporting records sanitized JS errors and unhandled promise rejections into local diagnostics without sending trip data off-device.
 
 ### Verification

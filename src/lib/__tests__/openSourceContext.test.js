@@ -29,6 +29,7 @@ describe('open-source trip context', () => {
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(true);
     expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('sampled GPS points');
+    expect(describeMapMatchingStatus({ status: 'needs_endpoint' })).toContain('OSRM endpoint');
     expect(describeMapMatchingStatus({ status: 'manual_required' })).toContain('Get Road Data');
     expect(describeOsmSpeedLimitStatus({ status: 'manual_required' })).toContain('Get Road Data');
   });

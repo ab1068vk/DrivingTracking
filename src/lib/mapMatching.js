@@ -54,7 +54,12 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
     return { routePoints, status: 'disabled', provider: 'osrm' };
   }
   if (!settings.osrm_map_matching_url) {
-    return { routePoints, status: 'disabled', provider: 'osrm' };
+    return {
+      routePoints,
+      status: 'needs_endpoint',
+      provider: 'osrm',
+      error: 'Route snapping is on, but no OSRM endpoint is set.',
+    };
   }
   const valid = (routePoints || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   if (valid.length < 3) return { routePoints, status: 'not_enough_points', provider: 'osrm' };
@@ -66,6 +71,16 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   try {
     const sampled = samplePoints(valid);
     const endpoint = settings.osrm_map_matching_url;
+    try {
+      new URL(endpoint);
+    } catch {
+      return {
+        routePoints,
+        status: 'needs_endpoint',
+        provider: 'osrm',
+        error: 'The OSRM endpoint is not a valid URL.',
+      };
+    }
     const response = await withRetry('osrm-map-matching', async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
@@ -103,11 +118,12 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
     await setJson(CACHE_KEY, { ...cache, [key]: result });
     return result;
   } catch (error) {
+    const detail = error?.message ? ` ${error.message}` : '';
     return {
       routePoints,
       status: 'unavailable',
       provider: 'osrm',
-      error: error?.message || 'Map matching unavailable',
+      error: `OSRM could not snap this route. The original GPS route was kept.${detail}`,
     };
   }
 }
