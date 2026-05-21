@@ -4,7 +4,7 @@ Road Sage is a local-first driving tracker built with React, Vite, Capacitor, an
 
 ## Documentation
 
-The main reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is source-first: it explains the app, includes actual code excerpts, and has a grouped complete calculation index for the whole tracked app.
+The main reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is an advanced calculation-focused reference: app details, exact formula snippets, thresholds, scoring logic, event detection, reports, and Android native tracking math without dumping entire source files.
 
 ## Current Status
 
