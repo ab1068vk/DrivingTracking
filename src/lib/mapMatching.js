@@ -2,7 +2,6 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
-const DEFAULT_OSRM_URL = 'https://router.project-osrm.org';
 const MAX_MATCH_POINTS = 100;
 const OSRM_TIMEOUT_MS = 12000;
 
@@ -29,7 +28,7 @@ function samplePoints(points = []) {
   });
 }
 
-function osrmMatchUrl(points = [], baseUrl = DEFAULT_OSRM_URL) {
+function osrmMatchUrl(points = [], baseUrl) {
   const url = new URL('/match/v1/driving/' + points.map(({ point }) => `${point.lng},${point.lat}`).join(';'), baseUrl);
   url.searchParams.set('overview', 'full');
   url.searchParams.set('geometries', 'geojson');
@@ -54,6 +53,9 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   if (settings.map_matching_enabled === false) {
     return { routePoints, status: 'disabled', provider: 'osrm' };
   }
+  if (!settings.osrm_map_matching_url) {
+    return { routePoints, status: 'disabled', provider: 'osrm' };
+  }
   const valid = (routePoints || []).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   if (valid.length < 3) return { routePoints, status: 'not_enough_points', provider: 'osrm' };
 
@@ -63,7 +65,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
 
   try {
     const sampled = samplePoints(valid);
-    const endpoint = settings.osrm_map_matching_url || DEFAULT_OSRM_URL;
+    const endpoint = settings.osrm_map_matching_url;
     const response = await withRetry('osrm-map-matching', async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);

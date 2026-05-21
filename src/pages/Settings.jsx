@@ -1540,7 +1540,7 @@ export default function Settings() {
           <SettingRow
             icon={Route}
             label="OSRM map matching"
-            sublabel="Snap GPS to roads with an open-source OSRM endpoint"
+            sublabel="Optional road snapping with a user-provided OSRM endpoint"
           >
             <Toggle
               value={cfg.map_matching_enabled !== false}
@@ -1550,12 +1550,13 @@ export default function Settings() {
           <div className="px-1 py-3 border-b border-border/50">
             <div className="mb-1 text-xs font-medium">OSRM endpoint</div>
             <input
-              value={cfg.osrm_map_matching_url || 'https://router.project-osrm.org'}
+              value={cfg.osrm_map_matching_url || ''}
               onChange={event => updateCfg({ osrm_map_matching_url: event.target.value })}
               disabled={cfg.map_matching_enabled === false}
+              placeholder="https://your-osrm.example"
               className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
             />
-            <p className="mt-1 text-xs text-muted-foreground">Use a self-hosted OSRM server for production privacy and reliability.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Leave blank to keep map matching local-only. Adding an endpoint sends route GPS coordinates to that server.</p>
           </div>
           <SettingRow
             icon={Target}

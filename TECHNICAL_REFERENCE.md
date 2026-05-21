@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T14:23:15.6918012-04:00
+Updated: 2026-05-21T17:35:00.0000000-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -54,7 +54,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Driver anomaly z-scores guard zero standard deviation; sensor fusion and cornering peaks use safe fallbacks.
 - Added `tripService.listAll()` / `localTripRepository.listAll()` and switched aggregate/reporting screens to full-history queries.
 - IndexedDB upgrade handling now has an incremental migration shape, and rescore writes are batched in one transaction where IndexedDB is available.
-- OSRM map matching has been restored to the legacy default endpoint, `https://router.project-osrm.org`, at user request. Settings still recommends a self-hosted OSRM server for production privacy and reliability.
+- OSRM map matching is disabled by default with a blank endpoint. Users must explicitly enable it and provide an endpoint before route coordinates leave the app for road snapping.
 - Economics now clamps eco scores, supports fuel-type-specific CO2 factors, and uses configurable CO2 baselines.
 - Phone-use merge results now include `data_sources` provenance for partial-detection transparency.
 - `/android` is gated to dev builds or `VITE_SHOW_DEBUG_ROUTES=true`.
@@ -64,7 +64,7 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - Backup export now tells the user when native Downloads export falls back to browser download, and backup import reports saved-filter restore failures.
 - OpenStreetMap, Open-Meteo, and OSRM requests now run through a small retry/circuit-breaker helper for transient failures.
 - Settings updates validate configurable threshold ranges before saving unsafe values.
-- The temporary onboarding/Settings disclosure that blank OSRM disables map matching was reverted with the OSRM default restoration.
+- OSRM is blank and disabled by default again. Map matching stays local-off unless the user enables it and enters an endpoint; Settings explains that route GPS coordinates are sent to that endpoint.
 - Lightweight production error reporting records sanitized JS errors and unhandled promise rejections into local diagnostics without sending trip data off-device.
 
 ### Verification
@@ -556,8 +556,8 @@ Source: `src/lib/trackingStore.js:1`
    96 |   sensor_fusion_enabled: true,
    97 |   crash_detection_enabled: true,
    98 |   emergency_workflow_enabled: false,
-   99 |   map_matching_enabled: true,
-  100 |   osrm_map_matching_url: 'https://router.project-osrm.org',
+   99 |   map_matching_enabled: false,
+  100 |   osrm_map_matching_url: '',
   101 |   predictive_route_risk_enabled: true,
   102 |   obd_bluetooth_enabled: false,
   103 |   notif_safety_alerts_enabled: true,
@@ -1162,8 +1162,8 @@ Source: `src/lib/trackingStore.js:31`
    96 |   sensor_fusion_enabled: true,
    97 |   crash_detection_enabled: true,
    98 |   emergency_workflow_enabled: false,
-   99 |   map_matching_enabled: true,
-  100 |   osrm_map_matching_url: 'https://router.project-osrm.org',
+   99 |   map_matching_enabled: false,
+  100 |   osrm_map_matching_url: '',
   101 |   predictive_route_risk_enabled: true,
   102 |   obd_bluetooth_enabled: false,
   103 |   notif_safety_alerts_enabled: true,
@@ -15519,11 +15519,11 @@ This is the exhaustive calculation pass for the tracked app source. It is groupe
  1503 |             label="Crash / incident detection"
  1504 |             sublabel="Detect impact-like motion followed by little movement"
  1515 |             sublabel="Optional local check-in notice after a possible incident; no SMS or paid emergency service is used"
- 1526 |             sublabel="Snap GPS to roads with an open-source OSRM endpoint"
+ 1526 |             sublabel="Optional road snapping with a user-provided OSRM endpoint"
  1533 |           <div className="px-1 py-3 border-b border-border/50">
  1534 |             <div className="mb-1 text-xs font-medium">OSRM endpoint</div>
  1539 |               className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
- 1541 |             <p className="mt-1 text-xs text-muted-foreground">Use a self-hosted OSRM server for production privacy and reliability.</p>
+ 1541 |             <p className="mt-1 text-xs text-muted-foreground">Leave blank to keep map matching local-only. Adding an endpoint sends route GPS coordinates to that server.</p>
  1556 |             sublabel="Speaks during active trips for live coaching, phone use, speeding, drowsy, long-drive, danger-zone, and incident alerts"
  1558 |             <div className="flex items-center gap-2">
  1565 |                 className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"

@@ -81,22 +81,8 @@ describe('release blocker regressions', () => {
     expect(Number.isFinite(result.anomaly_score)).toBe(true);
   });
 
-  it('uses the default OSRM endpoint when none is configured', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        matchings: [{
-          confidence: 0.8,
-          geometry: {
-            coordinates: [
-              [-79.38, 43.65],
-              [-79.38, 43.651],
-              [-79.38, 43.652],
-            ],
-          },
-        }],
-      }),
-    })));
+  it('does not call OSRM when map matching has no configured endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn());
     const route = [
       { lat: 43.65, lng: -79.38 },
       { lat: 43.651, lng: -79.38 },
@@ -105,9 +91,9 @@ describe('release blocker regressions', () => {
 
     const result = await mapMatchRoute(route, { map_matching_enabled: true, osrm_map_matching_url: '' });
 
-    expect(result.status).toBe('matched');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0][0]).toContain('https://router.project-osrm.org');
+    expect(result.status).toBe('disabled');
+    expect(result.routePoints).toBe(route);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('returns finite sensor fusion peaks for empty samples', () => {
