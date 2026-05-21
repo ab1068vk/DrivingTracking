@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T14:01:05.0138920-04:00
+Updated: 2026-05-21T14:11:25.8865580-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -32,6 +32,8 @@ The complete snippet index includes every tracked app-source calculation line fo
 
 Status as of 2026-05-21T14:01:05.0138920-04:00: the highest-risk release blockers from the final app analysis have been remediated in code and covered by focused regression tests.
 
+Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-priority and production-grade follow-ups from the report have also been implemented or covered by in-app equivalents.
+
 ### Before
 
 - `react-quill`/`quill` remained in the runtime dependency tree even though the app did not import it.
@@ -57,10 +59,17 @@ Status as of 2026-05-21T14:01:05.0138920-04:00: the highest-risk release blocker
 - Phone-use merge results now include `data_sources` provenance for partial-detection transparency.
 - `/android` is gated to dev builds or `VITE_SHOW_DEBUG_ROUTES=true`.
 - App package version is now `1.0.0`.
+- Rescore progress now emits app events and displays an updating trip-history banner in the shared layout.
+- `detectDrivingEvents()` now always returns `{ events, phoneUse }`; callers and tests no longer use brittle `Reflect.get()` return-shape probes.
+- Backup export now tells the user when native Downloads export falls back to browser download, and backup import reports saved-filter restore failures.
+- OpenStreetMap, Open-Meteo, and OSRM requests now run through a small retry/circuit-breaker helper for transient failures.
+- Settings updates validate configurable threshold ranges before saving unsafe values.
+- Onboarding and Settings disclose that configured OSRM map matching sends route GPS coordinates to the configured endpoint.
+- Lightweight production error reporting records sanitized JS errors and unhandled promise rejections into local diagnostics without sending trip data off-device.
 
 ### Verification
 
-- `npm.cmd test` passed: 31 test files, 239 tests.
+- `npm.cmd test` passed: 31 test files, 242 tests.
 - `npm.cmd run build` passed.
 - `android\gradlew.bat assembleDebug` passed.
 

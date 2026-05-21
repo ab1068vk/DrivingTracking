@@ -164,10 +164,10 @@ const IMPORT_NUMBER_RANGES = {
 };
 
 const IMPORT_ENUMS = {
-  tracking_mode: ['manual', 'foreground_auto', 'background_auto'],
+  tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
   dark_mode: ['system', 'light', 'dark'],
-  night_detection_mode: ['sunset', 'fixed'],
+  night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
 };
 
@@ -241,6 +241,30 @@ export function sanitizeImportedSettings(raw = {}) {
   });
 
   return sanitized;
+}
+
+export function validateSettingsPatch(patch = {}) {
+  const errors = [];
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return { valid: false, errors: ['Settings update must be an object.'] };
+  }
+
+  Object.entries(patch).forEach(([key, value]) => {
+    if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key)) return;
+    if (IMPORT_ENUMS[key] && !IMPORT_ENUMS[key].includes(value)) {
+      errors.push(`${key} must be one of: ${IMPORT_ENUMS[key].join(', ')}.`);
+      return;
+    }
+    if (IMPORT_NUMBER_RANGES[key]) {
+      const number = Number(value);
+      const [min, max] = IMPORT_NUMBER_RANGES[key];
+      if (!Number.isFinite(number) || number < min || number > max) {
+        errors.push(`${key} must be between ${min} and ${max}.`);
+      }
+    }
+  });
+
+  return { valid: errors.length === 0, errors };
 }
 
 export async function getLastParkedLocation() {

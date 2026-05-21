@@ -441,6 +441,9 @@ export default function Onboarding({ onComplete }) {
               ))}
               <div className="space-y-2 rounded-2xl bg-secondary/40 p-3">
                 <div className="text-xs font-bold uppercase tracking-normal text-muted-foreground">Setup checklist</div>
+                <div className="rounded-xl border border-border bg-card p-3 text-xs text-muted-foreground">
+                  OSRM road matching is off by default. If enabled later, route GPS coordinates are sent to the endpoint you configure.
+                </div>
                 <SetupChecklistRow
                   label="Location"
                   detail="Required for routes, speed, distance, and parking."

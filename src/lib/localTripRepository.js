@@ -18,6 +18,7 @@ const DB_NAME = 'drivesense_mobile';
 const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
 export const TRIP_SCHEMA_VERSION = 9;
+export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
@@ -146,6 +147,11 @@ const invalidateTripDerivedCaches = async () => {
 
 let importingNativeTrips = false;
 
+const emitRescoreProgress = (detail) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(RESCORE_PROGRESS_EVENT, { detail }));
+};
+
 const mergedPhoneUseForTrip = (trip, routePoints, stats, detectionPhoneUse) => {
   return buildPhoneUseFromTripEvidence(trip, routePoints, stats.duration_seconds, detectionPhoneUse);
 };
@@ -177,9 +183,9 @@ const rescoreTrip = (trip) => {
   const thresholds = buildDrivingThresholds(settings);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
   const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
-  const events = Reflect.get(detection, 'events') ?? detection;
+  const events = detection.events;
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
-  const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, Reflect.get(detection, 'phoneUse') ?? {});
+  const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detection.phoneUse ?? {});
   const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
   const drivingEvents = applyEventFeedbackToEvents(
@@ -220,16 +226,24 @@ const needsRescore = (trip) => (
 const rescoreTripsIfNeeded = async (trips = []) => {
   const next = [];
   const rescoredTrips = [];
+  const total = trips.filter(needsRescore).length;
+  let completed = 0;
+  if (total) emitRescoreProgress({ status: 'running', completed, total });
   for (const trip of trips) {
     if (needsRescore(trip)) {
       const rescored = rescoreTrip(trip);
       rescoredTrips.push(rescored);
       next.push(rescored);
+      completed += 1;
+      emitRescoreProgress({ status: 'running', completed, total });
     } else {
       next.push(trip);
     }
   }
-  if (rescoredTrips.length) await putTrips(rescoredTrips);
+  if (rescoredTrips.length) {
+    await putTrips(rescoredTrips);
+    emitRescoreProgress({ status: 'complete', completed, total });
+  }
   return next;
 };
 
@@ -247,8 +261,8 @@ const importNativeCompletedTrips = async () => {
       const thresholds = buildDrivingThresholds(settings);
       const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
       const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
-      const events = Reflect.get(detection, 'events') ?? detection;
-      const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, Reflect.get(detection, 'phoneUse') ?? {});
+      const events = detection.events;
+      const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detection.phoneUse ?? {});
       const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
       const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);

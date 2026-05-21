@@ -33,7 +33,7 @@ describe('road-type segmented scoring', () => {
   it('scores a deterministic highway segment', () => {
     const points = route(90, 100, 0.00027);
     const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
-    const events = detectDrivingEvents(points);
+    const events = detectDrivingEvents(points).events;
     const scores = calculateRoadTypeSegmentedScores(points, events, stats, DEFAULT_THRESHOLDS);
 
     expect(scores.highway_score?.overall).toBeGreaterThan(0);

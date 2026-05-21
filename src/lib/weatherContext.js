@@ -1,4 +1,5 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { withRetry } from '@/lib/retry';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -108,7 +109,7 @@ async function fetchOpenMeteoWeather({ lat, lng, date }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await withRetry('open-meteo-weather', () => fetch(url, { signal: controller.signal }));
     if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`);
     return response.json();
   } finally {

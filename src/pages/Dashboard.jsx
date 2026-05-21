@@ -842,10 +842,10 @@ export default function Dashboard() {
     }));
 
     const detection = detectDrivingEvents(pts, thresholds, endTime);
-    const detectedEvents = Reflect.get(detection, 'events') ?? detection;
+    const detectedEvents = detection.events;
     const activeIncidentEvents = (tripToEnd.driving_events || []).filter((event) => event.type === 'possible_crash');
     const events = enrichEventsWithSensorContext([...detectedEvents, ...activeIncidentEvents], sensorFusionRef.current?.getSamples?.() || []);
-    const gpsPhoneUse = Reflect.get(detection, 'phoneUse') ?? {};
+    const gpsPhoneUse = detection.phoneUse ?? {};
     const startMs = new Date(tripToEnd.start_time).getTime();
     const endMs = new Date(endTime).getTime();
     let nativePhoneUsageSummary = null;
@@ -1134,12 +1134,12 @@ export default function Dashboard() {
     if (firstPoints.length < 3 || lastPoints.length < 3) return false;
     const firstDetection = detectDrivingEvents(firstPoints);
     const lastDetection = detectDrivingEvents(lastPoints);
-    const firstEvents = Reflect.get(firstDetection, 'events') ?? firstDetection;
-    const lastEvents = Reflect.get(lastDetection, 'events') ?? lastDetection;
+    const firstEvents = firstDetection.events;
+    const lastEvents = lastDetection.events;
     const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
     const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
-    return calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, Reflect.get(lastDetection, 'phoneUse') ?? {}).score_overall <
-      calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, Reflect.get(firstDetection, 'phoneUse') ?? {}).score_overall - 15;
+    return calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, lastDetection.phoneUse ?? {}).score_overall <
+      calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstDetection.phoneUse ?? {}).score_overall - 15;
   })();
 
   const units = settings.units || 'metric';

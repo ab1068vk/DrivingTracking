@@ -2,6 +2,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -28,6 +29,7 @@ function BrandMark({ className = '' }) {
 export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [trackingActive, setTrackingActive] = useState(false);
+  const [rescoreProgress, setRescoreProgress] = useState(null);
   const location = useLocation();
 
   // Listen for tracking state changes
@@ -47,6 +49,23 @@ export default function Layout() {
     setMobileMenuOpen(false);
   }, [location]);
 
+  useEffect(() => {
+    let clearTimer = null;
+    const onProgress = (event) => {
+      const detail = event.detail || {};
+      setRescoreProgress(detail);
+      if (detail.status === 'complete') {
+        clearTimeout(clearTimer);
+        clearTimer = setTimeout(() => setRescoreProgress(null), 2500);
+      }
+    };
+    window.addEventListener(RESCORE_PROGRESS_EVENT, onProgress);
+    return () => {
+      clearTimeout(clearTimer);
+      window.removeEventListener(RESCORE_PROGRESS_EVENT, onProgress);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Top Header */}
@@ -62,6 +81,18 @@ export default function Layout() {
             >
               <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
               Recording
+            </motion.div>
+          )}
+          {rescoreProgress && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="hidden sm:flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+              {rescoreProgress.status === 'complete'
+                ? 'Trip history updated'
+                : `Updating trips ${rescoreProgress.completed || 0}/${rescoreProgress.total || 0}`}
             </motion.div>
           )}
         </div>

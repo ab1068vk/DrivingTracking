@@ -1,4 +1,5 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { withRetry } from '@/lib/retry';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -65,10 +66,12 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   try {
     const sampled = samplePoints(valid);
     const endpoint = settings.osrm_map_matching_url;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
-    const response = await fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
-      .finally(() => clearTimeout(timeout));
+    const response = await withRetry('osrm-map-matching', async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
+      return fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
+        .finally(() => clearTimeout(timeout));
+    });
     if (!response.ok) throw new Error(`OSRM match failed (${response.status})`);
     const data = await response.json();
     const matching = data.matchings?.[0];

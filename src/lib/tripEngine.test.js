@@ -164,7 +164,7 @@ describe('tripEngine', () => {
     ));
 
     const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
-    const events = detectDrivingEvents(points);
+    const events = detectDrivingEvents(points).events;
 
     expect(stats.max_speed_kmh).toBe(180);
     expect(events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
@@ -223,7 +223,7 @@ describe('tripEngine', () => {
       point(43.6536, -79.3828, 3, 80),
     ];
 
-    const events = detectDrivingEvents(points);
+    const events = detectDrivingEvents(points).events;
     const sharpTurn = events.find((event) => event.type === EVENT_TYPES.SHARP_TURN);
 
     expect(sharpTurn).toBeTruthy();
@@ -238,7 +238,7 @@ describe('tripEngine', () => {
       { ...point(43.6538, -79.3832, 3, 60), heading: 85 },
     ];
 
-    const events = detectDrivingEvents(points);
+    const events = detectDrivingEvents(points).events;
 
     expect(events.some((event) => event.type === EVENT_TYPES.SHARP_TURN)).toBe(false);
   });
@@ -403,8 +403,8 @@ describe('tripEngine', () => {
       heading: 0,
     }));
 
-    const strict = detectDrivingEvents(highwayPoints, { ...DEFAULT_THRESHOLDS, SPEEDING_FALLBACK_KMH: 90 });
-    const lenient = detectDrivingEvents(highwayPoints, { ...DEFAULT_THRESHOLDS, SPEEDING_FALLBACK_KMH: 130 });
+    const strict = detectDrivingEvents(highwayPoints, { ...DEFAULT_THRESHOLDS, SPEEDING_FALLBACK_KMH: 90 }).events;
+    const lenient = detectDrivingEvents(highwayPoints, { ...DEFAULT_THRESHOLDS, SPEEDING_FALLBACK_KMH: 130 }).events;
 
     expect(strict.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(true);
     expect(lenient.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
@@ -425,9 +425,9 @@ describe('tripEngine', () => {
       speed_limit_source: 'openstreetmap',
     }));
 
-    expect(detectDrivingEvents(urbanFast).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(true);
-    expect(detectDrivingEvents(highwayCompliant).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
-    expect(detectDrivingEvents(osmTaggedUrbanRoad).some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+    expect(detectDrivingEvents(urbanFast).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(true);
+    expect(detectDrivingEvents(highwayCompliant).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+    expect(detectDrivingEvents(osmTaggedUrbanRoad).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
   it('keeps OSM highway-default speed sources separate from posted maxspeed', () => {
@@ -438,7 +438,7 @@ describe('tripEngine', () => {
       speed_limit_source: 'osm_highway_default',
     }));
 
-    const speeding = detectDrivingEvents(defaultTaggedUrbanRoad).find((event) => event.type === EVENT_TYPES.SPEEDING);
+    const speeding = detectDrivingEvents(defaultTaggedUrbanRoad).events.find((event) => event.type === EVENT_TYPES.SPEEDING);
     expect(speeding?.speed_limit_source).toBe('osm_highway_default');
   });
 
@@ -470,8 +470,8 @@ describe('tripEngine', () => {
       point(43.6540, -79.3832, 2, 0),
     ];
 
-    expect(detectDrivingEvents(rapidStart).some((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION)).toBe(true);
-    expect(detectDrivingEvents(hardStop).some((event) => event.type === EVENT_TYPES.HARSH_BRAKE)).toBe(true);
+    expect(detectDrivingEvents(rapidStart).events.some((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION)).toBe(true);
+    expect(detectDrivingEvents(hardStop).events.some((event) => event.type === EVENT_TYPES.HARSH_BRAKE)).toBe(true);
   });
 
   it('does not emit idle events below the 90 second traffic-stop grace period', () => {
@@ -482,7 +482,7 @@ describe('tripEngine', () => {
       point(43.6538, -79.3832, 80, 0),
     ];
 
-    expect(detectDrivingEvents(points).some((event) => event.type === EVENT_TYPES.IDLE)).toBe(false);
+    expect(detectDrivingEvents(points).events.some((event) => event.type === EVENT_TYPES.IDLE)).toBe(false);
   });
 
   it('counts terminal parked time in stats and idle events', () => {
@@ -494,8 +494,8 @@ describe('tripEngine', () => {
     const endTime = new Date(Date.UTC(2026, 0, 1, 12, 2, 20)).toISOString();
 
     const stats = calculateTripStats(points, points[0].timestamp, endTime);
-    const events = detectDrivingEvents(points, DEFAULT_THRESHOLDS, endTime);
-    const scores = calculateTripScores(events, stats, points, DEFAULT_THRESHOLDS, stats.duration_seconds, Reflect.get(events, 'phoneUse') ?? {}, { endTime });
+    const events = detectDrivingEvents(points, DEFAULT_THRESHOLDS, endTime).events;
+    const scores = calculateTripScores(events, stats, points, DEFAULT_THRESHOLDS, stats.duration_seconds, {}, { endTime });
 
     expect(stats.idle_time_seconds).toBe(120);
     expect(stats.parking_stop_detected).toBe(true);

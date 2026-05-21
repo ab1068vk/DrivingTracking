@@ -1,5 +1,6 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
+import { withRetry } from '@/lib/retry';
 
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -120,12 +121,12 @@ async function fetchOverpassWaysFromUrl(bounds, url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(url, {
+    const response = await withRetry(`overpass-speed-limit:${url}`, () => fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
       body: new URLSearchParams({ data: overpassQuery(bounds) }),
       signal: controller.signal,
-    });
+    }));
     if (!response.ok) throw new Error(`Overpass request failed (${response.status})`);
     const data = await response.json();
     return Array.isArray(data?.elements) ? data.elements : [];

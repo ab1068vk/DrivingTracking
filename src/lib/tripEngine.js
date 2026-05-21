@@ -758,8 +758,8 @@ export function calculateRouteSummary(points, startTime, endTime, thresholds = D
   const cleaned = cleanRoutePoints(points, thresholds);
   const stats = calculateTripStats(points, startTime, endTime, thresholds);
   const detection = detectDrivingEvents(cleaned, thresholds, endTime);
-  const events = Reflect.get(detection, 'events') ?? detection;
-  const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {}, { endTime });
+  const events = detection.events;
+  const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, detection.phoneUse ?? {}, { endTime });
   return { points: cleaned, stats, events, scores };
 }
 
@@ -812,8 +812,8 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
     const endTime = segmentPoints[segmentPoints.length - 1].timestamp;
     const stats = calculateTripStats(segmentPoints, startTime, endTime, thresholds);
     const detection = detectDrivingEvents(segmentPoints, thresholds, endTime);
-    const events = Reflect.get(detection, 'events') ?? detection;
-    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {}, { endTime });
+    const events = detection.events;
+    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds, detection.phoneUse ?? {}, { endTime });
     const drivingEvents = scores.driving_events || events;
     const economics = estimateTripEconomics({ ...stats, ...scores });
 
@@ -2903,8 +2903,8 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
       idle_time_seconds: 0,
     };
     const segmentDetection = detectDrivingEvents(slice, thresholds);
-    const segmentEvents = Reflect.get(segmentDetection, 'events') ?? segmentDetection;
-    const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, Reflect.get(segmentDetection, 'phoneUse') ?? {}, {
+    const segmentEvents = segmentDetection.events;
+    const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, segmentDetection.phoneUse ?? {}, {
       includeRoadTypeSegments: false,
     });
     result[`${type}_score`] = {
@@ -2997,9 +2997,9 @@ function calculateSegmentStats(points = [], thresholds = DEFAULT_THRESHOLDS) {
 export function scoreSegmentPoints(points = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!points || points.length < 3) return 0;
   const detection = detectDrivingEvents(points, thresholds);
-  const events = Reflect.get(detection, 'events') ?? detection;
+  const events = detection.events;
   const stats = calculateSegmentStats(points, thresholds);
-  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, Reflect.get(detection, 'phoneUse') ?? {}).score_overall;
+  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, detection.phoneUse ?? {}).score_overall;
 }
 
 export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTimeMs, thresholds = DEFAULT_THRESHOLDS) {
@@ -3173,17 +3173,7 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
 }
 
 function attachEventResult(events = [], phoneUse = emptyPhoneUseResult()) {
-  Object.defineProperty(events, 'events', {
-    value: events,
-    enumerable: false,
-    configurable: true,
-  });
-  Object.defineProperty(events, 'phoneUse', {
-    value: phoneUse,
-    enumerable: false,
-    configurable: true,
-  });
-  return events;
+  return { events, phoneUse };
 }
 
 export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, endTime = null) {

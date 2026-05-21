@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/use-toast';
-import { applyThemeMode, getLastParkedLocation, localSettings } from '@/lib/trackingStore';
+import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
@@ -215,6 +215,24 @@ export default function Settings() {
   });
 
   const updateCfg = (patch) => {
+    const validation = validateSettingsPatch(patch);
+    if (!validation.valid) {
+      toast({
+        title: 'Setting not saved',
+        description: validation.errors[0],
+        variant: 'destructive',
+      });
+      return cfg;
+    }
+    if (
+      (patch.map_matching_enabled === true && cfg.osrm_map_matching_url) ||
+      (typeof patch.osrm_map_matching_url === 'string' && patch.osrm_map_matching_url.trim() && !cfg.osrm_map_matching_url)
+    ) {
+      toast({
+        title: 'External route matching',
+        description: 'OSRM map matching sends route GPS coordinates to the configured endpoint.',
+      });
+    }
     const updated = localSettings.update(patch);
     setCfg(updated);
     setSaved(true);
@@ -677,9 +695,12 @@ export default function Settings() {
     });
     toast({
       title: 'Backup saved',
-      description: result?.native
+      description: result?.nativeFallback
+        ? `Could not save to Downloads. ${result?.filename || 'Road Sage backup'} is downloading in the browser instead.`
+        : result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'Road Sage backup'} is downloading.`,
+      variant: result?.nativeFallback ? 'destructive' : undefined,
     });
   };
 
@@ -696,9 +717,12 @@ export default function Settings() {
       await qc.invalidateQueries();
       toast({
         title: 'Import complete',
-        description: result.privacy_zones_need_reconfiguration
+        description: !result.savedFiltersRestored && result.savedFilters
+          ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
+          : result.privacy_zones_need_reconfiguration
           ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
           : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
+        variant: (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
       });
     } catch (error) {
       toast({

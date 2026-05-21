@@ -71,6 +71,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   const backup = buildDriveSenseBackup({ trips, vehicles, settings });
   const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
   const content = JSON.stringify(backup, null, 2);
+  let nativeFallbackError = null;
 
   try {
     const { Capacitor } = await import('@capacitor/core');
@@ -83,6 +84,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
       return { native: true, filename: outputName, uri: result.uri, backup };
     }
   } catch (error) {
+    nativeFallbackError = error?.message || 'Native export failed.';
     console.warn('Native JSON export failed, falling back to browser download.', error);
   }
 
@@ -96,7 +98,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  return { native: false, filename: outputName, backup };
+  return { native: false, filename: outputName, backup, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
 }
 
 export function parseDriveSenseBackup(text) {
@@ -148,9 +150,11 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
   }
 
   const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
+  let savedFiltersRestored = false;
   if (savedFilters.length > 0) {
     try {
       localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
+      savedFiltersRestored = true;
     } catch (error) {
       console.warn('Could not restore saved trip filters from backup.', error);
     }
@@ -161,6 +165,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
     vehicles: importedVehicles.length,
     settings: importedSettings,
     savedFilters: savedFilters.length,
+    savedFiltersRestored,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
   };
 }

@@ -4,13 +4,16 @@ import { parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
+import { resetRetryCircuits, withRetry } from '@/lib/retry';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
-import { sanitizeImportedSettings } from '@/lib/trackingStore';
+import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
+import { detectDrivingEvents } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 
 describe('release blocker regressions', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetRetryCircuits();
   });
 
   it('does not read auth tokens from localStorage', () => {
@@ -53,6 +56,19 @@ describe('release blocker regressions', () => {
       masked_for_privacy: true,
     });
     expect(settings.privacy_zones[0].lat).toBeUndefined();
+  });
+
+  it('validates settings patches before saving unsafe thresholds', () => {
+    expect(validateSettingsPatch({ threshold_harsh_brake_ms2: 0 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ threshold_harsh_brake_ms2: 3.5, night_detection_mode: 'custom' })).toMatchObject({ valid: true });
+  });
+
+  it('returns a stable object from driving-event detection', () => {
+    const detection = detectDrivingEvents([]);
+
+    expect(Array.isArray(detection.events)).toBe(true);
+    expect(detection.phoneUse).toBeTruthy();
+    expect(detection.events.some).toBeTypeOf('function');
   });
 
   it('keeps anomaly scores finite when model stddev is zero', () => {
@@ -105,5 +121,14 @@ describe('release blocker regressions', () => {
     expect(extreme.actual_l_per_100km).toBe(8);
     expect(ev.co2_kg).toBe(0);
     expect(ev.co2_saved_kg).toBe(0);
+  });
+
+  it('retries transient external operations once', async () => {
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new Error('network hiccup'))
+      .mockResolvedValueOnce('ok');
+
+    await expect(withRetry('test-service', operation, { delayMs: 0 })).resolves.toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(2);
   });
 });
