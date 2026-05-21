@@ -206,7 +206,7 @@ export default function Settings() {
 
   const { data: allTrips = [] } = useQuery({
     queryKey: ['settings-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 5000 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const { data: allVehicles = [] } = useQuery({
@@ -248,7 +248,7 @@ export default function Settings() {
 
   const runCalibration = async () => {
     setCalibLoading(true);
-    const trips = await tripService.list({ sort: '-start_time', limit: 200 });
+    const trips = await tripService.listAll({ sort: '-start_time' });
     const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
     await saveCalibrationProfile(profile);
     setCalibProfile(profile);
@@ -696,7 +696,9 @@ export default function Settings() {
       await qc.invalidateQueries();
       toast({
         title: 'Import complete',
-        description: `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
+        description: result.privacy_zones_need_reconfiguration
+          ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
+          : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
       });
     } catch (error) {
       toast({
@@ -1523,7 +1525,7 @@ export default function Settings() {
           <SettingRow
             icon={Route}
             label="OSRM map matching"
-            sublabel="Snap GPS to roads with an open-source OSRM endpoint"
+            sublabel="Optional road snapping with a user-provided OSRM endpoint"
           >
             <Toggle
               value={cfg.map_matching_enabled !== false}
@@ -1533,12 +1535,13 @@ export default function Settings() {
           <div className="px-1 py-3 border-b border-border/50">
             <div className="mb-1 text-xs font-medium">OSRM endpoint</div>
             <input
-              value={cfg.osrm_map_matching_url || 'https://router.project-osrm.org'}
+              value={cfg.osrm_map_matching_url || ''}
               onChange={event => updateCfg({ osrm_map_matching_url: event.target.value })}
               disabled={cfg.map_matching_enabled === false}
+              placeholder="https://your-osrm.example"
               className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
             />
-            <p className="mt-1 text-xs text-muted-foreground">Use a self-hosted OSRM server for production privacy and reliability.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Leave blank to keep map matching disabled. Route matching sends GPS coordinates to this endpoint.</p>
           </div>
           <SettingRow
             icon={Target}

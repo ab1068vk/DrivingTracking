@@ -38,7 +38,7 @@ export default function DrivingCoach() {
   const units = settings.units || 'metric';
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['coach-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');

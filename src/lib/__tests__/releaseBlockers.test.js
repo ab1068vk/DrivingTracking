@@ -1,0 +1,109 @@
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { apiClient, getAuthToken } from '@/api/client';
+import { parseDriveSenseBackup } from '@/lib/dataBackup';
+import { scoreTripAnomaly } from '@/lib/driverAnomaly';
+import { mapMatchRoute } from '@/lib/mapMatching';
+import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
+import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
+import { sanitizeImportedSettings } from '@/lib/trackingStore';
+import { estimateTripEconomics } from '@/lib/tripInsights';
+
+describe('release blocker regressions', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('does not read auth tokens from localStorage', () => {
+    vi.stubGlobal('sessionStorage', { getItem: vi.fn(() => null) });
+    vi.stubGlobal('localStorage', { getItem: vi.fn(() => 'local-token') });
+
+    expect(getAuthToken()).toBeNull();
+    expect(localStorage.getItem).not.toHaveBeenCalled();
+  });
+
+  it('fails API calls clearly when no backend is configured', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    await expect(apiClient.get('/trips')).rejects.toThrow('No backend API configured');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports malformed backup JSON with a clear parse error', () => {
+    expect(() => parseDriveSenseBackup('not json')).toThrow('File is not valid JSON');
+    expect(() => parseDriveSenseBackup('{}')).toThrow('valid Road Sage backup');
+  });
+
+  it('drops unknown imported settings and clamps dangerous thresholds', () => {
+    const settings = sanitizeImportedSettings({
+      threshold_harsh_brake_ms2: 0,
+      tracking_mode: 'injected_value',
+      phone_use_detection_enabled: false,
+      injected_key: 'nope',
+      privacy_zones: [{ id: 'home', label: 'Home', radius_m: 5000, masked_for_privacy: true }],
+    });
+
+    expect(settings.threshold_harsh_brake_ms2).toBeGreaterThan(0);
+    expect(settings.threshold_harsh_brake_ms2).toBe(0.5);
+    expect(settings.tracking_mode).toBeUndefined();
+    expect(settings.phone_use_detection_enabled).toBe(false);
+    expect(settings.injected_key).toBeUndefined();
+    expect(settings.privacy_zones[0]).toMatchObject({
+      id: 'home',
+      radius_m: 1000,
+      masked_for_privacy: true,
+    });
+    expect(settings.privacy_zones[0].lat).toBeUndefined();
+  });
+
+  it('keeps anomaly scores finite when model stddev is zero', () => {
+    const result = scoreTripAnomaly(
+      { status: 'completed', score_overall: 90, distance_km: 10, harsh_brakes_count: 0 },
+      { trip_count: 8, features: { harsh_per_10km: { mean: 0, std: 0 } } }
+    );
+
+    expect(result.anomaly_score).toBe(0);
+    expect(Number.isFinite(result.anomaly_score)).toBe(true);
+  });
+
+  it('does not call OSRM when map matching has no configured endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const route = [
+      { lat: 43.65, lng: -79.38 },
+      { lat: 43.651, lng: -79.38 },
+      { lat: 43.652, lng: -79.38 },
+    ];
+
+    const result = await mapMatchRoute(route, { map_matching_enabled: true, osrm_map_matching_url: '' });
+
+    expect(result.status).toBe('disabled');
+    expect(result.routePoints).toBe(route);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns finite sensor fusion peaks for empty samples', () => {
+    const result = buildSensorFusionSummary([], []);
+
+    expect(result.peak_linear_ms2).toBe(0);
+    expect(result.peak_rotation_deg_s).toBe(0);
+    expect(Number.isFinite(result.phone_movement_score)).toBe(true);
+  });
+
+  it('adds phone-use data source provenance when only GPS proxy data is available', () => {
+    const result = mergePhoneUseSignals({ phone_use_score: 60 }, {}, 120);
+
+    expect(result.phone_use_score).toBe(60);
+    expect(result.data_sources).toEqual(['gps_proxy']);
+  });
+
+  it('clamps economics scores and uses vehicle fuel type CO2 factors', () => {
+    const gasoline = estimateTripEconomics({ distance_km: 100, eco_driving_score: 50 }, { fuel_type: 'gasoline', fuel_efficiency_l_per_100km: 10 }, {});
+    const diesel = estimateTripEconomics({ distance_km: 100, eco_driving_score: 50 }, { fuel_type: 'diesel', fuel_efficiency_l_per_100km: 10 }, {});
+    const extreme = estimateTripEconomics({ distance_km: 100, eco_driving_score: 999 }, { fuel_efficiency_l_per_100km: 10 }, {});
+    const ev = estimateTripEconomics({ distance_km: 100, eco_driving_score: 80 }, { fuel_type: 'electric' }, {});
+
+    expect(diesel.co2_kg).toBeGreaterThan(gasoline.co2_kg);
+    expect(extreme.actual_l_per_100km).toBe(8);
+    expect(ev.co2_kg).toBe(0);
+    expect(ev.co2_saved_kg).toBe(0);
+  });
+});

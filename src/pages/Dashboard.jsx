@@ -215,7 +215,7 @@ export default function Dashboard() {
   // Load recent trips
   const { data: recentTrips = [], refetch } = useQuery({
     queryKey: ['recent-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const { data: vehicles = [] } = useQuery({

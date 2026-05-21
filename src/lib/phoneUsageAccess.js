@@ -26,6 +26,7 @@ const emptyPhoneUse = () => ({
   phone_use_risk: 'none',
   phone_use_score: 100,
   phone_use_pct_of_trip: 0,
+  data_sources: [],
 });
 
 function isPassiveUsagePackage(packageName = '') {
@@ -125,6 +126,7 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
     phone_use_risk: phoneUseRisk,
     phone_use_score: Math.max(0, Math.round(100 - penalty)),
     phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+    data_sources: summary?.usage_access_granted === true ? ['android_usage_access'] : [],
   };
 }
 
@@ -176,8 +178,24 @@ export function buildPhoneUseFromEvents(events = [], tripDurationSeconds = 0, fa
     phone_use_risk: phoneUseRisk,
     phone_use_score: Math.max(0, Math.round(100 - penalty)),
     phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+    data_sources: ['stored_events'],
   };
 }
+
+const dataSourcesForSignal = (signal = {}, fallback = null) => {
+  if (Array.isArray(signal.data_sources)) return signal.data_sources.filter(Boolean);
+  const sources = new Set();
+  (signal.phone_use_events || []).forEach((event) => {
+    if (event?.source === 'android_usage_access') sources.add('android_usage_access');
+    else if (event?.source) sources.add(event.source);
+  });
+  const scoreIndicatesSignal = Number.isFinite(Number(signal.phone_use_score)) && Number(signal.phone_use_score) < 100;
+  const riskIndicatesSignal = signal.phone_use_risk && signal.phone_use_risk !== 'none';
+  if (!sources.size && fallback && (Number(signal.phone_use_window_count || 0) > 0 || scoreIndicatesSignal || riskIndicatesSignal)) {
+    sources.add(fallback);
+  }
+  return [...sources];
+};
 
 export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripDurationSeconds = 0) {
   const events = [
@@ -202,6 +220,10 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
     .sort((a, b) => (riskRank[b] || 0) - (riskRank[a] || 0))[0] || 'none';
   const score = Math.min(gpsPhoneUse.phone_use_score ?? 100, usagePhoneUse.phone_use_score ?? 100);
   const duration = Math.max(1, Number(tripDurationSeconds) || 1);
+  const dataSources = [
+    ...dataSourcesForSignal(gpsPhoneUse, 'gps_proxy'),
+    ...dataSourcesForSignal(usagePhoneUse, 'android_usage_access'),
+  ];
 
   return {
     phone_use_events: deduped,
@@ -211,6 +233,7 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
     phone_use_risk: risk,
     phone_use_score: score,
     phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+    data_sources: [...new Set(dataSources)],
   };
 }
 
@@ -241,6 +264,7 @@ export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripD
       phone_use_risk: trip.phone_use_risk || 'low',
       phone_use_score: Number.isFinite(Number(trip.phone_use_score)) ? Number(trip.phone_use_score) : 90,
       phone_use_pct_of_trip: Number(trip.phone_use_pct_of_trip) || 0,
+      data_sources: ['summary_only'],
     }
     : emptyPhoneUse();
 

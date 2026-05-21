@@ -35,12 +35,12 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
-import java.util.Date;
 import java.util.Deque;
 import java.util.Locale;
-import java.util.TimeZone;
 
 public class DriveSenseAutoTrackingService extends Service {
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
@@ -925,6 +925,7 @@ public class DriveSenseAutoTrackingService extends Service {
                 curr.optDouble("lat"),
                 curr.optDouble("lng")
             );
+            if (!Double.isFinite(distance)) continue;
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
             long dt = Math.max(0L, (currMs - prevMs) / 1000L);
@@ -946,7 +947,7 @@ public class DriveSenseAutoTrackingService extends Service {
             if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
             if (speed < STATIONARY_SPEED_KMH) stats.idleSeconds += dt;
 
-            int hour = Integer.parseInt(new SimpleDateFormat("H", Locale.US).format(new Date(currMs)));
+            int hour = Instant.ofEpochMilli(currMs).atZone(ZoneOffset.UTC).getHour();
             if (hour >= 22 || hour < 6) stats.nightDriving = true;
         }
 
@@ -1003,7 +1004,7 @@ public class DriveSenseAutoTrackingService extends Service {
         double a = Math.pow(Math.sin(dLat / 2d), 2d) +
             Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
             Math.pow(Math.sin(dLng / 2d), 2d);
-        double c = 2d * Math.atan2(Math.sqrt(a), Math.sqrt(1d - a));
+        double c = 2d * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0d, 1d - a)));
         return earthKm * c;
     }
 
@@ -1363,7 +1364,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private JSONObject diagnosticEvent(String type, String title, String reason, double speedKmh, long stoppedSeconds, double driftM) {
         JSONObject event = new JSONObject();
         try {
-            event.put("id", "native_" + System.currentTimeMillis() + "_" + Math.abs(type.hashCode()));
+            long typeHash = ((long) type.hashCode()) & 0xFFFFFFFFL;
+            event.put("id", "native_" + System.currentTimeMillis() + "_" + Long.toHexString(typeHash));
             event.put("timestamp", iso(System.currentTimeMillis()));
             event.put("type", type);
             event.put("title", title);
@@ -1389,17 +1391,13 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     static String iso(long timeMs) {
-        SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
-        formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
-        return formatter.format(new Date(timeMs));
+        return Instant.ofEpochMilli(timeMs).toString();
     }
 
     private static long parseIso(String value) {
         try {
-            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
-            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
-            return formatter.parse(value).getTime();
-        } catch (Exception e) {
+            return Instant.parse(value).toEpochMilli();
+        } catch (DateTimeParseException | NullPointerException e) {
             return System.currentTimeMillis();
         }
     }

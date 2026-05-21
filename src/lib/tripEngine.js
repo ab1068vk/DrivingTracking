@@ -24,7 +24,7 @@ export const DEFAULT_THRESHOLDS = {
   REACTION_SPEED_TRIGGER_KMH: 5,
   // Idle threshold: speed < 5 km/h
   IDLE_SPEED_KMH: 5,
-  // Idle event: idling for > 60 consecutive seconds
+  // Idle event: idling for > 90 consecutive seconds
   IDLE_EVENT_SECONDS: 90,
   // Long drive: > 120 continuous minutes
   LONG_DRIVE_MINUTES: 120,
@@ -902,6 +902,10 @@ function clamp(value, min, max) {
 
 function average(values) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function safeMax(values = [], fallback = 0) {
+  return values.length ? Math.max(...values) : fallback;
 }
 
 function percentileValue(values, p) {
@@ -2495,7 +2499,7 @@ export function calculateCorneringConsistency(routePoints, thresholds = DEFAULT_
   const meanG = average(cornerSamples);
   const stdG = stddev(cornerSamples);
   const cv = stdG / Math.max(0.01, meanG);
-  const peakG = Math.max(...cornerSamples);
+  const peakG = safeMax(cornerSamples);
   const consistencyBase = Math.max(0, 100 - cv * 120);
   const peakPenalty = Math.max(0, (peakG - 0.50) * 60);
   const score = Math.max(0, Math.round(consistencyBase - peakPenalty));

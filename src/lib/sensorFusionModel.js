@@ -6,6 +6,7 @@ const MAX_SAMPLE_AGE_MS = 2 * 60 * 60 * 1000;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 const round2 = (value) => Math.round(value * 100) / 100;
+const safeMax = (values = [], fallback = 0) => values.length ? Math.max(...values) : fallback;
 
 export function getMotionSensorSupport() {
   const win = /** @type {any} */ (typeof window !== 'undefined' ? window : {});
@@ -81,8 +82,8 @@ export function buildSensorFusionSummary(samples = [], routePoints = [], activit
 
   const linear = valid.map((sample) => sample.linear_magnitude_ms2);
   const rotation = valid.map((sample) => sample.rotation_magnitude_deg_s);
-  const peakLinear = Math.max(...linear);
-  const peakRotation = Math.max(...rotation);
+  const peakLinear = safeMax(linear);
+  const peakRotation = safeMax(rotation);
   const harshMotionCount = valid.filter((sample) => sample.linear_magnitude_ms2 >= 5.5).length;
   const impactLikeCount = valid.filter((sample) => sample.linear_magnitude_ms2 >= 14 && sample.rotation_magnitude_deg_s >= 120).length;
   const phoneMovementScore = clamp(Math.round(
@@ -113,8 +114,8 @@ export function enrichEventsWithSensorContext(events = [], samples = []) {
     if (!Number.isFinite(eventMs)) return event;
     const nearby = normalized.filter((sample) => Math.abs(new Date(sample.timestamp).getTime() - eventMs) <= 2500);
     if (!nearby.length) return event;
-    const peakLinear = Math.max(...nearby.map((sample) => sample.linear_magnitude_ms2));
-    const peakRotation = Math.max(...nearby.map((sample) => sample.rotation_magnitude_deg_s));
+    const peakLinear = safeMax(nearby.map((sample) => sample.linear_magnitude_ms2));
+    const peakRotation = safeMax(nearby.map((sample) => sample.rotation_magnitude_deg_s));
     const confirmed = (
       event.type === EVENT_TYPES.HARSH_BRAKE && peakLinear >= 4.5
     ) || (
@@ -139,7 +140,7 @@ export function detectCrashIncident({ routePoints = [], motionSamples = [], acti
   const recentPoints = points.slice(-8);
   const latestPoint = recentPoints[recentPoints.length - 1];
   const recentSpeeds = recentPoints.map((point) => Number(point.speed_kmh) || 0);
-  const maxRecentSpeed = Math.max(...recentSpeeds);
+  const maxRecentSpeed = safeMax(recentSpeeds);
   const stoppedSeconds = recentPoints
     .filter((point) => (Number(point.speed_kmh) || 0) < 3)
     .reduce((sum, point, index, list) => {
@@ -149,8 +150,8 @@ export function detectCrashIncident({ routePoints = [], motionSamples = [], acti
   const recentSamples = samples.filter((sample) => (
     Math.abs(new Date(sample.timestamp).getTime() - new Date(latestPoint.timestamp || Date.now()).getTime()) <= 12000
   ));
-  const peakLinear = recentSamples.length ? Math.max(...recentSamples.map((sample) => sample.linear_magnitude_ms2)) : 0;
-  const peakRotation = recentSamples.length ? Math.max(...recentSamples.map((sample) => sample.rotation_magnitude_deg_s)) : 0;
+  const peakLinear = safeMax(recentSamples.map((sample) => sample.linear_magnitude_ms2));
+  const peakRotation = safeMax(recentSamples.map((sample) => sample.rotation_magnitude_deg_s));
   const stillActivity = activity?.type === 'still' && (activity.confidence || 0) >= 60;
   const likelyIncident = maxRecentSpeed >= 20 && peakLinear >= 18 && peakRotation >= 90 && (stoppedSeconds >= 8 || stillActivity);
   if (!likelyIncident) return null;

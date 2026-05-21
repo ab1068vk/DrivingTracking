@@ -43,7 +43,8 @@ export function scoreTripAnomaly(trip = {}, model = null) {
   const zScores = Object.entries(vector).map(([key, value]) => {
     const baseline = model.features[key];
     if (!baseline) return null;
-    return { key, z: Math.abs((value - baseline.mean) / baseline.std), value, mean: baseline.mean };
+    const z = baseline.std > 0 ? Math.abs((value - baseline.mean) / baseline.std) : 0;
+    return { key, z, value, mean: baseline.mean };
   }).filter(Boolean);
   const score = clamp(Math.round(mean(zScores.map((item) => Math.min(item.z, 4))) * 25), 0, 100);
   const reasons = zScores

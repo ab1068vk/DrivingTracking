@@ -16,6 +16,7 @@ import { Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
 
+const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const TripHistory = lazy(() => import('@/pages/TripHistory'));
@@ -23,7 +24,7 @@ const TripDetail = lazy(() => import('@/pages/TripDetail'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
 const Reports = lazy(() => import('@/pages/Report'));
 const Settings = lazy(() => import('@/pages/Settings'));
-const AndroidReference = lazy(() => import('@/pages/AndroidReference'));
+const AndroidReference = showDebugRoutes ? lazy(() => import('@/pages/AndroidReference')) : null;
 const Vehicles = lazy(() => import('@/pages/Vehicles'));
 const Achievements = lazy(() => import('@/pages/Achievements'));
 const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
@@ -111,7 +112,7 @@ const AuthenticatedApp = () => {
         <Route path="/reports" element={<Reports />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/android" element={<AndroidReference />} />
+        {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
         <Route path="/vehicles" element={<Vehicles />} />
       </Route>
 

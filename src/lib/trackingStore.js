@@ -96,8 +96,8 @@ export const DEFAULT_SETTINGS = {
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
-  map_matching_enabled: true,
-  osrm_map_matching_url: 'https://router.project-osrm.org',
+  map_matching_enabled: false,
+  osrm_map_matching_url: '',
   predictive_route_risk_enabled: true,
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
@@ -121,8 +121,127 @@ export const DEFAULT_SETTINGS = {
   notif_min_score_for_post_trip: 0,
   danger_zone_alerts_enabled: true,
   calibration_profile_key: null,
+  co2_baseline_kg_per_100km: 12.0,
   privacy_zones: [],
 };
+
+const IMPORT_NUMBER_RANGES = {
+  data_retention_days: [1, 3650],
+  threshold_harsh_brake_ms2: [0.5, 15],
+  threshold_rapid_accel_ms2: [0.5, 15],
+  threshold_tailgate_decel_ms2: [0.5, 15],
+  threshold_sharp_turn_g_low: [0.05, 2],
+  threshold_sharp_turn_g_medium: [0.05, 2],
+  threshold_sharp_turn_g_high: [0.05, 2],
+  threshold_speeding_kmh: [10, 250],
+  threshold_speed_over_kmh: [0, 80],
+  threshold_idle_seconds: [10, 3600],
+  threshold_long_drive_minutes: [5, 1440],
+  night_sunset_offset_minutes: [-180, 180],
+  night_sunrise_offset_minutes: [-180, 180],
+  threshold_near_miss_brake_ms2: [0.5, 15],
+  threshold_near_miss_turn_degs: [1, 180],
+  threshold_drowsy_heading_std: [1, 90],
+  threshold_phone_proxy_oscillations: [1, 20],
+  phone_micro_steer_count: [1, 20],
+  phone_creep_rate_kmh_s: [0.1, 10],
+  phone_lane_drift_deg: [1, 90],
+  phone_coupling_threshold: [0, 1],
+  phone_confidence_threshold: [0, 1],
+  phone_min_window_s: [1, 120],
+  threshold_speed_creep_kmh: [1, 80],
+  threshold_overtake_accel_ms2: [0.5, 15],
+  min_speed_rapid_accel_kmh: [0, 100],
+  min_speed_harsh_brake_kmh: [0, 150],
+  weekly_goal_harsh_brakes: [0, 1000],
+  weekly_goal_speeding_events: [0, 1000],
+  weekly_goal_min_avg_score: [0, 100],
+  weekly_goal_max_night_trips: [0, 1000],
+  weekly_goal_max_night_km: [0, 10000],
+  notif_inactive_nudge_days: [1, 365],
+  notif_min_score_for_post_trip: [0, 100],
+  co2_baseline_kg_per_100km: [0, 50],
+};
+
+const IMPORT_ENUMS = {
+  tracking_mode: ['manual', 'foreground_auto', 'background_auto'],
+  units: ['metric', 'imperial'],
+  dark_mode: ['system', 'light', 'dark'],
+  night_detection_mode: ['sunset', 'fixed'],
+  phone_use_sensitivity: ['low', 'medium', 'high'],
+};
+
+const clampNumber = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const sanitizeImportedPrivacyZones = (zones) => (
+  Array.isArray(zones)
+    ? zones
+      .filter((zone) => zone && typeof zone === 'object')
+      .slice(0, 20)
+      .map((zone, index) => {
+        const radius = clampNumber(Number(zone.radius_m) || 150, 50, 1000);
+        const sanitized = {
+          id: typeof zone.id === 'string' ? zone.id.slice(0, 80) : `privacy_zone_import_${index}`,
+          label: typeof zone.label === 'string' && zone.label.trim()
+            ? zone.label.trim().slice(0, 80)
+            : 'Private place',
+          radius_m: radius,
+          ...(zone.masked_for_privacy === true ? { masked_for_privacy: true } : {}),
+        };
+        const lat = Number(zone.lat);
+        const lng = Number(zone.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+          sanitized.lat = lat;
+          sanitized.lng = lng;
+        }
+        return sanitized;
+      })
+    : []
+);
+
+export function sanitizeImportedSettings(raw = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+
+  const sanitized = {};
+  Object.entries(DEFAULT_SETTINGS).forEach(([key, defaultValue]) => {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) return;
+    const value = raw[key];
+
+    if (key === 'privacy_zones') {
+      sanitized.privacy_zones = sanitizeImportedPrivacyZones(value);
+      return;
+    }
+
+    if (IMPORT_ENUMS[key]) {
+      if (IMPORT_ENUMS[key].includes(value)) sanitized[key] = value;
+      return;
+    }
+
+    if (defaultValue === null) {
+      if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) sanitized[key] = value;
+      return;
+    }
+
+    if (typeof defaultValue === 'boolean') {
+      if (typeof value === 'boolean') sanitized[key] = value;
+      return;
+    }
+
+    if (typeof defaultValue === 'number') {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return;
+      const [min, max] = IMPORT_NUMBER_RANGES[key] || [-1_000_000, 1_000_000];
+      sanitized[key] = clampNumber(number, min, max);
+      return;
+    }
+
+    if (typeof defaultValue === 'string') {
+      if (typeof value === 'string') sanitized[key] = value.slice(0, 500);
+    }
+  });
+
+  return sanitized;
+}
 
 export async function getLastParkedLocation() {
   return getJson(LAST_PARKED_KEY, null);

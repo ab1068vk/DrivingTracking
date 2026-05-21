@@ -58,11 +58,21 @@ const openDb = () => new Promise((resolve, reject) => {
   }
 
   const request = indexedDB.open(DB_NAME, DB_VERSION);
-  request.onupgradeneeded = () => {
+  request.onupgradeneeded = (event) => {
     const db = request.result;
-    if (!db.objectStoreNames.contains(TRIP_STORE)) {
+    if (event.oldVersion < 1 || !db.objectStoreNames.contains(TRIP_STORE)) {
       const store = db.createObjectStore(TRIP_STORE, { keyPath: 'id' });
       store.createIndex('start_time', 'start_time');
+      store.createIndex('status', 'status');
+      return;
+    }
+
+    const tx = request.transaction;
+    const store = tx?.objectStore(TRIP_STORE);
+    if (store && !store.indexNames.contains('start_time')) {
+      store.createIndex('start_time', 'start_time');
+    }
+    if (store && !store.indexNames.contains('status')) {
       store.createIndex('status', 'status');
     }
   };
@@ -73,6 +83,12 @@ const openDb = () => new Promise((resolve, reject) => {
 const idbRequest = (request) => new Promise((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
   request.onerror = () => reject(request.error);
+});
+
+const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
+  tx.oncomplete = () => resolve();
+  tx.onerror = () => reject(tx.error);
+  tx.onabort = () => reject(tx.error);
 });
 
 const getAllTrips = async () => {
@@ -101,8 +117,22 @@ const putTrip = async (trip) => {
 };
 
 const putTrips = async (incomingTrips) => {
-  for (const trip of incomingTrips) {
-    await putTrip(trip);
+  if (!incomingTrips.length) return;
+  try {
+    const db = await openDb();
+    const tx = db.transaction(TRIP_STORE, 'readwrite');
+    const store = tx.objectStore(TRIP_STORE);
+    incomingTrips.forEach((trip) => store.put(trip));
+    await idbTransactionDone(tx);
+    db.close();
+  } catch {
+    const trips = await getJson(TRIPS_KEY, []);
+    const incomingIds = new Set(incomingTrips.map((trip) => String(trip.id)));
+    const next = [
+      ...incomingTrips,
+      ...trips.filter((item) => !incomingIds.has(String(item.id))),
+    ];
+    await setJson(TRIPS_KEY, next);
   }
 };
 
@@ -189,15 +219,17 @@ const needsRescore = (trip) => (
 
 const rescoreTripsIfNeeded = async (trips = []) => {
   const next = [];
+  const rescoredTrips = [];
   for (const trip of trips) {
     if (needsRescore(trip)) {
       const rescored = rescoreTrip(trip);
-      await putTrip(rescored);
+      rescoredTrips.push(rescored);
       next.push(rescored);
     } else {
       next.push(trip);
     }
   }
+  if (rescoredTrips.length) await putTrips(rescoredTrips);
   return next;
 };
 
@@ -313,6 +345,13 @@ export const localTripRepository = {
     await pruneExpiredTrips();
     const trips = await rescoreTripsIfNeeded(await getAllTrips());
     return sortTrips(trips, sort).slice(0, limit);
+  },
+
+  async listAll({ sort = '-start_time' } = {}) {
+    await importNativeCompletedTrips();
+    await pruneExpiredTrips();
+    const trips = await rescoreTripsIfNeeded(await getAllTrips());
+    return sortTrips(trips, sort);
   },
 
   async getById(id) {

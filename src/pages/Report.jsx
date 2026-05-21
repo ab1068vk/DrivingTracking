@@ -45,7 +45,7 @@ export default function Reports() {
 
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['report-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const { data: vehicles = [] } = useQuery({

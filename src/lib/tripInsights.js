@@ -1,6 +1,14 @@
 export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
 export const DEFAULT_L_PER_100KM = 8.5;
 export const GASOLINE_CO2_KG_PER_LITER = 2.31;
+export const CO2_KG_PER_LITER = {
+  gasoline: 2.31,
+  petrol: 2.31,
+  diesel: 2.68,
+  lpg: 1.65,
+  cng: 2.0,
+  hybrid: 2.31,
+};
 export const WEAR_KM_PER_STRESS_UNIT = 8;
 
 export const STRESS_UNITS = {
@@ -352,20 +360,24 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
 
 export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const distanceKm = Number(trip?.distance_km) || 0;
-  const lPer100Km = Number(vehicle?.fuel_efficiency_l_per_100km) || Number(settings.default_l_per_100km) || DEFAULT_L_PER_100KM;
+  const fuelType = String(vehicle?.fuel_type || settings.fuel_type || 'gasoline').toLowerCase();
+  const isElectric = fuelType === 'electric' || fuelType === 'ev';
+  const lPer100Km = isElectric ? 0 : (Number(vehicle?.fuel_efficiency_l_per_100km) || Number(settings.default_l_per_100km) || DEFAULT_L_PER_100KM);
   const fuelPrice = Number(vehicle?.fuel_price_per_liter) || Number(settings.default_fuel_price_per_liter) || DEFAULT_FUEL_PRICE_PER_LITER;
-  const ecoDrivingScore = Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50;
-  const efficiencyMultiplier = Math.max(0.7, 1 + (ecoDrivingScore - 50) / 200);
+  const ecoDrivingScore = clamp(Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50, 0, 100);
+  const efficiencyMultiplier = clamp(1 + (ecoDrivingScore - 50) / 200, 0.7, 1.5);
   const actualLPer100Km = lPer100Km / efficiencyMultiplier;
   const baselineLiters = distanceKm * lPer100Km / 100;
   const adjustedLiters = distanceKm * actualLPer100Km / 100;
   const cost = adjustedLiters * fuelPrice;
   const baselineCost = baselineLiters * fuelPrice;
-  const co2Kg = adjustedLiters * GASOLINE_CO2_KG_PER_LITER;
+  const co2Factor = CO2_KG_PER_LITER[fuelType] ?? GASOLINE_CO2_KG_PER_LITER;
+  const co2Kg = isElectric ? 0 : adjustedLiters * co2Factor;
   const fuelSavedLiters = Math.max(0, baselineLiters - adjustedLiters);
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
-  const avgCo2Kg = distanceKm * 12.0 / 100;
-  const co2SavedKg = Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
+  const baselineCo2KgPer100Km = Number(vehicle?.co2_baseline_kg_per_100km ?? settings.co2_baseline_kg_per_100km);
+  const avgCo2Kg = distanceKm * (Number.isFinite(baselineCo2KgPer100Km) ? baselineCo2KgPer100Km : 12.0) / 100;
+  const co2SavedKg = isElectric ? 0 : Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
 
   return {
     liters: Math.round(adjustedLiters * 100) / 100,

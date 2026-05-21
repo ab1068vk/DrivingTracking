@@ -1,11 +1,12 @@
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
-import { localSettings } from '@/lib/trackingStore';
+import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 
 const BACKUP_VERSION = 5;
 const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
+const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 const filterString = (value, fallback = '') => (
@@ -99,7 +100,13 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
 }
 
 export function parseDriveSenseBackup(text) {
-  const parsed = JSON.parse(text);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`File is not valid JSON: ${error?.message || 'Unable to parse backup.'}`);
+  }
+
   if (!parsed || !['Road Sage', 'DriveSense'].includes(parsed.app) || !Array.isArray(parsed.trips)) {
     throw new Error('This is not a valid Road Sage backup file.');
   }
@@ -114,6 +121,9 @@ export function parseDriveSenseBackup(text) {
 }
 
 export async function importDriveSenseBackup(file, { includeSettings = true } = {}) {
+  if (Number(file?.size) > MAX_BACKUP_BYTES) {
+    throw new Error('Backup file is too large. Please choose a Road Sage JSON backup under 50 MB.');
+  }
   const text = await file.text();
   const backup = parseDriveSenseBackup(text);
 
@@ -123,21 +133,34 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
     : backup.trips;
   const importedTrips = await tripService.upsertMany(tripsToImport);
 
+  const privacyZonesNeedReconfiguration = includeSettings && Array.isArray(backup.settings?.privacy_zones)
+    ? backup.settings.privacy_zones.filter((zone) => (
+      zone?.masked_for_privacy === true &&
+      (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng)))
+    )).length
+    : 0;
+
+  let importedSettings = false;
   if (includeSettings && backup.settings) {
-    localSettings.set({ ...localSettings.get(), ...backup.settings });
+    const sanitizedSettings = sanitizeImportedSettings(backup.settings);
+    localSettings.set({ ...localSettings.get(), ...sanitizedSettings });
+    importedSettings = Object.keys(sanitizedSettings).length > 0;
   }
 
   const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
   if (savedFilters.length > 0) {
     try {
       localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
-    } catch {}
+    } catch (error) {
+      console.warn('Could not restore saved trip filters from backup.', error);
+    }
   }
 
   return {
     trips: importedTrips.length,
     vehicles: importedVehicles.length,
-    settings: includeSettings && Boolean(backup.settings),
+    settings: importedSettings,
     savedFilters: savedFilters.length,
+    privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
   };
 }

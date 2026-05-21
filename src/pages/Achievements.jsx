@@ -37,7 +37,7 @@ const nextStepLabel = (badge) => {
 export default function Achievements() {
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['achievement-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');

@@ -1,10 +1,10 @@
-import { apiClient } from "@/api/client";
+import { API_BASE_URL, apiClient } from "@/api/client";
 import { localTripRepository } from "@/lib/localTripRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
 
-const shouldUseLocalStore = () => isNativePlatform() || !import.meta.env.VITE_API_URL;
+const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
 
 const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 
@@ -12,6 +12,11 @@ export const tripService = {
   list: ({ sort = "-start_time", limit = 100 } = {}) => {
     const local = repository();
     return local ? local.list({ sort, limit }) : apiClient.get("/trips", { query: { sort, limit } });
+  },
+
+  listAll: ({ sort = "-start_time" } = {}) => {
+    const local = repository();
+    return local ? local.listAll({ sort }) : apiClient.get("/trips", { query: { sort, limit: 10000 } });
   },
 
   getById: (id) => {

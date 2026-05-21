@@ -1,12 +1,13 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T17:24:28.811Z
+Updated: 2026-05-21T14:01:05.0138920-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
 ## Table Of Contents
 
 - [Coverage Guarantee](#coverage-guarantee)
+- [Release Blocker Remediation Update](#release-blocker-remediation-update)
 - [1. System Overview](#1-system-overview)
 - [2. App Details](#2-app-details)
 - [3. Data Flow And Storage](#3-data-flow-and-storage)
@@ -27,12 +28,50 @@ The complete snippet index includes every tracked app-source calculation line fo
 
 ---
 
+## Release Blocker Remediation Update
+
+Status as of 2026-05-21T14:01:05.0138920-04:00: the highest-risk release blockers from the final app analysis have been remediated in code and covered by focused regression tests.
+
+### Before
+
+- `react-quill`/`quill` remained in the runtime dependency tree even though the app did not import it.
+- Backend auth tokens were read from `localStorage`, making persistent tokens extractable by any same-origin XSS.
+- Backup import parsed arbitrary files with a raw `JSON.parse`, merged settings without a whitelist, and could restore privacy-zone labels without warning that coordinates were intentionally absent.
+- Android native tracking used unclamped haversine math, `SimpleDateFormat` timestamp handling, and `Math.abs(type.hashCode())` for diagnostic IDs.
+- Several score and physics helpers could produce `NaN`, `Infinity`, or incomplete aggregates: zero-std anomaly scoring, empty peak arrays, 100-trip aggregate caps, and unbounded eco score economics.
+- The default OSRM endpoint pointed to the public demo server, and `/android` debug reference routing was enabled in production.
+
+### After
+
+- Removed `react-quill` and its vulnerable transitive `quill` dependency from `package.json` and `package-lock.json`.
+- `getAuthToken()` now reads only `sessionStorage`; logout clears both session and legacy local token keys.
+- `parseDriveSenseBackup()` now catches malformed JSON, import rejects files over 50 MB, and imported settings pass through `sanitizeImportedSettings()` with known-key, type, enum, and range validation.
+- Backup import now returns `privacy_zones_need_reconfiguration` so Settings can warn users when privacy zones were restored without private coordinates.
+- Android native tracking now clamps haversine input, skips non-finite segment distances, formats/parses timestamps with `java.time.Instant`, and generates unsigned diagnostic hash suffixes.
+- Added Gradle core-library desugaring so `java.time` compiles against the current min SDK.
+- Driver anomaly z-scores guard zero standard deviation; sensor fusion and cornering peaks use safe fallbacks.
+- Added `tripService.listAll()` / `localTripRepository.listAll()` and switched aggregate/reporting screens to full-history queries.
+- IndexedDB upgrade handling now has an incremental migration shape, and rescore writes are batched in one transaction where IndexedDB is available.
+- OSRM map matching is disabled by default with a blank endpoint; Settings labels the endpoint as an external GPS-coordinate destination.
+- Economics now clamps eco scores, supports fuel-type-specific CO2 factors, and uses configurable CO2 baselines.
+- Phone-use merge results now include `data_sources` provenance for partial-detection transparency.
+- `/android` is gated to dev builds or `VITE_SHOW_DEBUG_ROUTES=true`.
+- App package version is now `1.0.0`.
+
+### Verification
+
+- `npm.cmd test` passed: 31 test files, 239 tests.
+- `npm.cmd run build` passed.
+- `android\gradlew.bat assembleDebug` passed.
+
+---
+
 ## 1. System Overview
 
 Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. The app records trips, detects risky driving events, computes driving scores, enriches routes with open-source map/weather context, stores trips locally, and supports background Android auto tracking.
 
 - Package: `drivesense-app`
-- Version: `0.0.0`
+- Version: `1.0.0`
 - Pattern: React SPA plus Capacitor Android shell; local-first modular monolith
 - Main calculation engine: `src/lib/tripEngine.js`
 - Main trip repository: `src/lib/localTripRepository.js`

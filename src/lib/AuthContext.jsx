@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { authService } from '@/api/auth';
+import { getAuthToken } from '@/api/client';
 
 const AuthContext = createContext();
 
@@ -22,7 +23,7 @@ export const AuthProvider = ({ children }) => {
     setIsLoadingPublicSettings(false);
     setAuthError(null);
 
-    const token = localStorage.getItem('token') || localStorage.getItem('access_token');
+    const token = getAuthToken();
     if (token) {
       await checkUserAuth();
     } else {

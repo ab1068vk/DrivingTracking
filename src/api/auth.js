@@ -5,6 +5,8 @@ export const authService = {
   me: () => apiClient.get("/auth/me"),
 
   logout: () => {
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("access_token");
     localStorage.removeItem("token");
     localStorage.removeItem("access_token");
   },

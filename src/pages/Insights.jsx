@@ -30,7 +30,7 @@ export default function Insights() {
 
   const { data: trips = [], isLoading } = useQuery({
     queryKey: ['insight-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');

@@ -161,7 +161,7 @@ export default function Vehicles() {
 
   const { data: trips = [] } = useQuery({
     queryKey: ['all-trips-vehicles'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });

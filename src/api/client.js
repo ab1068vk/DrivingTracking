@@ -1,5 +1,4 @@
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+export const API_BASE_URL = import.meta.env.VITE_API_URL || null;
 
 export class ApiError extends Error {
   /**
@@ -15,15 +14,20 @@ export class ApiError extends Error {
   }
 }
 
-const getAuthToken = () => {
+export const getAuthToken = () => {
   try {
-    return localStorage.getItem("token") || localStorage.getItem("access_token");
+    // Auth tokens are intentionally session-scoped so an XSS cannot extract a
+    // long-lived credential from localStorage.
+    return sessionStorage.getItem("token") || sessionStorage.getItem("access_token");
   } catch {
     return null;
   }
 };
 
 const buildUrl = (path, query) => {
+  if (!API_BASE_URL) {
+    throw new ApiError("No backend API configured.");
+  }
   const normalizedBase = API_BASE_URL.replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = new URL(`${normalizedBase}${normalizedPath}`);
