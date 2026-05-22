@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+import {
+  MAX_IMPORTED_TRIP_DRIVING_EVENTS,
+  MAX_IMPORTED_TRIP_ROUTE_POINTS,
+  parseDriveSenseBackup,
+} from '@/lib/dataBackup';
+
+const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
+  app: 'Road Sage',
+  version: 5,
+  trips,
+})).trips;
+
+describe('backup trip import sanitization', () => {
+  it('sanitizes active trips from backup imports', () => {
+    const [trip] = parseTrips([{ id: 'trip-active', status: 'active' }]);
+
+    expect(trip.status).toBe('completed');
+  });
+
+  it('truncates oversized imported trip routes', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-huge-route',
+      status: 'completed',
+      route_points: Array.from({ length: 100000 }, (_, index) => ({
+        lat: 43 + index / 100000,
+        lng: -79,
+        timestamp: `2026-05-22T12:${String(index % 60).padStart(2, '0')}:00.000Z`,
+        payload: { oversized: true },
+      })),
+    }]);
+
+    expect(trip.route_points).toHaveLength(MAX_IMPORTED_TRIP_ROUTE_POINTS);
+    expect(trip.route_points[0].payload).toBeUndefined();
+  });
+
+  it('truncates oversized imported driving events', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-huge-events',
+      status: 'completed',
+      driving_events: Array.from({ length: 1000 }, (_, index) => ({
+        type: 'harsh_brake',
+        severity: 'medium',
+        timestamp: `2026-05-22T12:${String(index % 60).padStart(2, '0')}:00.000Z`,
+      })),
+    }]);
+
+    expect(trip.driving_events).toHaveLength(MAX_IMPORTED_TRIP_DRIVING_EVENTS);
+  });
+
+  it('strips unknown fields from imported trips and driving events', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-unknown-fields',
+      status: 'completed',
+      score_overall: 91,
+      unknown_top_level: 'nope',
+      driving_events: [{
+        type: 'harsh_brake',
+        severity: 'medium',
+        malicious_payload: { execute: true },
+      }],
+    }]);
+
+    expect(trip).toMatchObject({ id: 'trip-unknown-fields', score_overall: 91 });
+    expect(trip.unknown_top_level).toBeUndefined();
+    expect(trip.driving_events[0].malicious_payload).toBeUndefined();
+  });
+
+  it('rejects imported trips without a non-empty string id', () => {
+    expect(() => parseTrips([{ id: '', status: 'completed' }])).toThrow('valid id');
+    expect(() => parseTrips([{ id: 123, status: 'completed' }])).toThrow('valid id');
+  });
+});
