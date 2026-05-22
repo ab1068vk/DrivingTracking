@@ -22,6 +22,7 @@ import {
   formatSpeed,
   getScoreColor,
   inferSpeedZones,
+  PHONE_USE_SAFETY_WEIGHT,
   splitTripAtStops,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -367,6 +368,10 @@ export default function TripDetail() {
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
   const showPhoneUse = (displayPhoneUse.phone_use_window_count || trip.phone_use_window_count || phoneUseWindows.length || 0) > 0 || phoneUseRisk !== 'none';
+  const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? 100;
+  const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : 100;
+  // Keep this estimate aligned with calculateTripScores' phoneUseScoreForSafety blend.
+  const phoneUseSafetyImpactPoints = Math.max(1, Math.round(Math.max(0, 100 - phoneUseScoreForImpact) * PHONE_USE_SAFETY_WEIGHT));
   const avgPhoneUseSpeed = phoneUseWindows.length
     ? Math.round(phoneUseWindows.reduce((sum, event) => sum + (Number(event.speed_kmh) || 0), 0) / phoneUseWindows.length)
     : 0;
@@ -749,9 +754,9 @@ export default function TripDetail() {
                 </div>
               </details>
 
-              {settings.phone_use_affects_score !== false && (displayPhoneUse.phone_use_score || trip.phone_use_score || 100) < 95 && (
+              {settings.phone_use_affects_score !== false && phoneUseScoreForImpact < 95 && (
                 <div className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
-                  Phone use reduced your Safety score by about {Math.max(1, Math.round((100 - (displayPhoneUse.phone_use_score || trip.phone_use_score || 100)) * 0.05))} point{Math.round((100 - (displayPhoneUse.phone_use_score || trip.phone_use_score || 100)) * 0.05) === 1 ? '' : 's'}.
+                  Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints} point{phoneUseSafetyImpactPoints === 1 ? '' : 's'}.
                 </div>
               )}
             </div>

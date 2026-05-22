@@ -7,6 +7,7 @@ const SPEED_VARIABILITY_INDEX_MULTIPLIER = 1.5;
 const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.4;
 const REACTION_SCORE_FLOOR = 20;
 const FOLLOWING_DISTANCE_MAX_DEDUCTION = 80;
+export const PHONE_USE_SAFETY_WEIGHT = 0.05;
 
 /**
  * Road Sage Trip Engine
@@ -4076,7 +4077,7 @@ export function calculateTripScores(
     followingDistanceScore * 0.10 +
     brakingScoreForSafety * 0.15 +
     complianceScoreForSafety * 0.10 +
-    phoneUseScoreForSafety * 0.05
+    phoneUseScoreForSafety * PHONE_USE_SAFETY_WEIGHT
   );
   let safety = overtakeQuality.overtake_count > 0
     ? Math.round(safetyWithoutOvertake * 0.95 + (overtakeQuality.overtake_quality_score ?? 100) * 0.05)

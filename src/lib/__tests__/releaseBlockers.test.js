@@ -11,7 +11,13 @@ import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
-import { calculateRouteSummary, detectDrivingEvents } from '@/lib/tripEngine';
+import {
+  calculateRouteSummary,
+  calculateTripScores,
+  DEFAULT_THRESHOLDS,
+  detectDrivingEvents,
+  PHONE_USE_SAFETY_WEIGHT,
+} from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 
 const routePoints = [
@@ -241,6 +247,31 @@ describe('release blocker regressions', () => {
 
     expect(result.phone_use_score).toBe(60);
     expect(result.data_sources).toEqual(['gps_proxy']);
+  });
+
+  it('keeps Trip Detail phone-use Safety impact text aligned with the scorer weight', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },
+      [],
+      DEFAULT_THRESHOLDS,
+      600,
+      {
+        phone_use_risk: 'high',
+        phone_use_score: 40,
+        phone_use_total_seconds: 180,
+        phone_use_pct_of_trip: 30,
+      },
+      { includeRoadTypeSegments: false }
+    );
+    const expectedImpact = Math.max(1, Math.round((100 - scores.phone_use_score) * PHONE_USE_SAFETY_WEIGHT));
+    const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
+
+    expect(expectedImpact).toBe(3);
+    expect(tripDetailSource).toContain('PHONE_USE_SAFETY_WEIGHT');
+    expect(tripDetailSource).toContain('phoneUseSafetyImpactPoints');
+    expect(tripDetailSource).toContain(`Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints}`);
+    expect(tripDetailSource).not.toContain('* 0.05');
   });
 
   it('clamps economics scores and uses vehicle fuel type CO2 factors', () => {
