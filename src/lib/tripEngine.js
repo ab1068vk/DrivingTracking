@@ -521,7 +521,7 @@ export function isNearRecentParkedLocation(point, parkedLocation, options = {}) 
 
 export function validateCandidateTrip({
   points = [],
-  startTime,
+  startTime = null,
   now = new Date().toISOString(),
   activity = null,
   nearParkedLocation = false,

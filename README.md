@@ -25,6 +25,14 @@ The main reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is an
 - The technical reference has been refreshed with the release remediation history and this follow-up pass.
 - Verified on 2026-05-22 with `npm.cmd test` and `npm.cmd run build`.
 
+## 2026-05-22 Full App Recheck
+
+- Rechecked the full web/native app surface: 82 JavaScript files, 78 JSX files, 2 TypeScript config/source files, 7 Android Java files, and 36 test files.
+- Confirmed the route map still covers onboarding, dashboard, trips, trip detail, map, coach, insights, achievements, reports, diagnostics, settings, vehicles, and a dev/flag-gated Android reference route.
+- Re-ran risk scans for cookie use, auth-token `localStorage` reads, removed editor dependencies, TODO/FIXME/HACK markers, stray `console.log`, and open-source context/network flags.
+- `npm.cmd run typecheck` now passes after tightening JS typecheck scope away from dependency JavaScript and clarifying optional app-side JSDoc shapes.
+- Verified again with `npm.cmd test`, `npm.cmd run lint`, `npm.cmd run typecheck`, `npm.cmd run build`, and `android\gradlew.bat assembleDebug`.
+
 ## Local Setup
 
 ```bash

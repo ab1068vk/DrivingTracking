@@ -78,12 +78,12 @@ function saferWindowText(currentHour, profile) {
 /**
  * Estimate upcoming route risk from recent driving, nearby danger zones, weather, and time.
  * @param {object} params - Route risk inputs.
- * @param {Array<object>} params.trips - Completed trip history.
- * @param {Array<object>} params.dangerZones - Learned danger-zone coordinates.
- * @param {number} params.weatherRiskScore - Weather risk score from 0 to 100.
- * @param {{lat:number,lng:number}|null} params.currentLocation - Current GPS coordinate.
- * @param {object|null} params.habitProfile - Optional learned profile returned by buildHabitProfile.
- * @param {Date|string|number} params.now - Optional clock for deterministic risk estimates.
+ * @param {Array<object>} [params.trips] - Completed trip history.
+ * @param {Array<object>} [params.dangerZones] - Learned danger-zone coordinates.
+ * @param {number} [params.weatherRiskScore] - Weather risk score from 0 to 100.
+ * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
+ * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
+ * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
  * @returns {object} Predictive route risk score, level, safer window text, and primary factor.
  * @example estimatePredictiveRouteRisk({ trips, dangerZones, habitProfile })
  */

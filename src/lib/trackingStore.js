@@ -202,6 +202,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
       .slice(0, 20)
       .map((zone, index) => {
         const radius = clampNumber(Number(zone.radius_m) || 150, 50, 1000);
+        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean,lat?:number,lng?:number}} */
         const sanitized = {
           id: typeof zone.id === 'string' ? zone.id.slice(0, 80) : `privacy_zone_import_${index}`,
           label: typeof zone.label === 'string' && zone.label.trim()

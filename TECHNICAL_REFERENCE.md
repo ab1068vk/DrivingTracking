@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-22T16:00:00.0000000-04:00
+Updated: 2026-05-22T18:34:38.1687961-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -9,6 +9,7 @@ This is the readable app reference. It is not a full code dump. It documents the
 - [Coverage Guarantee](#coverage-guarantee)
 - [Release Blocker Remediation Update](#release-blocker-remediation-update)
 - [2026-05-22 Follow-Up Update](#2026-05-22-follow-up-update)
+- [2026-05-22 Full App Recheck](#2026-05-22-full-app-recheck)
 - [1. System Overview](#1-system-overview)
 - [2. App Details](#2-app-details)
 - [3. Data Flow And Storage](#3-data-flow-and-storage)
@@ -122,6 +123,49 @@ Status as of 2026-05-22: the accumulated follow-up work from today's review pass
 - `npm.cmd test` passed on 2026-05-22: 37 test files, 284 tests.
 - `npm.cmd run build` passed on 2026-05-22 with Vite production output.
 - Android debug build remains the native verification target when native files or Capacitor synchronization change; this pass is web/JS-focused.
+
+---
+
+## 2026-05-22 Full App Recheck
+
+Status as of 2026-05-22T18:34:38.1687961-04:00: the full repository has been rechecked after the scoring, phone-use, notification, and sidebar follow-ups. The recheck covered the React app, local repositories, calculation engines, API wrappers, test suite, and Android native background-tracking shell.
+
+### Source Surface Checked
+
+- Source inventory: 82 `.js` files, 78 `.jsx` files, 2 `.ts` files, 7 Android `.java` files, and 36 test files under `src/lib/__tests__` and `src/api/__tests__`.
+- Runtime routes confirmed in `src/App.jsx`: onboarding, dashboard, trip history, trip detail, map, driving coach, insights, achievements, reports, diagnostics, settings, vehicles, and a development/`VITE_SHOW_DEBUG_ROUTES=true` gated Android reference page.
+- Main app bootstrap still wires `AuthProvider`, React Query, local settings hydration, notification channel setup, reminder sync, native Android auto-tracking startup, notification action routing, and theme application.
+- Optional backend behavior remains gated by `VITE_API_URL`; when absent, trip and vehicle APIs use local repositories.
+- Storage surfaces remain explicit: session-scoped auth tokens, local settings/trips/filters/diagnostics, IndexedDB trip storage, Capacitor Preferences, Android `SharedPreferences`, native Downloads export, and local notifications.
+
+### Recheck Scans
+
+- No `document.cookie` usage was found in app or Android source after the sidebar preference migration.
+- No direct runtime `localStorage.getItem("token")` or `localStorage.getItem("access_token")` auth reads were found; auth token reads stay session-scoped, with legacy local tokens only migrated/deleted through auth cleanup.
+- No runtime `react-quill` or `quill` dependency usage was found in source or package manifests.
+- No `TODO`, `FIXME`, `HACK`, or stray `console.log()` markers were found in the scanned app/native/package surface.
+- Open-source context remains explicit and opt-in: Overpass/OpenStreetMap, Open-Meteo, and optional OSRM route snapping are visible through settings and "Get Road Data" flows.
+
+### Typecheck Cleanup From Recheck
+
+- `jsconfig.json` now sets `maxNodeModuleJsDepth: 0` so `npm.cmd run typecheck` checks the app's JavaScript/JSDoc surface without descending into bundled dependency implementation files such as Leaflet's distributed JS.
+- `estimatePredictiveRouteRisk()` JSDoc now marks destructured route-risk inputs as optional, matching the function's default parameter behavior and dashboard usage.
+- `sanitizeImportedPrivacyZones()` now annotates the sanitized privacy-zone object shape so optional `lat`/`lng` restoration is visible to JS type checking.
+- `validateCandidateTrip()` now defaults `startTime` to `null`, matching its optional usage from dashboard trip-candidate flows.
+
+### Verification Completed For Full Recheck
+
+- `npm.cmd test` passed on 2026-05-22: 37 test files, 284 tests.
+- `npm.cmd run lint` passed on 2026-05-22 with `eslint . --quiet`.
+- `npm.cmd run typecheck` passed on 2026-05-22 after the JS typecheck cleanup above.
+- `npm.cmd run build` passed on 2026-05-22 with Vite production output.
+- `android\gradlew.bat assembleDebug` passed on 2026-05-22 for the Android debug APK path.
+
+### Recheck Conclusion
+
+- No new release-blocking issue was found during this pass.
+- The only app changes required by the recheck were typecheck hygiene fixes, not runtime behavior changes.
+- The current highest-signal remaining watch area is configuration hygiene: keep `typecheck`, `lint`, web build, and Android debug build in the release checklist so dependency or JSDoc drift is caught before packaging.
 
 ---
 
