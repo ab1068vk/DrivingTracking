@@ -1,4 +1,6 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const MILEAGE_SCORE_WINDOW_DAYS = 365;
+const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 export const UBI_CATEGORY_WEIGHTS = {
   mileage: 0.15,
@@ -64,7 +66,17 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
   const turnsPer100Km = per100(totalSharpTurns);
   const speedingPer100Km = per100(speedingEvents);
 
-  const mileageScore = clamp(Math.round(100 - Math.max(0, (totalKm - 1000) / 1000) * 5), 20, 100);
+  const generatedAt = new Date();
+  const mileageWindowEnd = generatedAt.getTime();
+  const mileageWindowStart = mileageWindowEnd - MILEAGE_SCORE_WINDOW_MS;
+  const mileageWindowKm = completed
+    .filter((trip) => {
+      const tripTime = new Date(trip.end_time || trip.start_time).getTime();
+      return Number.isFinite(tripTime) && tripTime >= mileageWindowStart && tripTime <= mileageWindowEnd;
+    })
+    .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+
+  const mileageScore = clamp(Math.round(100 - Math.max(0, (mileageWindowKm - 1000) / 1000) * 5), 20, 100);
   const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));
   const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));
   const accelScore = Math.max(0, Math.round(100 - accelPer100Km * 8));
@@ -82,7 +94,7 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
   const ends = completed.map((trip) => new Date(trip.end_time || trip.start_time).getTime()).filter(Number.isFinite);
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: generatedAt.toISOString(),
     periodStart: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
     periodEnd: ends.length ? new Date(Math.max(...ends)).toISOString() : null,
     tripCount: completed.length,
@@ -92,7 +104,7 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     ubiGrade: ubiGrade(ubiScore),
     ubiTier: ubiScore >= 85 ? 'Preferred' : ubiScore >= 70 ? 'Standard' : 'Non-preferred',
     categories: {
-      mileage: category(mileageScore, 'Total mileage', `${totalKm.toFixed(1)} km`),
+      mileage: category(mileageScore, '12-month mileage', `${mileageWindowKm.toFixed(1)} km`),
       timeOfDay: category(timeOfDayScore, 'Time of day', `${(nightRatio * 100).toFixed(0)}% night`),
       hardBraking: category(brakingScore, 'Hard braking', `${brakesPer100Km.toFixed(1)}/100 km`),
       acceleration: category(accelScore, 'Rapid acceleration', `${accelPer100Km.toFixed(1)}/100 km`),

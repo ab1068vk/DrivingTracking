@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeUBIReport, UBI_CATEGORY_WEIGHTS } from '@/lib/ubiReport';
 
 const trip = (distanceKm, overrides = {}) => ({
@@ -16,6 +16,10 @@ const trip = (distanceKm, overrides = {}) => ({
 });
 
 describe('ubiReport', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('handles empty trips without NaN', () => {
     const report = computeUBIReport([]);
     expect(report.ubiScore).toBe(0);
@@ -37,5 +41,47 @@ describe('ubiReport', () => {
 
   it('totalKm sums all trip distances', () => {
     expect(computeUBIReport([trip(10.2), trip(20.3)]).totalKm).toBe(30.5);
+  });
+
+  it('scores mileage from the last 12 months instead of lifetime distance', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+
+    const report = computeUBIReport([
+      trip(19500, {
+        start_time: '2024-01-01T12:00:00.000Z',
+        end_time: '2024-01-01T12:30:00.000Z',
+      }),
+      trip(500, {
+        start_time: '2026-01-01T12:00:00.000Z',
+        end_time: '2026-01-01T12:30:00.000Z',
+      }),
+    ]);
+
+    expect(report.totalKm).toBe(20000);
+    expect(report.categories.mileage.score).toBe(100);
+    expect(report.categories.mileage.value).toBe('500.0 km');
+  });
+
+  it('scores lower recent annual mileage below very high recent annual mileage', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+
+    const moderateMileageReport = computeUBIReport([
+      trip(2000, {
+        start_time: '2026-01-01T12:00:00.000Z',
+        end_time: '2026-01-01T12:30:00.000Z',
+      }),
+    ]);
+    const highMileageReport = computeUBIReport([
+      trip(20000, {
+        start_time: '2026-01-01T12:00:00.000Z',
+        end_time: '2026-01-01T12:30:00.000Z',
+      }),
+    ]);
+
+    expect(moderateMileageReport.categories.mileage.score).toBe(95);
+    expect(highMileageReport.categories.mileage.score).toBe(20);
+    expect(moderateMileageReport.categories.mileage.score).toBeGreaterThan(highMileageReport.categories.mileage.score);
   });
 });
