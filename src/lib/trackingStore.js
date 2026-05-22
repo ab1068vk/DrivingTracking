@@ -4,6 +4,12 @@
  * This is a singleton store used by the tracking service.
  */
 import { getJson, setJson } from '@/lib/mobileStorage';
+import {
+  DEFAULT_CO2_BASELINE_KG_PER_100KM,
+  DEFAULT_EV_KWH_PER_100KM,
+  DEFAULT_GRID_CO2_KG_PER_KWH,
+  DEFAULT_TREE_CO2_KG_PER_YEAR,
+} from '@/lib/tripInsights';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
@@ -122,13 +128,16 @@ export const DEFAULT_SETTINGS = {
   notif_min_score_for_post_trip: 0,
   danger_zone_alerts_enabled: true,
   calibration_profile_key: null,
-  co2_baseline_kg_per_100km: 12.0,
+  co2_baseline_kg_per_100km: DEFAULT_CO2_BASELINE_KG_PER_100KM,
+  default_ev_kwh_per_100km: DEFAULT_EV_KWH_PER_100KM,
+  grid_co2_kg_per_kwh: DEFAULT_GRID_CO2_KG_PER_KWH,
+  tree_co2_kg_per_year: DEFAULT_TREE_CO2_KG_PER_YEAR,
   privacy_zones: [],
 };
 
 const IMPORT_NUMBER_RANGES = {
   data_retention_days: [1, 3650],
-  threshold_harsh_brake_ms2: [0.5, 15],
+  threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_tailgate_decel_ms2: [0.5, 15],
   threshold_sharp_turn_g_low: [0.05, 2],
@@ -162,15 +171,27 @@ const IMPORT_NUMBER_RANGES = {
   notif_inactive_nudge_days: [1, 365],
   notif_min_score_for_post_trip: [0, 100],
   co2_baseline_kg_per_100km: [0, 50],
+  default_ev_kwh_per_100km: [5, 40],
+  grid_co2_kg_per_kwh: [0, 2],
+  tree_co2_kg_per_year: [1, 100],
 };
 
-const IMPORT_ENUMS = {
+const SETTINGS_ENUMS = {
   tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
   dark_mode: ['system', 'light', 'dark'],
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
 };
+
+const IMPORT_ENUMS = {
+  ...SETTINGS_ENUMS,
+  tracking_mode: ['manual', 'auto_detect'],
+};
+
+const IMPORT_STRIPPED_KEYS = new Set([
+  'osrm_map_matching_url',
+]);
 
 const clampNumber = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -206,6 +227,7 @@ export function sanitizeImportedSettings(raw = {}) {
   const sanitized = {};
   Object.entries(DEFAULT_SETTINGS).forEach(([key, defaultValue]) => {
     if (!Object.prototype.hasOwnProperty.call(raw, key)) return;
+    if (IMPORT_STRIPPED_KEYS.has(key)) return;
     const value = raw[key];
 
     if (key === 'privacy_zones') {
@@ -252,8 +274,8 @@ export function validateSettingsPatch(patch = {}) {
 
   Object.entries(patch).forEach(([key, value]) => {
     if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key)) return;
-    if (IMPORT_ENUMS[key] && !IMPORT_ENUMS[key].includes(value)) {
-      errors.push(`${key} must be one of: ${IMPORT_ENUMS[key].join(', ')}.`);
+    if (SETTINGS_ENUMS[key] && !SETTINGS_ENUMS[key].includes(value)) {
+      errors.push(`${key} must be one of: ${SETTINGS_ENUMS[key].join(', ')}.`);
       return;
     }
     if (IMPORT_NUMBER_RANGES[key]) {

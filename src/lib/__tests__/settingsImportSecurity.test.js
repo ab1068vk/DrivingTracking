@@ -1,0 +1,98 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const serviceMocks = vi.hoisted(() => ({
+  tripUpsertMany: vi.fn(async (trips = []) => trips),
+  vehicleUpsertMany: vi.fn(async (vehicles = []) => vehicles),
+}));
+
+vi.mock('@/api/trips', () => ({
+  tripService: {
+    upsertMany: serviceMocks.tripUpsertMany,
+  },
+}));
+
+vi.mock('@/api/vehicles', () => ({
+  vehicleService: {
+    upsertMany: serviceMocks.vehicleUpsertMany,
+  },
+}));
+
+import { importDriveSenseBackup } from '@/lib/dataBackup';
+import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
+
+function makeMemoryStorage(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    getItem: vi.fn((key) => store.get(key) ?? null),
+    setItem: vi.fn((key, value) => store.set(key, String(value))),
+    removeItem: vi.fn((key) => store.delete(key)),
+    clear: vi.fn(() => store.clear()),
+  };
+}
+
+function backupFile(settings) {
+  return {
+    size: 1024,
+    text: vi.fn(async () => JSON.stringify({
+      app: 'Road Sage',
+      version: 5,
+      vehicles: [],
+      trips: [],
+      settings,
+    })),
+  };
+}
+
+describe('backup settings import security', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('drops unknown keys before merging imported settings', async () => {
+    vi.stubGlobal('localStorage', makeMemoryStorage());
+
+    await importDriveSenseBackup(backupFile({
+      ['__proto__']: { polluted: true },
+      injected_key: 'nope',
+      phone_use_detection_enabled: false,
+    }));
+
+    const settings = localSettings.get();
+    expect(settings.injected_key).toBeUndefined();
+    expect(settings.phone_use_detection_enabled).toBe(false);
+    expect({}.polluted).toBeUndefined();
+  });
+
+  it('strips imported OSRM endpoints so backups cannot redirect route data', async () => {
+    vi.stubGlobal('localStorage', makeMemoryStorage());
+
+    await importDriveSenseBackup(backupFile({
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://evil.example.com',
+    }));
+
+    expect(localSettings.get().osrm_map_matching_url).toBe('');
+  });
+
+  it('clamps imported harsh-braking thresholds to the safe range', async () => {
+    vi.stubGlobal('localStorage', makeMemoryStorage());
+
+    await importDriveSenseBackup(backupFile({
+      threshold_harsh_brake_ms2: 9999,
+    }));
+
+    expect(localSettings.get().threshold_harsh_brake_ms2).toBe(8);
+    expect(sanitizeImportedSettings({ threshold_harsh_brake_ms2: 0 }).threshold_harsh_brake_ms2).toBe(2);
+  });
+
+  it('does not import background auto-tracking without in-app consent', async () => {
+    vi.stubGlobal('localStorage', makeMemoryStorage());
+
+    await importDriveSenseBackup(backupFile({
+      tracking_mode: 'background_auto',
+    }));
+
+    expect(localSettings.get().tracking_mode).toBe('manual');
+  });
+});
