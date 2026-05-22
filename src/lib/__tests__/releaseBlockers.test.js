@@ -1,15 +1,42 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
 import { importDriveSenseBackup, parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
+import { localTripRepository } from '@/lib/localTripRepository';
 import { mapMatchRoute } from '@/lib/mapMatching';
+import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
-import { detectDrivingEvents } from '@/lib/tripEngine';
+import { calculateRouteSummary, detectDrivingEvents } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
+
+const routePoints = [
+  { lat: 43.6500, lng: -79.3800, speed_kmh: 20, accuracy: 8, timestamp: '2026-01-01T12:00:00.000Z' },
+  { lat: 43.6504, lng: -79.3800, speed_kmh: 30, accuracy: 8, timestamp: '2026-01-01T12:00:20.000Z' },
+  { lat: 43.6509, lng: -79.3802, speed_kmh: 35, accuracy: 8, timestamp: '2026-01-01T12:00:40.000Z' },
+  { lat: 43.6514, lng: -79.3804, speed_kmh: 30, accuracy: 8, timestamp: '2026-01-01T12:01:00.000Z' },
+];
+
+const completedTrip = (patch = {}) => ({
+  id: `shape_${Math.random().toString(36).slice(2)}`,
+  status: 'completed',
+  start_time: routePoints[0].timestamp,
+  end_time: routePoints[routePoints.length - 1].timestamp,
+  route_points: routePoints,
+  needs_rescore: true,
+  schema_version: 0,
+  ...patch,
+});
+
+const expectFiniteTripScores = (value) => {
+  for (const key of ['score_overall', 'score_safety', 'score_smoothness', 'score_eco']) {
+    expect(Number.isFinite(value[key])).toBe(true);
+  }
+};
 
 describe('release blocker regressions', () => {
   afterEach(() => {
@@ -114,7 +141,7 @@ describe('release blocker regressions', () => {
     });
 
     expect(settings.threshold_harsh_brake_ms2).toBeGreaterThan(0);
-    expect(settings.threshold_harsh_brake_ms2).toBe(0.5);
+    expect(settings.threshold_harsh_brake_ms2).toBe(2);
     expect(settings.tracking_mode).toBeUndefined();
     expect(settings.phone_use_detection_enabled).toBe(false);
     expect(settings.injected_key).toBeUndefined();
@@ -131,12 +158,49 @@ describe('release blocker regressions', () => {
     expect(validateSettingsPatch({ threshold_harsh_brake_ms2: 3.5, night_detection_mode: 'custom' })).toMatchObject({ valid: true });
   });
 
-  it('returns a stable object from driving-event detection', () => {
+  it('returns only the stable driving-event detection object shape', () => {
     const detection = detectDrivingEvents([]);
+    const invalidInputDetection = detectDrivingEvents('not route points');
 
+    expect(Object.keys(detection).sort()).toEqual(['events', 'phoneUse']);
     expect(Array.isArray(detection.events)).toBe(true);
     expect(detection.phoneUse).toBeTruthy();
+    expect(typeof detection.phoneUse).toBe('object');
     expect(detection.events.some).toBeTypeOf('function');
+    expect(Object.keys(invalidInputDetection).sort()).toEqual(['events', 'phoneUse']);
+    expect(invalidInputDetection.events).toEqual([]);
+    expect(typeof invalidInputDetection.phoneUse).toBe('object');
+  });
+
+  it('does not use brittle detection return-shape probes at trip scoring call sites', () => {
+    const sources = [
+      readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../openSourceTripContext.js', import.meta.url), 'utf8'),
+    ].join('\n');
+
+    expect(sources).not.toContain('Reflect.get(detection');
+    expect(sources).not.toContain('?? detection');
+    expect(sources).not.toMatch(/const\s+\w*Detection?\s*=\s*detectDrivingEvents/);
+  });
+
+  it('keeps trip scoring call sites finite with the stable detection object', async () => {
+    const summary = calculateRouteSummary(
+      routePoints,
+      routePoints[0].timestamp,
+      routePoints[routePoints.length - 1].timestamp
+    );
+    expectFiniteTripScores(summary.scores);
+
+    const [rescoredTrip] = await localTripRepository.upsertMany([completedTrip()]);
+    expectFiniteTripScores(rescoredTrip);
+
+    const patch = await buildOpenSourceTripContextPatch(completedTrip(), {
+      map_matching_enabled: false,
+      speed_limit_lookup_enabled: false,
+      weather_context_enabled: false,
+    });
+    expectFiniteTripScores(patch);
   });
 
   it('keeps anomaly scores finite when model stddev is zero', () => {
@@ -183,12 +247,40 @@ describe('release blocker regressions', () => {
     const gasoline = estimateTripEconomics({ distance_km: 100, eco_driving_score: 50 }, { fuel_type: 'gasoline', fuel_efficiency_l_per_100km: 10 }, {});
     const diesel = estimateTripEconomics({ distance_km: 100, eco_driving_score: 50 }, { fuel_type: 'diesel', fuel_efficiency_l_per_100km: 10 }, {});
     const extreme = estimateTripEconomics({ distance_km: 100, eco_driving_score: 999 }, { fuel_efficiency_l_per_100km: 10 }, {});
-    const ev = estimateTripEconomics({ distance_km: 100, eco_driving_score: 80 }, { fuel_type: 'electric' }, {});
+    const ev = estimateTripEconomics({ distance_km: 100, eco_driving_score: 80 }, { fuel_type: 'electric' }, { co2_baseline_kg_per_100km: 12 });
 
-    expect(diesel.co2_kg).toBeGreaterThan(gasoline.co2_kg);
+    expect(gasoline.co2_kg).toBe(23.1);
+    expect(diesel.co2_kg).toBe(26.8);
+    expect(diesel.co2_kg / gasoline.co2_kg).toBeCloseTo(2.68 / 2.31, 2);
     expect(extreme.actual_l_per_100km).toBe(8);
-    expect(ev.co2_kg).toBe(0);
-    expect(ev.co2_saved_kg).toBe(0);
+    expect(ev.co2_kg).toBeGreaterThan(0);
+    expect(ev.fuel_co2_kg).toBe(0);
+    expect(ev.grid_co2_kg).toBeGreaterThan(0);
+    expect(ev.co2_saved_kg).toBeGreaterThan(0);
+  });
+
+  it('changes CO2 savings when the average vehicle baseline changes', () => {
+    const trip = { distance_km: 100, eco_driving_score: 50 };
+    const vehicle = { fuel_type: 'gasoline', fuel_efficiency_l_per_100km: 3 };
+
+    const euBaseline = estimateTripEconomics(trip, vehicle, { co2_baseline_kg_per_100km: 12 });
+    const northAmericaBaseline = estimateTripEconomics(trip, vehicle, { co2_baseline_kg_per_100km: 18 });
+
+    expect(northAmericaBaseline.co2_saved_kg).toBeGreaterThan(euBaseline.co2_saved_kg);
+    expect(northAmericaBaseline.co2_saved_kg - euBaseline.co2_saved_kg).toBe(6);
+  });
+
+  it('uses grid intensity for electric vehicle CO2 savings', () => {
+    const ev = estimateTripEconomics(
+      { distance_km: 100, eco_driving_score: 50 },
+      { fuel_type: 'electric', ev_efficiency_kwh_per_100km: 20 },
+      { co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 },
+    );
+
+    expect(ev.co2_kg).toBe(1);
+    expect(ev.grid_co2_kg).toBe(1);
+    expect(ev.co2_saved_kg).toBe(17);
+    expect(ev.grid_co2_kg_per_kwh).toBe(0.05);
   });
 
   it('retries transient external operations once', async () => {

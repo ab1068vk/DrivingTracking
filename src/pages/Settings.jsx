@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap
 } from 'lucide-react';
 import {
   Dialog,
@@ -767,6 +767,7 @@ export default function Settings() {
     { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', detail: 'Manual, foreground auto-detect, background auto, and pause controls.', keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement' },
     { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', detail: 'Location, background location, activity, battery, and native auto service setup.', keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt' },
     { label: 'Feature permissions', section: 'Feature Permissions', sectionId: 'settings-feature-permissions', detail: 'See which features are blocked by missing permissions.', keywords: 'blocked unavailable permission feature status' },
+    { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },
     { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
     { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },
     { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive' },
@@ -1089,6 +1090,71 @@ export default function Settings() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Economics */}
+        <SectionTitle id="settings-economics">Economics</SectionTitle>
+        <div className="space-y-1">
+          <SettingRow
+            icon={Leaf}
+            label="Average vehicle CO2 baseline"
+            sublabel="kg CO2 per 100 km used for saved-vs-average comparisons"
+          >
+            <input
+              type="number"
+              min="0"
+              max="50"
+              step="0.1"
+              value={cfg.co2_baseline_kg_per_100km ?? 12}
+              onChange={e => updateCfg({ co2_baseline_kg_per_100km: Number(e.target.value) })}
+              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Zap}
+            label="Default EV efficiency"
+            sublabel="kWh per 100 km used when an electric vehicle has no profile value"
+          >
+            <input
+              type="number"
+              min="5"
+              max="40"
+              step="0.1"
+              value={cfg.default_ev_kwh_per_100km ?? 18}
+              onChange={e => updateCfg({ default_ev_kwh_per_100km: Number(e.target.value) })}
+              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Zap}
+            label="Grid CO2 intensity"
+            sublabel="kg CO2 per kWh used for electric-vehicle trip emissions"
+          >
+            <input
+              type="number"
+              min="0"
+              max="2"
+              step="0.001"
+              value={cfg.grid_co2_kg_per_kwh ?? 0.04}
+              onChange={e => updateCfg({ grid_co2_kg_per_kwh: Number(e.target.value) })}
+              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Leaf}
+            label="Tree-year equivalent"
+            sublabel="kg CO2 per tree per year used in carbon impact summaries"
+          >
+            <input
+              type="number"
+              min="1"
+              max="100"
+              step="0.1"
+              value={cfg.tree_co2_kg_per_year ?? 21}
+              onChange={e => updateCfg({ tree_co2_kg_per_year: Number(e.target.value) })}
+              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
+            />
+          </SettingRow>
         </div>
 
         {/* Notifications */}

@@ -3,27 +3,38 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle } from 'lucide-react';
+import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+const FUEL_TYPES = [
+  { value: 'gasoline', label: 'Gasoline' },
+  { value: 'diesel', label: 'Diesel' },
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'electric', label: 'Electric' },
+];
 
 function validateVehicleForm(form) {
   const errors = [];
   const year = Number(form.year);
   const currentYear = new Date().getFullYear() + 1;
   const odometer = Number(form.odometer_km);
+  const fuelType = String(form.fuel_type || 'gasoline').toLowerCase();
+  const isElectric = fuelType === 'electric' || fuelType === 'ev';
   const efficiency = Number(form.fuel_efficiency_l_per_100km);
+  const evEfficiency = Number(form.ev_efficiency_kwh_per_100km);
   const fuelPrice = Number(form.fuel_price_per_liter);
   const reserve = Number(form.maintenance_reserve_per_km);
 
   if (!String(form.name || '').trim()) errors.push('Nickname is required.');
   if (form.year && (!Number.isInteger(year) || year < 1900 || year > currentYear)) errors.push(`Year must be between 1900 and ${currentYear}.`);
   if (!Number.isFinite(odometer) || odometer < 0) errors.push('Odometer must be zero or higher.');
-  if (!Number.isFinite(efficiency) || efficiency <= 0 || efficiency > 40) errors.push('Fuel efficiency must be between 0 and 40 L/100km.');
+  if (!FUEL_TYPES.some((type) => type.value === fuelType)) errors.push('Fuel type is not supported.');
+  if (!isElectric && (!Number.isFinite(efficiency) || efficiency <= 0 || efficiency > 40)) errors.push('Fuel efficiency must be between 0 and 40 L/100km.');
+  if (isElectric && (!Number.isFinite(evEfficiency) || evEfficiency < 5 || evEfficiency > 40)) errors.push('EV efficiency must be between 5 and 40 kWh/100km.');
   if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > 10) errors.push('Fuel price must be between 0 and 10.');
   if (!Number.isFinite(reserve) || reserve < 0 || reserve > 5) errors.push('Maintenance reserve must be between 0 and 5 per km.');
   return errors;
@@ -38,7 +49,9 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
     color: '#3b82f6',
     plate: '',
     odometer_km: 0,
+    fuel_type: 'gasoline',
     fuel_efficiency_l_per_100km: 8.5,
+    ev_efficiency_kwh_per_100km: 18,
     fuel_price_per_liter: 1.65,
     maintenance_reserve_per_km: 0.08,
     registration_renewal_date: '',
@@ -46,6 +59,7 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
     ...initial,
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const isElectric = ['electric', 'ev'].includes(String(form.fuel_type || '').toLowerCase());
   const errors = validateVehicleForm(form);
   const canSave = errors.length === 0;
 
@@ -86,12 +100,25 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Fuel L/100km</label>
-          <input value={form.fuel_efficiency_l_per_100km} onChange={e => set('fuel_efficiency_l_per_100km', e.target.value)} placeholder="8.5" type="number" step="0.1"
-            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+          <label className="text-xs text-muted-foreground mb-1 block">Fuel type</label>
+          <select value={form.fuel_type || 'gasoline'} onChange={e => set('fuel_type', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
+            {FUEL_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? 'EV kWh/100km' : 'Fuel L/100km'}</label>
+          <input
+            value={isElectric ? form.ev_efficiency_kwh_per_100km : form.fuel_efficiency_l_per_100km}
+            onChange={e => set(isElectric ? 'ev_efficiency_kwh_per_100km' : 'fuel_efficiency_l_per_100km', e.target.value)}
+            placeholder={isElectric ? '18' : '8.5'}
+            type="number"
+            step="0.1"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary"
+          />
         </div>
         <div className="col-span-2">
-          <label className="text-xs text-muted-foreground mb-1 block">Fuel Price ($/L)</label>
+          <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? 'Energy Price ($/kWh)' : 'Fuel Price ($/L)'}</label>
           <input value={form.fuel_price_per_liter} onChange={e => set('fuel_price_per_liter', e.target.value)} placeholder="1.65" type="number" step="0.01"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
@@ -135,7 +162,9 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
           onClick={() => canSave && onSave({
             ...form,
             odometer_km: Number(form.odometer_km) || 0,
+            fuel_type: String(form.fuel_type || 'gasoline').toLowerCase(),
             fuel_efficiency_l_per_100km: Number(form.fuel_efficiency_l_per_100km) || 8.5,
+            ev_efficiency_kwh_per_100km: Number(form.ev_efficiency_kwh_per_100km) || 18,
             fuel_price_per_liter: Number(form.fuel_price_per_liter) || 1.65,
             maintenance_reserve_per_km: Number(form.maintenance_reserve_per_km) || 0.08,
           })}
@@ -332,6 +361,10 @@ export default function Vehicles() {
           const avgEngineStress = vehicleTrips.length
             ? Math.round(vehicleTrips.reduce((sum, trip) => sum + (trip.engine_stress_score ?? 100), 0) / vehicleTrips.length)
             : null;
+          const isElectricVehicle = ['electric', 'ev'].includes(String(v.fuel_type || '').toLowerCase());
+          const efficiencyLabel = isElectricVehicle
+            ? `${v.ev_efficiency_kwh_per_100km || 18} kWh/100km`
+            : `${v.fuel_efficiency_l_per_100km || 8.5} L/100km`;
 
           return (
             <motion.div key={v.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
@@ -406,8 +439,8 @@ export default function Vehicles() {
                   <div className="grid grid-cols-2 gap-2 mt-4">
                     <div className="bg-secondary/50 rounded-xl p-3">
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Fuel className="w-3.5 h-3.5" />
-                        Fuel estimate
+                        {isElectricVehicle ? <Zap className="w-3.5 h-3.5" /> : <Fuel className="w-3.5 h-3.5" />}
+                        {isElectricVehicle ? 'Energy estimate' : 'Fuel estimate'}
                       </div>
                       <div className="font-semibold text-sm mt-1">${fuelTotals.cost.toFixed(2)}</div>
                       <div className="text-xs text-muted-foreground">{fuelTotals.co2.toFixed(1)} kg CO2</div>
@@ -420,7 +453,7 @@ export default function Vehicles() {
                       <div className={`font-semibold text-sm mt-1 ${dueMaintenance.length ? 'text-orange-500' : 'text-emerald-500'}`}>
                         {dueMaintenance.length ? `${dueMaintenance.length} due soon` : 'All good'}
                       </div>
-                      <div className="text-xs text-muted-foreground">{v.fuel_efficiency_l_per_100km || 8.5} L/100km</div>
+                      <div className="text-xs text-muted-foreground">{efficiencyLabel}</div>
                     </div>
                     <div className="bg-secondary/50 rounded-xl p-3">
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">

@@ -81,7 +81,7 @@ export default function Reports() {
     : 0;
   // FIX: Compute report average speed from avg_running_speed_kmh, falling back only for legacy trips.
   const baseline = computePersonalBaseline(completed);
-  const carbonImpact = calculateCarbonImpact(trips);
+  const carbonImpact = calculateCarbonImpact(trips, settings);
   const commutePatterns = identifyCommutePatterns(trips);
   const peakHourStress = calculatePeakHourStress(trips);
   const roadTypeData = ['highway', 'urban', 'mixed', 'residential']

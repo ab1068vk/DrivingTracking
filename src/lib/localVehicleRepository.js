@@ -1,5 +1,5 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripInsights';
+import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripInsights';
 
 const VEHICLES_KEY = 'drivesense_vehicles';
 
@@ -22,7 +22,9 @@ const normalizeVehicle = (vehicle) => ({
   odometer_km: Number(vehicle.odometer_km) || 0,
   odometer_trip_distance_anchor_km: Number(vehicle.odometer_trip_distance_anchor_km) || 0,
   auto_odometer_last_sync_at: vehicle.auto_odometer_last_sync_at || null,
+  fuel_type: String(vehicle.fuel_type || 'gasoline').trim().toLowerCase(),
   fuel_efficiency_l_per_100km: Number(vehicle.fuel_efficiency_l_per_100km) || 8.5,
+  ev_efficiency_kwh_per_100km: Number(vehicle.ev_efficiency_kwh_per_100km) || DEFAULT_EV_KWH_PER_100KM,
   fuel_price_per_liter: Number(vehicle.fuel_price_per_liter) || 1.65,
   maintenance_reserve_per_km: Number(vehicle.maintenance_reserve_per_km) || 0.08,
   registration_renewal_date: vehicle.registration_renewal_date || '',

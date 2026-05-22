@@ -1,5 +1,9 @@
 export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
 export const DEFAULT_L_PER_100KM = 8.5;
+export const DEFAULT_EV_KWH_PER_100KM = 18;
+export const DEFAULT_GRID_CO2_KG_PER_KWH = 0.04;
+export const DEFAULT_CO2_BASELINE_KG_PER_100KM = 12.0;
+export const DEFAULT_TREE_CO2_KG_PER_YEAR = 21.0;
 export const GASOLINE_CO2_KG_PER_LITER = 2.31;
 export const CO2_KG_PER_LITER = {
   gasoline: 2.31,
@@ -7,7 +11,9 @@ export const CO2_KG_PER_LITER = {
   diesel: 2.68,
   lpg: 1.65,
   cng: 2.0,
-  hybrid: 2.31,
+  hybrid: 2.10,
+  electric: 0,
+  ev: 0,
 };
 export const WEAR_KM_PER_STRESS_UNIT = 8;
 
@@ -29,6 +35,13 @@ export const DEFAULT_MAINTENANCE_ITEMS = [
 const DAY_MS = 86400000;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+export const DRIVING_CONSISTENCY_IQR_MULTIPLIERS = {
+  urban: 1.0,
+  residential: 1.2,
+  mixed: 1.4,
+  highway: 1.8,
+};
 
 const startOfDay = (date) => {
   const d = new Date(date);
@@ -360,24 +373,34 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
 
 export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const distanceKm = Number(trip?.distance_km) || 0;
-  const fuelType = String(vehicle?.fuel_type || settings.fuel_type || 'gasoline').toLowerCase();
+  const fuelType = String(vehicle?.fuel_type || settings.fuel_type || 'gasoline').trim().toLowerCase();
   const isElectric = fuelType === 'electric' || fuelType === 'ev';
   const lPer100Km = isElectric ? 0 : (Number(vehicle?.fuel_efficiency_l_per_100km) || Number(settings.default_l_per_100km) || DEFAULT_L_PER_100KM);
+  const evKwhPer100Km = Number(vehicle?.ev_efficiency_kwh_per_100km ?? vehicle?.energy_efficiency_kwh_per_100km ?? settings.default_ev_kwh_per_100km) || DEFAULT_EV_KWH_PER_100KM;
+  const gridCo2KgPerKwh = Number(vehicle?.grid_co2_kg_per_kwh ?? settings.grid_co2_kg_per_kwh);
+  const effectiveGridCo2KgPerKwh = Number.isFinite(gridCo2KgPerKwh) ? gridCo2KgPerKwh : DEFAULT_GRID_CO2_KG_PER_KWH;
   const fuelPrice = Number(vehicle?.fuel_price_per_liter) || Number(settings.default_fuel_price_per_liter) || DEFAULT_FUEL_PRICE_PER_LITER;
   const ecoDrivingScore = clamp(Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50, 0, 100);
   const efficiencyMultiplier = clamp(1 + (ecoDrivingScore - 50) / 200, 0.7, 1.5);
   const actualLPer100Km = lPer100Km / efficiencyMultiplier;
+  const actualEvKwhPer100Km = evKwhPer100Km / efficiencyMultiplier;
   const baselineLiters = distanceKm * lPer100Km / 100;
   const adjustedLiters = distanceKm * actualLPer100Km / 100;
-  const cost = adjustedLiters * fuelPrice;
-  const baselineCost = baselineLiters * fuelPrice;
+  const baselineKwh = isElectric ? distanceKm * evKwhPer100Km / 100 : 0;
+  const adjustedKwh = isElectric ? distanceKm * actualEvKwhPer100Km / 100 : 0;
+  const cost = isElectric ? adjustedKwh * fuelPrice : adjustedLiters * fuelPrice;
+  const baselineCost = isElectric ? baselineKwh * fuelPrice : baselineLiters * fuelPrice;
   const co2Factor = CO2_KG_PER_LITER[fuelType] ?? GASOLINE_CO2_KG_PER_LITER;
-  const co2Kg = isElectric ? 0 : adjustedLiters * co2Factor;
+  const fuelCo2Kg = isElectric ? 0 : adjustedLiters * co2Factor;
+  const gridCo2Kg = isElectric ? adjustedKwh * effectiveGridCo2KgPerKwh : 0;
+  const co2Kg = fuelCo2Kg + gridCo2Kg;
   const fuelSavedLiters = Math.max(0, baselineLiters - adjustedLiters);
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
+  const roundedFuelCo2Kg = Math.round(fuelCo2Kg * 100) / 100;
+  const roundedGridCo2Kg = Math.round(gridCo2Kg * 100) / 100;
   const baselineCo2KgPer100Km = Number(vehicle?.co2_baseline_kg_per_100km ?? settings.co2_baseline_kg_per_100km);
-  const avgCo2Kg = distanceKm * (Number.isFinite(baselineCo2KgPer100Km) ? baselineCo2KgPer100Km : 12.0) / 100;
-  const co2SavedKg = isElectric ? 0 : Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
+  const avgCo2Kg = distanceKm * (Number.isFinite(baselineCo2KgPer100Km) ? baselineCo2KgPer100Km : DEFAULT_CO2_BASELINE_KG_PER_100KM) / 100;
+  const co2SavedKg = Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
 
   return {
     liters: Math.round(adjustedLiters * 100) / 100,
@@ -385,9 +408,16 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
     cost: Math.round(cost * 100) / 100,
     baseline_cost: Math.round(baselineCost * 100) / 100,
     co2_kg: roundedCo2Kg,
+    fuel_co2_kg: roundedFuelCo2Kg,
+    grid_co2_kg: roundedGridCo2Kg,
     co2_saved_kg: co2SavedKg,
     l_per_100km: lPer100Km,
     actual_l_per_100km: Math.round(actualLPer100Km * 10) / 10,
+    kwh: Math.round(adjustedKwh * 100) / 100,
+    baseline_kwh: Math.round(baselineKwh * 100) / 100,
+    ev_kwh_per_100km: evKwhPer100Km,
+    actual_ev_kwh_per_100km: Math.round(actualEvKwhPer100Km * 10) / 10,
+    grid_co2_kg_per_kwh: effectiveGridCo2KgPerKwh,
     fuel_saved_liters: Math.round(fuelSavedLiters * 100) / 100,
     fuel_price_per_liter: fuelPrice,
   };
@@ -815,9 +845,13 @@ export function calculateTireWearUnits(events = []) {
   return { trip_tire_wear_units: Math.round(units * 10) / 10 };
 }
 
-export function calculateCarbonImpact(completedTrips = []) {
+export function calculateCarbonImpact(completedTrips = [], settings = {}) {
   const totalCo2SavedKg = Math.round(completedTrips.reduce((sum, trip) => sum + (trip.co2_saved_kg || 0), 0) * 10) / 10;
-  const treesEquivalent = Math.round((totalCo2SavedKg / 21.0) * 10) / 10;
+  const treeCo2KgPerYear = Number(settings.tree_co2_kg_per_year);
+  const effectiveTreeCo2KgPerYear = Number.isFinite(treeCo2KgPerYear) && treeCo2KgPerYear > 0
+    ? treeCo2KgPerYear
+    : DEFAULT_TREE_CO2_KG_PER_YEAR;
+  const treesEquivalent = Math.round((totalCo2SavedKg / effectiveTreeCo2KgPerYear) * 10) / 10;
   return {
     total_co2_saved_kg: totalCo2SavedKg,
     trees_equivalent: treesEquivalent,
@@ -939,9 +973,29 @@ export function calculateSpeedDiscipline(trips = [], settings = {}) {
   };
 }
 
+function consistencyRoadTypeForTrip(trip = {}) {
+  const explicitType = trip.dominant_road_type || trip.road_type;
+  if (DRIVING_CONSISTENCY_IQR_MULTIPLIERS[explicitType]) return explicitType;
+  return null;
+}
+
+function calculateConsistencyIqrMultiplier(trips = []) {
+  const counts = trips.reduce((acc, trip) => {
+    const roadType = consistencyRoadTypeForTrip(trip);
+    if (roadType) acc.set(roadType, (acc.get(roadType) || 0) + 1);
+    return acc;
+  }, new Map());
+
+  if (!counts.size) return DRIVING_CONSISTENCY_IQR_MULTIPLIERS.highway;
+
+  const [dominantType] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  return DRIVING_CONSISTENCY_IQR_MULTIPLIERS[dominantType];
+}
+
 export function calculateDrivingConsistency(trips = []) {
-  const scores = trips
-    .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
+  const completedWithScores = trips
+    .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0);
+  const scores = completedWithScores
     .map((trip) => Number(trip.score_overall))
     .sort((a, b) => a - b);
 
@@ -962,7 +1016,8 @@ export function calculateDrivingConsistency(trips = []) {
   const q1 = percentile(scores, 25);
   const q3 = percentile(scores, 75);
   const iqr = q3 - q1;
-  const consistencyScore = Math.max(0, Math.round(100 - iqr * 1.8));
+  const iqrMultiplier = calculateConsistencyIqrMultiplier(completedWithScores);
+  const consistencyScore = Math.max(0, Math.round(100 - iqr * iqrMultiplier));
 
   return {
     trip_count: scores.length,
@@ -972,6 +1027,7 @@ export function calculateDrivingConsistency(trips = []) {
     iqr: Math.round(iqr * 10) / 10,
     q1: Math.round(q1 * 10) / 10,
     q3: Math.round(q3 * 10) / 10,
+    iqr_multiplier: iqrMultiplier,
     level: consistencyScore >= 85 ? 'steady' : consistencyScore >= 70 ? 'mixed' : 'inconsistent',
   };
 }
@@ -985,7 +1041,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   const baseline = computePersonalBaseline(completed);
   const peakHourStress = calculatePeakHourStress(completed);
   const commutePatterns = identifyCommutePatterns(completed);
-  const carbonImpact = calculateCarbonImpact(completed);
+  const carbonImpact = calculateCarbonImpact(completed, settings);
   const timeOfDay = analyzeTimeOfDay(completed);
   const bestWindow = timeOfDay
     .filter((bucket) => bucket.trips > 0 && bucket.avgScore !== null)
@@ -1114,7 +1170,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   };
 }
 
-export function calculateAchievementBadges(trips = []) {
+export function calculateAchievementBadges(trips = [], settings = {}) {
   const completed = trips.filter((trip) => trip.status === 'completed');
   const totalKm = completed.reduce((sum, trip) => sum + (trip.distance_km || 0), 0);
   const nightCount = completed.filter((trip) => trip.night_driving).length;
@@ -1162,7 +1218,7 @@ export function calculateAchievementBadges(trips = []) {
   }).length;
   const cruiseMasterTrips = completed.filter((trip) => trip.band_label === 'excellent cruise').length;
   const nearMissFreeTrips = completed.filter((trip) => (trip.near_miss_count || 0) === 0).length;
-  const carbon = calculateCarbonImpact(completed);
+  const carbon = calculateCarbonImpact(completed, settings);
 
   return [
     {
