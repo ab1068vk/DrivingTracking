@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  MAX_ACHIEVEMENT_NOTIF_IDS,
   NOTIFICATION_IDS,
+  achievementNotificationId,
   dispatchPostTripNotification,
   isQuietHours,
 } from '@/lib/notificationService';
+import { calculateAchievementBadges } from '@/lib/tripInsights';
 
 const settings = {
   notifications_enabled: true,
@@ -26,7 +30,17 @@ const trip = (patch = {}) => ({
 describe('advanced notifications', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
+
+  const stubLocalStorage = () => {
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+  };
 
   it('allows safety alerts during quiet hours', () => {
     vi.useFakeTimers();
@@ -55,6 +69,25 @@ describe('advanced notifications', () => {
       notif_quiet_start: '22:00',
       notif_quiet_end: '07:00',
     })).toBe(false);
+  });
+
+  it('assigns distinct notification IDs for same-digit-sum achievement IDs', () => {
+    stubLocalStorage();
+
+    const ids = ['12', '21', '30'].map(achievementNotificationId);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(achievementNotificationId('12')).not.toBe(achievementNotificationId('21'));
+  });
+
+  it('assigns unique notification IDs for all achievement badge IDs', () => {
+    stubLocalStorage();
+    const achievementIds = calculateAchievementBadges([]).map((badge) => badge.id);
+
+    const notificationIds = achievementIds.map(achievementNotificationId);
+
+    expect(new Set(notificationIds).size).toBe(achievementIds.length);
+    expect(achievementIds.length).toBeLessThanOrEqual(MAX_ACHIEVEMENT_NOTIF_IDS);
   });
 
   it('fires near-miss summary before lower-priority post-trip alerts', async () => {
@@ -120,6 +153,39 @@ describe('advanced notifications', () => {
     expect(fuel.id).toBe(NOTIFICATION_IDS.TRIP_FUEL_SAVING);
     expect(condition.id).toBe(NOTIFICATION_IDS.TRIP_CONDITION_ADJUSTED);
     expect(decline.id).toBe(NOTIFICATION_IDS.TRIP_SCORE_DECLINE);
+  });
+
+  it('does not format fuel-savings notifications with a raw hardcoded fallback price', () => {
+    const source = readFileSync(new URL('../notificationService.js', import.meta.url), 'utf8');
+    const titleIndex = source.indexOf("title: 'Eco Drive'");
+    const branchStart = source.lastIndexOf('notif_post_trip_fuel_saving', titleIndex);
+    const branchEnd = source.indexOf("title: 'Adjusted for Conditions'", titleIndex);
+    const fuelSavingsBranch = source.slice(branchStart, branchEnd);
+
+    expect(titleIndex).toBeGreaterThan(-1);
+    expect(fuelSavingsBranch).not.toContain('1.65');
+  });
+
+  it('formats fuel-savings notifications from the user settings fuel price', async () => {
+    const baseTrip = trip({
+      id: 'fuel-settings-trip',
+      score_overall: 80,
+      score_eco: 90,
+      fuel_saved_liters: 1,
+    });
+    const recentTrips = [{ score_overall: 80 }, { score_overall: 82 }];
+
+    const lowPrice = await dispatchPostTripNotification(baseTrip, recentTrips, {
+      ...settings,
+      fuel_price_per_liter: 1,
+    });
+    const highPrice = await dispatchPostTripNotification(baseTrip, recentTrips, {
+      ...settings,
+      fuel_price_per_liter: 3.25,
+    });
+
+    expect(lowPrice.body).toContain('~$1.00');
+    expect(highPrice.body).toContain('~$3.25');
   });
 
   it('summarizes following gap, merge, and rapid acceleration risks after higher-priority alerts', async () => {

@@ -17,14 +17,34 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 
-const SIDEBAR_COOKIE_NAME = "sidebar_state"
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
+const SIDEBAR_PREF_KEY = "sidebar_state"
 const SIDEBAR_WIDTH = "16rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
 const SidebarContext = React.createContext(null)
+
+function readSidebarPreference(defaultOpen) {
+  if (typeof window === "undefined") return defaultOpen
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_PREF_KEY)
+    if (stored === "true") return true
+    if (stored === "false") return false
+  } catch {
+    // localStorage can be unavailable in restricted browser contexts.
+  }
+  return defaultOpen
+}
+
+function writeSidebarPreference(openState) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(SIDEBAR_PREF_KEY, String(openState))
+  } catch {
+    // The sidebar can still work as controlled React state without persistence.
+  }
+}
 
 function useSidebar() {
   const context = React.useContext(SidebarContext)
@@ -52,7 +72,7 @@ const SidebarProvider = React.forwardRef((
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen)
+  const [_open, _setOpen] = React.useState(() => readSidebarPreference(defaultOpen))
   const open = openProp ?? _open
   const setOpen = React.useCallback((value) => {
     const openState = typeof value === "function" ? value(open) : value
@@ -62,8 +82,8 @@ const SidebarProvider = React.forwardRef((
       _setOpen(openState)
     }
 
-    // This sets the cookie to keep the sidebar state.
-    document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+    // Keep the preference local to this browser instead of sending it with HTTP requests.
+    writeSidebarPreference(openState)
   }, [setOpenProp, open])
 
   // Helper to toggle the sidebar.

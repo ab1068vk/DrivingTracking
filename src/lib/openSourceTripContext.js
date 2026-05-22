@@ -121,13 +121,12 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   routePoints = speedLimitContext.routePoints || routePoints;
   stage(onProgress, 'Recalculating trip scores');
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-  const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
-  const detectedEvents = detection.events;
+  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const phoneUse = buildPhoneUseFromTripEvidence(
     trip,
     routePoints,
     stats.duration_seconds,
-    detection.phoneUse ?? {}
+    detectedPhoneUse
   );
   const weatherContext = await weatherPromise;
   let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });

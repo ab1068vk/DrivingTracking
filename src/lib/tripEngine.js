@@ -2,6 +2,12 @@ import { saveExportToDownloads } from './nativeDownloads';
 import { detectTripStops, estimateTripEconomics } from './tripInsights';
 import { maskTripForPrivacy } from './privacyZones';
 
+const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
+const SPEED_VARIABILITY_INDEX_MULTIPLIER = 1.5;
+const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.4;
+const REACTION_SCORE_FLOOR = 20;
+const FOLLOWING_DISTANCE_MAX_DEDUCTION = 80;
+
 /**
  * Road Sage Trip Engine
  * Core logic for trip tracking, event detection, and scoring.
@@ -21,6 +27,8 @@ export const DEFAULT_THRESHOLDS = {
   // Speeding fallback: above 100 km/h when no open-source speed limit data is available.
   SPEEDING_FALLBACK_KMH: 100,
   SPEED_OVER_KMH: 5,
+  ECO_CRUISE_MIN_KMH: 55,
+  ECO_CRUISE_MAX_KMH: 110,
   REACTION_SPEED_TRIGGER_KMH: 5,
   // Idle threshold: speed < 5 km/h
   IDLE_SPEED_KMH: 5,
@@ -115,6 +123,8 @@ export function buildDrivingThresholds(settings = {}) {
     SHARP_TURN_G_HIGH: settingNumber(settings.threshold_sharp_turn_g_high, DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH),
     SPEEDING_FALLBACK_KMH: settingNumber(settings.threshold_speeding_kmh, DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH),
     SPEED_OVER_KMH: settingNumber(settings.threshold_speed_over_kmh, DEFAULT_THRESHOLDS.SPEED_OVER_KMH),
+    ECO_CRUISE_MIN_KMH: settingNumber(settings.threshold_eco_cruise_min_kmh, DEFAULT_THRESHOLDS.ECO_CRUISE_MIN_KMH),
+    ECO_CRUISE_MAX_KMH: settingNumber(settings.threshold_eco_cruise_max_kmh, DEFAULT_THRESHOLDS.ECO_CRUISE_MAX_KMH),
     REACTION_SPEED_TRIGGER_KMH: settingNumber(settings.reaction_speed_trigger_kmh, DEFAULT_THRESHOLDS.REACTION_SPEED_TRIGGER_KMH),
     IDLE_EVENT_SECONDS: settingNumber(settings.threshold_idle_seconds, DEFAULT_THRESHOLDS.IDLE_EVENT_SECONDS),
     LONG_DRIVE_MINUTES: settingNumber(settings.threshold_long_drive_minutes, DEFAULT_THRESHOLDS.LONG_DRIVE_MINUTES),
@@ -757,9 +767,8 @@ export function simplifyRoute(points = [], toleranceMeters = 10, events = []) {
 export function calculateRouteSummary(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
   const cleaned = cleanRoutePoints(points, thresholds);
   const stats = calculateTripStats(points, startTime, endTime, thresholds);
-  const detection = detectDrivingEvents(cleaned, thresholds, endTime);
-  const events = detection.events;
-  const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, detection.phoneUse ?? {}, { endTime });
+  const { events, phoneUse } = detectDrivingEvents(cleaned, thresholds, endTime);
+  const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, phoneUse, { endTime });
   return { points: cleaned, stats, events, scores };
 }
 
@@ -811,9 +820,8 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
     const startTime = segmentPoints[0].timestamp;
     const endTime = segmentPoints[segmentPoints.length - 1].timestamp;
     const stats = calculateTripStats(segmentPoints, startTime, endTime, thresholds);
-    const detection = detectDrivingEvents(segmentPoints, thresholds, endTime);
-    const events = detection.events;
-    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds, detection.phoneUse ?? {}, { endTime });
+    const { events, phoneUse } = detectDrivingEvents(segmentPoints, thresholds, endTime);
+    const scores = calculateTripScores(events, stats, segmentPoints, thresholds, stats.duration_seconds, phoneUse, { endTime });
     const drivingEvents = scores.driving_events || events;
     const economics = estimateTripEconomics({ ...stats, ...scores });
 
@@ -1232,7 +1240,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
   };
 }
 
-export function calculateEcoDrivingScore(cleanPoints = [], stats = {}) {
+export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, thresholds = DEFAULT_THRESHOLDS) {
   const movingSpeeds = cleanPoints
     .map((_, index) => reliablePointSpeed(cleanPoints, index))
     .filter((speed) => Number.isFinite(speed) && speed >= 15);
@@ -1244,8 +1252,13 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}) {
   const mean = average(movingSpeeds);
   const variance = average(movingSpeeds.map((speed) => (speed - mean) ** 2));
   const cv = Math.sqrt(variance) / Math.max(1, mean);
-  const speedStability = Math.max(0, 100 - cv * 150);
-  const cruiseRatio = movingSpeeds.filter((speed) => speed >= 55 && speed <= 90).length / movingSpeeds.length;
+  // CV is scale-normalized variability; 0.5 is already highly uneven, so this scores it near 25.
+  const speedStability = Math.max(0, 100 - cv * ECO_SPEED_STABILITY_CV_MULTIPLIER);
+  const configuredCruiseMin = settingNumber(thresholds.ECO_CRUISE_MIN_KMH, DEFAULT_THRESHOLDS.ECO_CRUISE_MIN_KMH);
+  const configuredCruiseMax = settingNumber(thresholds.ECO_CRUISE_MAX_KMH, DEFAULT_THRESHOLDS.ECO_CRUISE_MAX_KMH);
+  const cruiseMin = Math.min(configuredCruiseMin, configuredCruiseMax);
+  const cruiseMax = Math.max(configuredCruiseMin, configuredCruiseMax);
+  const cruiseRatio = movingSpeeds.filter((speed) => speed >= cruiseMin && speed <= cruiseMax).length / movingSpeeds.length;
   const cruiseScore = Math.min(100, cruiseRatio * 130);
   const avoidableIdleSeconds = stats.sustained_idle_seconds ?? stats.idle_time_seconds ?? 0;
   // FIX: Penalize sustained parked idle instead of unavoidable traffic-stop idle.
@@ -1277,7 +1290,8 @@ export function calculateSpeedVariabilityIndex(cleanPoints = []) {
   const mean = average(samples);
   const variance = average(samples.map((speed) => (speed - mean) ** 2));
   const svi = round1(Math.sqrt(variance));
-  const sviScore = Math.max(0, Math.round(100 - svi * 1.5));
+  // SVI uses raw km/h standard deviation; it complements CV stability by preserving absolute speed swings.
+  const sviScore = Math.max(0, Math.round(100 - svi * SPEED_VARIABILITY_INDEX_MULTIPLIER));
   const sviLabel = svi < 10
     ? 'very smooth'
     : svi < 20
@@ -1319,7 +1333,8 @@ export function calculateFuelBandScore(cleanPoints = [], thresholds = DEFAULT_TH
   }
 
   const optimalBandRatio = totalMovingSeconds > 0 ? Math.round((optimalBandSeconds / totalMovingSeconds) * 100) : 0;
-  const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * 1.4));
+  // Full credit starts around 72% optimal-band time to reward strong cruise habits without demanding perfection.
+  const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * FUEL_BAND_FULL_SCORE_MULTIPLIER));
   const bandLabel = fuelBandScore >= 80
     ? 'excellent cruise'
     : fuelBandScore >= 55
@@ -2442,7 +2457,8 @@ export function calculateReactionTimeProxy(routePoints, drivingEvents = [], thre
   }
 
   const distFactor = Math.max(1, calculateRouteDistanceKm(points, thresholds));
-  const reactionScore = Math.max(20, Math.round(100 - Math.min(totalPenalty * (5 / distFactor), 80)));
+  // Floor of 20: this is a GPS-derived reaction proxy, not a precise human reaction measurement.
+  const reactionScore = Math.max(REACTION_SCORE_FLOOR, Math.round(100 - Math.min(totalPenalty * (5 / distFactor), 80)));
   return {
     reaction_score: reactionScore,
     avg_reaction_seconds: round2(average(windows)),
@@ -2902,9 +2918,8 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
       intersection_score: 100,
       idle_time_seconds: 0,
     };
-    const segmentDetection = detectDrivingEvents(slice, thresholds);
-    const segmentEvents = segmentDetection.events;
-    const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, segmentDetection.phoneUse ?? {}, {
+    const { events: segmentEvents, phoneUse: segmentPhoneUse } = detectDrivingEvents(slice, thresholds);
+    const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, segmentPhoneUse, {
       includeRoadTypeSegments: false,
     });
     result[`${type}_score`] = {
@@ -2996,10 +3011,9 @@ function calculateSegmentStats(points = [], thresholds = DEFAULT_THRESHOLDS) {
 
 export function scoreSegmentPoints(points = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!points || points.length < 3) return 0;
-  const detection = detectDrivingEvents(points, thresholds);
-  const events = detection.events;
+  const { events, phoneUse } = detectDrivingEvents(points, thresholds);
   const stats = calculateSegmentStats(points, thresholds);
-  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, detection.phoneUse ?? {}).score_overall;
+  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, phoneUse).score_overall;
 }
 
 export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTimeMs, thresholds = DEFAULT_THRESHOLDS) {
@@ -3173,12 +3187,16 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
 }
 
 function attachEventResult(events = [], phoneUse = emptyPhoneUseResult()) {
-  return { events, phoneUse };
+  const safeEvents = Array.isArray(events) ? events : [];
+  const safePhoneUse = phoneUse && typeof phoneUse === 'object' && !Array.isArray(phoneUse)
+    ? phoneUse
+    : emptyPhoneUseResult();
+  return { events: safeEvents, phoneUse: safePhoneUse };
 }
 
 export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, endTime = null) {
   const events = [];
-  if (!points || points.length < 3) return attachEventResult(events);
+  if (!Array.isArray(points) || points.length < 3) return attachEventResult();
 
   const EVENT_COOLDOWN_SECONDS = {
     [EVENT_TYPES.HARSH_BRAKE]: 4,
@@ -3919,6 +3937,7 @@ export function calculateTripScores(
     [EVENT_TYPES.ERRATIC_SPEED]: { low: 2, medium: 5, high: 10 },
     [EVENT_TYPES.NEAR_MISS]: { low: 8, medium: 18, high: 35 },
     [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
+    [EVENT_TYPES.PHONE_USE]: { low: 5, medium: 12, high: 20 },
   };
 
   // Count events
@@ -3962,13 +3981,14 @@ export function calculateTripScores(
       EVENT_TYPES.ERRATIC_SPEED,
       EVENT_TYPES.NEAR_MISS,
       EVENT_TYPES.AGGRESSIVE_OVERTAKE,
+      EVENT_TYPES.PHONE_USE,
     ].includes(evt.type)) safetyPenalty += p;
     // Smoothness: deducts from harsh_brake, rapid_acceleration, sharp_turn
     if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN, EVENT_TYPES.NEAR_MISS].includes(evt.type)) smoothnessPenalty += p;
     // Eco: deducts from speeding, rapid_acceleration, idle
     if ([EVENT_TYPES.SPEEDING, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.IDLE].includes(evt.type)) ecoPenalty += p;
     if (evt.type === EVENT_TYPES.TAILGATE_CYCLE) tailgatePenalty += p;
-    if (evt.type === EVENT_TYPES.ERRATIC_SPEED) distractionPenalty += p;
+    if ([EVENT_TYPES.ERRATIC_SPEED, EVENT_TYPES.PHONE_USE].includes(evt.type)) distractionPenalty += p;
   }
 
   const speedCreep = advancedSafetyEnabled
@@ -3995,6 +4015,18 @@ export function calculateTripScores(
   safetyPenalty += (stats.fatigue_risk_score || 0) * 1.2;
 
   const distKm = Math.max(1, stats.distance_km || 1);
+  const phoneUseScoreDeduction = Math.max(0, Math.min(100, 100 - (phoneUseResult.phone_use_score ?? 100)));
+  const phoneUseRiskDeduction = {
+    none: 0,
+    low: 10,
+    medium: 35,
+    high: 55,
+  }[phoneUseResult.phone_use_risk] ?? 0;
+  const phoneUsePctDeduction = Math.max(0, Math.min(70, (phoneUseResult.phone_use_pct_of_trip || 0) * 0.5));
+  const phoneUseDeduction = Math.max(phoneUseScoreDeduction, phoneUseRiskDeduction, phoneUsePctDeduction);
+  if (phoneUseDeduction > 0) {
+    distractionPenalty = Math.max(distractionPenalty, phoneUseDeduction * (distKm / 3));
+  }
   const SCORE_FLOOR = 20;
   const MAX_DEDUCTION = 80;
   const SCALE_FACTOR = 40.0;
@@ -4008,7 +4040,7 @@ export function calculateTripScores(
   const baseSmoothness = Math.round(normalize(smoothnessPenalty));
   const baseEco = Math.round(normalize(ecoPenalty));
   const jerk = calculateJerkScore(routePoints, stats.distance_km || distKm);
-  const ecoDriving = calculateEcoDrivingScore(routePoints, stats);
+  const ecoDriving = calculateEcoDrivingScore(routePoints, stats, thresholds);
   const svi = calculateSpeedVariabilityIndex(routePoints);
   const fuelBand = calculateFuelBandScore(routePoints, thresholds);
   const merge = detectHighwayMergeBehavior(routePoints, thresholds);
@@ -4025,8 +4057,10 @@ export function calculateTripScores(
     : Math.max(0, Math.round(100 * Math.pow(0.60, counts[EVENT_TYPES.NEAR_MISS])));
   const aggressive = calculateAggressiveDrivingScore(eventsList, { ...stats, ...jerk });
   const highwayKm = Math.max(1, calculateHighwayDistanceKm(routePoints));
-  const followingDistanceScore = Math.max(0, 100 - Math.min(tailgatePenalty * (4 / highwayKm), 80));
-  const distractionScore = Math.max(0, 100 - Math.min(distractionPenalty * (3 / distKm), 50));
+  // Cap the deduction at 80 so GPS-inferred following distance bottoms out at 20 instead of implying certainty.
+  const followingDistanceScore = Math.max(0, 100 - Math.min(tailgatePenalty * (4 / highwayKm), FOLLOWING_DISTANCE_MAX_DEDUCTION));
+  const distractionDeductionCap = thresholds.DISTRACTION_DEDUCTION_CAP ?? 70;
+  const distractionScore = Math.max(0, 100 - Math.min(distractionPenalty * (3 / distKm), distractionDeductionCap));
   const reaction = calculateReactionTimeProxy(routePoints, eventsList, thresholds);
   const cornering = calculateCorneringConsistency(routePoints, thresholds);
   const brakingEfficiency = calculateBrakingEfficiency(routePoints, eventsList, thresholds);

@@ -214,24 +214,20 @@ const rescoreTrip = (trip) => {
   const settings = localSettings.get();
   const thresholds = buildDrivingThresholds(settings);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-  const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
-  const events = detection.events;
+  const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
-  const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detection.phoneUse ?? {});
+  const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
   const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
-  const drivingEvents = applyEventFeedbackToEvents(
-    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse),
-    trip.event_feedback
-  );
+  const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse);
   return {
     ...trip,
     ...stats,
     ...scores,
     co2_saved_kg: economics.co2_saved_kg,
     route_points: routePoints,
-    driving_events: drivingEvents.events,
-    feedback_adjusted_events_count: feedbackAdjusted.removed + drivingEvents.removed,
+    driving_events: drivingEvents,
+    feedback_adjusted_events_count: feedbackAdjusted.removed,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),
@@ -292,9 +288,8 @@ const importNativeCompletedTrips = async () => {
       const settings = localSettings.get();
       const thresholds = buildDrivingThresholds(settings);
       const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-      const detection = detectDrivingEvents(routePoints, thresholds, trip.end_time);
-      const events = detection.events;
-      const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detection.phoneUse ?? {});
+      const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
+      const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
       const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
       const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);

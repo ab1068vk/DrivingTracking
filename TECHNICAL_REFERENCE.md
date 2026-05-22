@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-22T00:00:00.0000000-04:00
+Updated: 2026-05-22T16:00:00.0000000-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -8,6 +8,7 @@ This is the readable app reference. It is not a full code dump. It documents the
 
 - [Coverage Guarantee](#coverage-guarantee)
 - [Release Blocker Remediation Update](#release-blocker-remediation-update)
+- [2026-05-22 Follow-Up Update](#2026-05-22-follow-up-update)
 - [1. System Overview](#1-system-overview)
 - [2. App Details](#2-app-details)
 - [3. Data Flow And Storage](#3-data-flow-and-storage)
@@ -76,6 +77,51 @@ Second-pass status as of 2026-05-21T14:11:25.8865580-04:00: the remaining low-pr
 - `npm.cmd test` passed: 31 test files, 242 tests.
 - `npm.cmd run build` passed.
 - `android\gradlew.bat assembleDebug` passed.
+
+---
+
+## 2026-05-22 Follow-Up Update
+
+Status as of 2026-05-22: the accumulated follow-up work from today's review pass is now reflected in code, tests, and documentation. The theme of this pass is transparency: scoring constants now explain their intent, phone-use evidence flows through the scoring engine consistently, notification IDs no longer collide, and UI-only preferences stay local to the browser.
+
+### Scoring And Calculation Transparency
+
+- `DEFAULT_TREE_CO2_KG_PER_YEAR` is now the named planning constant for tree-equivalent carbon impact. The code comment documents the USDA/Arbor Day "more than 48 lb CO2/year for a mature tree" reference and explains why the app uses a conservative 21 kg/year value. Source context: https://www.usda.gov/about-usda/news/blog/power-one-tree-very-air-we-breathe
+- Eco cruise scoring now accepts configurable `ECO_CRUISE_MIN_KMH` and `ECO_CRUISE_MAX_KMH` thresholds instead of hardcoding one narrow band. The default band covers practical steady cruising up to highway speed.
+- `calculateEcoDrivingScore()` now receives thresholds from `calculateTripScores()`, route summaries, stop-split segments, and segment scoring so user threshold settings apply consistently.
+- CV-based `speed_stability` keeps the multiplier at 150, but the code now explains the policy: CV around 0.5 is already highly uneven and should score near 25.
+- Raw-standard-deviation `svi_score` keeps the multiplier at 1.5, with a comment clarifying that SVI measures absolute km/h speed swings while CV stability is scale-normalized.
+- `fuel_band_score` keeps the 1.4 multiplier, with an explicit comment that full credit begins around 72% optimal-band time to reward strong cruise habits without requiring perfect compliance.
+- `reaction_score` now uses a named `REACTION_SCORE_FLOOR` and documents the floor as a GPS-derived proxy limit, not a claim that a driver cannot score lower physiologically.
+- `following_distance_score` now uses a named `FOLLOWING_DISTANCE_MAX_DEDUCTION` and documents the effective 20-point floor as a limit on GPS-inferred certainty.
+
+### Phone-Use And Event Rescore Flow
+
+- `detectDrivingEvents()` now always returns a safe `{ events, phoneUse }` object. Short, invalid, or non-array routes return an empty event list and an empty phone-use result instead of forcing callers into fallback probes.
+- Callers in the dashboard, live coach overlay, route summary, stop splitting, road-type segmentation, open-source context refresh, and local repository rescore now destructure the stable event-detection result directly.
+- Phone-use events now participate in safety and distraction penalty weighting. High-risk phone use can reduce the distraction score even when it arrives through merged phone-use evidence rather than a standalone GPS event.
+- Distraction scoring now has a configurable cap defaulting to 70 points of deduction, giving persistent phone-use risk a visible score impact while preserving a documented 30-point floor.
+- Feedback-driven rescoring now removes reviewed-wrong detected driving events before scoring, then merges phone-use events afterward. This prevents a user verdict on a displayed phone-use item from accidentally erasing phone-use evidence that was merged from native usage access.
+- Focused regression tests cover wrong-event removal, post-score phone-use event retention, high-risk phone-use distraction penalties, no-phone-use perfect distraction score, and the persistent phone-use cap.
+
+### Notifications And User Preferences
+
+- Fuel-savings notifications now use the trip or user settings fuel price before falling back to `DEFAULT_FUEL_PRICE_PER_LITER`; the previous raw `1.65` formatting fallback is covered by a source-inspection regression test.
+- Achievement notification IDs now allocate from a persisted ID map instead of summing character codes. This prevents collisions such as `12`, `21`, and `30` producing the same notification ID.
+- Notification tests now cover achievement ID uniqueness for colliding digit patterns and for the full generated badge list.
+- Sidebar expanded/collapsed state now persists in `localStorage` under `sidebar_state` instead of a cookie. This avoids sending a cosmetic UI preference with HTTP requests to the optional backend.
+
+### Consistency And Local-First Reporting
+
+- Driving consistency tests now cover road-type-aware score spread expectations for urban stop-and-go trips and highway trips. Urban spread is intentionally less punitive than highway spread.
+- Local trip rescoring continues to use local settings and local repositories, preserving the app's local-first behavior.
+- Dashboard and context refresh code now pass phone-use evidence through the same stable scoring path used by completed trip rescoring.
+
+### Verification Completed For This Pass
+
+- `npm.cmd test` passed on 2026-05-22: 37 test files, 284 tests.
+- `npm.cmd run build` passed on 2026-05-22 with Vite production output.
+- Android debug build remains the native verification target when native files or Capacitor synchronization change; this pass is web/JS-focused.
 
 ---
 

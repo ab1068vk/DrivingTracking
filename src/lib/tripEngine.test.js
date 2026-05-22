@@ -11,6 +11,7 @@ import {
   calculateTripScores,
   calculateTripStats,
   calculateHillDrivingScore,
+  calculateEcoDrivingScore,
   calculateReactionTimeProxy,
   calculateSpeedLimitCompliance,
   cleanRoutePoints,
@@ -170,6 +171,16 @@ describe('tripEngine', () => {
     expect(events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
+  it('scores steady 105 km/h cruising inside the default eco cruise band', () => {
+    const points = Array.from({ length: 6 }, (_, index) => (
+      point(43.6532 + index * 0.0025, -79.3832, index * 10, 105, 6)
+    ));
+
+    const result = calculateEcoDrivingScore(points);
+
+    expect(result.cruise_score).toBeGreaterThan(0);
+  });
+
   it('ignores low-quality altitude samples for hill control', () => {
     const points = [40, 45, 50, 45, 40].map((speed, index) => ({
       ...point(43.6532 + index * 0.001, -79.3832, index * 10, speed, 6),
@@ -268,6 +279,59 @@ describe('tripEngine', () => {
     const longScore = calculateTripScores(longEvents, { distance_km: 50, fatigue_risk_score: 0 }, []);
 
     expect(longScore.score_overall).toBe(shortScore.score_overall);
+  });
+
+  it('penalizes high-risk phone use in the distraction score', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },
+      [],
+      DEFAULT_THRESHOLDS,
+      600,
+      {
+        phone_use_risk: 'high',
+        phone_use_score: 45,
+        phone_use_total_seconds: 300,
+        phone_use_pct_of_trip: 50,
+      },
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.phone_use_risk).toBe('high');
+    expect(scores.distraction_score).toBeLessThan(60);
+  });
+
+  it('keeps distraction score perfect when there are no phone or erratic-speed events', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },
+      [],
+      DEFAULT_THRESHOLDS,
+      600,
+      {},
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.distraction_score).toBe(100);
+  });
+
+  it('caps persistent phone-use distraction at a 30 point floor', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },
+      [],
+      DEFAULT_THRESHOLDS,
+      600,
+      {
+        phone_use_risk: 'high',
+        phone_use_score: 0,
+        phone_use_total_seconds: 600,
+        phone_use_pct_of_trip: 100,
+      },
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.distraction_score).toBe(30);
   });
 
   it('caps safety and overall scores after road-condition bonuses', () => {

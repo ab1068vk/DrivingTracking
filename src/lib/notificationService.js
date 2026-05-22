@@ -2,6 +2,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
+import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
 
 export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
 export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
@@ -56,8 +57,10 @@ const WEEKLY_REPORT_ID = 2101;
 const SAFE_DRIVING_ID = 2102;
 const STAY_ALERT_ID = NOTIFICATION_IDS.STAY_ALERT;
 const ACHIEVEMENT_BASE_ID = 3000;
-const ACHIEVEMENT_GROUP_ID = 3099;
+export const MAX_ACHIEVEMENT_NOTIF_IDS = 999;
+const ACHIEVEMENT_GROUP_ID = ACHIEVEMENT_BASE_ID + MAX_ACHIEVEMENT_NOTIF_IDS;
 const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
+const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'drivesense_achievement_notification_ids_v1';
 const NOTIFICATION_DEDUPE_KEY = 'drivesense_notification_dedupe_v1';
 const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
 const DROWSY_NOTIF_LAST_KEY = 'drivesense_drowsy_notif_last_ms';
@@ -179,6 +182,58 @@ function scoreOf(trip = {}) {
   return Number(trip.score_overall ?? trip.overall_score ?? 0);
 }
 
+let fallbackAchievementNotificationIds = {};
+
+const isAchievementNotificationId = (id) => (
+  Number.isInteger(id) &&
+  id >= ACHIEVEMENT_BASE_ID &&
+  id < ACHIEVEMENT_BASE_ID + MAX_ACHIEVEMENT_NOTIF_IDS
+);
+
+const readAchievementNotificationIds = () => {
+  try {
+    const raw = localStorage.getItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return { ...fallbackAchievementNotificationIds };
+  }
+};
+
+const writeAchievementNotificationIds = (ids) => {
+  fallbackAchievementNotificationIds = { ...ids };
+  try {
+    localStorage.setItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY, JSON.stringify(ids));
+  } catch {}
+};
+
+const nextAchievementNotificationId = (assignedIds) => {
+  const used = new Set(
+    Object.values(assignedIds)
+      .map((id) => Number(id))
+      .filter(isAchievementNotificationId)
+  );
+
+  for (let offset = 0; offset < MAX_ACHIEVEMENT_NOTIF_IDS; offset += 1) {
+    const id = ACHIEVEMENT_BASE_ID + offset;
+    if (!used.has(id)) return id;
+  }
+
+  throw new Error('Achievement notification ID range exhausted');
+};
+
+function resolveFuelPricePerLiter(trip = {}, settings = {}) {
+  const candidates = [
+    trip.fuel_price,
+    trip.fuel_price_per_liter,
+    settings.fuel_price_per_liter,
+    settings.default_fuel_price_per_liter,
+    DEFAULT_FUEL_PRICE_PER_LITER,
+  ];
+  const price = candidates.map(Number).find((value) => Number.isFinite(value) && value > 0);
+  return price ?? DEFAULT_FUEL_PRICE_PER_LITER;
+}
+
 /**
  * Returns true if local time is inside quiet hours. Safety alerts bypass quiet hours.
  * @param {Object} settings - User settings.
@@ -204,9 +259,17 @@ export function isQuietHours(settings = localSettings.get(), isSafetyAlert = fal
     : nowMins >= startMins || nowMins < endMins;
 }
 
-const achievementNotificationId = (achievementId) => (
-  ACHIEVEMENT_BASE_ID + [...String(achievementId)].reduce((sum, char) => sum + char.charCodeAt(0), 0)
-);
+export const achievementNotificationId = (achievementId) => {
+  const key = String(achievementId);
+  const assignedIds = readAchievementNotificationIds();
+  const existingId = Number(assignedIds[key]);
+  if (isAchievementNotificationId(existingId)) return existingId;
+
+  const id = nextAchievementNotificationId(assignedIds);
+  assignedIds[key] = id;
+  writeAchievementNotificationIds(assignedIds);
+  return id;
+};
 
 export async function configureNotificationChannels() {
   if (!isNativePlatform()) return;
@@ -572,7 +635,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
         extra: { tripId: trip.id },
       };
     } else if (settings.notif_post_trip_fuel_saving !== false && (trip.score_eco ?? trip.eco_score ?? 0) >= 85 && (trip.fuel_saved_liters ?? 0) >= 0.3) {
-      const saved = ((trip.fuel_saved_liters ?? 0) * (trip.fuel_price ?? 1.65)).toFixed(2);
+      const saved = ((trip.fuel_saved_liters ?? 0) * resolveFuelPricePerLiter(trip, settings)).toFixed(2);
       notification = {
         id: NOTIFICATION_IDS.TRIP_FUEL_SAVING,
         title: 'Eco Drive',
