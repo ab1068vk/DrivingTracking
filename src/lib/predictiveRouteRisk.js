@@ -96,7 +96,10 @@ export function estimatePredictiveRouteRisk({
   now: nowInput = null,
 } = {}) {
   const completed = (trips || []).filter((trip) => trip.status === 'completed');
-  const recent = completed.slice(0, ROUTE_RISK_CONSTANTS.RECENT_TRIP_WINDOW);
+  const sorted = [...completed].sort((a, b) => (
+    new Date(b.startTime || b.start_time || 0).getTime() - new Date(a.startTime || a.start_time || 0).getTime()
+  ));
+  const recent = sorted.slice(0, ROUTE_RISK_CONSTANTS.RECENT_TRIP_WINDOW);
   const avgScore = recent.length
     ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0), 0) / recent.length
     : ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE;

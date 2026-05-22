@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-22T23:34:28.639Z
+Updated: 2026-05-22T23:40:08.707Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -31,7 +31,7 @@ This document is generated from the current repository. It keeps the reference r
 - App/source files scanned: 178
 - Production calculation lines indexed: 1510
 - Test calculation/assertion lines indexed separately: 138
-- Hard-coded production literals indexed: 13889
+- Hard-coded production literals indexed: 13891
 - Functions/methods catalogued: 1148
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
@@ -49,6 +49,7 @@ This document is generated from the current repository. It keeps the reference r
 | Architecture | React/Vite single-page app plus Capacitor Android shell and native background services. Domain logic is concentrated in `src/lib/*`, API adapters in `src/api/*`, UI in `src/pages/*` and `src/components/*`. |
 | Primary storage | IndexedDB/localStorage/sessionStorage/Capacitor Preferences/Android SharedPreferences. |
 | Optional backend | `VITE_API_URL`; absent by default. |
+| Predictive route risk window | `estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history. |
 
 ```mermaid
 flowchart TD
@@ -259,7 +260,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/pdfExport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | jspdf, @/lib/nativeDownloads, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripEngine | exportMonthlyReportPDF, exportUBIReportPDF | 8 | 16 | 328 |
 | src/lib/permissions.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @capacitor/geolocation, @capacitor/local-notifications, @/lib/nativePlatform, @/lib/trackingStore, @/lib/obdBluetooth, @/lib/sensorFusionModel | getPermissionStatus, requestForegroundLocationPermission, requestNotificationPermission, requestActivityRecognitionPermission, requestBackgroundLocationPermission, getPermissionExplanation, openNativeSettings | 7 | 0 | 55 |
 | src/lib/phoneUsageAccess.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | buildPhoneUseFromAndroidUsage, buildPhoneUseFromEvents, mergePhoneUseSignals, mergeManyPhoneUseSignals, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents | 13 | 15 | 160 |
-| src/lib/predictiveRouteRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/habitProfile | estimatePredictiveRouteRisk | 4 | 12 | 75 |
+| src/lib/predictiveRouteRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/habitProfile | estimatePredictiveRouteRisk | 4 | 12 | 77 |
 | src/lib/preTripRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripInsights, @/lib/habitProfile | PRE_TRIP_RISK_WEIGHTS, PRE_TRIP_RISK_SIGNAL_GATES, deriveWeights, deriveSignalGates, computePreTripRisk | 11 | 13 | 150 |
 | src/lib/privacyZones.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/trackingStore | getPrivacyZones, isPointInPrivacyZone, privacyZonesForRoute, privacyBoundaryPoint, maskRoutePointsForPrivacy, maskEventsForPrivacy, maskTripForPrivacy, upsertPrivacyZone, removePrivacyZone | 17 | 8 | 35 |
 | src/lib/query-client.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @tanstack/react-query | queryClientInstance | 0 | 0 | 2 |
@@ -2752,7 +2753,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 627 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
 | 639 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
 | 651 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 859 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
+| 860 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
 
 ### src/api/auth.js
 
@@ -3670,7 +3671,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 23 | function | `personalTimeRisk(hour, profile)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 38 | function | `formatHour(hour)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 45 | function | `saferWindowText(currentHour, profile)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 90 | function | `estimatePredictiveRouteRisk(ObjectPattern = )` | none detected | Time: O(n) candidate; Space: context dependent |
+| 90 | function | `estimatePredictiveRouteRisk(ObjectPattern = )` | mutation | Time: O(n) candidate; Space: context dependent |
 
 ### src/lib/preTripRisk.js
 
@@ -4564,7 +4565,10 @@ export function estimatePredictiveRouteRisk({
   now: nowInput = null,
 } = {}) {
   const completed = (trips || []).filter((trip) => trip.status === 'completed');
-  const recent = completed.slice(0, ROUTE_RISK_CONSTANTS.RECENT_TRIP_WINDOW);
+  const sorted = [...completed].sort((a, b) => (
+    new Date(b.startTime || b.start_time || 0).getTime() - new Date(a.startTime || a.start_time || 0).getTime()
+  ));
+  const recent = sorted.slice(0, ROUTE_RISK_CONSTANTS.RECENT_TRIP_WINDOW);
   const avgScore = recent.length
     ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0), 0) / recent.length
     : ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE;
@@ -5495,7 +5499,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
 | 35 | personalTimeRisk | return clamp(Math.round(hourData.riskScore x ROUTE_RISK_CONSTANTS.PERSONAL_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK) | `return clamp(Math.round(hourData.riskScore * ROUTE_RISK_CONSTANTS.PERSONAL_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK);` |
-| 101 | estimatePredictiveRouteRisk | ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall default trip.score) OR 0), 0) / recent.length | `? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) \|\| 0), 0) / recent.length` |
+| 104 | estimatePredictiveRouteRisk | ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall default trip.score) OR 0), 0) / recent.length | `? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) \|\| 0), 0) / recent.length` |
 
 #### src/lib/preTripRisk.js
 
@@ -6298,7 +6302,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 108 | estimatePredictiveRouteRisk | return sum + events / Math.max(1, Number(trip.distance_km) OR 1) | `return sum + events / Math.max(1, Number(trip.distance_km) \|\| 1);` |
+| 111 | estimatePredictiveRouteRisk | return sum + events / Math.max(1, Number(trip.distance_km) OR 1) | `return sum + events / Math.max(1, Number(trip.distance_km) \|\| 1);` |
 
 #### src/lib/preTripRisk.js
 
@@ -7612,7 +7616,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 109 | estimatePredictiveRouteRisk | }, 0) / Math.max(1, recent.length) | `}, 0) / Math.max(1, recent.length);` |
+| 112 | estimatePredictiveRouteRisk | }, 0) / Math.max(1, recent.length) | `}, 0) / Math.max(1, recent.length);` |
 
 #### src/lib/preTripRisk.js
 
@@ -7893,8 +7897,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 33 | (module scope) | { lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now).toISOString() }, | `{ lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now).toISOString() },` |
 | 66 | (module scope) | currentLocation: { lat: 43.65, lng: -79.38 }, | `currentLocation: { lat: 43.65, lng: -79.38 },` |
 | 67 | (module scope) | dangerZones: [{ id: 'dz1', lat: 43.6501, lng: -79.3801, riskLevel: 'high' }], | `dangerZones: [{ id: 'dz1', lat: 43.6501, lng: -79.3801, riskLevel: 'high' }],` |
-| 138 | (module scope) | trips = scores.map((score, index) => trip(score, index, { | `const trips = scores.map((score, index) => trip(score, index, {` |
-| 142 | (module scope) | mean = scores.reduce((sum, score) => sum + score, 0) / scores.length | `const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;` |
+| 155 | (module scope) | trips = scores.map((score, index) => trip(score, index, { | `const trips = scores.map((score, index) => trip(score, index, {` |
+| 159 | (module scope) | mean = scores.reduce((sum, score) => sum + score, 0) / scores.length | `const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;` |
 
 #### src/lib/__tests__/brakingEfficiency.test.js
 
@@ -13836,7 +13840,7 @@ The app contains many intentional literals: route labels, storage keys, feature 
 </details>
 
 <details>
-<summary>src/lib/predictiveRouteRisk.js (75)</summary>
+<summary>src/lib/predictiveRouteRisk.js (77)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -13888,33 +13892,35 @@ The app contains many intentional literals: route labels, storage keys, feature 
 | 75 | ``Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`` | string literal | lower | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 93 | `0` | numeric literal | weatherRiskScore | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
 | 98 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 99 | `0` | numeric literal | recent | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 101 | `0` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 101 | `0` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 104 | `0` | numeric literal | events | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 105 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 106 | `0` | numeric literal | 2 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 106 | `2` | numeric literal | 2 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 107 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 108 | `1` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 108 | `1` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 109 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 109 | `1` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 121 | `100` | numeric literal | 100 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 124 | `0` | numeric literal | WEATHER_WEIGHT | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 126 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 126 | `100` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 130 | `65` | numeric literal | riskLevel | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 130 | `'high'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 130 | `40` | numeric literal | riskLevel | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 130 | `'moderate'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 130 | `'low'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 134 | `'Known danger zones nearby'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 135 | `40` | numeric literal | weatherRiskScore | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 136 | `'Weather risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 137 | `0.6` | numeric literal | eventDensity | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 138 | `'Recent route event density'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 139 | `'Personal baseline'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 100 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 100 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 102 | `0` | numeric literal | recent | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 104 | `0` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 104 | `0` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 107 | `0` | numeric literal | events | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 108 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 109 | `0` | numeric literal | 2 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 109 | `2` | numeric literal | 2 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 110 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 111 | `1` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 111 | `1` | numeric literal | sum | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 112 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 112 | `1` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 124 | `100` | numeric literal | 100 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 127 | `0` | numeric literal | WEATHER_WEIGHT | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 129 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 129 | `100` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 133 | `65` | numeric literal | riskLevel | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 133 | `'high'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 133 | `40` | numeric literal | riskLevel | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 133 | `'moderate'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 133 | `'low'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 137 | `'Known danger zones nearby'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 138 | `40` | numeric literal | weatherRiskScore | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 139 | `'Weather risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 140 | `0.6` | numeric literal | eventDensity | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 141 | `'Recent route event density'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 142 | `'Personal baseline'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -24557,15 +24563,16 @@ App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `n
 | src/lib/__tests__/advancedOpenSourceFeatures.test.js | 50 | it | parses common OBD-II PID responses |
 | src/lib/__tests__/advancedOpenSourceFeatures.test.js | 55 | it | scores unusual trips against a local driver model |
 | src/lib/__tests__/advancedOpenSourceFeatures.test.js | 63 | it | includes known danger zones in predictive route risk |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 73 | it | does not describe late-night route timing as acceptable |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 83 | it | recommends a personal safer window when hourly risk is calibrated |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 104 | it | builds a local weekly coaching sentence without AI services |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 115 | describe | buildHabitProfile |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 116 | it | returns safe defaults for an empty trips array |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 123 | it | marks all time buckets insufficient with four spread-out trips |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 136 | it | calibrates night risk from thirty night trips |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 149 | it | calculates trendRisk from the most recent twenty trips |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 160 | it | detects fatigue onset when scores drop after cumulative daily driving |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 73 | it | uses the newest completed trips for predictive route risk even when input is unsorted |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 90 | it | does not describe late-night route timing as acceptable |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 100 | it | recommends a personal safer window when hourly risk is calibrated |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 121 | it | builds a local weekly coaching sentence without AI services |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 132 | describe | buildHabitProfile |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 133 | it | returns safe defaults for an empty trips array |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 140 | it | marks all time buckets insufficient with four spread-out trips |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 153 | it | calibrates night risk from thirty night trips |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 166 | it | calculates trendRisk from the most recent twenty trips |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 177 | it | detects fatigue onset when scores drop after cumulative daily driving |
 | src/lib/__tests__/brakingEfficiency.test.js | 11 | describe | braking efficiency |
 | src/lib/__tests__/brakingEfficiency.test.js | 12 | it | handles empty route points |
 | src/lib/__tests__/brakingEfficiency.test.js | 16 | it | handles a single route point |

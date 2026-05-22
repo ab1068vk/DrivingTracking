@@ -708,6 +708,7 @@ function buildDoc() {
       ['Architecture', 'React/Vite single-page app plus Capacitor Android shell and native background services. Domain logic is concentrated in `src/lib/*`, API adapters in `src/api/*`, UI in `src/pages/*` and `src/components/*`.'],
       ['Primary storage', 'IndexedDB/localStorage/sessionStorage/Capacitor Preferences/Android SharedPreferences.'],
       ['Optional backend', '`VITE_API_URL`; absent by default.'],
+      ['Predictive route risk window', '`estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history.'],
     ],
   ));
   doc.push('');
@@ -880,6 +881,7 @@ function buildReadme() {
     '- Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.',
     '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.',
     '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
+    '- Predictive route risk now sorts completed trips newest-first inside the estimator before applying the recent-trip window, so dashboard and map pre-trip risk stay based on fresh history even when callers pass unsorted trip arrays.',
     '- Vehicle engine-health summaries now average only finite stored engine stress scores. Trips without a usable score are excluded, and vehicles with no scored samples show `N/A` instead of a misleading maximum-stress fallback.',
     '- CO2 and economics baselines are configurable in Settings, including average vehicle CO2 per 100 km, EV kWh per 100 km, grid CO2 intensity, and tree-year equivalents. Vehicle fuel type is used for trip CO2 and savings estimates.',
     '- Backup import is hardened: malformed or non-backup JSON gets clear errors, oversized files are rejected, trips/settings are sanitized, unknown fields are stripped, prototype-pollution keys are ignored, route/event arrays are capped, unsafe thresholds are clamped, imported OSRM endpoints are stripped, and imported background auto tracking requires in-app consent.',

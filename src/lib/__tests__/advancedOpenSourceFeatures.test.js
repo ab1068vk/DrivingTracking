@@ -70,6 +70,23 @@ describe('advanced open-source features', () => {
     expect(risk.primaryFactor).toBe('Known danger zones nearby');
   });
 
+  it('uses the newest completed trips for predictive route risk even when input is unsorted', () => {
+    const oldExcellentTrips = Array.from({ length: 20 }, (_, index) => trip(100, index, {
+      start_time: new Date(Date.UTC(2026, 0, index + 1, 12)).toISOString(),
+    }));
+    const newerPoorTrips = Array.from({ length: 20 }, (_, index) => trip(20, index, {
+      startTime: new Date(Date.UTC(2026, 1, index + 1, 12)).toISOString(),
+      start_time: undefined,
+    }));
+
+    const risk = estimatePredictiveRouteRisk({
+      trips: [...oldExcellentTrips, ...newerPoorTrips],
+      now: new Date(2026, 0, 10, 12),
+    });
+
+    expect(risk.riskScore).toBe(36);
+  });
+
   it('does not describe late-night route timing as acceptable', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 0, 45));
     const risk = estimatePredictiveRouteRisk({
