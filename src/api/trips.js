@@ -4,7 +4,7 @@ import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
 
-const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
+export const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
 
 const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 

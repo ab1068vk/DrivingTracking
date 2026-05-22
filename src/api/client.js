@@ -1,4 +1,4 @@
-export const API_BASE_URL = import.meta.env.VITE_API_URL || null;
+export const API_BASE_URL = (import.meta.env.VITE_API_URL || "").trim();
 
 export class ApiError extends Error {
   /**

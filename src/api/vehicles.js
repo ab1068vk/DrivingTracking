@@ -2,7 +2,7 @@ import { API_BASE_URL, apiClient } from "@/api/client";
 import { localVehicleRepository } from "@/lib/localVehicleRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
 
-const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
+export const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
 
 const repository = () => (shouldUseLocalStore() ? localVehicleRepository : null);
 
