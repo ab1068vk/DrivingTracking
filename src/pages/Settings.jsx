@@ -36,7 +36,12 @@ import {
   stopNativeAutoTracking,
 } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
-import { exportDriveSenseBackup, importDriveSenseBackup } from '@/lib/dataBackup';
+import {
+  BACKUP_TOO_LARGE_MESSAGE,
+  exportDriveSenseBackup,
+  importDriveSenseBackup,
+  MAX_BACKUP_BYTES,
+} from '@/lib/dataBackup';
 import {
   applyCalibrationProfile,
   clearCalibrationProfile,
@@ -732,6 +737,14 @@ export default function Settings() {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    if (Number(file.size) > MAX_BACKUP_BYTES) {
+      toast({
+        title: 'Could not import backup',
+        description: BACKUP_TOO_LARGE_MESSAGE,
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
 
     try {

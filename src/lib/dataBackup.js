@@ -6,7 +6,8 @@ import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 
 const BACKUP_VERSION = 5;
 const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
-const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
+export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
+export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 
@@ -380,7 +381,7 @@ export function parseDriveSenseBackup(text) {
 
 export async function importDriveSenseBackup(file, { includeSettings = true } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
-    throw new Error('Backup file is too large. Please choose a Road Sage JSON backup under 50 MB.');
+    throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
   const text = await file.text();
   const backup = parseDriveSenseBackup(text);

@@ -1,9 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  importDriveSenseBackup,
+  MAX_BACKUP_BYTES,
   MAX_IMPORTED_TRIP_DRIVING_EVENTS,
   MAX_IMPORTED_TRIP_ROUTE_POINTS,
   parseDriveSenseBackup,
 } from '@/lib/dataBackup';
+
+vi.mock('@/api/trips', () => ({
+  tripService: {
+    upsertMany: vi.fn(async (trips) => trips),
+  },
+}));
+
+vi.mock('@/api/vehicles', () => ({
+  vehicleService: {
+    upsertMany: vi.fn(async (vehicles) => vehicles),
+  },
+}));
 
 const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
   app: 'Road Sage',
@@ -12,6 +26,38 @@ const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
 })).trips;
 
 describe('backup trip import sanitization', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects oversized backup files before reading them', async () => {
+    const file = {
+      size: MAX_BACKUP_BYTES + 1,
+      text: vi.fn(),
+    };
+
+    await expect(importDriveSenseBackup(file)).rejects.toThrow('50 MB or smaller');
+    expect(file.text).not.toHaveBeenCalled();
+  });
+
+  it('accepts a backup file exactly at the size limit', async () => {
+    const file = {
+      size: MAX_BACKUP_BYTES,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: 5,
+        vehicles: [],
+        trips: [],
+      })),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      trips: 0,
+      vehicles: 0,
+    });
+    expect(file.text).toHaveBeenCalledTimes(1);
+  });
+
   it('sanitizes active trips from backup imports', () => {
     const [trip] = parseTrips([{ id: 'trip-active', status: 'active' }]);
 

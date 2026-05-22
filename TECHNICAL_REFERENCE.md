@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-22T23:40:08.707Z
+Updated: 2026-05-22T23:45:12.809Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -31,7 +31,7 @@ This document is generated from the current repository. It keeps the reference r
 - App/source files scanned: 178
 - Production calculation lines indexed: 1510
 - Test calculation/assertion lines indexed separately: 138
-- Hard-coded production literals indexed: 13891
+- Hard-coded production literals indexed: 13893
 - Functions/methods catalogued: 1148
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
@@ -241,7 +241,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/AuthContext.jsx | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | react, @/api/auth, @/api/client | AuthProvider, useAuth | 6 | 0 | 25 |
 | src/lib/dailyFatigueEngine.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | getTodayTrips, computeDailyFatigue | 4 | 10 | 53 |
 | src/lib/dangerZoneEngine.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/tripEngine | DANGER_ZONES_KEY, buildDangerZones, checkDangerZoneProximity, saveDangerZones, loadDangerZones, invalidateDangerZoneCache | 9 | 12 | 43 |
-| src/lib/dataBackup.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/api/trips, @/api/vehicles, @/lib/nativeDownloads, @/lib/trackingStore, @/lib/privacyZones | MAX_IMPORTED_TRIP_ROUTE_POINTS, MAX_IMPORTED_TRIP_DRIVING_EVENTS, sanitizeImportedTrip, sanitizeSavedTripFilters, buildDriveSenseBackup, exportDriveSenseBackup, parseDriveSenseBackup, importDriveSenseBackup | 11 | 8 | 249 |
+| src/lib/dataBackup.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/api/trips, @/api/vehicles, @/lib/nativeDownloads, @/lib/trackingStore, @/lib/privacyZones | MAX_BACKUP_BYTES, BACKUP_TOO_LARGE_MESSAGE, MAX_IMPORTED_TRIP_ROUTE_POINTS, MAX_IMPORTED_TRIP_DRIVING_EVENTS, sanitizeImportedTrip, sanitizeSavedTripFilters, buildDriveSenseBackup, exportDriveSenseBackup, parseDriveSenseBackup, importDriveSenseBackup | 11 | 8 | 249 |
 | src/lib/driverAnomaly.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | tripFeatureVector, buildOnDeviceDriverModel, scoreTripAnomaly | 6 | 13 | 43 |
 | src/lib/errorReporting.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/trackingDiagnostics | initializeErrorReporting | 3 | 1 | 21 |
 | src/lib/habitProfile.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | clamp, getTimeBucket, buildHabitProfile, getFallbackTimeRisk | 10 | 30 | 114 |
@@ -291,7 +291,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/pages/MapScreen.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, lucide-react, @/components/TripMap, @/components/TripPlayback, @/lib/tripEngine | MapScreen | 9 | 27 | 196 |
 | src/pages/Onboarding.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, lucide-react, @/lib/trackingStore, @/lib/permissions, @/lib/sensorFusionModel, @/lib/nativePlatform, @/lib/activityRecognition | Onboarding | 14 | 2 | 152 |
 | src/pages/Report.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, recharts, @/lib/tripEngine | Reports | 4 | 57 | 525 |
-| src/pages/Settings.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/ui/dialog, @/components/ui/use-toast | Settings | 42 | 64 | 907 |
+| src/pages/Settings.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/ui/dialog, @/components/ui/use-toast | Settings | 42 | 64 | 909 |
 | src/pages/TripDetail.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, react-router-dom, @tanstack/react-query, @/api/trips, @/api/vehicles, framer-motion, lucide-react, recharts | TripDetail | 7 | 57 | 672 |
 | src/pages/TripHistory.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/TripCard, @/lib/trackingStore | TripHistory | 10 | 16 | 173 |
 | src/pages/Vehicles.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/VehicleCompare, @/lib/tripInsights | Vehicles | 14 | 15 | 212 |
@@ -1353,8 +1353,8 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 ### src/lib/__tests__/dataBackupImportSecurity.test.js
 
-- src/lib/__tests__/dataBackupImportSecurity.test.js:1 imports `describe as describe, expect as expect, it as it` from `vitest`
-- src/lib/__tests__/dataBackupImportSecurity.test.js:2 imports `MAX_IMPORTED_TRIP_DRIVING_EVENTS as MAX_IMPORTED_TRIP_DRIVING_EVENTS, MAX_IMPORTED_TRIP_ROUTE_POINTS as MAX_IMPORTED_TRIP_ROUTE_POINTS, parseDriveSenseBackup as parseDriveSenseBackup` from `@/lib/dataBackup`
+- src/lib/__tests__/dataBackupImportSecurity.test.js:1 imports `afterEach as afterEach, describe as describe, expect as expect, it as it, vi as vi` from `vitest`
+- src/lib/__tests__/dataBackupImportSecurity.test.js:2 imports `importDriveSenseBackup as importDriveSenseBackup, MAX_BACKUP_BYTES as MAX_BACKUP_BYTES, MAX_IMPORTED_TRIP_DRIVING_EVENTS as MAX_IMPORTED_TRIP_DRIVING_EVENTS, MAX_IMPORTED_TRIP_ROUTE_POINTS as MAX_IMPORTED_TRIP_ROUTE_POINTS, parseDriveSenseBackup as parseDriveSenseBackup` from `@/lib/dataBackup`
 
 - No exports.
 
@@ -1490,7 +1490,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/__tests__/releaseBlockers.test.js:2 imports `readFileSync as readFileSync` from `node:fs`
 - src/lib/__tests__/releaseBlockers.test.js:3 imports `authService as authService, migrateLegacyAuthTokens as migrateLegacyAuthTokens` from `@/api/auth`
 - src/lib/__tests__/releaseBlockers.test.js:4 imports `apiClient as apiClient, getAuthToken as getAuthToken` from `@/api/client`
-- src/lib/__tests__/releaseBlockers.test.js:5 imports `importDriveSenseBackup as importDriveSenseBackup, parseDriveSenseBackup as parseDriveSenseBackup` from `@/lib/dataBackup`
+- src/lib/__tests__/releaseBlockers.test.js:5 imports `importDriveSenseBackup as importDriveSenseBackup, MAX_BACKUP_BYTES as MAX_BACKUP_BYTES, parseDriveSenseBackup as parseDriveSenseBackup` from `@/lib/dataBackup`
 - src/lib/__tests__/releaseBlockers.test.js:6 imports `scoreTripAnomaly as scoreTripAnomaly` from `@/lib/driverAnomaly`
 - src/lib/__tests__/releaseBlockers.test.js:7 imports `localTripRepository as localTripRepository` from `@/lib/localTripRepository`
 - src/lib/__tests__/releaseBlockers.test.js:8 imports `mapMatchRoute as mapMatchRoute` from `@/lib/mapMatching`
@@ -1643,14 +1643,16 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/dataBackup.js:4 imports `localSettings as localSettings, sanitizeImportedSettings as sanitizeImportedSettings` from `@/lib/trackingStore`
 - src/lib/dataBackup.js:5 imports `getPrivacyZones as getPrivacyZones, maskTripForPrivacy as maskTripForPrivacy` from `@/lib/privacyZones`
 
-- src/lib/dataBackup.js:10 exports `MAX_IMPORTED_TRIP_ROUTE_POINTS` (named const)
-- src/lib/dataBackup.js:11 exports `MAX_IMPORTED_TRIP_DRIVING_EVENTS` (named const)
-- src/lib/dataBackup.js:243 exports `sanitizeImportedTrip` (FunctionDeclaration)
-- src/lib/dataBackup.js:272 exports `sanitizeSavedTripFilters` (named const)
-- src/lib/dataBackup.js:288 exports `buildDriveSenseBackup` (FunctionDeclaration)
-- src/lib/dataBackup.js:326 exports `exportDriveSenseBackup` (FunctionDeclaration)
-- src/lib/dataBackup.js:360 exports `parseDriveSenseBackup` (FunctionDeclaration)
-- src/lib/dataBackup.js:381 exports `importDriveSenseBackup` (FunctionDeclaration)
+- src/lib/dataBackup.js:9 exports `MAX_BACKUP_BYTES` (named const)
+- src/lib/dataBackup.js:10 exports `BACKUP_TOO_LARGE_MESSAGE` (named const)
+- src/lib/dataBackup.js:11 exports `MAX_IMPORTED_TRIP_ROUTE_POINTS` (named const)
+- src/lib/dataBackup.js:12 exports `MAX_IMPORTED_TRIP_DRIVING_EVENTS` (named const)
+- src/lib/dataBackup.js:244 exports `sanitizeImportedTrip` (FunctionDeclaration)
+- src/lib/dataBackup.js:273 exports `sanitizeSavedTripFilters` (named const)
+- src/lib/dataBackup.js:289 exports `buildDriveSenseBackup` (FunctionDeclaration)
+- src/lib/dataBackup.js:327 exports `exportDriveSenseBackup` (FunctionDeclaration)
+- src/lib/dataBackup.js:361 exports `parseDriveSenseBackup` (FunctionDeclaration)
+- src/lib/dataBackup.js:382 exports `importDriveSenseBackup` (FunctionDeclaration)
 
 ### src/lib/driverAnomaly.js
 
@@ -2408,16 +2410,16 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/pages/Settings.jsx:29 imports `isAndroid as isAndroid` from `@/lib/nativePlatform`
 - src/pages/Settings.jsx:30 imports `getAndroidBatteryOptimizationStatus as getAndroidBatteryOptimizationStatus, openAndroidUsageAccessSettings as openAndroidUsageAccessSettings, getNativeAutoTrackingStatus as getNativeAutoTrackingStatus, openAndroidBatteryOptimizationSettings as openAndroidBatteryOptimizationSettings, startNativeAutoTracking as startNativeAutoTracking, stopNativeAutoTracking as stopNativeAutoTracking` from `@/lib/activityRecognition`
 - src/pages/Settings.jsx:38 imports `syncReminderNotifications as syncReminderNotifications` from `@/lib/notificationService`
-- src/pages/Settings.jsx:39 imports `exportDriveSenseBackup as exportDriveSenseBackup, importDriveSenseBackup as importDriveSenseBackup` from `@/lib/dataBackup`
-- src/pages/Settings.jsx:40 imports `applyCalibrationProfile as applyCalibrationProfile, clearCalibrationProfile as clearCalibrationProfile, computeCalibrationProfile as computeCalibrationProfile, loadCalibrationProfile as loadCalibrationProfile, saveCalibrationProfile as saveCalibrationProfile` from `@/lib/thresholdCalibration`
-- src/pages/Settings.jsx:47 imports `getCurrentLocation as getCurrentLocation` from `@/lib/trackingService`
-- src/pages/Settings.jsx:48 imports `getPrivacyZones as getPrivacyZones, removePrivacyZone as removePrivacyZone, upsertPrivacyZone as upsertPrivacyZone` from `@/lib/privacyZones`
-- src/pages/Settings.jsx:49 imports `connectObdBleAdapter as connectObdBleAdapter, getObdBluetoothSupport as getObdBluetoothSupport` from `@/lib/obdBluetooth`
-- src/pages/Settings.jsx:50 imports `getMotionSensorSupport as getMotionSensorSupport, requestMotionSensorPermission as requestMotionSensorPermission` from `@/lib/sensorFusionModel`
-- src/pages/Settings.jsx:51 imports `testVoiceAlert as testVoiceAlert` from `@/lib/voiceAlerts`
-- src/pages/Settings.jsx:52 imports `PUBLIC_OSRM_DEMO_URL as PUBLIC_OSRM_DEMO_URL` from `@/lib/openSourceTripContext`
+- src/pages/Settings.jsx:39 imports `BACKUP_TOO_LARGE_MESSAGE as BACKUP_TOO_LARGE_MESSAGE, exportDriveSenseBackup as exportDriveSenseBackup, importDriveSenseBackup as importDriveSenseBackup, MAX_BACKUP_BYTES as MAX_BACKUP_BYTES` from `@/lib/dataBackup`
+- src/pages/Settings.jsx:45 imports `applyCalibrationProfile as applyCalibrationProfile, clearCalibrationProfile as clearCalibrationProfile, computeCalibrationProfile as computeCalibrationProfile, loadCalibrationProfile as loadCalibrationProfile, saveCalibrationProfile as saveCalibrationProfile` from `@/lib/thresholdCalibration`
+- src/pages/Settings.jsx:52 imports `getCurrentLocation as getCurrentLocation` from `@/lib/trackingService`
+- src/pages/Settings.jsx:53 imports `getPrivacyZones as getPrivacyZones, removePrivacyZone as removePrivacyZone, upsertPrivacyZone as upsertPrivacyZone` from `@/lib/privacyZones`
+- src/pages/Settings.jsx:54 imports `connectObdBleAdapter as connectObdBleAdapter, getObdBluetoothSupport as getObdBluetoothSupport` from `@/lib/obdBluetooth`
+- src/pages/Settings.jsx:55 imports `getMotionSensorSupport as getMotionSensorSupport, requestMotionSensorPermission as requestMotionSensorPermission` from `@/lib/sensorFusionModel`
+- src/pages/Settings.jsx:56 imports `testVoiceAlert as testVoiceAlert` from `@/lib/voiceAlerts`
+- src/pages/Settings.jsx:57 imports `PUBLIC_OSRM_DEMO_URL as PUBLIC_OSRM_DEMO_URL` from `@/lib/openSourceTripContext`
 
-- src/pages/Settings.jsx:184 exports `Settings` (default export)
+- src/pages/Settings.jsx:189 exports `Settings` (default export)
 
 ### src/pages/TripDetail.jsx
 
@@ -3116,7 +3118,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 8 | arrow function | `parseTrips(trips)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 22 | arrow function | `parseTrips(trips)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/__tests__/driverSignature.test.js
 
@@ -3356,17 +3358,17 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 13 | arrow function | `safeFilename(filename)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 14 | arrow function | `filterString(value, fallback = fallback = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 205 | arrow function | `isPlainObject(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 212 | arrow function | `sanitizeJsonValue(value, depth = depth = 0)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 232 | arrow function | `sanitizeWhitelistedObject(value, allowedFields)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 243 | function | `sanitizeImportedTrip(trip)` | throws | Time: O(n) candidate; Space: context dependent |
-| 272 | arrow function | `sanitizeSavedTripFilters(filters)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 288 | function | `buildDriveSenseBackup(ObjectPattern = { trips = [], vehicles = [], settings = localSettings.get() } = {})` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
-| 326 | function | `async exportDriveSenseBackup(ObjectPattern = { trips, vehicles, settings, filename } = {})` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 360 | function | `parseDriveSenseBackup(text)` | throws | Time: O(n) candidate; Space: context dependent |
-| 381 | function | `async importDriveSenseBackup(file, ObjectPattern = { includeSettings = true } = {})` | storage/network/native I/O, mutation, throws | Time: O(n) candidate; Space: context dependent |
+| 14 | arrow function | `safeFilename(filename)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 15 | arrow function | `filterString(value, fallback = fallback = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 206 | arrow function | `isPlainObject(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 213 | arrow function | `sanitizeJsonValue(value, depth = depth = 0)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 233 | arrow function | `sanitizeWhitelistedObject(value, allowedFields)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 244 | function | `sanitizeImportedTrip(trip)` | throws | Time: O(n) candidate; Space: context dependent |
+| 273 | arrow function | `sanitizeSavedTripFilters(filters)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 289 | function | `buildDriveSenseBackup(ObjectPattern = { trips = [], vehicles = [], settings = localSettings.get() } = {})` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
+| 327 | function | `async exportDriveSenseBackup(ObjectPattern = { trips, vehicles, settings, filename } = {})` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 361 | function | `parseDriveSenseBackup(text)` | throws | Time: O(n) candidate; Space: context dependent |
+| 382 | function | `async importDriveSenseBackup(file, ObjectPattern = { includeSettings = true } = {})` | storage/network/native I/O, mutation, throws | Time: O(n) candidate; Space: context dependent |
 
 ### src/lib/driverAnomaly.js
 
@@ -4230,48 +4232,48 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 54 | function | `SectionTitle({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 58 | function | `SettingRow({...})` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 80 | function | `Toggle({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 92 | function | `PermissionBadge({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 108 | function | `FeaturePermissionBadge({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 166 | function | `validatePrivacyRadius(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 184 | function | `Settings()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 218 | arrow function | `updateCfg(patch)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 235 | arrow function | `enableOsrmMapMatching(enabled)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 247 | arrow function | `usePublicOsrmDemo()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 255 | arrow function | `updateExternalContextAutoFetch(enabled)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 267 | arrow function | `updateNightMode(mode)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 271 | arrow function | `sliderWarning(value, min, max)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 280 | arrow function | `updateTheme(mode)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 285 | arrow function | `async runVoiceTest()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 291 | arrow function | `async runCalibration()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 300 | arrow function | `async applyCalibration()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 314 | arrow function | `async rescoreTrips()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 321 | arrow function | `async dismissCalibration()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 326 | arrow function | `async updateNotificationSetting(patch)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 348 | arrow function | `async updateRetention(days)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 353 | arrow function | `showPrivacyPolicy()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 361 | arrow function | `async stopNativeAutoTrackingSafely(title = title = 'Auto tracking could not be turned off')` | throws | Time: O(1) candidate; Space: O(1) candidate |
-| 382 | arrow function | `async updateTrackingPaused(paused)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 408 | arrow function | `async enableTrackingMode(mode)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 488 | arrow function | `async refreshPermissions()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 502 | arrow function | `async refreshSettingsFromNative(ObjectPattern = { restartIfReady = false } = {})` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 526 | arrow function | `commitPrivacyDraftRadius()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 541 | arrow function | `savePrivacyZone(location, sourceLabel)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 575 | arrow function | `async addCurrentPrivacyZone()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 588 | arrow function | `deletePrivacyZone(id)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 605 | arrow function | `updatePrivacyZoneRadius(zone, rawValue)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 633 | arrow function | `async refreshAndRestartIfReady()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 637 | arrow function | `onVisibility()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 650 | arrow function | `async handleBatteryOptimization()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 663 | arrow function | `async handleMotionPermission()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 675 | arrow function | `async handleObdPairing()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 689 | arrow function | `async handleDeleteAllTrips()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 702 | arrow function | `async handleExportAll()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 714 | arrow function | `async handleExportBackup()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 731 | arrow function | `async handleImportBackup(event)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 789 | arrow function | `scrollSettingSection(sectionId)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 59 | function | `SectionTitle({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 63 | function | `SettingRow({...})` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 85 | function | `Toggle({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 97 | function | `PermissionBadge({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 113 | function | `FeaturePermissionBadge({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 171 | function | `validatePrivacyRadius(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 189 | function | `Settings()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 223 | arrow function | `updateCfg(patch)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 240 | arrow function | `enableOsrmMapMatching(enabled)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 252 | arrow function | `usePublicOsrmDemo()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 260 | arrow function | `updateExternalContextAutoFetch(enabled)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 272 | arrow function | `updateNightMode(mode)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 276 | arrow function | `sliderWarning(value, min, max)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 285 | arrow function | `updateTheme(mode)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 290 | arrow function | `async runVoiceTest()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 296 | arrow function | `async runCalibration()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 305 | arrow function | `async applyCalibration()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 319 | arrow function | `async rescoreTrips()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 326 | arrow function | `async dismissCalibration()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 331 | arrow function | `async updateNotificationSetting(patch)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 353 | arrow function | `async updateRetention(days)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 358 | arrow function | `showPrivacyPolicy()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 366 | arrow function | `async stopNativeAutoTrackingSafely(title = title = 'Auto tracking could not be turned off')` | throws | Time: O(1) candidate; Space: O(1) candidate |
+| 387 | arrow function | `async updateTrackingPaused(paused)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 413 | arrow function | `async enableTrackingMode(mode)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 493 | arrow function | `async refreshPermissions()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 507 | arrow function | `async refreshSettingsFromNative(ObjectPattern = { restartIfReady = false } = {})` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 531 | arrow function | `commitPrivacyDraftRadius()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 546 | arrow function | `savePrivacyZone(location, sourceLabel)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 580 | arrow function | `async addCurrentPrivacyZone()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 593 | arrow function | `deletePrivacyZone(id)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 610 | arrow function | `updatePrivacyZoneRadius(zone, rawValue)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 638 | arrow function | `async refreshAndRestartIfReady()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 642 | arrow function | `onVisibility()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 655 | arrow function | `async handleBatteryOptimization()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 668 | arrow function | `async handleMotionPermission()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 680 | arrow function | `async handleObdPairing()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 694 | arrow function | `async handleDeleteAllTrips()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 707 | arrow function | `async handleExportAll()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 719 | arrow function | `async handleExportBackup()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 736 | arrow function | `async handleImportBackup(event)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 802 | arrow function | `scrollSettingSection(sectionId)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/pages/TripDetail.jsx
 
@@ -5407,7 +5409,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 390 | importDriveSenseBackup | ? backup.trips.map((trip) => ({ ...trip, needs_rescore: true })) | `? backup.trips.map((trip) => ({ ...trip, needs_rescore: true }))` |
+| 391 | importDriveSenseBackup | ? backup.trips.map((trip) => ({ ...trip, needs_rescore: true })) | `? backup.trips.map((trip) => ({ ...trip, needs_rescore: true }))` |
 
 #### src/lib/driverAnomaly.js
 
@@ -5710,15 +5712,15 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 158 | (module scope) | definition: 'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.', | `definition: 'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.',` |
-| 307 | Settings | setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.') | `setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');` |
-| 772 | Settings | { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly ... | `{ label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },` |
-| 773 | Settings | { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback beh... | `{ label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive' },` |
-| 775 | Settings | { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keyword... | `{ label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },` |
-| 782 | Settings | score = terms.reduce((sum, term) => ( | `const score = terms.reduce((sum, term) => (` |
-| 788 | Settings | }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6) | `}).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6);` |
-| 1507 | Settings | Re-score completed trips | `Re-score completed trips` |
-| 1811 | Settings | <SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score"> | `<SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score">` |
+| 163 | (module scope) | definition: 'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.', | `definition: 'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.',` |
+| 312 | Settings | setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.') | `setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');` |
+| 785 | Settings | { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly ... | `{ label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },` |
+| 786 | Settings | { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback beh... | `{ label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive' },` |
+| 788 | Settings | { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keyword... | `{ label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },` |
+| 795 | Settings | score = terms.reduce((sum, term) => ( | `const score = terms.reduce((sum, term) => (` |
+| 801 | Settings | }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6) | `}).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6);` |
+| 1520 | Settings | Re-score completed trips | `Re-score completed trips` |
+| 1824 | Settings | <SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score"> | `<SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score">` |
 
 #### src/pages/TripDetail.jsx
 
@@ -5857,9 +5859,9 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 774 | Settings | { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash si... | `{ label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },` |
-| 1224 | Settings | { key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' }, | `{ key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' },` |
-| 1561 | Settings | { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are ... | `{ key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are needed before distraction risk is flagged.' },` |
+| 787 | Settings | { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash si... | `{ label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },` |
+| 1237 | Settings | { key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' }, | `{ key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' },` |
+| 1574 | Settings | { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are ... | `{ key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are needed before distraction risk is flagged.' },` |
 
 #### src/pages/TripDetail.jsx
 
@@ -6133,13 +6135,13 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 219 | sanitizeJsonValue | .map((item) => sanitizeJsonValue(item, depth + 1)) | `.map((item) => sanitizeJsonValue(item, depth + 1))` |
-| 227 | sanitizeJsonValue | .map(([key, item]) => [key, sanitizeJsonValue(item, depth + 1)]) | `.map(([key, item]) => [key, sanitizeJsonValue(item, depth + 1)])` |
-| 259 | sanitizeImportedTrip | .map((point) => sanitizeWhitelistedObject(point, IMPORTED_ROUTE_POINT_FIELDS)) | `.map((point) => sanitizeWhitelistedObject(point, IMPORTED_ROUTE_POINT_FIELDS))` |
-| 265 | sanitizeImportedTrip | .map((event) => sanitizeWhitelistedObject(event, IMPORTED_DRIVING_EVENT_FIELDS)) | `.map((event) => sanitizeWhitelistedObject(event, IMPORTED_DRIVING_EVENT_FIELDS))` |
-| 277 | sanitizeSavedTripFilters | .map((item, index) => ({ | `.map((item, index) => ({` |
-| 295 | buildDriveSenseBackup | privacy_zones: getPrivacyZones(settings).map((zone) => ({ | `privacy_zones: getPrivacyZones(settings).map((zone) => ({` |
-| 311 | buildDriveSenseBackup | trips: trips.map((trip) => { | `trips: trips.map((trip) => {` |
+| 220 | sanitizeJsonValue | .map((item) => sanitizeJsonValue(item, depth + 1)) | `.map((item) => sanitizeJsonValue(item, depth + 1))` |
+| 228 | sanitizeJsonValue | .map(([key, item]) => [key, sanitizeJsonValue(item, depth + 1)]) | `.map(([key, item]) => [key, sanitizeJsonValue(item, depth + 1)])` |
+| 260 | sanitizeImportedTrip | .map((point) => sanitizeWhitelistedObject(point, IMPORTED_ROUTE_POINT_FIELDS)) | `.map((point) => sanitizeWhitelistedObject(point, IMPORTED_ROUTE_POINT_FIELDS))` |
+| 266 | sanitizeImportedTrip | .map((event) => sanitizeWhitelistedObject(event, IMPORTED_DRIVING_EVENT_FIELDS)) | `.map((event) => sanitizeWhitelistedObject(event, IMPORTED_DRIVING_EVENT_FIELDS))` |
+| 278 | sanitizeSavedTripFilters | .map((item, index) => ({ | `.map((item, index) => ({` |
+| 296 | buildDriveSenseBackup | privacy_zones: getPrivacyZones(settings).map((zone) => ({ | `privacy_zones: getPrivacyZones(settings).map((zone) => ({` |
+| 312 | buildDriveSenseBackup | trips: trips.map((trip) => { | `trips: trips.map((trip) => {` |
 
 #### src/lib/driverAnomaly.js
 
@@ -6720,41 +6722,41 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 776 | Settings | { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits o... | `{ label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },` |
-| 778 | Settings | ].map((item) => { | `].map((item) => {` |
-| 837 | Settings | {settingSearchResults.length > 0 ? settingSearchResults.map((item) => ( | `{settingSearchResults.length > 0 ? settingSearchResults.map((item) => (` |
-| 867 | Settings | ].map(opt => ( | `].map(opt => (` |
-| 945 | Settings | ].map(({ key, label, sub, action }) => ( | `].map(({ key, label, sub, action }) => (` |
-| 1014 | Settings | sub: 'Uses open-source map / weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.', | `sub: 'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.',` |
-| 1028 | Settings | ].map(({ label, sub, value, action }) => ( | `].map(({ label, sub, value, action }) => (` |
-| 1059 | Settings | ].map(({ id, icon: Icon, label }) => ( | `].map(({ id, icon: Icon, label }) => (` |
-| 1080 | Settings | ].map(opt => ( | `].map(opt => (` |
-| 1210 | Settings | ].map(({ key, label, sub }) => ( | `].map(({ key, label, sub }) => (` |
-| 1226 | Settings | ].map(({ key, label, sub }) => ( | `].map(({ key, label, sub }) => (` |
-| 1259 | Settings | ].map(({ key, label, sub }) => ( | `].map(({ key, label, sub }) => (` |
-| 1281 | Settings | {[3, 5, 7, 14].map((days) => <option key={days} value={days}>{days} days< / option>)} | `{[3, 5, 7, 14].map((days) => <option key={days} value={days}>{days} days</option>)}` |
-| 1300 | Settings | ].map(({ key, label, min, max, step }) => ( | `].map(({ key, label, min, max, step }) => (` |
-| 1329 | Settings | ].map(opt => ( | `].map(opt => (` |
-| 1385 | Settings | ].map(({ key, label, min, max }) => ( | `].map(({ key, label, min, max }) => (` |
-| 1481 | Settings | {Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => ( | `{Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => (` |
-| 1524 | Settings | ].map(({ key, label, unit, min, max, step }) => ( | `].map(({ key, label, unit, min, max, step }) => (` |
-| 1559 | Settings | { key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg / s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to c... | `{ key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as a near-miss manoeuvre.' },` |
-| 1564 | Settings | ].map(({ key, label, unit, min, max, step, help }) => ( | `].map(({ key, label, unit, min, max, step, help }) => (` |
-| 1679 | Settings | ? 'Off: Get Road Data will not contact OSRM, and map / playback use the original GPS line.' | `? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` |
-| 1783 | Settings | ].map((option) => ( | `].map((option) => (` |
-| 1804 | Settings | <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps"> | `<SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">` |
-| 1840 | Settings | ].map(({ key, label, min, max, step, unit }) => ( | `].map(({ key, label, min, max, step, unit }) => (` |
-| 1878 | Settings | sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits" | `sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` |
-| 1898 | Settings | sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual." | `sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` |
-| 1911 | Settings | ? 'skips OpenStreetMap; scoring and map colors use GPS / fallback limits only.' | `? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` |
-| 1923 | Settings | ? 'skips OSRM; map / playback keep the original GPS line.' | `? 'skips OSRM; map/playback keep the original GPS line.'` |
-| 1925 | Settings | ? 'sends sampled GPS points to OSRM and may make map / playback follow roads more cleanly.' | `? 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` |
-| 1931 | Settings | ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.' | `? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` |
-| 1932 | Settings | : 'new saved trips stay local for map / weather services until the user taps Get Road Data.'} | `: 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}` |
-| 2017 | Settings | Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside t... | `Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.` |
-| 2040 | Settings | {privacyZones.map((zone) => ( | `{privacyZones.map((zone) => (` |
-| 2160 | Settings | {DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => ( | `{DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => (` |
-| 2174 | Settings | <div>Map: OpenStreetMap + Leaflet (free, open-source)< / div> | `<div>Map: OpenStreetMap + Leaflet (free, open-source)</div>` |
+| 789 | Settings | { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits o... | `{ label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },` |
+| 791 | Settings | ].map((item) => { | `].map((item) => {` |
+| 850 | Settings | {settingSearchResults.length > 0 ? settingSearchResults.map((item) => ( | `{settingSearchResults.length > 0 ? settingSearchResults.map((item) => (` |
+| 880 | Settings | ].map(opt => ( | `].map(opt => (` |
+| 958 | Settings | ].map(({ key, label, sub, action }) => ( | `].map(({ key, label, sub, action }) => (` |
+| 1027 | Settings | sub: 'Uses open-source map / weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.', | `sub: 'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.',` |
+| 1041 | Settings | ].map(({ label, sub, value, action }) => ( | `].map(({ label, sub, value, action }) => (` |
+| 1072 | Settings | ].map(({ id, icon: Icon, label }) => ( | `].map(({ id, icon: Icon, label }) => (` |
+| 1093 | Settings | ].map(opt => ( | `].map(opt => (` |
+| 1223 | Settings | ].map(({ key, label, sub }) => ( | `].map(({ key, label, sub }) => (` |
+| 1239 | Settings | ].map(({ key, label, sub }) => ( | `].map(({ key, label, sub }) => (` |
+| 1272 | Settings | ].map(({ key, label, sub }) => ( | `].map(({ key, label, sub }) => (` |
+| 1294 | Settings | {[3, 5, 7, 14].map((days) => <option key={days} value={days}>{days} days< / option>)} | `{[3, 5, 7, 14].map((days) => <option key={days} value={days}>{days} days</option>)}` |
+| 1313 | Settings | ].map(({ key, label, min, max, step }) => ( | `].map(({ key, label, min, max, step }) => (` |
+| 1342 | Settings | ].map(opt => ( | `].map(opt => (` |
+| 1398 | Settings | ].map(({ key, label, min, max }) => ( | `].map(({ key, label, min, max }) => (` |
+| 1494 | Settings | {Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => ( | `{Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => (` |
+| 1537 | Settings | ].map(({ key, label, unit, min, max, step }) => ( | `].map(({ key, label, unit, min, max, step }) => (` |
+| 1572 | Settings | { key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg / s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to c... | `{ key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as a near-miss manoeuvre.' },` |
+| 1577 | Settings | ].map(({ key, label, unit, min, max, step, help }) => ( | `].map(({ key, label, unit, min, max, step, help }) => (` |
+| 1692 | Settings | ? 'Off: Get Road Data will not contact OSRM, and map / playback use the original GPS line.' | `? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` |
+| 1796 | Settings | ].map((option) => ( | `].map((option) => (` |
+| 1817 | Settings | <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps"> | `<SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">` |
+| 1853 | Settings | ].map(({ key, label, min, max, step, unit }) => ( | `].map(({ key, label, min, max, step, unit }) => (` |
+| 1891 | Settings | sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits" | `sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` |
+| 1911 | Settings | sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual." | `sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` |
+| 1924 | Settings | ? 'skips OpenStreetMap; scoring and map colors use GPS / fallback limits only.' | `? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` |
+| 1936 | Settings | ? 'skips OSRM; map / playback keep the original GPS line.' | `? 'skips OSRM; map/playback keep the original GPS line.'` |
+| 1938 | Settings | ? 'sends sampled GPS points to OSRM and may make map / playback follow roads more cleanly.' | `? 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` |
+| 1944 | Settings | ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.' | `? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` |
+| 1945 | Settings | : 'new saved trips stay local for map / weather services until the user taps Get Road Data.'} | `: 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}` |
+| 2030 | Settings | Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside t... | `Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.` |
+| 2053 | Settings | {privacyZones.map((zone) => ( | `{privacyZones.map((zone) => (` |
+| 2173 | Settings | {DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => ( | `{DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => (` |
+| 2187 | Settings | <div>Map: OpenStreetMap + Leaflet (free, open-source)< / div> | `<div>Map: OpenStreetMap + Leaflet (free, open-source)</div>` |
 
 #### src/pages/TripDetail.jsx
 
@@ -7366,18 +7368,18 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 126 | (module scope) | definition: 'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.', | `definition: 'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.',` |
-| 138 | (module scope) | definition: 'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.', | `definition: 'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.',` |
-| 150 | (module scope) | definition: 'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.', | `definition: 'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.',` |
-| 1522 | Settings | { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km / h', min: 5, max: 60, step: 5 }, | `{ key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },` |
-| 1523 | Settings | { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km / h', min: 0, max: 40, step: 5 }, | `{ key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },` |
-| 1549 | Settings | sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included... | `sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included in detection and scoring'}` |
-| 1562 | Settings | { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km / h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road... | `{ key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },` |
-| 1835 | Settings | { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km / h / s' }, | `{ key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },` |
-| 1863 | Settings | { / x Speed Warning x / } | `{/* Speed Warning */}` |
-| 1864 | Settings | <SectionTitle id="settings-speed-warning">Speed Warning< / SectionTitle> | `<SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>` |
-| 1897 | Settings | label="Automatically get speed limits + weather" | `label="Automatically get speed limits + weather"` |
-| 1945 | Settings | onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}` |
+| 131 | (module scope) | definition: 'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.', | `definition: 'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.',` |
+| 143 | (module scope) | definition: 'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.', | `definition: 'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.',` |
+| 155 | (module scope) | definition: 'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.', | `definition: 'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.',` |
+| 1535 | Settings | { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km / h', min: 5, max: 60, step: 5 }, | `{ key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },` |
+| 1536 | Settings | { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km / h', min: 0, max: 40, step: 5 }, | `{ key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },` |
+| 1562 | Settings | sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included... | `sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included in detection and scoring'}` |
+| 1575 | Settings | { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km / h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road... | `{ key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },` |
+| 1848 | Settings | { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km / h / s' }, | `{ key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },` |
+| 1876 | Settings | { / x Speed Warning x / } | `{/* Speed Warning */}` |
+| 1877 | Settings | <SectionTitle id="settings-speed-warning">Speed Warning< / SectionTitle> | `<SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>` |
+| 1910 | Settings | label="Automatically get speed limits + weather" | `label="Automatically get speed limits + weather"` |
+| 1958 | Settings | onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}` |
 
 #### src/pages/TripDetail.jsx
 
@@ -7454,9 +7456,9 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 770 | Settings | { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.... | `{ label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },` |
-| 1101 | Settings | sublabel="kg CO2 per 100 km used for saved-vs-average comparisons" | `sublabel="kg CO2 per 100 km used for saved-vs-average comparisons"` |
-| 1131 | Settings | sublabel="kg CO2 per kWh used for electric-vehicle trip emissions" | `sublabel="kg CO2 per kWh used for electric-vehicle trip emissions"` |
+| 783 | Settings | { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.... | `{ label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },` |
+| 1114 | Settings | sublabel="kg CO2 per 100 km used for saved-vs-average comparisons" | `sublabel="kg CO2 per 100 km used for saved-vs-average comparisons"` |
+| 1144 | Settings | sublabel="kg CO2 per kWh used for electric-vehicle trip emissions" | `sublabel="kg CO2 per kWh used for electric-vehicle trip emissions"` |
 
 #### src/pages/Vehicles.jsx
 
@@ -7857,8 +7859,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 1540 | Settings | onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}` |
-| 1580 | Settings | onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}` |
+| 1553 | Settings | onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}` |
+| 1593 | Settings | onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}` |
 
 #### src/pages/TripDetail.jsx
 
@@ -7932,8 +7934,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 26 | (module scope) | lat: 43 + index / 100000, | `lat: 43 + index / 100000,` |
-| 27 | (module scope) | lng: -79, | `lng: -79,` |
+| 72 | (module scope) | lat: 43 + index / 100000, | `lat: 43 + index / 100000,` |
+| 73 | (module scope) | lng: -79, | `lng: -79,` |
 
 #### src/lib/__tests__/drivingConsistency.test.js
 
@@ -11425,250 +11427,250 @@ The app contains many intentional literals: route labels, storage keys, feature 
 | 9 | `50` | numeric literal | MAX_BACKUP_BYTES | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
 | 9 | `1024` | numeric literal | MAX_BACKUP_BYTES | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
 | 9 | `1024` | numeric literal | MAX_BACKUP_BYTES | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 10 | `5000` | numeric literal | MAX_IMPORTED_TRIP_ROUTE_POINTS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 11 | `500` | numeric literal | MAX_IMPORTED_TRIP_DRIVING_EVENTS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 13 | `'-'` | string literal | safeFilename | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 14 | `''` | string literal | filterString | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 15 | `'string'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 15 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 15 | `120` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 18 | `'completed'` | string literal | IMPORTED_TRIP_STATUS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 18 | `'discarded'` | string literal | IMPORTED_TRIP_STATUS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `'__proto__'` | string literal | DANGEROUS_OBJECT_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `'constructor'` | string literal | DANGEROUS_OBJECT_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `'prototype'` | string literal | DANGEROUS_OBJECT_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 20 | `500` | numeric literal | MAX_IMPORTED_NESTED_ARRAY_ITEMS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 21 | `100` | numeric literal | MAX_IMPORTED_NESTED_OBJECT_KEYS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 22 | `5000` | numeric literal | MAX_IMPORTED_STRING_LENGTH | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 25 | `'id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 26 | `'status'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 27 | `'start_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 28 | `'end_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 29 | `'created_at'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 30 | `'updated_at'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 31 | `'vehicle_id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 32 | `'tag'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 33 | `'tags'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 34 | `'nickname'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 35 | `'notes'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 36 | `'is_favorite'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 37 | `'auto_tag'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 38 | `'auto_tag_confidence'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 39 | `'background_tracking'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 40 | `'start_source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 41 | `'imported_from_native'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 42 | `'split_parent_id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 43 | `'split_segment_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 44 | `'needs_rescore'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 45 | `'schema_version'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 46 | `'route_points'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 47 | `'route_points_raw_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 48 | `'route_points_map_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 49 | `'driving_events'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 50 | `'event_feedback'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 51 | `'duration_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 52 | `'distance_km'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 53 | `'avg_speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 54 | `'avg_running_speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 55 | `'max_speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 56 | `'total_idle_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 57 | `'idle_periods_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 58 | `'night_driving'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 59 | `'road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 60 | `'speed_zones'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 61 | `'score_overall'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 62 | `'score_safety'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 63 | `'score_smoothness'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 64 | `'score_eco'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 65 | `'harsh_brakes_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 66 | `'rapid_accel_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 67 | `'sharp_turns_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 68 | `'speeding_events_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 69 | `'lane_changes_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 70 | `'lane_changes_per_10km'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 71 | `'tailgate_cycle_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 72 | `'following_distance_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 73 | `'distraction_events_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 74 | `'distraction_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 75 | `'near_miss_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 76 | `'near_miss_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 77 | `'overtake_event_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 78 | `'overtake_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 79 | `'intersection_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 80 | `'jerk_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 81 | `'eco_driving_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 82 | `'speed_variability_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 83 | `'fuel_band_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 84 | `'smooth_braking_ratio'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 85 | `'engine_stress_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 86 | `'trip_tire_wear_units'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 87 | `'drowsy_risk_level'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 88 | `'drowsy_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 89 | `'hill_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 90 | `'parking_approach_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 91 | `'reaction_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 92 | `'avg_reaction_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 93 | `'reaction_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 94 | `'reaction_sample_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 95 | `'cornering_consistency_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 96 | `'cornering_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 97 | `'mean_lateral_g'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 98 | `'peak_lateral_g'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 99 | `'corner_sample_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 100 | `'braking_efficiency_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 101 | `'braking_efficiency_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 102 | `'braking_sequence_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 103 | `'avg_braking_smoothness'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 104 | `'highway_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 105 | `'urban_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 106 | `'residential_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 107 | `'dominant_road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 108 | `'highway_compliance'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 109 | `'urban_compliance'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 110 | `'residential_compliance'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 111 | `'overall_compliance_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 112 | `'overtake_quality_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 113 | `'overtake_quality_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 114 | `'overtake_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 115 | `'unsafe_reentry_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 116 | `'slippery_proxy'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 117 | `'wet_signal_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 118 | `'wet_ratio'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 119 | `'safety_condition_bonus'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 120 | `'avg_distance_ratio'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 121 | `'aggressive_driving_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 122 | `'aggressive_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 123 | `'defensive_driving_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 124 | `'defensive_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 125 | `'phone_proxy_risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 126 | `'native_phone_proxy_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 127 | `'phone_use_events'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 128 | `'phone_use_window_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 129 | `'phone_use_total_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 130 | `'phone_use_risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 131 | `'phone_use_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 132 | `'phone_use_pct_of_trip'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 133 | `'phone_use_high_confidence_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 134 | `'native_phone_usage_events'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 135 | `'native_phone_usage_event_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 136 | `'native_phone_usage_total_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 137 | `'native_phone_usage_access_granted'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 138 | `'fuel_cost'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 139 | `'fuel_used_liters'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 140 | `'fuel_saved_liters'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 141 | `'fuel_price_per_liter'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 142 | `'co2_kg'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 143 | `'co2_saved_kg'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 144 | `'fatigue_progression'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 145 | `'segment_scores'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 146 | `'map_matching_status'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 147 | `'map_matching_provider'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 148 | `'speed_limit_context'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 149 | `'weather_context'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 153 | `'lat'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 154 | `'lng'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 155 | `'timestamp'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 156 | `'time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 157 | `'speed'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 158 | `'speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 159 | `'accuracy'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 160 | `'heading'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 161 | `'altitude'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 162 | `'accel_ms2'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 163 | `'acceleration_ms2'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 164 | `'distance_m'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 165 | `'delta_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 166 | `'road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 167 | `'speed_limit'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 168 | `'speed_limit_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 169 | `'speed_limit_source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 170 | `'privacy_masked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 171 | `'privacy_boundary'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 172 | `'original_lat'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 173 | `'original_lng'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 174 | `'source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 178 | `'id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 179 | `'type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 180 | `'severity'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 181 | `'timestamp'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 182 | `'time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 183 | `'lat'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 184 | `'lng'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 185 | `'value'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 186 | `'speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 187 | `'durationS'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 188 | `'duration_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 189 | `'distance_m'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 190 | `'confidence'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 191 | `'source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 192 | `'inferred'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 193 | `'speed_limit'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 194 | `'speed_limit_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 195 | `'speed_limit_source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 196 | `'start_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 197 | `'end_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 198 | `'start_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 199 | `'end_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 200 | `'road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 201 | `'message'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 202 | `'label'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 207 | `'object'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 212 | `0` | numeric literal | sanitizeJsonValue | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 213 | `'boolean'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 213 | `'number'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 214 | `'string'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 214 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 215 | `3` | numeric literal | depth | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 218 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 219 | `1` | numeric literal | depth | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 226 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 227 | `1` | numeric literal | depth | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 245 | `'Backup contains an invalid trip record.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 250 | `'Backup contains a trip without a valid id.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 255 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 258 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 264 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 275 | `'object'` | string literal | item | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 276 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 276 | `8` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 278 | ``filter_import_${index}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 281 | `'date_desc'` | string literal | sortBy | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 282 | `'all'` | string literal | filterBy | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 283 | `'all'` | string literal | selectedTag | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 291 | `'[]'` | string literal | savedTripFilters | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 299 | `true` | boolean flag | masked_for_privacy | Inline state/default flag; changing can flip behavior. |
-| 303 | `'Road Sage'` | string literal | app | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 317 | `'object'` | string literal | event_feedback | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 328 | ``road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`` | string constant/key | outputName | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 329 | `2` | numeric literal | content | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 333 | `'@capacitor/core'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 338 | `'application/json'` | string literal | mimeType | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 340 | `true` | boolean flag | native | Inline state/default flag; changing can flip behavior. |
-| 343 | `'Native export failed.'` | string literal | nativeFallbackError | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 344 | `'Native JSON export failed, falling back to browser download.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 347 | `'application/json;charset=utf-8;'` | string literal | blob | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 349 | `'a'` | string literal | a | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 352 | `'none'` | string literal | display | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 357 | `false` | boolean flag | native | Inline state/default flag; changing can flip behavior. |
-| 365 | `'Backup file is not valid JSON. Please select the correct file.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 368 | `'Road Sage'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 368 | `'DriveSense'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 369 | `'This is not a valid Road Sage backup file.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 373 | `0` | numeric literal | version | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 374 | `'object'` | string literal | settings | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 375 | `'object'` | string literal | ui | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 381 | `true` | boolean flag | includeSettings | Inline state/default flag; changing can flip behavior. |
-| 383 | `'Backup file is too large. Please choose a Road Sage JSON backup under 50 MB.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 389 | `4` | numeric literal | tripsToImport | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 390 | `true` | boolean flag | needs_rescore | Inline state/default flag; changing can flip behavior. |
-| 396 | `true` | boolean flag | masked_for_privacy | Inline state/default flag; changing can flip behavior. |
-| 399 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 401 | `false` | boolean flag | importedSettings | Inline state/default flag; changing can flip behavior. |
-| 405 | `0` | numeric literal | importedSettings | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 409 | `false` | boolean flag | savedFiltersRestored | Inline state/default flag; changing can flip behavior. |
-| 410 | `0` | numeric literal | length | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 413 | `true` | boolean flag | savedFiltersRestored | Inline state/default flag; changing can flip behavior. |
-| 415 | `'Could not restore saved trip filters from backup.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 10 | `'Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.'` | string constant/key | BACKUP_TOO_LARGE_MESSAGE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 11 | `5000` | numeric literal | MAX_IMPORTED_TRIP_ROUTE_POINTS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 12 | `500` | numeric literal | MAX_IMPORTED_TRIP_DRIVING_EVENTS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 14 | `'-'` | string literal | safeFilename | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 15 | `''` | string literal | filterString | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `'string'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 16 | `120` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 19 | `'completed'` | string literal | IMPORTED_TRIP_STATUS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `'discarded'` | string literal | IMPORTED_TRIP_STATUS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 20 | `'__proto__'` | string literal | DANGEROUS_OBJECT_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 20 | `'constructor'` | string literal | DANGEROUS_OBJECT_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 20 | `'prototype'` | string literal | DANGEROUS_OBJECT_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 21 | `500` | numeric literal | MAX_IMPORTED_NESTED_ARRAY_ITEMS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 22 | `100` | numeric literal | MAX_IMPORTED_NESTED_OBJECT_KEYS | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 23 | `5000` | numeric literal | MAX_IMPORTED_STRING_LENGTH | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 26 | `'id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 27 | `'status'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 28 | `'start_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 29 | `'end_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 30 | `'created_at'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 31 | `'updated_at'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 32 | `'vehicle_id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 33 | `'tag'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 34 | `'tags'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 35 | `'nickname'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 36 | `'notes'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 37 | `'is_favorite'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 38 | `'auto_tag'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 39 | `'auto_tag_confidence'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 40 | `'background_tracking'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 41 | `'start_source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 42 | `'imported_from_native'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 43 | `'split_parent_id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `'split_segment_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 45 | `'needs_rescore'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 46 | `'schema_version'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 47 | `'route_points'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 48 | `'route_points_raw_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 49 | `'route_points_map_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 50 | `'driving_events'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 51 | `'event_feedback'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 52 | `'duration_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 53 | `'distance_km'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `'avg_speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 55 | `'avg_running_speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 56 | `'max_speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 57 | `'total_idle_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 58 | `'idle_periods_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 59 | `'night_driving'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 60 | `'road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 61 | `'speed_zones'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 62 | `'score_overall'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 63 | `'score_safety'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 64 | `'score_smoothness'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 65 | `'score_eco'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 66 | `'harsh_brakes_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 67 | `'rapid_accel_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 68 | `'sharp_turns_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 69 | `'speeding_events_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 70 | `'lane_changes_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 71 | `'lane_changes_per_10km'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 72 | `'tailgate_cycle_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 73 | `'following_distance_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 74 | `'distraction_events_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 75 | `'distraction_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 76 | `'near_miss_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 77 | `'near_miss_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 78 | `'overtake_event_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 79 | `'overtake_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 80 | `'intersection_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 81 | `'jerk_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 82 | `'eco_driving_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 83 | `'speed_variability_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 84 | `'fuel_band_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 85 | `'smooth_braking_ratio'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 86 | `'engine_stress_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 87 | `'trip_tire_wear_units'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 88 | `'drowsy_risk_level'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 89 | `'drowsy_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 90 | `'hill_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 91 | `'parking_approach_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 92 | `'reaction_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 93 | `'avg_reaction_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 94 | `'reaction_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 95 | `'reaction_sample_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 96 | `'cornering_consistency_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 97 | `'cornering_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 98 | `'mean_lateral_g'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 99 | `'peak_lateral_g'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 100 | `'corner_sample_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 101 | `'braking_efficiency_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 102 | `'braking_efficiency_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 103 | `'braking_sequence_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 104 | `'avg_braking_smoothness'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 105 | `'highway_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 106 | `'urban_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 107 | `'residential_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 108 | `'dominant_road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 109 | `'highway_compliance'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 110 | `'urban_compliance'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 111 | `'residential_compliance'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 112 | `'overall_compliance_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 113 | `'overtake_quality_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 114 | `'overtake_quality_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 115 | `'overtake_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 116 | `'unsafe_reentry_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 117 | `'slippery_proxy'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 118 | `'wet_signal_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 119 | `'wet_ratio'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 120 | `'safety_condition_bonus'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 121 | `'avg_distance_ratio'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 122 | `'aggressive_driving_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 123 | `'aggressive_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 124 | `'defensive_driving_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 125 | `'defensive_grade'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 126 | `'phone_proxy_risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 127 | `'native_phone_proxy_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 128 | `'phone_use_events'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 129 | `'phone_use_window_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 130 | `'phone_use_total_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 131 | `'phone_use_risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 132 | `'phone_use_score'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 133 | `'phone_use_pct_of_trip'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 134 | `'phone_use_high_confidence_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 135 | `'native_phone_usage_events'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 136 | `'native_phone_usage_event_count'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 137 | `'native_phone_usage_total_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 138 | `'native_phone_usage_access_granted'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 139 | `'fuel_cost'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 140 | `'fuel_used_liters'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 141 | `'fuel_saved_liters'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 142 | `'fuel_price_per_liter'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 143 | `'co2_kg'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 144 | `'co2_saved_kg'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 145 | `'fatigue_progression'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 146 | `'segment_scores'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 147 | `'map_matching_status'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 148 | `'map_matching_provider'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 149 | `'speed_limit_context'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 150 | `'weather_context'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 154 | `'lat'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 155 | `'lng'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 156 | `'timestamp'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 157 | `'time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 158 | `'speed'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 159 | `'speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 160 | `'accuracy'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 161 | `'heading'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 162 | `'altitude'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 163 | `'accel_ms2'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 164 | `'acceleration_ms2'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 165 | `'distance_m'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 166 | `'delta_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 167 | `'road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 168 | `'speed_limit'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 169 | `'speed_limit_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 170 | `'speed_limit_source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 171 | `'privacy_masked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 172 | `'privacy_boundary'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 173 | `'original_lat'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 174 | `'original_lng'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 175 | `'source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 179 | `'id'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 180 | `'type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 181 | `'severity'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 182 | `'timestamp'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 183 | `'time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 184 | `'lat'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 185 | `'lng'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 186 | `'value'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 187 | `'speed_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 188 | `'durationS'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 189 | `'duration_seconds'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 190 | `'distance_m'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 191 | `'confidence'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 192 | `'source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 193 | `'inferred'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 194 | `'speed_limit'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 195 | `'speed_limit_kmh'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 196 | `'speed_limit_source'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 197 | `'start_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 198 | `'end_time'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 199 | `'start_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 200 | `'end_index'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 201 | `'road_type'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 202 | `'message'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 203 | `'label'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 208 | `'object'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 213 | `0` | numeric literal | sanitizeJsonValue | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 214 | `'boolean'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 214 | `'number'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 215 | `'string'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 215 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 216 | `3` | numeric literal | depth | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 219 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 220 | `1` | numeric literal | depth | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 227 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 228 | `1` | numeric literal | depth | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 246 | `'Backup contains an invalid trip record.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 251 | `'Backup contains a trip without a valid id.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 256 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 259 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 265 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 276 | `'object'` | string literal | item | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 277 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 277 | `8` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 279 | ``filter_import_${index}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 282 | `'date_desc'` | string literal | sortBy | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 283 | `'all'` | string literal | filterBy | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 284 | `'all'` | string literal | selectedTag | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 292 | `'[]'` | string literal | savedTripFilters | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 300 | `true` | boolean flag | masked_for_privacy | Inline state/default flag; changing can flip behavior. |
+| 304 | `'Road Sage'` | string literal | app | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 318 | `'object'` | string literal | event_feedback | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 329 | ``road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`` | string constant/key | outputName | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 330 | `2` | numeric literal | content | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 334 | `'@capacitor/core'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 339 | `'application/json'` | string literal | mimeType | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 341 | `true` | boolean flag | native | Inline state/default flag; changing can flip behavior. |
+| 344 | `'Native export failed.'` | string literal | nativeFallbackError | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 345 | `'Native JSON export failed, falling back to browser download.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 348 | `'application/json;charset=utf-8;'` | string literal | blob | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 350 | `'a'` | string literal | a | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 353 | `'none'` | string literal | display | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 358 | `false` | boolean flag | native | Inline state/default flag; changing can flip behavior. |
+| 366 | `'Backup file is not valid JSON. Please select the correct file.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 369 | `'Road Sage'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 369 | `'DriveSense'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 370 | `'This is not a valid Road Sage backup file.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 374 | `0` | numeric literal | version | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 375 | `'object'` | string literal | settings | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 376 | `'object'` | string literal | ui | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 382 | `true` | boolean flag | includeSettings | Inline state/default flag; changing can flip behavior. |
+| 390 | `4` | numeric literal | tripsToImport | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 391 | `true` | boolean flag | needs_rescore | Inline state/default flag; changing can flip behavior. |
+| 397 | `true` | boolean flag | masked_for_privacy | Inline state/default flag; changing can flip behavior. |
+| 400 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 402 | `false` | boolean flag | importedSettings | Inline state/default flag; changing can flip behavior. |
+| 406 | `0` | numeric literal | importedSettings | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 410 | `false` | boolean flag | savedFiltersRestored | Inline state/default flag; changing can flip behavior. |
+| 411 | `0` | numeric literal | length | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 414 | `true` | boolean flag | savedFiltersRestored | Inline state/default flag; changing can flip behavior. |
+| 416 | `'Could not restore saved trip filters from backup.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -21045,7 +21047,7 @@ The app contains many intentional literals: route labels, storage keys, feature 
 </details>
 
 <details>
-<summary>src/pages/Settings.jsx (907)</summary>
+<summary>src/pages/Settings.jsx (909)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -21053,909 +21055,911 @@ The app contains many intentional literals: route labels, storage keys, feature 
 | 15 | `'@/components/ui/dialog'` | string literal | components | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 28 | `'@/lib/permissions'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 37 | `'@/lib/activityRecognition'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 46 | `'@/lib/thresholdCalibration'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 58 | `''` | string literal | icon | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 58 | `false` | boolean flag | icon | Inline state/default flag; changing can flip behavior. |
-| 80 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 93 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 94 | `'unavailable'` | string literal | unavailable | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 98 | `'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 100 | `'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 101 | `'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 103 | `'Granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 103 | `'Unavailable'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 103 | `'denied'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 103 | `'Denied'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 103 | `'Needs setup'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 109 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 121 | `'Aggression score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 122 | `'Rates hard acceleration, harsh braking, aggressive overtakes, speed creep, and jerk. Higher means calmer, more controlled driving.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 125 | `'Defensive score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 126 | `'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 129 | `'Jerk score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 130 | `'Measures how abruptly acceleration changes. Low jerk means smoother throttle and braking; high jerk often feels jumpy or uncomfortable.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 133 | `'Speed variability index'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 134 | `'Shows how much your speed swings during the trip. Lower variability usually means smoother traffic flow and better anticipation.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 137 | `'Fuel band score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 138 | `'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 141 | `'Following score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 142 | `'Looks for repeated deceleration patterns that suggest following traffic too closely or reacting late to vehicles ahead.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 145 | `'Focus score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 146 | `'Uses Android Usage Access when enabled, plus GPS behaviour signals as a fallback, to estimate distraction during trips.'` | string constant/key | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 149 | `'Intersection score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 150 | `'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 153 | `'Drowsy risk'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 154 | `'Flags longer highway sections with growing heading drift or weaker control patterns that can suggest fatigue.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 157 | `'Parking approach'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 158 | `'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 162 | `50` | numeric literal | PRIVACY_RADIUS_MIN_M | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 163 | `1000` | numeric literal | PRIVACY_RADIUS_MAX_M | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 164 | `180` | numeric literal | PRIVACY_RADIUS_DEFAULT_M | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 167 | `''` | string literal | raw | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 169 | `false` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
-| 169 | ``Enter a radius between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.`` | string constant/key | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `'@/lib/dataBackup'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 51 | `'@/lib/thresholdCalibration'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 63 | `''` | string literal | icon | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 63 | `false` | boolean flag | icon | Inline state/default flag; changing can flip behavior. |
+| 85 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 98 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 99 | `'unavailable'` | string literal | unavailable | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 103 | `'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 105 | `'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 106 | `'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 108 | `'Granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 108 | `'Unavailable'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 108 | `'denied'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 108 | `'Denied'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 108 | `'Needs setup'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 114 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 126 | `'Aggression score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 127 | `'Rates hard acceleration, harsh braking, aggressive overtakes, speed creep, and jerk. Higher means calmer, more controlled driving.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 130 | `'Defensive score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 131 | `'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 134 | `'Jerk score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 135 | `'Measures how abruptly acceleration changes. Low jerk means smoother throttle and braking; high jerk often feels jumpy or uncomfortable.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 138 | `'Speed variability index'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 139 | `'Shows how much your speed swings during the trip. Lower variability usually means smoother traffic flow and better anticipation.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 142 | `'Fuel band score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 143 | `'Checks how much driving happened in efficient cruising ranges versus stop-and-go, very slow crawling, or high-speed driving.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 146 | `'Following score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 147 | `'Looks for repeated deceleration patterns that suggest following traffic too closely or reacting late to vehicles ahead.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 150 | `'Focus score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 151 | `'Uses Android Usage Access when enabled, plus GPS behaviour signals as a fallback, to estimate distraction during trips.'` | string constant/key | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 154 | `'Intersection score'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 155 | `'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 158 | `'Drowsy risk'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 159 | `'Flags longer highway sections with growing heading drift or weaker control patterns that can suggest fatigue.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 162 | `'Parking approach'` | string literal | term | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 163 | `'Scores the final low-speed part of a trip for smooth deceleration instead of abrupt stopping near the destination.'` | string literal | definition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 167 | `50` | numeric literal | PRIVACY_RADIUS_MIN_M | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 168 | `1000` | numeric literal | PRIVACY_RADIUS_MAX_M | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 169 | `180` | numeric literal | PRIVACY_RADIUS_DEFAULT_M | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 172 | `''` | string literal | raw | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 174 | `false` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
-| 174 | `'Radius must be a number in meters.'` | string literal | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 178 | `false` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
-| 178 | ``Radius must be between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.`` | string constant/key | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 181 | `true` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
-| 181 | `''` | string literal | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 185 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 189 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 191 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 193 | `'Private place'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 195 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 197 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 198 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 199 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 174 | ``Enter a radius between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.`` | string constant/key | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 179 | `false` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
+| 179 | `'Radius must be a number in meters.'` | string literal | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 183 | `false` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
+| 183 | ``Radius must be between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.`` | string constant/key | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 186 | `true` | boolean flag | valid | Inline state/default flag; changing can flip behavior. |
+| 186 | `''` | string literal | valid | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 190 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 194 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 196 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 198 | `'Private place'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 200 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 206 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 209 | `'settings-trips'` | string literal | queryKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 210 | `'-start_time'` | string literal | queryFn | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 214 | `'settings-vehicles'` | string literal | queryKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 215 | `'-created_date'` | string literal | queryFn | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 215 | `200` | numeric literal | queryFn | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 222 | `'Setting not saved'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 223 | `0` | numeric literal | description | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 230 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 231 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 231 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 237 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 237 | `''` | string literal | map_matching_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 240 | `'undefined'` | string literal | ok | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 241 | `'Snap route to roads needs an OSRM link. Road Sage can use the public OSRM demo now. Sampled GPS points are sent there only when you tap Get Road Data on a trip. Continue?'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 244 | `true` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 248 | `'undefined'` | string literal | ok | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 249 | `'The public OSRM demo server has no app privacy contract or uptime guarantee. If you use it, sampled route GPS points are sent to router.project-osrm.org only when you tap Get Road Data on a trip. Continue?'` | string constant/key | project | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 252 | `true` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 257 | `false` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
-| 260 | `'undefined'` | string literal | ok | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 261 | `'Automatic road data sends route-area boxes to OpenStreetMap and the trip midpoint/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'` | string constant/key | route | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 264 | `true` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
-| 275 | `0.12` | numeric literal | parsed | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 275 | `'Very sensitive'` | string literal | parsed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 276 | `0.12` | numeric literal | parsed | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 276 | `'Very lenient'` | string literal | parsed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 287 | `'Voice test sent.'` | string literal | browser | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 287 | `'Speech output is unavailable in this browser/WebView.'` | string literal | browser | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 288 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 288 | `3000` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 292 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 293 | `'-start_time'` | string literal | trips | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 297 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 305 | `0` | numeric literal | count | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 307 | ``${count} completed trips queued for re-score.`` | string literal | re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 307 | `'Calibration applied.'` | string literal | re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 309 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 310 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 310 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 317 | ``${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`` | string literal | count | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 318 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 318 | `5000` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 327 | `true` | boolean flag | wantsNotifications | Inline state/default flag; changing can flip behavior. |
-| 328 | `'notifications_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 328 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 334 | `'Notification permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 335 | `'notifications'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 355 | `'Privacy and local data'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 356 | `'Road Sage stores trip, route, score, vehicle, and settings data locally on this device. It does not upload trips, sell data, or use ads or analytics.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 357 | `9000` | numeric literal | duration | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 361 | `'Auto tracking could not be turned off'` | string literal | stopNativeAutoTrackingSafely | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 362 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 367 | `true` | boolean flag | stopped | Inline state/default flag; changing can flip behavior. |
-| 368 | `'Android did not confirm that native auto tracking stopped.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 370 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 374 | `'Check Android permissions and try again.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 378 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 387 | `'Auto tracking could not be paused'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 388 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
-| 392 | `'background_auto'` | string literal | tracking_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 397 | `true` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
-| 399 | `'Background tracking could not resume'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 400 | `'Check Location, Physical Activity, Notifications, and Battery Optimization settings.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 409 | `'manual'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 410 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
-| 413 | `'manual'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 414 | `'Manual mode could not stop background tracking'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 417 | `'manual'` | string literal | tracking_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 418 | `false` | boolean flag | auto_tracking_enabled | Inline state/default flag; changing can flip behavior. |
-| 419 | `false` | boolean flag | background_tracking_enabled | Inline state/default flag; changing can flip behavior. |
-| 420 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
-| 428 | `'Location permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 429 | `'foregroundLocation'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 439 | `'Activity permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 440 | `'activityRecognition'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 447 | `'background_auto'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 451 | `'Background location needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 452 | `'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 454 | `9000` | numeric literal | duration | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 465 | `'Background tracking could not start'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 466 | `'Check Location, Physical Activity, Notifications, and Battery Optimization settings.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 475 | `'background_auto'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 476 | `'Background tracking could not be turned off'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 481 | `'manual'` | string literal | auto_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 482 | `'background_auto'` | string literal | background_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 483 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
-| 502 | `false` | boolean flag | refreshSettingsFromNative | Inline state/default flag; changing can flip behavior. |
-| 509 | `'background_auto'` | string literal | tracking_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 530 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 533 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 538 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 546 | `'Privacy zone radius needs fixing'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 557 | `'No location available'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 558 | `'Try again after Road Sage has a current or parked location.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 563 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 571 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 572 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 572 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 578 | `'Current location'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 581 | `'Could not get current location'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 582 | `'Check location permission and GPS availability.'` | string constant/key | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 601 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 602 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 602 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 610 | `'Privacy zone radius needs fixing'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 626 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 627 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 627 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 634 | `true` | boolean flag | restartIfReady | Inline state/default flag; changing can flip behavior. |
-| 638 | `'visible'` | string literal | visibilityState | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 640 | `2000` | numeric literal | interval | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 641 | `'focus'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 642 | `'visibilitychange'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 645 | `'focus'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 646 | `'visibilitychange'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 656 | `'Battery settings unavailable'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 657 | `'Open Android Settings > Apps > Road Sage > Battery and choose Unrestricted.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 668 | `'Motion permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 669 | `'motionSensors'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 676 | `'Opening Bluetooth chooser...'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 679 | `'OBD-II adapter'` | string constant/key | name | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 680 | ``${name} connected for this session.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 680 | ``${name} selected. Could not open a GATT session.`` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 681 | `true` | boolean flag | obd_bluetooth_enabled | Inline state/default flag; changing can flip behavior. |
-| 684 | `'Could not connect to the OBD-II adapter.'` | string constant/key | OBD | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 690 | `'Delete ALL trips? This cannot be undone.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 697 | `'Trips deleted'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 698 | `'All local trip history was removed from this device.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 703 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 705 | ``road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`` | string constant/key | result | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 707 | `'Export saved'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 709 | ``${result.filename} was saved to Downloads.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 710 | ``${result?.filename \|\| 'Trip CSV'} is downloading.`` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 721 | `'Backup saved'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 723 | ``Could not save to Downloads. ${result?.filename \|\| 'Road Sage backup'} is downloading in the browser instead.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 725 | ``${result.filename} was saved to Downloads.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 726 | ``${result?.filename \|\| 'Road Sage backup'} is downloading.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 732 | `0` | numeric literal | file | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 733 | `''` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 735 | `'Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 743 | `'Import complete'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 745 | ``${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 747 | ``${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`` | string literal | privacy_zones_need_reconfiguration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 748 | ``${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters \|\| 0} saved filters merged.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 753 | `'Could not import backup'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 754 | `'Make sure the file is a Road Sage backup JSON file.'` | string constant/key | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 760 | `'manual'` | string literal | effectiveTrackingMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 763 | `'granted'` | string literal | locationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 763 | `'granted'` | string literal | locationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 764 | `'granted'` | string literal | notificationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 764 | `'granted'` | string literal | notificationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 767 | `'Tracking mode'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 767 | `'Tracking'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 767 | `'settings-tracking'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 767 | `'Manual, foreground auto-detect, background auto, and pause controls.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 767 | `'manual auto detect background pause delayed start not starting drive signal gps movement'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 768 | `'Android permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 768 | `'Android Permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 768 | `'settings-android-permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 768 | `'Location, background location, activity, battery, and native auto service setup.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 768 | `'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 769 | `'Feature permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 769 | `'Feature Permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 769 | `'settings-feature-permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 769 | `'See which features are blocked by missing permissions.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 769 | `'blocked unavailable permission feature status'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 770 | `'Economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 770 | `'Economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 770 | `'settings-economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 770 | `'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 770 | `'co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 771 | `'Notifications'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 771 | `'Notifications'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 771 | `'settings-notifications'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 771 | `'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 771 | `'quiet hours trip summary coaching maintenance nudges alert'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 772 | `'Driving goals'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 772 | `'Driving Goals'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 772 | `'settings-driving-goals'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 772 | `'Weekly score and behavior targets used by dashboard goals.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 772 | `'weekly score harsh brake speeding night goals target'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 773 | `'Detection thresholds'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 773 | `'Detection Thresholds'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 773 | `'settings-detection-thresholds'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 773 | `'Sensitivity, calibration, re-score, and event feedback behavior.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 773 | `'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 774 | `'Advanced models'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 774 | `'Advanced Models'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 774 | `'settings-advanced-models'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 774 | `'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash signals.'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 774 | `'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 775 | `'Phone use detection'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 775 | `'Phone Use Detection'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 775 | `'settings-phone-use'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 775 | `'Phone distraction detection, map display, and scoring impact.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 775 | `'distraction usage access phone score map foreground app'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'Speed warning'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'Speed Warning'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'settings-speed-warning'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'Live speed warnings and OpenStreetMap limit margin.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'speed limits overpass osm warning margin over limit'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 777 | `'Privacy zones and backup'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 777 | `'Privacy & Data'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 777 | `'settings-privacy-data'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 777 | `'Privacy zones, backup, import, export, saved filters, and feedback data.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 777 | `'privacy export import backup retention delete data saved filters event feedback'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 779 | `0` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 780 | ``${item.label} ${item.section} ${item.detail} ${item.keywords}`` | string literal | haystack | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 783 | `6` | numeric literal | 6 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 783 | `0` | numeric literal | 6 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 784 | `4` | numeric literal | 4 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 784 | `0` | numeric literal | 4 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 785 | `1` | numeric literal | 1 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 785 | `0` | numeric literal | 1 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 786 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 788 | `0` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 788 | `0` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 788 | `6` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 790 | `'smooth'` | string literal | behavior | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 790 | `'start'` | string literal | behavior | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 791 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 804 | `0` | numeric literal | initial | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 804 | `0.8` | numeric literal | initial | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 805 | `1` | numeric literal | animate | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 805 | `1` | numeric literal | animate | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 806 | `0` | numeric literal | exit | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 821 | `"Search settings, permissions, auto start, map, feedback..."` | string literal | placeholder | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 826 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 827 | `''` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 828 | `"Clear settings search"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 837 | `0` | numeric literal | length | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 839 | ``${item.section}-${item.label}`` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 840 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 858 | `"settings-tracking"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 864 | `'manual'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 864 | `'Manual Only'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 864 | `'Start/stop trips manually'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 865 | `'auto_detect'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 865 | `'Auto-Detect'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 865 | `'Detects driving when app is open'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 866 | `'background_auto'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 866 | `'Background Auto'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 866 | `'⚠️ Uses more battery'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 872 | `'border-primary bg-primary/5'` | string literal | effectiveTrackingMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 872 | `'border-border hover:border-primary/40'` | string literal | effectiveTrackingMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 887 | `"Pause All Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 888 | `"Temporarily disable trip detection"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 894 | `"Auto-Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 895 | `'Paused until Pause All Tracking is turned off'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 895 | `'Start only after you enable it and driving signals are strong'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 899 | `'auto_detect'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 902 | `'Auto tracking could not be turned off'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 904 | `false` | boolean flag | auto_tracking_enabled | Inline state/default flag; changing can flip behavior. |
-| 904 | `'manual'` | string literal | auto_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 909 | `"Background Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 910 | `'Paused until Pause All Tracking is turned off'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 910 | `'Native background auto tracking is running'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 910 | `'Keeps recording after the app is minimized with a persistent notification'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 914 | `'background_auto'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 917 | `'Background tracking could not be turned off'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 919 | `false` | boolean flag | background_tracking_enabled | Inline state/default flag; changing can flip behavior. |
-| 919 | `false` | boolean flag | background_tracking_enabled | Inline state/default flag; changing can flip behavior. |
-| 919 | `'manual'` | string literal | background_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 926 | `"settings-android-permissions"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 931 | `"Native Auto Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 932 | `'Android service is armed and waiting for driving motion'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 932 | `'Android service is not running'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 934 | `'granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 934 | `'not_requested'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 938 | `'foregroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 938 | `'Location'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 938 | `'foregroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 939 | `'backgroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 939 | `'Background Location'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 939 | `'backgroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 940 | `'activityRecognition'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 940 | `'Physical Activity'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 940 | `'activityRecognition'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 941 | `'notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 941 | `'Notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 941 | `'notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 942 | `'motionSensors'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 942 | `'Motion Sensors'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 942 | `'motionSensors'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 943 | `'bluetooth'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 943 | `'Bluetooth / Nearby Devices'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 943 | `'bluetooth'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 944 | `'phoneUsageAccess'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 944 | `'Phone Usage Access'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 944 | `'phoneUsageAccess'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 949 | `'granted'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 966 | `"Battery Optimization"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 967 | `'Battery optimization is already unrestricted for Road Sage'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 967 | `'Open Android battery settings and allow unrestricted background activity'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 972 | `'granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 972 | `'not_requested'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 980 | `"settings-feature-permissions"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 984 | `'Trip history, search, tags, notes, favorites, calendar, weekly summary, goals, costs'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 985 | `'No new Android permission prompt. These features use local trips, vehicles, and settings already stored on this device.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 986 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 989 | `'Route comparison, commute detection, road types, parking reminder, risk hotspots'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 990 | `'Uses trip GPS data. Android asks for Location when you start tracking, use current location, or enable auto tracking.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 995 | `'Maintenance reminders and weekly driver digests'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 996 | `'In-app dashboards need no prompt. Android asks for Notifications only if reminder notifications are enabled.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1001 | `'Background auto tracking for richer repeated-route history'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1002 | `'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1007 | `'Sensor fusion, crash detection, phone movement, and incident check-in'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1008 | `'Uses GPS plus device motion and Android activity context. Motion usually has no Android prompt, but this row will request it on platforms that require one.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1013 | `'Real speed limits, weather, optional OSRM matching, and offline route previews'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1014 | `'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1015 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1018 | `'Live voice alerts and AI driving coach summaries'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1019 | `'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1020 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1023 | `'OBD-II Bluetooth diagnostics'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1024 | `'Optional. Pairing a compatible BLE adapter may trigger Android Nearby Devices/Bluetooth permission and the Bluetooth chooser.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1032 | `'granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1050 | `"settings-appearance"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1056 | `'light'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1056 | `'Light'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1057 | `'dark'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1057 | `'Dark'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1058 | `'system'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1058 | `'System'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1064 | `'border-primary bg-primary/5 text-primary'` | string literal | dark_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1064 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | dark_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1078 | `'metric'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1078 | `'Metric (km/h)'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1079 | `'imperial'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1079 | `'Imperial (mph)'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1085 | `'border-primary bg-primary/5 text-primary'` | string literal | units | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1085 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | units | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1096 | `"settings-economics"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1100 | `"Average vehicle CO2 baseline"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1101 | `"kg CO2 per 100 km used for saved-vs-average comparisons"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1104 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1105 | `"0"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1106 | `"50"` | string literal | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1107 | `"0.1"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1108 | `12` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1115 | `"Default EV efficiency"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1116 | `"kWh per 100 km used when an electric vehicle has no profile value"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1119 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1120 | `"5"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1121 | `"40"` | string literal | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1122 | `"0.1"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1123 | `18` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1130 | `"Grid CO2 intensity"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1131 | `"kg CO2 per kWh used for electric-vehicle trip emissions"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1134 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1135 | `"0"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1136 | `"2"` | string literal | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1137 | `"0.001"` | string constant/key | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1138 | `0.04` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1145 | `"Tree-year equivalent"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1146 | `"kg CO2 per tree per year used in carbon impact summaries"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1149 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1150 | `"1"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1151 | `"100"` | string constant/key | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1152 | `"0.1"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1153 | `21` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1161 | `"settings-notifications"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1165 | `"Enable all notifications"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1166 | `"Disabling this turns off all notification groups below"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1168 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1173 | `"Quiet hours"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1173 | `"Suppress non-safety notifications during this window"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1174 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1174 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1180 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1181 | `'22:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1182 | `true` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1190 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1191 | `'07:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1192 | `true` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1204 | `'notif_safety_alerts_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1204 | `'Safety alerts channel'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1204 | `'Urgent warnings while driving'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1205 | `'notif_phone_use_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1205 | `'Phone use warning'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1205 | `'Immediate warning when phone-use patterns appear'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1206 | `'notif_drowsy_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1206 | `'Drowsy / fatigue warning'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1206 | `'Fatigue and long-drive break alerts'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1207 | `'notif_speeding_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1207 | `'Speeding alert'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1207 | `'Sustained speeding warnings'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1208 | `'danger_zone_alerts_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1208 | `'Danger zone proximity alerts'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1208 | `'Warn when approaching your historical risk hotspots'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1209 | `'live_coaching_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1209 | `'Live coaching overlay'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1209 | `'Show real-time coaching feedback during active trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1212 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1212 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1212 | `'notif_safety_alerts_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1212 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1220 | `'trip_start_notification'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1220 | `'Trip started'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1220 | `'Notify when a trip begins'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1221 | `'trip_end_notification'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1221 | `'Trip ended'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1221 | `'Basic summary when trip finishes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1222 | `'notif_post_trip_summary_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1222 | `'Post-trip smart summary'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1222 | `'One contextual notification after a notable trip'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1223 | `'notif_post_trip_score_change'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1223 | `'Score improvements and declines'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1223 | `'Notify when a score moves meaningfully'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1224 | `'notif_post_trip_phone_use'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1224 | `'Phone use report'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1224 | `'Post-trip report for high phone-use risk'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1225 | `'notif_post_trip_fuel_saving'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1225 | `'Eco fuel savings'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1225 | `'Call out efficient trips with fuel savings'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1228 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1228 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1228 | `'notif_post_trip_'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1228 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1228 | `'notif_post_trip_summary_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1237 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1238 | `0` | numeric literal | min | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1239 | `100` | numeric literal | max | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1240 | `5` | numeric literal | step | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1241 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1252 | `'notif_coaching_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1252 | `'Coaching notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1252 | `'Driving improvement tips and pattern changes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1253 | `'achievement_notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1253 | `'Achievements'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1253 | `'Notify when an achievement unlocks'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1254 | `'notif_streak_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1254 | `'Streak milestones'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1254 | `'Smooth-driving streak notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1255 | `'notif_weekly_pattern_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1255 | `'Weekly driving summary'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1255 | `'Monday at 8:30am'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1256 | `'weekly_report_notification'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1256 | `'Classic weekly report'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1256 | `'Legacy Tuesday report'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1257 | `'notif_style_shift_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1257 | `'Driving style shift alerts'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1257 | `'Notify when your style changes across recent trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1258 | `'safe_driving_reminder'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1258 | `'Safe driving tips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1258 | `'Occasional driving reminders'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1261 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1261 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1261 | `'notif_coaching_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1261 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1261 | `'notif_'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1268 | `"Maintenance reminders"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1268 | `"Vehicle service due and soon notifications"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1269 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1269 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1271 | `"No-trip nudge"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1271 | `"Remind after a period with no recorded trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1272 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1272 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1274 | `"Nudge after"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1274 | `"Days without a completed trip"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1276 | `7` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1277 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1281 | `3` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1281 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1281 | `7` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1281 | `14` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1289 | `"settings-driving-goals"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1295 | `'weekly_goal_harsh_brakes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1295 | `'Max harsh brakes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1295 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1295 | `20` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1295 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1296 | `'weekly_goal_speeding_events'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1296 | `'Max speeding events'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1296 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1296 | `20` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1296 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1297 | `'weekly_goal_min_avg_score'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1297 | `'Minimum average score'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1297 | `50` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1297 | `100` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1297 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1298 | `'weekly_goal_max_night_km'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1298 | `'Max night km'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1298 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1298 | `100` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1298 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1299 | `'weekly_goal_max_night_trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1299 | `'Max night trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1299 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1299 | `14` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1299 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1307 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1320 | `"settings-night-window"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1327 | `'sunset'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1327 | `'Sunset'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1327 | `'GPS-based'` | string constant/key | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1328 | `'custom'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1328 | `'Custom'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1328 | ``${cfg.night_start_time \|\| '22:00'} to ${cfg.night_end_time \|\| '06:00'}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1334 | `'border-primary bg-primary/5 text-primary'` | string literal | night_detection_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1334 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | night_detection_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1355 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1356 | `'22:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1357 | `'custom'` | string literal | disabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1365 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1366 | `'06:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1367 | `'custom'` | string literal | disabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1375 | `'sunset'` | string literal | night_detection_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1383 | `'night_sunset_offset_minutes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1383 | `'Sunset offset'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1383 | `-120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1383 | `120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1384 | `'night_sunrise_offset_minutes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1384 | `'Sunrise offset'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1384 | `-120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1384 | `120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1392 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1395 | `15` | numeric literal | step | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1396 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1408 | `"settings-detection-thresholds"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1411 | `"Driving Pattern Definitions"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1412 | `"Explain aggression, defensive, jerk, focus, fuel band, and related trip metrics"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1413 | `true` | boolean flag | onClick | Inline state/default flag; changing can flip behavior. |
-| 1422 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1425 | `'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1425 | `'bg-secondary text-muted-foreground'` | string literal | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1429 | `'Editing'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1429 | `'Locked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1451 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1456 | `'Analysing...'` | string literal | Re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1456 | `'Re-analyze'` | string literal | Re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1456 | `'Analyse my driving'` | string literal | Re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1475 | `0` | numeric literal | total | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1477 | `1` | numeric literal | total | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1477 | `''` | string literal | total | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1477 | `'s'` | string literal | total | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1503 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1514 | `'threshold_harsh_brake_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1514 | `'Harsh Braking'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1514 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1514 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1514 | `8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1514 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1515 | `'threshold_rapid_accel_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1515 | `'Rapid Acceleration'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1515 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1515 | `1.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1515 | `6` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1515 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1516 | `'threshold_tailgate_decel_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1516 | `'Tailgate Decel'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1516 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1516 | `1.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1516 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1516 | `0.25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1517 | `'threshold_sharp_turn_g_low'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1517 | `'Sharp Turn Low'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1517 | `'g'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1517 | `0.2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1517 | `0.6` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1517 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1518 | `'threshold_sharp_turn_g_medium'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1518 | `'Sharp Turn Medium'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1518 | `'g'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1518 | `0.25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1518 | `0.8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1518 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1519 | `'threshold_sharp_turn_g_high'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1519 | `'Sharp Turn High'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1519 | `'g'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1519 | `0.35` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1519 | `1.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1519 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1520 | `'threshold_speeding_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1520 | `'Speeding (fallback)'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1520 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1520 | `80` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1520 | `160` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1520 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1521 | `'threshold_idle_seconds'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1521 | `'Idle Event'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1521 | `'s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1521 | `90` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1521 | `300` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1521 | `30` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1522 | `'min_speed_harsh_brake_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1522 | `'Harsh Brake Min Speed'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1522 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1522 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1522 | `60` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1522 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1523 | `'min_speed_rapid_accel_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1523 | `'Rapid Accel Min Speed'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1523 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1523 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1523 | `40` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1523 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1538 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1548 | `"Advanced Safety Detection"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1549 | `false` | boolean flag | sublabel | Inline state/default flag; changing can flip behavior. |
-| 1549 | `'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1549 | `'Extra safety signatures are included in detection and scoring'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1552 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1558 | `'threshold_near_miss_brake_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1558 | `'Near-Miss Brake Threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1558 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1558 | `2.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1558 | `5.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1558 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1558 | `'How much braking force is needed before Road Sage considers a combined brake-and-turn a near miss.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1559 | `'threshold_near_miss_turn_degs'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1559 | `'Near-Miss Turn Threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1559 | `'deg/s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1559 | `15` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1559 | `60` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1559 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1559 | `'How quickly heading must change during braking to count as a near-miss manoeuvre.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1560 | `'threshold_drowsy_heading_std'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1560 | `'Drowsy Heading Drift'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1560 | `'degrees'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1560 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1560 | `15` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1560 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1560 | `'How much highway heading drift is allowed before a fatigue warning can trigger.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1561 | `'threshold_phone_proxy_oscillations'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1561 | `'Phone Proxy Sensitivity'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1561 | `'oscillations'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1561 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1561 | `6` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1561 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1561 | `'How many left-right heading corrections are needed before distraction risk is flagged.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1562 | `'threshold_speed_creep_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1562 | `'Speed Creep Alert'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1562 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1562 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1562 | `25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1562 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1562 | `'How much speed can rise on straight highway sections before Road Sage logs speed creep.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1563 | `'threshold_overtake_accel_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1563 | `'Overtake Detection Sensitivity'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1563 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1563 | `2.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1563 | `5.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1563 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1563 | `'How hard acceleration must be to start the aggressive-overtake signature.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1569 | `false` | boolean flag | advanced_safety_detection_enabled | Inline state/default flag; changing can flip behavior. |
-| 1578 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1579 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1591 | `"settings-advanced-models"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1595 | `"Sensor fusion model"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1596 | `'Combine GPS, device motion, gyroscope, and Android activity context'` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1599 | `'granted'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1611 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1619 | `"Crash / incident detection"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1620 | `"Detect impact-like motion followed by little movement"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1623 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1625 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1630 | `"Emergency workflow"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1631 | `"Optional local check-in notice after a possible incident; no SMS or paid emergency service is used"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1634 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1636 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1641 | `"Snap route to roads (OSRM)"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1642 | `"Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1645 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1652 | `''` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1654 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1655 | `"https://your-osrm.example"` | inline URL | placeholder | External service endpoint or help text; changing may redirect data or break integration. |
-| 1660 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1662 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1668 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1669 | `false` | boolean flag | onClick | Inline state/default flag; changing can flip behavior. |
-| 1669 | `''` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1670 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1678 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 1679 | `'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` | string constant/key | Off | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1681 | `'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'` | string constant/key | On | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1682 | `'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'` | string constant/key | link | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1687 | `"Predictive route risk"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1688 | `"Estimate safest route window from history, danger zones, and context"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1691 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1697 | `"Live voice alerts"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1698 | `"Speaks during active trips for live coaching, phone use, speeding, drowsy, long-drive, danger-zone, and incident alerts"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1702 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1712 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1724 | `"OBD-II Bluetooth"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1725 | `'BLE OBD-II parsing is available for compatible adapters'` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1739 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1753 | `"settings-phone-use"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1757 | `"Detect phone use while driving"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1758 | `"Use Android Usage Access when allowed, with GPS behaviour signals as a fallback"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1761 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1767 | `"Phone use live alert"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1768 | `"Send an immediate warning when phone-use patterns are detected"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1771 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1773 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1780 | `'low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1780 | `'Low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1780 | `'Fewer false positives'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1781 | `'medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1781 | `'Medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1781 | `'Recommended'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1782 | `'high'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1782 | `'High'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1782 | `'More sensitive'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1786 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1788 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1790 | `'medium'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1791 | `'border-primary bg-primary/5 text-primary'` | string literal | border | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1792 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | hover | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'low'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'0.60'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'high'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'0.25'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1801 | `'0.40'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1804 | `"Show on trip map"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1804 | `"Mark suspected phone-use windows on route maps"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1806 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1808 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1811 | `"Include in trip score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1811 | `"Apply phone-use penalties to the Safety score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1813 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1815 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1829 | `'Editable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1829 | `'Locked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1834 | `'phone_micro_steer_count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1834 | `'Micro-steer count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1834 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1834 | `8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1834 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1834 | `'turns'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1835 | `'phone_creep_rate_kmh_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1835 | `'Speed creep rate'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1835 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1835 | `4` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1835 | `0.25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1835 | `'km/h/s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1836 | `'phone_lane_drift_deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1836 | `'Lane drift angle'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1836 | `3` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1836 | `18` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1836 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1836 | `'deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1837 | `'phone_coupling_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1837 | `'Coupling threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1837 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1837 | `0.4` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1837 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1837 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1838 | `'phone_confidence_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1838 | `'Confidence threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1838 | `0.15` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1838 | `0.8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1838 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1838 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'phone_min_window_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'Minimum window'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1839 | `12` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1839 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1839 | `'s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1847 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1852 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1864 | `"settings-speed-warning"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1867 | `"Live Speed Warning"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1868 | `false` | boolean flag | sublabel | Inline state/default flag; changing can flip behavior. |
-| 1868 | `'Dashboard speed warnings are disabled'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1868 | `'Warn during a trip when speed exceeds the fallback limit plus margin'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1871 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1877 | `"Get posted speed limits"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1878 | `"When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1881 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1887 | `"Get trip weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1888 | `"When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1891 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1897 | `"Automatically get speed limits + weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1898 | `"Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1901 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1910 | `false` | boolean flag | speed_limit_lookup_enabled | Inline state/default flag; changing can flip behavior. |
-| 1911 | `'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` | string constant/key | GPS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1912 | `'sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits.'` | string literal | route | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1916 | `false` | boolean flag | weather_context_enabled | Inline state/default flag; changing can flip behavior. |
-| 1917 | `'skips Open-Meteo; scores do not get weather adjustment.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1918 | `'sends trip midpoint and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1922 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 1923 | `'skips OSRM; map/playback keep the original GPS line.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1925 | `'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1926 | `'will be skipped until an OSRM endpoint is added.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1930 | `true` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
-| 1931 | `'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` | string constant/key | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1932 | `'new saved trips stay local for map/weather services until the user taps Get Road Data.'` | string literal | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1942 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1942 | `5` | numeric literal | type | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1942 | `30` | numeric literal | type | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1942 | `5` | numeric literal | type | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1943 | `5` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1944 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1949 | `5` | numeric literal | span | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1950 | `30` | numeric literal | span | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 1955 | `"settings-privacy-data"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1959 | `"Privacy Policy"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1960 | `"All data is stored locally on your device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1981 | `"Home, work, school"` | string literal | placeholder | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1984 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1985 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1988 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1992 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2000 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2005 | `"Privacy zone radius in meters"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2009 | `50` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2009 | `1000` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2017 | `50` | numeric literal | 50 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2017 | `-1000` | numeric literal | 50 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2021 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2029 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2030 | `'Parked location'` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2038 | `0` | numeric literal | length | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2048 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2049 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2052 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2066 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2071 | ``Radius in meters for ${zone.label}`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2074 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2077 | ``Delete ${zone.label} privacy zone`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2094 | `"Export All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2095 | `"Download as CSV file"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2102 | `"Export Full Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2103 | `"JSON with trips, GPS route points, events, vehicles, and settings"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2110 | `"Import Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2111 | `"Restore a Road Sage JSON backup into local storage"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2118 | `"Data Retention"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2119 | `"Keep local trip history on this device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2126 | `90` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2126 | `90` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2127 | `365` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2127 | `1` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2128 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2133 | `"Delete All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2134 | `"Permanently removes all trip data"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2145 | `"file"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2146 | `"application/json,.json"` | string literal | accept | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2173 | `1.0` | numeric literal | div | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
-| 2173 | `0` | numeric literal | div | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 202 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 203 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 204 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 205 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 211 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 214 | `'settings-trips'` | string literal | queryKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 215 | `'-start_time'` | string literal | queryFn | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 219 | `'settings-vehicles'` | string literal | queryKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 220 | `'-created_date'` | string literal | queryFn | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 220 | `200` | numeric literal | queryFn | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 227 | `'Setting not saved'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 228 | `0` | numeric literal | description | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 235 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 236 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 236 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 242 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 242 | `''` | string literal | map_matching_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 245 | `'undefined'` | string literal | ok | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 246 | `'Snap route to roads needs an OSRM link. Road Sage can use the public OSRM demo now. Sampled GPS points are sent there only when you tap Get Road Data on a trip. Continue?'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 249 | `true` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 253 | `'undefined'` | string literal | ok | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 254 | `'The public OSRM demo server has no app privacy contract or uptime guarantee. If you use it, sampled route GPS points are sent to router.project-osrm.org only when you tap Get Road Data on a trip. Continue?'` | string constant/key | project | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 257 | `true` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 262 | `false` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
+| 265 | `'undefined'` | string literal | ok | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 266 | `'Automatic road data sends route-area boxes to OpenStreetMap and the trip midpoint/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'` | string constant/key | route | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 269 | `true` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
+| 280 | `0.12` | numeric literal | parsed | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 280 | `'Very sensitive'` | string literal | parsed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 281 | `0.12` | numeric literal | parsed | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 281 | `'Very lenient'` | string literal | parsed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 292 | `'Voice test sent.'` | string literal | browser | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 292 | `'Speech output is unavailable in this browser/WebView.'` | string literal | browser | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 293 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 293 | `3000` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 297 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 298 | `'-start_time'` | string literal | trips | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 302 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 310 | `0` | numeric literal | count | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 312 | ``${count} completed trips queued for re-score.`` | string literal | re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 312 | `'Calibration applied.'` | string literal | re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 314 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 315 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 315 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 322 | ``${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`` | string literal | count | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 323 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 323 | `5000` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 332 | `true` | boolean flag | wantsNotifications | Inline state/default flag; changing can flip behavior. |
+| 333 | `'notifications_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 333 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 339 | `'Notification permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 340 | `'notifications'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 360 | `'Privacy and local data'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 361 | `'Road Sage stores trip, route, score, vehicle, and settings data locally on this device. It does not upload trips, sell data, or use ads or analytics.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 362 | `9000` | numeric literal | duration | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 366 | `'Auto tracking could not be turned off'` | string literal | stopNativeAutoTrackingSafely | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 367 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 372 | `true` | boolean flag | stopped | Inline state/default flag; changing can flip behavior. |
+| 373 | `'Android did not confirm that native auto tracking stopped.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 375 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 379 | `'Check Android permissions and try again.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 383 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 392 | `'Auto tracking could not be paused'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 393 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
+| 397 | `'background_auto'` | string literal | tracking_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 402 | `true` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
+| 404 | `'Background tracking could not resume'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 405 | `'Check Location, Physical Activity, Notifications, and Battery Optimization settings.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 414 | `'manual'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 415 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
+| 418 | `'manual'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 419 | `'Manual mode could not stop background tracking'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 422 | `'manual'` | string literal | tracking_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 423 | `false` | boolean flag | auto_tracking_enabled | Inline state/default flag; changing can flip behavior. |
+| 424 | `false` | boolean flag | background_tracking_enabled | Inline state/default flag; changing can flip behavior. |
+| 425 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
+| 433 | `'Location permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 434 | `'foregroundLocation'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 444 | `'Activity permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 445 | `'activityRecognition'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 452 | `'background_auto'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 456 | `'Background location needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 457 | `'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 459 | `9000` | numeric literal | duration | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 470 | `'Background tracking could not start'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 471 | `'Check Location, Physical Activity, Notifications, and Battery Optimization settings.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 480 | `'background_auto'` | string literal | mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 481 | `'Background tracking could not be turned off'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 486 | `'manual'` | string literal | auto_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 487 | `'background_auto'` | string literal | background_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 488 | `false` | boolean flag | tracking_paused | Inline state/default flag; changing can flip behavior. |
+| 507 | `false` | boolean flag | refreshSettingsFromNative | Inline state/default flag; changing can flip behavior. |
+| 514 | `'background_auto'` | string literal | tracking_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 535 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 538 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 543 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 551 | `'Privacy zone radius needs fixing'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 562 | `'No location available'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 563 | `'Try again after Road Sage has a current or parked location.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 568 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 576 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 577 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 577 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 583 | `'Current location'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 586 | `'Could not get current location'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 587 | `'Check location permission and GPS availability.'` | string constant/key | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 606 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 607 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 607 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 615 | `'Privacy zone radius needs fixing'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 631 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 632 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 632 | `1500` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 639 | `true` | boolean flag | restartIfReady | Inline state/default flag; changing can flip behavior. |
+| 643 | `'visible'` | string literal | visibilityState | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 645 | `2000` | numeric literal | interval | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 646 | `'focus'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 647 | `'visibilitychange'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 650 | `'focus'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 651 | `'visibilitychange'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 661 | `'Battery settings unavailable'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 662 | `'Open Android Settings > Apps > Road Sage > Battery and choose Unrestricted.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 673 | `'Motion permission needed'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 674 | `'motionSensors'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 681 | `'Opening Bluetooth chooser...'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 684 | `'OBD-II adapter'` | string constant/key | name | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 685 | ``${name} connected for this session.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 685 | ``${name} selected. Could not open a GATT session.`` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 686 | `true` | boolean flag | obd_bluetooth_enabled | Inline state/default flag; changing can flip behavior. |
+| 689 | `'Could not connect to the OBD-II adapter.'` | string constant/key | OBD | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 695 | `'Delete ALL trips? This cannot be undone.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 702 | `'Trips deleted'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 703 | `'All local trip history was removed from this device.'` | string literal | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 708 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 710 | ``road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`` | string constant/key | result | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 712 | `'Export saved'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 714 | ``${result.filename} was saved to Downloads.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 715 | ``${result?.filename \|\| 'Trip CSV'} is downloading.`` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 726 | `'Backup saved'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 728 | ``Could not save to Downloads. ${result?.filename \|\| 'Road Sage backup'} is downloading in the browser instead.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 730 | ``${result.filename} was saved to Downloads.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 731 | ``${result?.filename \|\| 'Road Sage backup'} is downloading.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 737 | `0` | numeric literal | file | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 738 | `''` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 742 | `'Could not import backup'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 748 | `'Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 756 | `'Import complete'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 758 | ``${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 760 | ``${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`` | string literal | privacy_zones_need_reconfiguration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 761 | ``${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters \|\| 0} saved filters merged.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 766 | `'Could not import backup'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 767 | `'Make sure the file is a Road Sage backup JSON file.'` | string constant/key | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 773 | `'manual'` | string literal | effectiveTrackingMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 776 | `'granted'` | string literal | locationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 776 | `'granted'` | string literal | locationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 777 | `'granted'` | string literal | notificationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 777 | `'granted'` | string literal | notificationFeatureStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 780 | `'Tracking mode'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 780 | `'Tracking'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 780 | `'settings-tracking'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 780 | `'Manual, foreground auto-detect, background auto, and pause controls.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 780 | `'manual auto detect background pause delayed start not starting drive signal gps movement'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 781 | `'Android permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 781 | `'Android Permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 781 | `'settings-android-permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 781 | `'Location, background location, activity, battery, and native auto service setup.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 781 | `'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 782 | `'Feature permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 782 | `'Feature Permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 782 | `'settings-feature-permissions'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 782 | `'See which features are blocked by missing permissions.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 782 | `'blocked unavailable permission feature status'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 783 | `'Economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 783 | `'Economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 783 | `'settings-economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 783 | `'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 783 | `'co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 784 | `'Notifications'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 784 | `'Notifications'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 784 | `'settings-notifications'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 784 | `'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 784 | `'quiet hours trip summary coaching maintenance nudges alert'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 785 | `'Driving goals'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 785 | `'Driving Goals'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 785 | `'settings-driving-goals'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 785 | `'Weekly score and behavior targets used by dashboard goals.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 785 | `'weekly score harsh brake speeding night goals target'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 786 | `'Detection thresholds'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 786 | `'Detection Thresholds'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 786 | `'settings-detection-thresholds'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 786 | `'Sensitivity, calibration, re-score, and event feedback behavior.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 786 | `'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 787 | `'Advanced models'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 787 | `'Advanced Models'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 787 | `'settings-advanced-models'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 787 | `'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash signals.'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 787 | `'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 788 | `'Phone use detection'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 788 | `'Phone Use Detection'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 788 | `'settings-phone-use'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 788 | `'Phone distraction detection, map display, and scoring impact.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 788 | `'distraction usage access phone score map foreground app'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 789 | `'Speed warning'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 789 | `'Speed Warning'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 789 | `'settings-speed-warning'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 789 | `'Live speed warnings and OpenStreetMap limit margin.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 789 | `'speed limits overpass osm warning margin over limit'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `'Privacy zones and backup'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `'Privacy & Data'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `'settings-privacy-data'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `'Privacy zones, backup, import, export, saved filters, and feedback data.'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `'privacy export import backup retention delete data saved filters event feedback'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 792 | `0` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 793 | ``${item.label} ${item.section} ${item.detail} ${item.keywords}`` | string literal | haystack | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 796 | `6` | numeric literal | 6 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 796 | `0` | numeric literal | 6 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 797 | `4` | numeric literal | 4 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 797 | `0` | numeric literal | 4 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 798 | `1` | numeric literal | 1 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 798 | `0` | numeric literal | 1 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 799 | `0` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 801 | `0` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 801 | `0` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 801 | `6` | numeric literal | score | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 803 | `'smooth'` | string literal | behavior | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 803 | `'start'` | string literal | behavior | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 804 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 817 | `0` | numeric literal | initial | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 817 | `0.8` | numeric literal | initial | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 818 | `1` | numeric literal | animate | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 818 | `1` | numeric literal | animate | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 819 | `0` | numeric literal | exit | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 834 | `"Search settings, permissions, auto start, map, feedback..."` | string literal | placeholder | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 839 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 840 | `''` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 841 | `"Clear settings search"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 850 | `0` | numeric literal | length | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 852 | ``${item.section}-${item.label}`` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 853 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 871 | `"settings-tracking"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 877 | `'manual'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 877 | `'Manual Only'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 877 | `'Start/stop trips manually'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 878 | `'auto_detect'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 878 | `'Auto-Detect'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 878 | `'Detects driving when app is open'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 879 | `'background_auto'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 879 | `'Background Auto'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 879 | `'⚠️ Uses more battery'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 885 | `'border-primary bg-primary/5'` | string literal | effectiveTrackingMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 885 | `'border-border hover:border-primary/40'` | string literal | effectiveTrackingMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 900 | `"Pause All Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 901 | `"Temporarily disable trip detection"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 907 | `"Auto-Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 908 | `'Paused until Pause All Tracking is turned off'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 908 | `'Start only after you enable it and driving signals are strong'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 912 | `'auto_detect'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 915 | `'Auto tracking could not be turned off'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 917 | `false` | boolean flag | auto_tracking_enabled | Inline state/default flag; changing can flip behavior. |
+| 917 | `'manual'` | string literal | auto_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 922 | `"Background Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 923 | `'Paused until Pause All Tracking is turned off'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 923 | `'Native background auto tracking is running'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 923 | `'Keeps recording after the app is minimized with a persistent notification'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 927 | `'background_auto'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 930 | `'Background tracking could not be turned off'` | string literal | stopped | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 932 | `false` | boolean flag | background_tracking_enabled | Inline state/default flag; changing can flip behavior. |
+| 932 | `false` | boolean flag | background_tracking_enabled | Inline state/default flag; changing can flip behavior. |
+| 932 | `'manual'` | string literal | background_tracking_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 939 | `"settings-android-permissions"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 944 | `"Native Auto Tracking"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 945 | `'Android service is armed and waiting for driving motion'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 945 | `'Android service is not running'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 947 | `'granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 947 | `'not_requested'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 951 | `'foregroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 951 | `'Location'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 951 | `'foregroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 952 | `'backgroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 952 | `'Background Location'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 952 | `'backgroundLocation'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 953 | `'activityRecognition'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 953 | `'Physical Activity'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 953 | `'activityRecognition'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 954 | `'notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 954 | `'Notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 954 | `'notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 955 | `'motionSensors'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 955 | `'Motion Sensors'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 955 | `'motionSensors'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 956 | `'bluetooth'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 956 | `'Bluetooth / Nearby Devices'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 956 | `'bluetooth'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 957 | `'phoneUsageAccess'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 957 | `'Phone Usage Access'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 957 | `'phoneUsageAccess'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 962 | `'granted'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 979 | `"Battery Optimization"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 980 | `'Battery optimization is already unrestricted for Road Sage'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 980 | `'Open Android battery settings and allow unrestricted background activity'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 985 | `'granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 985 | `'not_requested'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 993 | `"settings-feature-permissions"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 997 | `'Trip history, search, tags, notes, favorites, calendar, weekly summary, goals, costs'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 998 | `'No new Android permission prompt. These features use local trips, vehicles, and settings already stored on this device.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 999 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1002 | `'Route comparison, commute detection, road types, parking reminder, risk hotspots'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1003 | `'Uses trip GPS data. Android asks for Location when you start tracking, use current location, or enable auto tracking.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1008 | `'Maintenance reminders and weekly driver digests'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1009 | `'In-app dashboards need no prompt. Android asks for Notifications only if reminder notifications are enabled.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1014 | `'Background auto tracking for richer repeated-route history'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1015 | `'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1020 | `'Sensor fusion, crash detection, phone movement, and incident check-in'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1021 | `'Uses GPS plus device motion and Android activity context. Motion usually has no Android prompt, but this row will request it on platforms that require one.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1026 | `'Real speed limits, weather, optional OSRM matching, and offline route previews'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1027 | `'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1028 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1031 | `'Live voice alerts and AI driving coach summaries'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1032 | `'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.'` | string literal | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1033 | `'none'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1036 | `'OBD-II Bluetooth diagnostics'` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1037 | `'Optional. Pairing a compatible BLE adapter may trigger Android Nearby Devices/Bluetooth permission and the Bluetooth chooser.'` | string constant/key | sub | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1045 | `'granted'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1063 | `"settings-appearance"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1069 | `'light'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1069 | `'Light'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1070 | `'dark'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1070 | `'Dark'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1071 | `'system'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1071 | `'System'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1077 | `'border-primary bg-primary/5 text-primary'` | string literal | dark_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1077 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | dark_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1091 | `'metric'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1091 | `'Metric (km/h)'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1092 | `'imperial'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1092 | `'Imperial (mph)'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1098 | `'border-primary bg-primary/5 text-primary'` | string literal | units | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1098 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | units | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1109 | `"settings-economics"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1113 | `"Average vehicle CO2 baseline"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1114 | `"kg CO2 per 100 km used for saved-vs-average comparisons"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1117 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1118 | `"0"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1119 | `"50"` | string literal | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1120 | `"0.1"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1121 | `12` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1128 | `"Default EV efficiency"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1129 | `"kWh per 100 km used when an electric vehicle has no profile value"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1132 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1133 | `"5"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1134 | `"40"` | string literal | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1135 | `"0.1"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1136 | `18` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1143 | `"Grid CO2 intensity"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1144 | `"kg CO2 per kWh used for electric-vehicle trip emissions"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1147 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1148 | `"0"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1149 | `"2"` | string literal | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1150 | `"0.001"` | string constant/key | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1151 | `0.04` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1158 | `"Tree-year equivalent"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1159 | `"kg CO2 per tree per year used in carbon impact summaries"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1162 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1163 | `"1"` | string literal | min | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1164 | `"100"` | string constant/key | max | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1165 | `"0.1"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1166 | `21` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1174 | `"settings-notifications"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1178 | `"Enable all notifications"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1179 | `"Disabling this turns off all notification groups below"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1181 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1186 | `"Quiet hours"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1186 | `"Suppress non-safety notifications during this window"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1187 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1187 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1193 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1194 | `'22:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1195 | `true` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1203 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1204 | `'07:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1205 | `true` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1217 | `'notif_safety_alerts_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1217 | `'Safety alerts channel'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1217 | `'Urgent warnings while driving'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1218 | `'notif_phone_use_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1218 | `'Phone use warning'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1218 | `'Immediate warning when phone-use patterns appear'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1219 | `'notif_drowsy_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1219 | `'Drowsy / fatigue warning'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1219 | `'Fatigue and long-drive break alerts'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1220 | `'notif_speeding_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1220 | `'Speeding alert'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1220 | `'Sustained speeding warnings'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1221 | `'danger_zone_alerts_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1221 | `'Danger zone proximity alerts'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1221 | `'Warn when approaching your historical risk hotspots'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1222 | `'live_coaching_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1222 | `'Live coaching overlay'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1222 | `'Show real-time coaching feedback during active trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1225 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1225 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1225 | `'notif_safety_alerts_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1225 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1233 | `'trip_start_notification'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1233 | `'Trip started'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1233 | `'Notify when a trip begins'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1234 | `'trip_end_notification'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1234 | `'Trip ended'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1234 | `'Basic summary when trip finishes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1235 | `'notif_post_trip_summary_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1235 | `'Post-trip smart summary'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1235 | `'One contextual notification after a notable trip'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1236 | `'notif_post_trip_score_change'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1236 | `'Score improvements and declines'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1236 | `'Notify when a score moves meaningfully'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1237 | `'notif_post_trip_phone_use'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1237 | `'Phone use report'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1237 | `'Post-trip report for high phone-use risk'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1238 | `'notif_post_trip_fuel_saving'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1238 | `'Eco fuel savings'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1238 | `'Call out efficient trips with fuel savings'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1241 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1241 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1241 | `'notif_post_trip_'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1241 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1241 | `'notif_post_trip_summary_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1250 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1251 | `0` | numeric literal | min | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1252 | `100` | numeric literal | max | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1253 | `5` | numeric literal | step | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1254 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1265 | `'notif_coaching_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1265 | `'Coaching notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1265 | `'Driving improvement tips and pattern changes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1266 | `'achievement_notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1266 | `'Achievements'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1266 | `'Notify when an achievement unlocks'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1267 | `'notif_streak_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1267 | `'Streak milestones'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1267 | `'Smooth-driving streak notifications'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1268 | `'notif_weekly_pattern_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1268 | `'Weekly driving summary'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1268 | `'Monday at 8:30am'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1269 | `'weekly_report_notification'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1269 | `'Classic weekly report'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1269 | `'Legacy Tuesday report'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1270 | `'notif_style_shift_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1270 | `'Driving style shift alerts'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1270 | `'Notify when your style changes across recent trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1271 | `'safe_driving_reminder'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1271 | `'Safe driving tips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1271 | `'Occasional driving reminders'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1274 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1274 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1274 | `'notif_coaching_enabled'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1274 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1274 | `'notif_'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1281 | `"Maintenance reminders"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1281 | `"Vehicle service due and soon notifications"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1282 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1282 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1284 | `"No-trip nudge"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1284 | `"Remind after a period with no recorded trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1285 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1285 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1287 | `"Nudge after"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1287 | `"Days without a completed trip"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1289 | `7` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1290 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1294 | `3` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1294 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1294 | `7` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1294 | `14` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1302 | `"settings-driving-goals"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1308 | `'weekly_goal_harsh_brakes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1308 | `'Max harsh brakes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1308 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1308 | `20` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1308 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1309 | `'weekly_goal_speeding_events'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1309 | `'Max speeding events'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1309 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1309 | `20` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1309 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1310 | `'weekly_goal_min_avg_score'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1310 | `'Minimum average score'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1310 | `50` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1310 | `100` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1310 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1311 | `'weekly_goal_max_night_km'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1311 | `'Max night km'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1311 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1311 | `100` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1311 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1312 | `'weekly_goal_max_night_trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1312 | `'Max night trips'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1312 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1312 | `14` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1312 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1320 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1333 | `"settings-night-window"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1340 | `'sunset'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1340 | `'Sunset'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1340 | `'GPS-based'` | string constant/key | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1341 | `'custom'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1341 | `'Custom'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1341 | ``${cfg.night_start_time \|\| '22:00'} to ${cfg.night_end_time \|\| '06:00'}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1347 | `'border-primary bg-primary/5 text-primary'` | string literal | night_detection_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1347 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | night_detection_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1368 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1369 | `'22:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1370 | `'custom'` | string literal | disabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1378 | `"time"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1379 | `'06:00'` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1380 | `'custom'` | string literal | disabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1388 | `'sunset'` | string literal | night_detection_mode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1396 | `'night_sunset_offset_minutes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1396 | `'Sunset offset'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1396 | `-120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1396 | `120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1397 | `'night_sunrise_offset_minutes'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1397 | `'Sunrise offset'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1397 | `-120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1397 | `120` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1405 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1408 | `15` | numeric literal | step | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1409 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1421 | `"settings-detection-thresholds"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1424 | `"Driving Pattern Definitions"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1425 | `"Explain aggression, defensive, jerk, focus, fuel band, and related trip metrics"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1426 | `true` | boolean flag | onClick | Inline state/default flag; changing can flip behavior. |
+| 1435 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1438 | `'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'` | string constant/key | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1438 | `'bg-secondary text-muted-foreground'` | string literal | dark | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1442 | `'Editing'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1442 | `'Locked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1464 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1469 | `'Analysing...'` | string literal | Re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1469 | `'Re-analyze'` | string literal | Re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1469 | `'Analyse my driving'` | string literal | Re | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1488 | `0` | numeric literal | total | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1490 | `1` | numeric literal | total | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1490 | `''` | string literal | total | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1490 | `'s'` | string literal | total | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1516 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1527 | `'threshold_harsh_brake_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1527 | `'Harsh Braking'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1527 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1527 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1527 | `8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1527 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1528 | `'threshold_rapid_accel_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1528 | `'Rapid Acceleration'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1528 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1528 | `1.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1528 | `6` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1528 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1529 | `'threshold_tailgate_decel_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1529 | `'Tailgate Decel'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1529 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1529 | `1.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1529 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1529 | `0.25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1530 | `'threshold_sharp_turn_g_low'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1530 | `'Sharp Turn Low'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1530 | `'g'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1530 | `0.2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1530 | `0.6` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1530 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1531 | `'threshold_sharp_turn_g_medium'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1531 | `'Sharp Turn Medium'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1531 | `'g'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1531 | `0.25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1531 | `0.8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1531 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1532 | `'threshold_sharp_turn_g_high'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1532 | `'Sharp Turn High'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1532 | `'g'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1532 | `0.35` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1532 | `1.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1532 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1533 | `'threshold_speeding_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1533 | `'Speeding (fallback)'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1533 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1533 | `80` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1533 | `160` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1533 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1534 | `'threshold_idle_seconds'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1534 | `'Idle Event'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1534 | `'s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1534 | `90` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1534 | `300` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1534 | `30` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1535 | `'min_speed_harsh_brake_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1535 | `'Harsh Brake Min Speed'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1535 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1535 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1535 | `60` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1535 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1536 | `'min_speed_rapid_accel_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1536 | `'Rapid Accel Min Speed'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1536 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1536 | `0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1536 | `40` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1536 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1551 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1561 | `"Advanced Safety Detection"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1562 | `false` | boolean flag | sublabel | Inline state/default flag; changing can flip behavior. |
+| 1562 | `'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1562 | `'Extra safety signatures are included in detection and scoring'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1565 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1571 | `'threshold_near_miss_brake_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1571 | `'Near-Miss Brake Threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1571 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1571 | `2.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1571 | `5.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1571 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1571 | `'How much braking force is needed before Road Sage considers a combined brake-and-turn a near miss.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1572 | `'threshold_near_miss_turn_degs'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1572 | `'Near-Miss Turn Threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1572 | `'deg/s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1572 | `15` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1572 | `60` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1572 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1572 | `'How quickly heading must change during braking to count as a near-miss manoeuvre.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1573 | `'threshold_drowsy_heading_std'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1573 | `'Drowsy Heading Drift'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1573 | `'degrees'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1573 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1573 | `15` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1573 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1573 | `'How much highway heading drift is allowed before a fatigue warning can trigger.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1574 | `'threshold_phone_proxy_oscillations'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1574 | `'Phone Proxy Sensitivity'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1574 | `'oscillations'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1574 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1574 | `6` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1574 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1574 | `'How many left-right heading corrections are needed before distraction risk is flagged.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1575 | `'threshold_speed_creep_kmh'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1575 | `'Speed Creep Alert'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1575 | `'km/h'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1575 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1575 | `25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1575 | `5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1575 | `'How much speed can rise on straight highway sections before Road Sage logs speed creep.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1576 | `'threshold_overtake_accel_ms2'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1576 | `'Overtake Detection Sensitivity'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1576 | `'m/s²'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1576 | `2.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1576 | `5.0` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1576 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1576 | `'How hard acceleration must be to start the aggressive-overtake signature.'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1582 | `false` | boolean flag | advanced_safety_detection_enabled | Inline state/default flag; changing can flip behavior. |
+| 1591 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1592 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1604 | `"settings-advanced-models"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1608 | `"Sensor fusion model"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1609 | `'Combine GPS, device motion, gyroscope, and Android activity context'` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1612 | `'granted'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1624 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1632 | `"Crash / incident detection"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1633 | `"Detect impact-like motion followed by little movement"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1636 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1638 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1643 | `"Emergency workflow"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1644 | `"Optional local check-in notice after a possible incident; no SMS or paid emergency service is used"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1647 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1649 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1654 | `"Snap route to roads (OSRM)"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1655 | `"Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1658 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1665 | `''` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1667 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1668 | `"https://your-osrm.example"` | inline URL | placeholder | External service endpoint or help text; changing may redirect data or break integration. |
+| 1673 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1675 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1681 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1682 | `false` | boolean flag | onClick | Inline state/default flag; changing can flip behavior. |
+| 1682 | `''` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1683 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1691 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 1692 | `'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` | string constant/key | Off | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1694 | `'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'` | string constant/key | On | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1695 | `'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'` | string constant/key | link | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1700 | `"Predictive route risk"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1701 | `"Estimate safest route window from history, danger zones, and context"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1704 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1710 | `"Live voice alerts"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1711 | `"Speaks during active trips for live coaching, phone use, speeding, drowsy, long-drive, danger-zone, and incident alerts"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1715 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1725 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1737 | `"OBD-II Bluetooth"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1738 | `'BLE OBD-II parsing is available for compatible adapters'` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1752 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1766 | `"settings-phone-use"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1770 | `"Detect phone use while driving"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1771 | `"Use Android Usage Access when allowed, with GPS behaviour signals as a fallback"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1774 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1780 | `"Phone use live alert"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1781 | `"Send an immediate warning when phone-use patterns are detected"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1784 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1786 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1793 | `'low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1793 | `'Low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1793 | `'Fewer false positives'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1794 | `'medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1794 | `'Medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1794 | `'Recommended'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1795 | `'high'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1795 | `'High'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1795 | `'More sensitive'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1799 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1801 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1803 | `'medium'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1804 | `'border-primary bg-primary/5 text-primary'` | string literal | border | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1805 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | hover | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'low'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'0.60'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'high'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'0.25'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `'0.40'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1817 | `"Show on trip map"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1817 | `"Mark suspected phone-use windows on route maps"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1819 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1821 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1824 | `"Include in trip score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1824 | `"Apply phone-use penalties to the Safety score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1826 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1828 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1842 | `'Editable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1842 | `'Locked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'phone_micro_steer_count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'Micro-steer count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1847 | `8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1847 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1847 | `'turns'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1848 | `'phone_creep_rate_kmh_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1848 | `'Speed creep rate'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1848 | `0.5` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1848 | `4` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1848 | `0.25` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1848 | `'km/h/s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1849 | `'phone_lane_drift_deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1849 | `'Lane drift angle'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1849 | `3` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1849 | `18` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1849 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1849 | `'deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1850 | `'phone_coupling_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1850 | `'Coupling threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1850 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1850 | `0.4` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1850 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1850 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1851 | `'phone_confidence_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1851 | `'Confidence threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1851 | `0.15` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1851 | `0.8` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1851 | `0.05` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1851 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1852 | `'phone_min_window_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1852 | `'Minimum window'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1852 | `2` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1852 | `12` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1852 | `1` | numeric literal | key | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1852 | `'s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1860 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1865 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1877 | `"settings-speed-warning"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1880 | `"Live Speed Warning"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1881 | `false` | boolean flag | sublabel | Inline state/default flag; changing can flip behavior. |
+| 1881 | `'Dashboard speed warnings are disabled'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1881 | `'Warn during a trip when speed exceeds the fallback limit plus margin'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1884 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1890 | `"Get posted speed limits"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1891 | `"When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1894 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1900 | `"Get trip weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1901 | `"When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1904 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1910 | `"Automatically get speed limits + weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1911 | `"Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1914 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1923 | `false` | boolean flag | speed_limit_lookup_enabled | Inline state/default flag; changing can flip behavior. |
+| 1924 | `'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` | string constant/key | GPS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1925 | `'sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits.'` | string literal | route | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1929 | `false` | boolean flag | weather_context_enabled | Inline state/default flag; changing can flip behavior. |
+| 1930 | `'skips Open-Meteo; scores do not get weather adjustment.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1931 | `'sends trip midpoint and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1935 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 1936 | `'skips OSRM; map/playback keep the original GPS line.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1938 | `'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1939 | `'will be skipped until an OSRM endpoint is added.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1943 | `true` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
+| 1944 | `'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` | string constant/key | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1945 | `'new saved trips stay local for map/weather services until the user taps Get Road Data.'` | string literal | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1955 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1955 | `5` | numeric literal | type | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1955 | `30` | numeric literal | type | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1955 | `5` | numeric literal | type | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1956 | `5` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1957 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1962 | `5` | numeric literal | span | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1963 | `30` | numeric literal | span | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 1968 | `"settings-privacy-data"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1972 | `"Privacy Policy"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1973 | `"All data is stored locally on your device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1994 | `"Home, work, school"` | string literal | placeholder | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1997 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1998 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2001 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2005 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2013 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2018 | `"Privacy zone radius in meters"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2022 | `50` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2022 | `1000` | numeric literal | inline_value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2030 | `50` | numeric literal | 50 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2030 | `-1000` | numeric literal | 50 | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2034 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2042 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2043 | `'Parked location'` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2051 | `0` | numeric literal | length | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2061 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2062 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2065 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2079 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2084 | ``Radius in meters for ${zone.label}`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2087 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2090 | ``Delete ${zone.label} privacy zone`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2107 | `"Export All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2108 | `"Download as CSV file"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2115 | `"Export Full Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2116 | `"JSON with trips, GPS route points, events, vehicles, and settings"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2123 | `"Import Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2124 | `"Restore a Road Sage JSON backup into local storage"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2131 | `"Data Retention"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2132 | `"Keep local trip history on this device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2139 | `90` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2139 | `90` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2140 | `365` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2140 | `1` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2141 | `0` | numeric literal | value | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2146 | `"Delete All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2147 | `"Permanently removes all trip data"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2158 | `"file"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2159 | `"application/json,.json"` | string literal | accept | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2186 | `1.0` | numeric literal | div | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
+| 2186 | `0` | numeric literal | div | Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior. |
 
 </details>
 
@@ -23956,42 +23960,44 @@ const MAX_BACKUP_BYTES = 1024;
 /** Source: src/lib/dataBackup.js:9. */
 const MAX_BACKUP_BYTES = 1024;
 /** Source: src/lib/dataBackup.js:10. */
-const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
+const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.';
 /** Source: src/lib/dataBackup.js:11. */
+const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
+/** Source: src/lib/dataBackup.js:12. */
 const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
-/** Source: src/lib/dataBackup.js:13. */
-const SAFEFILENAME = '-';
 /** Source: src/lib/dataBackup.js:14. */
+const SAFEFILENAME = '-';
+/** Source: src/lib/dataBackup.js:15. */
 const FILTERSTRING = '';
-/** Source: src/lib/dataBackup.js:18. */
+/** Source: src/lib/dataBackup.js:19. */
 const IMPORTED_TRIP_STATUS = 'completed';
-/** Source: src/lib/dataBackup.js:18. */
+/** Source: src/lib/dataBackup.js:19. */
 const IMPORTED_TRIP_STATUS = 'discarded';
-/** Source: src/lib/dataBackup.js:19. */
-const DANGEROUS_OBJECT_KEYS = '__proto__';
-/** Source: src/lib/dataBackup.js:19. */
-const DANGEROUS_OBJECT_KEYS = 'constructor';
-/** Source: src/lib/dataBackup.js:19. */
-const DANGEROUS_OBJECT_KEYS = 'prototype';
 /** Source: src/lib/dataBackup.js:20. */
-const MAX_IMPORTED_NESTED_ARRAY_ITEMS = 500;
+const DANGEROUS_OBJECT_KEYS = '__proto__';
+/** Source: src/lib/dataBackup.js:20. */
+const DANGEROUS_OBJECT_KEYS = 'constructor';
+/** Source: src/lib/dataBackup.js:20. */
+const DANGEROUS_OBJECT_KEYS = 'prototype';
 /** Source: src/lib/dataBackup.js:21. */
-const MAX_IMPORTED_NESTED_OBJECT_KEYS = 100;
+const MAX_IMPORTED_NESTED_ARRAY_ITEMS = 500;
 /** Source: src/lib/dataBackup.js:22. */
+const MAX_IMPORTED_NESTED_OBJECT_KEYS = 100;
+/** Source: src/lib/dataBackup.js:23. */
 const MAX_IMPORTED_STRING_LENGTH = 5000;
-/** Source: src/lib/dataBackup.js:212. */
+/** Source: src/lib/dataBackup.js:213. */
 const SANITIZEJSONVALUE = 0;
-/** Source: src/lib/dataBackup.js:328. */
-const OUTPUTNAME = `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`;
 /** Source: src/lib/dataBackup.js:329. */
+const OUTPUTNAME = `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`;
+/** Source: src/lib/dataBackup.js:330. */
 const CONTENT = 2;
-/** Source: src/lib/dataBackup.js:333. */
+/** Source: src/lib/dataBackup.js:334. */
 const CAPACITOR = '@capacitor/core';
-/** Source: src/lib/dataBackup.js:347. */
+/** Source: src/lib/dataBackup.js:348. */
 const BLOB = 'application/json;charset=utf-8;';
-/** Source: src/lib/dataBackup.js:349. */
+/** Source: src/lib/dataBackup.js:350. */
 const A = 'a';
-/** Source: src/lib/dataBackup.js:389. */
+/** Source: src/lib/dataBackup.js:390. */
 const TRIPSTOIMPORT = 4;
 /** Source: src/lib/driverAnomaly.js:2. */
 const MEAN = 0;
@@ -24051,8 +24057,6 @@ const DEFAULT_AVG_SCORE = 70;
 const DEFAULT_NEUTRAL_SCORE = 50;
 /** Source: src/lib/habitProfile.js:9. */
 const DEFAULT_FATIGUE_ONSET_MINUTES = 60;
-/** Source: src/lib/habitProfile.js:10. */
-const MIN_MULTI_TRIP_DAYS_FOR_FATIGUE = 10;
 ```
 
 ---
@@ -24088,8 +24092,8 @@ Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic
 | src/components/ui/sidebar.jsx | 31 | const stored = window.localStorage.getItem(SIDEBAR_PREF_KEY) |
 | src/components/ui/sidebar.jsx | 35 | // localStorage can be unavailable in restricted browser contexts. |
 | src/components/ui/sidebar.jsx | 43 | window.localStorage.setItem(SIDEBAR_PREF_KEY, String(openState)) |
-| src/lib/dataBackup.js | 291 | savedTripFilters = sanitizeSavedTripFilters(JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) \|\| '[]')); |
-| src/lib/dataBackup.js | 412 | localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters)); |
+| src/lib/dataBackup.js | 292 | savedTripFilters = sanitizeSavedTripFilters(JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) \|\| '[]')); |
+| src/lib/dataBackup.js | 413 | localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters)); |
 | src/lib/localTripRepository.js | 52 | const canUseIndexedDb = () => typeof indexedDB !== 'undefined'; |
 | src/lib/localTripRepository.js | 104 | const request = indexedDB.open(DB_NAME, DB_VERSION); |
 | src/lib/mobileStorage.js | 7 | return typeof localStorage !== 'undefined'; |
@@ -24318,17 +24322,17 @@ App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `n
 | src/lib/AuthContext.jsx | 44 | } catch (error) { | fallback/log/rethrow depending on block |
 | src/lib/AuthContext.jsx | 52 | setAuthError({ | protected operation |
 | src/lib/AuthContext.jsx | 96 | throw new Error('useAuth must be used within an AuthProvider'); | raises failure to caller |
-| src/lib/dataBackup.js | 245 | throw new Error('Backup contains an invalid trip record.'); | raises failure to caller |
-| src/lib/dataBackup.js | 250 | throw new Error('Backup contains a trip without a valid id.'); | raises failure to caller |
-| src/lib/dataBackup.js | 290 | try { | protected operation |
-| src/lib/dataBackup.js | 332 | try { | protected operation |
-| src/lib/dataBackup.js | 342 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/lib/dataBackup.js | 362 | try { | protected operation |
-| src/lib/dataBackup.js | 365 | throw new Error('Backup file is not valid JSON. Please select the correct file.'); | raises failure to caller |
-| src/lib/dataBackup.js | 369 | throw new Error('This is not a valid Road Sage backup file.'); | raises failure to caller |
-| src/lib/dataBackup.js | 383 | throw new Error('Backup file is too large. Please choose a Road Sage JSON backup under 50 MB.'); | raises failure to caller |
-| src/lib/dataBackup.js | 411 | try { | protected operation |
-| src/lib/dataBackup.js | 414 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/lib/dataBackup.js | 246 | throw new Error('Backup contains an invalid trip record.'); | raises failure to caller |
+| src/lib/dataBackup.js | 251 | throw new Error('Backup contains a trip without a valid id.'); | raises failure to caller |
+| src/lib/dataBackup.js | 291 | try { | protected operation |
+| src/lib/dataBackup.js | 333 | try { | protected operation |
+| src/lib/dataBackup.js | 343 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/lib/dataBackup.js | 363 | try { | protected operation |
+| src/lib/dataBackup.js | 366 | throw new Error('Backup file is not valid JSON. Please select the correct file.'); | raises failure to caller |
+| src/lib/dataBackup.js | 370 | throw new Error('This is not a valid Road Sage backup file.'); | raises failure to caller |
+| src/lib/dataBackup.js | 384 | throw new Error(BACKUP_TOO_LARGE_MESSAGE); | raises failure to caller |
+| src/lib/dataBackup.js | 412 | try { | protected operation |
+| src/lib/dataBackup.js | 415 | } catch (error) { | fallback/log/rethrow depending on block |
 | src/lib/errorReporting.js | 23 | const error = sanitizeError(event); | protected operation |
 | src/lib/localTripRepository.js | 100 | reject(new Error('IndexedDB unavailable')); | raises failure to caller |
 | src/lib/localTripRepository.js | 128 | try { | protected operation |
@@ -24484,30 +24488,30 @@ App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `n
 | src/pages/Report.jsx | 204 | }).catch(() => {}); | fallback/log/rethrow depending on block |
 | src/pages/Report.jsx | 222 | }).catch(() => {}); | fallback/log/rethrow depending on block |
 | src/pages/Report.jsx | 242 | }).catch(() => {}); | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 305 | const count = await tripService.markCompletedForRescore().catch(() => 0); | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 364 | try { | protected operation |
-| src/pages/Settings.jsx | 368 | throw new Error('Android did not confirm that native auto tracking stopped.'); | raises failure to caller |
-| src/pages/Settings.jsx | 371 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 374 | description: error.message \|\| 'Check Android permissions and try again.', | protected operation |
-| src/pages/Settings.jsx | 393 | try { | protected operation |
-| src/pages/Settings.jsx | 396 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 461 | try { | protected operation |
-| src/pages/Settings.jsx | 463 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 493 | try { | protected operation |
-| src/pages/Settings.jsx | 496 | try { | protected operation |
-| src/pages/Settings.jsx | 510 | try { | protected operation |
-| src/pages/Settings.jsx | 529 | setPrivacyDraftRadiusError(validation.error); | protected operation |
-| src/pages/Settings.jsx | 533 | setPrivacyDraftRadiusError(''); | protected operation |
-| src/pages/Settings.jsx | 544 | setPrivacyDraftRadiusError(validation.error); | protected operation |
-| src/pages/Settings.jsx | 563 | setPrivacyDraftRadiusError(''); | protected operation |
-| src/pages/Settings.jsx | 576 | try { | protected operation |
-| src/pages/Settings.jsx | 579 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 651 | try { | protected operation |
-| src/pages/Settings.jsx | 677 | try { | protected operation |
-| src/pages/Settings.jsx | 683 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 737 | try { | protected operation |
-| src/pages/Settings.jsx | 751 | } catch (error) { | fallback/log/rethrow depending on block |
-| src/pages/Settings.jsx | 1992 | setPrivacyDraftRadiusError(''); | protected operation |
+| src/pages/Settings.jsx | 310 | const count = await tripService.markCompletedForRescore().catch(() => 0); | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 369 | try { | protected operation |
+| src/pages/Settings.jsx | 373 | throw new Error('Android did not confirm that native auto tracking stopped.'); | raises failure to caller |
+| src/pages/Settings.jsx | 376 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 379 | description: error.message \|\| 'Check Android permissions and try again.', | protected operation |
+| src/pages/Settings.jsx | 398 | try { | protected operation |
+| src/pages/Settings.jsx | 401 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 466 | try { | protected operation |
+| src/pages/Settings.jsx | 468 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 498 | try { | protected operation |
+| src/pages/Settings.jsx | 501 | try { | protected operation |
+| src/pages/Settings.jsx | 515 | try { | protected operation |
+| src/pages/Settings.jsx | 534 | setPrivacyDraftRadiusError(validation.error); | protected operation |
+| src/pages/Settings.jsx | 538 | setPrivacyDraftRadiusError(''); | protected operation |
+| src/pages/Settings.jsx | 549 | setPrivacyDraftRadiusError(validation.error); | protected operation |
+| src/pages/Settings.jsx | 568 | setPrivacyDraftRadiusError(''); | protected operation |
+| src/pages/Settings.jsx | 581 | try { | protected operation |
+| src/pages/Settings.jsx | 584 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 656 | try { | protected operation |
+| src/pages/Settings.jsx | 682 | try { | protected operation |
+| src/pages/Settings.jsx | 688 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 750 | try { | protected operation |
+| src/pages/Settings.jsx | 764 | } catch (error) { | fallback/log/rethrow depending on block |
+| src/pages/Settings.jsx | 2005 | setPrivacyDraftRadiusError(''); | protected operation |
 | src/pages/TripDetail.jsx | 202 | try { | protected operation |
 | src/pages/TripHistory.jsx | 83 | try { | protected operation |
 | src/pages/TripHistory.jsx | 169 | try { | protected operation |
@@ -24599,12 +24603,14 @@ App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `n
 | src/lib/__tests__/dangerZoneEngine.test.js | 39 | it | assigns riskLevel for each severity band |
 | src/lib/__tests__/dangerZoneEngine.test.js | 60 | it | returns only nearby danger zones sorted by distance |
 | src/lib/__tests__/dangerZoneEngine.test.js | 70 | it | returns [] when no zones are nearby |
-| src/lib/__tests__/dataBackupImportSecurity.test.js | 14 | describe | backup trip import sanitization |
-| src/lib/__tests__/dataBackupImportSecurity.test.js | 15 | it | sanitizes active trips from backup imports |
-| src/lib/__tests__/dataBackupImportSecurity.test.js | 21 | it | truncates oversized imported trip routes |
-| src/lib/__tests__/dataBackupImportSecurity.test.js | 37 | it | truncates oversized imported driving events |
-| src/lib/__tests__/dataBackupImportSecurity.test.js | 51 | it | strips unknown fields from imported trips and driving events |
-| src/lib/__tests__/dataBackupImportSecurity.test.js | 69 | it | rejects imported trips without a non-empty string id |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 28 | describe | backup trip import sanitization |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 33 | it | rejects oversized backup files before reading them |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 43 | it | accepts a backup file exactly at the size limit |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 61 | it | sanitizes active trips from backup imports |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 67 | it | truncates oversized imported trip routes |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 83 | it | truncates oversized imported driving events |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 97 | it | strips unknown fields from imported trips and driving events |
+| src/lib/__tests__/dataBackupImportSecurity.test.js | 115 | it | rejects imported trips without a non-empty string id |
 | src/lib/__tests__/driverSignature.test.js | 17 | describe | driver signature |
 | src/lib/__tests__/driverSignature.test.js | 18 | it | returns null for no trips |
 | src/lib/__tests__/driverSignature.test.js | 22 | it | returns null for fewer than five trips |

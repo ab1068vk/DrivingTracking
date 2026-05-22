@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
-import { importDriveSenseBackup, parseDriveSenseBackup } from '@/lib/dataBackup';
+import { importDriveSenseBackup, MAX_BACKUP_BYTES, parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { localTripRepository } from '@/lib/localTripRepository';
 import { mapMatchRoute } from '@/lib/mapMatching';
@@ -129,11 +129,11 @@ describe('release blocker regressions', () => {
 
   it('rejects oversized backup files before reading them', async () => {
     const file = {
-      size: 51 * 1024 * 1024,
+      size: MAX_BACKUP_BYTES + 1,
       text: vi.fn(),
     };
 
-    await expect(importDriveSenseBackup(file)).rejects.toThrow('under 50 MB');
+    await expect(importDriveSenseBackup(file)).rejects.toThrow('50 MB or smaller');
     expect(file.text).not.toHaveBeenCalled();
   });
 
