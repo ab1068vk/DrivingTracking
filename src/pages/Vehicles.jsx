@@ -5,7 +5,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
-import { calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
+import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
 
@@ -358,9 +358,7 @@ export default function Vehicles() {
           const costSummary = buildVehicleCostSummary(v, vehicleTrips);
           const reminders = buildMaintenanceReminders(v, vehicleTrips);
           const urgentReminders = reminders.filter((item) => item.status !== 'ok');
-          const avgEngineStress = vehicleTrips.length
-            ? Math.round(vehicleTrips.reduce((sum, trip) => sum + (trip.engine_stress_score ?? 100), 0) / vehicleTrips.length)
-            : null;
+          const avgEngineStress = calculateAverageEngineStressScore(vehicleTrips);
           const isElectricVehicle = ['electric', 'ev'].includes(String(v.fuel_type || '').toLowerCase());
           const efficiencyLabel = isElectricVehicle
             ? `${v.ev_efficiency_kwh_per_100km || 18} kWh/100km`
@@ -480,7 +478,7 @@ export default function Vehicles() {
                         <Activity className="w-3.5 h-3.5" />
                         Engine stress
                       </div>
-                      <div className="font-semibold text-sm mt-1">{avgEngineStress ?? '-'} score</div>
+                      <div className="font-semibold text-sm mt-1">{avgEngineStress == null ? 'N/A' : `${Math.round(avgEngineStress)} score`}</div>
                       <div className="text-xs text-muted-foreground">High-speed acceleration adds engine and transmission wear.</div>
                     </div>
                     <div className="bg-secondary/50 rounded-xl p-3">

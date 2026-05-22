@@ -372,6 +372,16 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
   };
 }
 
+export function calculateAverageEngineStressScore(trips = []) {
+  const scores = (trips || [])
+    .map((trip) => trip?.engine_stress_score)
+    .filter((score) => Number.isFinite(score));
+
+  return scores.length
+    ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+    : null;
+}
+
 export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const distanceKm = Number(trip?.distance_km) || 0;
   const fuelType = String(vehicle?.fuel_type || settings.fuel_type || 'gasoline').trim().toLowerCase();
@@ -888,12 +898,7 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
   const tireBase = Number(vehicle.tire_rotation_interval_km) || 10000;
   const totalTireWear = completed.reduce((sum, trip) => sum + (Number(trip.trip_tire_wear_units) || 0), 0);
   const tireWearGrade = totalTireWear < 50 ? 'minimal' : totalTireWear < 150 ? 'normal' : totalTireWear < 300 ? 'elevated' : 'accelerated';
-  const engineScores = completed
-    .map((trip) => Number(trip.engine_stress_score))
-    .filter((score) => Number.isFinite(score) && score > 0);
-  const avgEngineStressScore = engineScores.length
-    ? engineScores.reduce((sum, score) => sum + score, 0) / engineScores.length
-    : null;
+  const avgEngineStressScore = calculateAverageEngineStressScore(completed);
   const baseHealthGrade = totalStressUnits < 50 ? 'A' : totalStressUnits < 150 ? 'B' : totalStressUnits < 300 ? 'C' : 'D';
   const downgrade = (grade) => ({ A: 'B', B: 'C', C: 'D', D: 'D' }[grade] || grade);
   const healthGrade = avgEngineStressScore != null && avgEngineStressScore < 55

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculatePredictiveMaintenance } from '@/lib/tripInsights';
+import { calculateAverageEngineStressScore, calculatePredictiveMaintenance } from '@/lib/tripInsights';
 
 const vehicle = {
   odometer_km: 10000,
@@ -50,5 +50,28 @@ describe('predictive maintenance', () => {
     const one = calculatePredictiveMaintenance([trip(0, { aggressive_driving_score: 60 })], vehicle, {});
     const two = calculatePredictiveMaintenance([trip(0, { aggressive_driving_score: 60 }), trip(1, { aggressive_driving_score: 60 })], vehicle, {});
     expect(Math.abs(one.stress_index - two.stress_index)).toBeLessThanOrEqual(0.05);
+  });
+
+  it('averages only trips with finite engine stress scores', () => {
+    const result = calculateAverageEngineStressScore([
+      trip(0, { engine_stress_score: 40 }),
+      trip(1),
+      trip(2, { engine_stress_score: 81 }),
+      trip(3, { engine_stress_score: null }),
+      trip(4, { engine_stress_score: Number.POSITIVE_INFINITY }),
+      trip(5, { engine_stress_score: '100' }),
+    ]);
+
+    expect(result).toBe(60.5);
+  });
+
+  it('returns null when no trips have a finite engine stress score', () => {
+    const result = calculateAverageEngineStressScore([
+      trip(0),
+      trip(1, { engine_stress_score: null }),
+      trip(2, { engine_stress_score: Number.NaN }),
+    ]);
+
+    expect(result).toBeNull();
   });
 });
