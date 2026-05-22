@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
 import { parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
@@ -22,6 +23,58 @@ describe('release blocker regressions', () => {
 
     expect(getAuthToken()).toBeNull();
     expect(localStorage.getItem).not.toHaveBeenCalled();
+  });
+
+  it('removes auth tokens from all browser storage on logout', () => {
+    vi.stubGlobal('sessionStorage', { removeItem: vi.fn() });
+    vi.stubGlobal('localStorage', { removeItem: vi.fn() });
+
+    authService.logout();
+
+    expect(sessionStorage.removeItem).toHaveBeenCalledWith('token');
+    expect(sessionStorage.removeItem).toHaveBeenCalledWith('access_token');
+    expect(localStorage.removeItem).toHaveBeenCalledWith('token');
+    expect(localStorage.removeItem).toHaveBeenCalledWith('access_token');
+  });
+
+  it('migrates legacy localStorage auth tokens into sessionStorage and deletes them', () => {
+    const legacyTokens = new Map([
+      ['token', 'legacy-token'],
+      ['access_token', 'legacy-access-token'],
+    ]);
+    const sessionTokens = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
+      removeItem: vi.fn((key) => legacyTokens.delete(key)),
+    });
+    vi.stubGlobal('sessionStorage', {
+      getItem: vi.fn((key) => sessionTokens.get(key) ?? null),
+      setItem: vi.fn((key, value) => sessionTokens.set(key, value)),
+    });
+
+    migrateLegacyAuthTokens();
+
+    expect(sessionStorage.setItem).toHaveBeenCalledWith('token', 'legacy-token');
+    expect(sessionStorage.setItem).toHaveBeenCalledWith('access_token', 'legacy-access-token');
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('access_token')).toBeNull();
+  });
+
+  it('leaves no auth token readable from localStorage after migration', () => {
+    const legacyTokens = new Map([['token', 'legacy-token']]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
+      removeItem: vi.fn((key) => legacyTokens.delete(key)),
+    });
+    vi.stubGlobal('sessionStorage', {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+
+    migrateLegacyAuthTokens();
+
+    const xssReadableToken = localStorage.getItem('token') || localStorage.getItem('access_token');
+    expect(xssReadableToken).toBeNull();
   });
 
   it('fails API calls clearly when no backend is configured', async () => {
