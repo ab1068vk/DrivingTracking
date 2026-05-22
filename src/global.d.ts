@@ -8,6 +8,7 @@ interface ImportMeta {
 
 interface Window {
   L?: any;
+  __roadSageErrorReportingInitialized?: boolean;
 }
 
 declare module '@capacitor/app' {

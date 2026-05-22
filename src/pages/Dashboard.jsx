@@ -79,6 +79,7 @@ import {
   getTrackingDiagnostics,
   recordTrackingDiagnostic,
 } from '@/lib/trackingDiagnostics';
+import { logError } from '@/lib/errorReporting';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
@@ -963,16 +964,32 @@ export default function Dashboard() {
       });
       setParkedLocation(savedParkedLocation);
     }
-    await dispatchTripCompletedNotification(completedTrip, completedTrips, settings).catch(() => {});
-    checkAndNotifyPhoneUsePattern([completedTrip, ...completedTrips], settings).catch(() => {});
+    await dispatchTripCompletedNotification(completedTrip, completedTrips, settings).catch((err) => {
+      logError('post_trip_completed_notification', err, { tripId: savedTrip?.id || completedTrip.id });
+    });
+    checkAndNotifyPhoneUsePattern([completedTrip, ...completedTrips], settings).catch((err) => {
+      logError('post_trip_phone_use_pattern_notification', err, { tripId: savedTrip?.id || completedTrip.id });
+    });
     const driverSignature = buildDriverSignature([completedTrip, ...completedTrips].slice(0, 20));
     if (driverSignature?.style_shifts?.length > 0) {
-      notifyStyleShift(driverSignature.style_shifts, settings).catch(() => {});
+      notifyStyleShift(driverSignature.style_shifts, settings).catch((err) => {
+        logError('post_trip_style_shift_notification', err, {
+          tripId: savedTrip?.id || completedTrip.id,
+          shift_count: driverSignature.style_shifts.length,
+        });
+      });
     }
-    await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch(() => {});
+    await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch((err) => {
+      logError('post_trip_achievement_notification_sync', err, { tripId: savedTrip?.id || completedTrip.id });
+    });
     const newDailyFatigue = computeDailyFatigue(getTodayTrips([completedTrip, ...completedTrips]), settings);
     if (newDailyFatigue.fatigueLevel === 'high' || newDailyFatigue.fatigueLevel === 'critical') {
-      notifyDailyFatigueWarning(newDailyFatigue).catch(() => {});
+      notifyDailyFatigueWarning(newDailyFatigue).catch((err) => {
+        logError('post_trip_daily_fatigue_warning', err, {
+          tripId: savedTrip?.id || completedTrip.id,
+          fatigue_level: newDailyFatigue.fatigueLevel,
+        });
+      });
     }
     await activityStopRef.current?.();
     activityStopRef.current = null;

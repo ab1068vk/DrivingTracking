@@ -15,6 +15,7 @@ import {
 import { setJson } from '@/lib/mobileStorage';
 import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
+import { logError } from '@/lib/errorReporting';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -61,7 +62,14 @@ export default function DrivingCoach() {
     shift.dimension === 'aggression' && shift.direction === 'increasing'
   ));
   useEffect(() => {
-    if (driverSignature) setJson(DRIVER_SIGNATURE_KEY, driverSignature).catch(() => {});
+    if (driverSignature) {
+      setJson(DRIVER_SIGNATURE_KEY, driverSignature).catch((err) => {
+        logError('driver_signature_save', err, {
+          trip_count: completed.length,
+          style_shift_count: driverSignature.style_shifts?.length || 0,
+        });
+      });
+    }
   }, [driverSignature]);
   const timeOfDay = analyzeTimeOfDay(completed);
   const dayOfWeek = analyzeDayOfWeek(completed);

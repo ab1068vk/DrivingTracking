@@ -15,19 +15,25 @@ const sanitizeError = (error) => {
   return { name, message, stack };
 };
 
+export function logError(context, error, extra = {}) {
+  const sanitized = sanitizeError(error);
+  return recordTrackingDiagnostic({
+    type: 'operation_error',
+    title: `Operation failed: ${context}`,
+    detail: sanitized.message,
+    context,
+    error_name: sanitized.name,
+    stack_preview: sanitized.stack,
+    ...extra,
+  });
+}
+
 export function initializeErrorReporting() {
   if (typeof window === 'undefined' || window.__roadSageErrorReportingInitialized) return;
   window.__roadSageErrorReportingInitialized = true;
 
   const report = (type, event) => {
-    const error = sanitizeError(event);
-    recordTrackingDiagnostic({
-      type,
-      title: 'App error captured',
-      detail: error.message,
-      error_name: error.name,
-      stack_preview: error.stack,
-    });
+    logError(type, event, { type, title: 'App error captured' });
   };
 
   window.addEventListener('error', (event) => report('js_error', event));

@@ -11,12 +11,15 @@ Road Sage is a local-first driving tracker built with React, Vite, Capacitor, an
 - Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, per-car cost, CO2, and engine-health summaries, default vehicle handling, and vehicle comparison.
 - Reports with CSV export, monthly PDF export, UBI score-card PDF export, rolling baseline comparison, carbon impact, fuel cost, and CO2 savings.
 - Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, and reviewed event feedback.
+- Diagnostics capture unhandled app errors and handled critical operation failures with sanitized messages and stack previews.
 
 ## Recent Update Coverage
 
 The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.
 
 - Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.
+- Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, phone-use pattern alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed.
+- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.
 - Numeric clamping is centralized in `src/lib/mathUtils.js`; score, route-risk, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.
 - Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.
 - Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.

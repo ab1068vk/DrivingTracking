@@ -8,8 +8,12 @@ import VehicleCompare from '@/components/VehicleCompare';
 import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
+import { logError } from '@/lib/errorReporting';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+let odometerSyncFailureCount = 0;
+let odometerSyncFailureToastShown = false;
+
 const FUEL_TYPES = [
   { value: 'gasoline', label: 'Gasoline' },
   { value: 'diesel', label: 'Diesel' },
@@ -256,7 +260,21 @@ export default function Vehicles() {
       if (!cancelled && changed) invalidate();
     };
 
-    syncOdometers().catch(() => {});
+    syncOdometers().catch((err) => {
+      odometerSyncFailureCount += 1;
+      logError('vehicle_odometer_sync', err, {
+        vehicle_count: vehicles.length,
+        trip_count: trips.length,
+        failure_count: odometerSyncFailureCount,
+      });
+      if (odometerSyncFailureCount > 1 && !odometerSyncFailureToastShown) {
+        odometerSyncFailureToastShown = true;
+        toast({
+          title: 'Odometer sync delayed',
+          description: 'Vehicle odometer estimates may be stale. We will try again when vehicle data refreshes.',
+        });
+      }
+    });
     return () => {
       cancelled = true;
     };

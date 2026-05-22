@@ -4,6 +4,7 @@ import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
 import { importDriveSenseBackup, MAX_BACKUP_BYTES, parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
+import { logError } from '@/lib/errorReporting';
 import { localTripRepository } from '@/lib/localTripRepository';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
@@ -321,5 +322,47 @@ describe('release blocker regressions', () => {
 
     await expect(withRetry('test-service', operation, { delayMs: 0 })).resolves.toBe('ok');
     expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  it('writes diagnostic events for handled critical operation failures', () => {
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const diagnostic = logError('post_trip_completed_notification', new Error('notification failed'), { tripId: 'trip-1' });
+    const events = JSON.parse(values.get('drivesense_tracking_diagnostics'));
+
+    expect(diagnostic).toMatchObject({
+      type: 'operation_error',
+      context: 'post_trip_completed_notification',
+      detail: 'notification failed',
+      tripId: 'trip-1',
+    });
+    expect(events[0]).toMatchObject(diagnostic);
+  });
+
+  it('keeps critical post-trip, odometer, and coach persistence failures diagnostically logged', () => {
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const vehiclesSource = readFileSync(new URL('../../pages/Vehicles.jsx', import.meta.url), 'utf8');
+    const coachSource = readFileSync(new URL('../../pages/DrivingCoach.jsx', import.meta.url), 'utf8');
+
+    [
+      'post_trip_completed_notification',
+      'post_trip_phone_use_pattern_notification',
+      'post_trip_style_shift_notification',
+      'post_trip_achievement_notification_sync',
+      'post_trip_daily_fatigue_warning',
+    ].forEach((context) => {
+      expect(dashboardSource).toContain(`logError('${context}'`);
+    });
+    expect(dashboardSource).not.toContain('dispatchTripCompletedNotification(completedTrip, completedTrips, settings).catch(() => {})');
+    expect(vehiclesSource).toContain("logError('vehicle_odometer_sync'");
+    expect(vehiclesSource).toContain('Odometer sync delayed');
+    expect(vehiclesSource).not.toContain('syncOdometers().catch(() => {})');
+    expect(coachSource).toContain("logError('driver_signature_save'");
+    expect(coachSource).not.toContain('setJson(DRIVER_SIGNATURE_KEY, driverSignature).catch(() => {})');
   });
 });

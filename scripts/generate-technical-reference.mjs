@@ -638,10 +638,21 @@ function storageCatalogue() {
 
 function errorCatalogue() {
   const rows = [];
-  const regex = /\btry\b|\bcatch\s*\(|\.catch\s*\(|throw new|Promise\.reject|Error\(/g;
+  const regex = /\btry\b|\bcatch\s*\(|\.catch\s*\(|throw new|Promise\.reject|Error\(|logError\(/g;
   for (const file of productionBehaviorFiles) {
     linesOf(file).forEach((line, index) => {
-      if (regex.test(line)) rows.push([rel(file), index + 1, line.trim(), /catch/.test(line) ? 'fallback/log/rethrow depending on block' : /throw|reject/.test(line) ? 'raises failure to caller' : 'protected operation']);
+      if (regex.test(line)) {
+        const strategy = /logError\(/.test(line)
+          ? 'writes tracking diagnostic event'
+          : /\.catch\s*\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/.test(line)
+            ? 'silent optional fallback; verify low impact'
+            : /catch/.test(line)
+              ? 'handled fallback or diagnostic logging'
+              : /throw|reject/.test(line)
+                ? 'raises failure to caller'
+                : 'protected operation';
+        rows.push([rel(file), index + 1, line.trim(), strategy]);
+      }
       regex.lastIndex = 0;
     });
   }
@@ -710,6 +721,7 @@ function buildDoc() {
       ['Optional backend', '`VITE_API_URL`; absent by default.'],
       ['Shared numeric clamp', '`src/lib/mathUtils.js` exports the canonical `clamp(value, min, max)` helper. Invalid numeric input returns `min`, preventing NaN from leaking through score, risk, report, and playback calculations.'],
       ['Predictive route risk window', '`estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history.'],
+      ['Handled operation failures', '`src/lib/errorReporting.js` exports `logError(context, error, extra)` for critical async failures. Post-trip notifications, achievement sync, odometer sync, and driver-signature persistence now write tracking diagnostics instead of disappearing behind bare catches.'],
     ],
   ));
   doc.push('');
@@ -805,6 +817,8 @@ function buildDoc() {
 
   doc.push('## Error Handling Catalogue');
   doc.push('');
+  doc.push('Critical async operations should call `logError(context, error, extra)` when a failure is handled locally. This records an `operation_error` diagnostic with sanitized message and stack preview so Diagnostics can explain missing notifications, stale odometers, or failed coaching persistence without surfacing an unhandled rejection.');
+  doc.push('');
   doc.push(errorCatalogue());
   doc.push('');
   doc.push('---');
@@ -874,12 +888,15 @@ function buildReadme() {
     '- Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, per-car cost, CO2, and engine-health summaries, default vehicle handling, and vehicle comparison.',
     '- Reports with CSV export, monthly PDF export, UBI score-card PDF export, rolling baseline comparison, carbon impact, fuel cost, and CO2 savings.',
     '- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, and reviewed event feedback.',
+    '- Diagnostics capture unhandled app errors and handled critical operation failures with sanitized messages and stack previews.',
     '',
     '## Recent Update Coverage',
     '',
     'The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.',
     '',
     '- Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.',
+    '- Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, phone-use pattern alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed.',
+    '- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.',
     '- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, route-risk, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
     '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.',
     '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
