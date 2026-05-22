@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-22T23:00:11.084Z
+Updated: 2026-05-22T23:11:12.904Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -2750,7 +2750,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 627 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
 | 639 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
 | 651 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 859 | function | `buildReadme()` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
+| 859 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
 
 ### src/api/auth.js
 
