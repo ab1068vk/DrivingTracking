@@ -105,8 +105,8 @@ export function parseDriveSenseBackup(text) {
   let parsed;
   try {
     parsed = JSON.parse(text);
-  } catch (error) {
-    throw new Error(`File is not valid JSON: ${error?.message || 'Unable to parse backup.'}`);
+  } catch {
+    throw new Error('Backup file is not valid JSON. Please select the correct file.');
   }
 
   if (!parsed || !['Road Sage', 'DriveSense'].includes(parsed.app) || !Array.isArray(parsed.trips)) {
