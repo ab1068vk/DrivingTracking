@@ -9,6 +9,21 @@ export default [
     ignores: ["android/**/build/**", "dist/**", "node_modules/**"],
   },
   {
+    files: ["src/**/*.{js,mjs,cjs,jsx}"],
+    languageOptions: {
+      parserOptions: {
+        ecmaVersion: 2022,
+        sourceType: "module",
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+    },
+    rules: {
+      "no-dupe-keys": "error",
+    },
+  },
+  {
     files: [
       "src/components/**/*.{js,mjs,cjs,jsx}",
       "src/pages/**/*.{js,mjs,cjs,jsx}",
