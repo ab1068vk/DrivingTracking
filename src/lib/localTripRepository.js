@@ -15,7 +15,6 @@ import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } fro
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
-const DB_VERSION = 1;
 const TRIP_STORE = 'trips';
 export const TRIP_SCHEMA_VERSION = 9;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
@@ -52,6 +51,50 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
 
+const hasStore = (db, storeName) => db.objectStoreNames.contains(storeName);
+
+const hasIndex = (store, indexName) => store.indexNames.contains(indexName);
+
+const ensureTripIndex = (store, indexName, keyPath) => {
+  if (!hasIndex(store, indexName)) {
+    store.createIndex(indexName, keyPath);
+  }
+};
+
+const getTripStoreForUpgrade = (db, transaction) => {
+  if (!hasStore(db, TRIP_STORE)) {
+    return db.createObjectStore(TRIP_STORE, { keyPath: 'id' });
+  }
+  return transaction.objectStore(TRIP_STORE);
+};
+
+export const createIndexedDbMigrationRunner = (migrations) => {
+  const orderedMigrations = [...migrations].sort((a, b) => a.version - b.version);
+  const latestVersion = orderedMigrations.at(-1)?.version ?? 1;
+
+  return {
+    version: latestVersion,
+    migrate({ db, oldVersion, transaction }) {
+      orderedMigrations
+        .filter((migration) => oldVersion < migration.version)
+        .forEach((migration) => migration.migrate({ db, transaction }));
+    },
+  };
+};
+
+const tripDbMigrationRunner = createIndexedDbMigrationRunner([
+  {
+    version: 1,
+    migrate({ db, transaction }) {
+      const store = getTripStoreForUpgrade(db, transaction);
+      ensureTripIndex(store, 'start_time', 'start_time');
+      ensureTripIndex(store, 'status', 'status');
+    },
+  },
+]);
+
+const DB_VERSION = tripDbMigrationRunner.version;
+
 const openDb = () => new Promise((resolve, reject) => {
   if (!canUseIndexedDb()) {
     reject(new Error('IndexedDB unavailable'));
@@ -60,22 +103,11 @@ const openDb = () => new Promise((resolve, reject) => {
 
   const request = indexedDB.open(DB_NAME, DB_VERSION);
   request.onupgradeneeded = (event) => {
-    const db = request.result;
-    if (event.oldVersion < 1 || !db.objectStoreNames.contains(TRIP_STORE)) {
-      const store = db.createObjectStore(TRIP_STORE, { keyPath: 'id' });
-      store.createIndex('start_time', 'start_time');
-      store.createIndex('status', 'status');
-      return;
-    }
-
-    const tx = request.transaction;
-    const store = tx?.objectStore(TRIP_STORE);
-    if (store && !store.indexNames.contains('start_time')) {
-      store.createIndex('start_time', 'start_time');
-    }
-    if (store && !store.indexNames.contains('status')) {
-      store.createIndex('status', 'status');
-    }
+    tripDbMigrationRunner.migrate({
+      db: request.result,
+      oldVersion: event.oldVersion,
+      transaction: request.transaction,
+    });
   };
   request.onsuccess = () => resolve(request.result);
   request.onerror = () => reject(request.error);
