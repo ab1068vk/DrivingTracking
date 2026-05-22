@@ -1,0 +1,47 @@
+name: Security CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  security-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production and development dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Block react-quill source imports
+        run: |
+          if grep -R "react-quill" src; then
+            echo "react-quill must not be imported from application source."
+            exit 1
+          fi
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Block localhost API fallback in production bundle
+        run: |
+          if grep -R "http://localhost:5000/api" dist; then
+            echo "Production bundle must not contain a localhost API fallback."
+            exit 1
+          fi

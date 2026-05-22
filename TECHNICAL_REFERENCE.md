@@ -1,6 +1,6 @@
 # Road Sage Advanced Calculation Reference
 
-Updated: 2026-05-21T18:35:00.0000000-04:00
+Updated: 2026-05-22T00:00:00.0000000-04:00
 
 This is the readable app reference. It is not a full code dump. It documents the app architecture and shows the actual calculation snippets that matter: thresholds, physics math, event detection, scoring, risk, reporting, maintenance, phone-use evidence, map playback, and Android native tracking math.
 
@@ -16703,7 +16703,6 @@ npm run android:open    # npx cap open android
 - `react-hot-toast` ^2.6.0; resolved 2.6.0; runtime.
 - `react-leaflet` ^4.2.1; resolved 4.2.1; runtime.
 - `react-markdown` ^9.0.1; resolved 9.1.0; runtime.
-- `react-quill` ^2.0.0; resolved 2.0.0; runtime.
 - `react-resizable-panels` ^2.1.7; resolved 2.1.9; runtime.
 - `react-router-dom` ^6.26.0; resolved 6.30.3; runtime.
 - `recharts` ^2.15.4; resolved 2.15.4; runtime.
@@ -16724,4 +16723,4 @@ npm run android:open    # npx cap open android
 - Auth tokens are read from `localStorage` keys `token` and `access_token` for optional backend calls.
 - The app stores sensitive location/trip history locally unless the user exports data or configures backend API use.
 - Android permissions include foreground/background location, activity recognition, notifications, usage access, Bluetooth, foreground service, and boot handling.
-- Latest npm audit during this documentation work reported two moderate findings through `react-quill`/`quill` XSS advisory GHSA-4943-9vgg-gr5r.
+- `react-quill` and its transitive `quill` dependency are absent from `package.json`, `package-lock.json`, and the resolved dependency tree.
