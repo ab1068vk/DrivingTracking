@@ -708,6 +708,7 @@ function buildDoc() {
       ['Architecture', 'React/Vite single-page app plus Capacitor Android shell and native background services. Domain logic is concentrated in `src/lib/*`, API adapters in `src/api/*`, UI in `src/pages/*` and `src/components/*`.'],
       ['Primary storage', 'IndexedDB/localStorage/sessionStorage/Capacitor Preferences/Android SharedPreferences.'],
       ['Optional backend', '`VITE_API_URL`; absent by default.'],
+      ['Shared numeric clamp', '`src/lib/mathUtils.js` exports the canonical `clamp(value, min, max)` helper. Invalid numeric input returns `min`, preventing NaN from leaking through score, risk, report, and playback calculations.'],
       ['Predictive route risk window', '`estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history.'],
     ],
   ));
@@ -879,6 +880,7 @@ function buildReadme() {
     'The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.',
     '',
     '- Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.',
+    '- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, route-risk, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
     '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.',
     '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
     '- Predictive route risk now sorts completed trips newest-first inside the estimator before applying the recent-trip window, so dashboard and map pre-trip risk stay based on fresh history even when callers pass unsorted trip arrays.',

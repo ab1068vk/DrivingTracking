@@ -1,6 +1,6 @@
-const startOfLocalDay = (date = new Date()) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+import { clamp } from '@/lib/mathUtils';
 
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const startOfLocalDay = (date = new Date()) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 /**
  * Return completed trips that started during the current local day.

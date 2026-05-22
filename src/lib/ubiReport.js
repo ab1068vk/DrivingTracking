@@ -1,4 +1,5 @@
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+import { clamp } from '@/lib/mathUtils';
+
 const MILEAGE_SCORE_WINDOW_DAYS = 365;
 const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 

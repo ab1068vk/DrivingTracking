@@ -1,4 +1,5 @@
 import { saveExportToDownloads } from './nativeDownloads';
+import { clamp } from './mathUtils';
 import { detectTripStops, estimateTripEconomics } from './tripInsights';
 import { maskTripForPrivacy } from './privacyZones';
 
@@ -903,10 +904,6 @@ function round1(value) {
 
 function round2(value) {
   return Math.round(value * 100) / 100;
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function average(values) {

@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/mathUtils';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 
@@ -5,7 +6,6 @@ const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const HISTORICAL_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 const round1 = (value) => Math.round(value * 10) / 10;
 

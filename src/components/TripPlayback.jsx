@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
 import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
+import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
@@ -107,7 +108,6 @@ function loadLeaflet() {
 
 const SPEEDS = [1, 2, 4, 8];
 const REVIEW_SECONDS_PER_POINT = 0.6;
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const carIconHtml = (color, heading, label = '') => `
   <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.94);border:1px solid rgba(15,23,42,0.18);box-shadow:0 4px 16px rgba(15,23,42,0.24);display:flex;align-items:center;justify-content:center">

@@ -1,4 +1,5 @@
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+import { clamp } from '@/lib/mathUtils';
+
 const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 const std = (values) => {
   if (values.length < 2) return 0;

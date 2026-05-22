@@ -1,5 +1,6 @@
 import { analyzeDayOfWeek, analyzeTimeOfDay, computePersonalBaseline } from '@/lib/tripInsights';
-import { clamp, getFallbackTimeRisk, getTimeBucket } from '@/lib/habitProfile';
+import { getFallbackTimeRisk, getTimeBucket } from '@/lib/habitProfile';
+import { clamp } from '@/lib/mathUtils';
 
 const RISK_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,

@@ -1,3 +1,5 @@
+import { clamp } from '@/lib/mathUtils';
+
 const HABIT_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,
   MIN_TRIPS_FOR_DAY: 2,
@@ -25,19 +27,7 @@ const FATIGUE_BANDS = [
   { min: 120, max: Infinity, midpoint: 135 },
 ];
 
-/**
- * Clamp a numeric value to an inclusive range.
- * @param {number} value - Value to constrain.
- * @param {number} min - Inclusive minimum.
- * @param {number} max - Inclusive maximum.
- * @returns {number} The constrained value.
- * @example clamp(120, 0, 100)
- */
-export function clamp(value, min, max) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return min;
-  return Math.min(max, Math.max(min, numeric));
-}
+export { clamp };
 
 const getTripStartDate = (trip) => {
   const raw = trip?.startedAt ?? trip?.start_time ?? trip?.startTime ?? trip?.created_date;

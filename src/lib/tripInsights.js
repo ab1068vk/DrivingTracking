@@ -1,3 +1,5 @@
+import { clamp } from '@/lib/mathUtils';
+
 export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
 export const DEFAULT_L_PER_100KM = 8.5;
 export const DEFAULT_EV_KWH_PER_100KM = 18;
@@ -34,8 +36,6 @@ export const DEFAULT_MAINTENANCE_ITEMS = [
 ];
 
 const DAY_MS = 86400000;
-
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export const DRIVING_CONSISTENCY_IQR_MULTIPLIERS = {
   urban: 1.0,

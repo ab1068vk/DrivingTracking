@@ -1,5 +1,6 @@
 import { checkDangerZoneProximity } from '@/lib/dangerZoneEngine';
-import { clamp, getFallbackTimeRisk } from '@/lib/habitProfile';
+import { getFallbackTimeRisk } from '@/lib/habitProfile';
+import { clamp } from '@/lib/mathUtils';
 
 const ROUTE_RISK_CONSTANTS = {
   RECENT_TRIP_WINDOW: 20,

@@ -4,6 +4,7 @@
  * This is a singleton store used by the tracking service.
  */
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { clamp as clampNumber } from '@/lib/mathUtils';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -192,8 +193,6 @@ const IMPORT_ENUMS = {
 const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_map_matching_url',
 ]);
-
-const clampNumber = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const sanitizeImportedPrivacyZones = (zones) => (
   Array.isArray(zones)

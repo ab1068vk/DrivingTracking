@@ -1,9 +1,9 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { clamp } from '@/lib/mathUtils';
 import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/tripEngine';
 
 export const CALIBRATION_PROFILE_KEY = 'drivesense_calibration_profile';
 
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const round1 = (value) => Math.round(value * 10) / 10;
 const round2 = (value) => Math.round(value * 100) / 100;
 const DEFAULT_THRESHOLDS = {

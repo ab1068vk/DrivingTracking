@@ -1,9 +1,9 @@
 import { EVENT_TYPES } from '@/lib/tripEngine';
+import { clamp } from '@/lib/mathUtils';
 
 const MS2_PER_G = 9.80665;
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 60 * 1000;
 
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 const round2 = (value) => Math.round(value * 100) / 100;
 const safeMax = (values = [], fallback = 0) => values.length ? Math.max(...values) : fallback;
