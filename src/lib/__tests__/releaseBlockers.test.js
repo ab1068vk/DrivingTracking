@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
-import { parseDriveSenseBackup } from '@/lib/dataBackup';
+import { importDriveSenseBackup, parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
@@ -85,8 +85,23 @@ describe('release blocker regressions', () => {
   });
 
   it('reports malformed backup JSON with a clear parse error', () => {
-    expect(() => parseDriveSenseBackup('not json')).toThrow('File is not valid JSON');
+    expect(() => parseDriveSenseBackup('not json')).toThrow(Error);
+    expect(() => parseDriveSenseBackup('not json')).not.toThrow(SyntaxError);
+    expect(() => parseDriveSenseBackup('not json')).toThrow('Backup file is not valid JSON');
+  });
+
+  it('reports non-backup JSON with a clear validation error', () => {
     expect(() => parseDriveSenseBackup('{}')).toThrow('valid Road Sage backup');
+  });
+
+  it('rejects oversized backup files before reading them', async () => {
+    const file = {
+      size: 51 * 1024 * 1024,
+      text: vi.fn(),
+    };
+
+    await expect(importDriveSenseBackup(file)).rejects.toThrow('under 50 MB');
+    expect(file.text).not.toHaveBeenCalled();
   });
 
   it('drops unknown imported settings and clamps dangerous thresholds', () => {
