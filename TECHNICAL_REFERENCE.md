@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-23T21:45:40.169Z
+Updated: 2026-05-23T21:48:27.456Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
