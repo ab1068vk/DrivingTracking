@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 9;
+export const TRIP_SCHEMA_VERSION = 10;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -47,6 +47,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 9 recalculates trips after privacy-masked coordinates were excluded
  * from map, playback, segment, and speed-zone distance calculations.
+ *
+ * Version 10 backfills CO2 savings so legacy completed trips count toward
+ * carbon reports and achievement badges.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -244,6 +247,7 @@ const needsRescore = (trip) => (
     trip.braking_efficiency_grade == null ||
     trip.overall_compliance_score == null ||
     trip.dominant_road_type == null ||
+    trip.co2_saved_kg == null ||
     trip.phone_use_score == null ||
     trip.phone_use_risk == null ||
     (Number(trip.phone_use_window_count) > 0 && !(trip.driving_events || []).some((event) => event?.type === 'phone_use')) ||

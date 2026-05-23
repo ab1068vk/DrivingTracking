@@ -7,6 +7,11 @@ import {
 } from '@/lib/activityRecognition';
 
 describe('activityRecognition auto-stop logic', () => {
+  it('keeps Android ON_BICYCLE distinct from the legacy CYCLING alias', () => {
+    expect(ACTIVITY_TYPES.ON_BICYCLE).toBe('on_bicycle');
+    expect(ACTIVITY_TYPES.CYCLING).toBe('cycling');
+  });
+
   it('auto-starts after a two-second confirmed in-vehicle movement window', () => {
     expect(shouldAutoStartTracking({
       activity: { type: ACTIVITY_TYPES.IN_VEHICLE, confidence: 66 },
@@ -73,6 +78,15 @@ describe('activityRecognition auto-stop logic', () => {
     expect(shouldAutoStopTracking({
       activity: { type: ACTIVITY_TYPES.WALKING, confidence: 82 },
       currentSpeedKmh: 10,
+      stillSeconds: 20,
+      gpsPositionDriftM: 18,
+    })).toBe(true);
+  });
+
+  it('stops after parking when Android reports on-bicycle activity', () => {
+    expect(shouldAutoStopTracking({
+      activity: { type: ACTIVITY_TYPES.ON_BICYCLE, confidence: 82 },
+      currentSpeedKmh: 8,
       stillSeconds: 20,
       gpsPositionDriftM: 18,
     })).toBe(true);

@@ -501,7 +501,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             case DetectedActivity.IN_VEHICLE:
                 return "in_vehicle";
             case DetectedActivity.ON_BICYCLE:
-                return "cycling";
+                return "on_bicycle";
             case DetectedActivity.ON_FOOT:
                 return "on_foot";
             case DetectedActivity.RUNNING:

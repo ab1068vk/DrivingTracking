@@ -5,6 +5,7 @@ import {
   loadRouteRiskIndex,
   saveRouteRiskIndex,
   segmentKey,
+  speedRiskBonus,
 } from '@/lib/routeRiskIndex';
 
 const points = [
@@ -38,6 +39,12 @@ describe('routeRiskIndex', () => {
   it('riskScore is 0 when no events are associated', () => {
     const index = buildRouteRiskIndex([trip()]);
     expect([...index.values()][0].riskScore).toBe(0);
+  });
+
+  it('graduates speed risk instead of using a binary highway-speed bonus', () => {
+    expect(speedRiskBonus(99)).toBe(0);
+    expect(speedRiskBonus(101)).toBeLessThan(speedRiskBonus(160));
+    expect(speedRiskBonus(160)).toBe(15);
   });
 
   it('getSegmentsForTrip returns only segments with tripCount >= 2', () => {

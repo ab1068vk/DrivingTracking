@@ -864,7 +864,12 @@ export function calculateTireWearUnits(events = []) {
 }
 
 export function calculateCarbonImpact(completedTrips = [], settings = {}) {
-  const totalCo2SavedKg = Math.round(completedTrips.reduce((sum, trip) => sum + (trip.co2_saved_kg || 0), 0) * 10) / 10;
+  const totalCo2SavedKg = Math.round(completedTrips.reduce((sum, trip) => {
+    const saved = Number(trip?.co2_saved_kg);
+    if (Number.isFinite(saved)) return sum + saved;
+    if (trip?.status !== 'completed' || !(Number(trip?.distance_km) > 0)) return sum;
+    return sum + estimateTripEconomics(trip, {}, settings).co2_saved_kg;
+  }, 0) * 10) / 10;
   const treeCo2KgPerYear = Number(settings.tree_co2_kg_per_year);
   const effectiveTreeCo2KgPerYear = Number.isFinite(treeCo2KgPerYear) && treeCo2KgPerYear > 0
     ? treeCo2KgPerYear

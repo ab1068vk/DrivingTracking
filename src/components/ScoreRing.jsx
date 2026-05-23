@@ -10,10 +10,7 @@ export default function ScoreRing({ score = 0, size = 120, strokeWidth = 8, labe
   const circumference = 2 * Math.PI * radius;
   const progress = Math.max(0, Math.min(100, score));
   const offset = circumference - (progress / 100) * circumference;
-  const { color, label: scoreLabel } = getScoreColor(score);
-
-  // Color mapping for SVG stroke
-  const strokeColor = score >= 85 ? '#22c55e' : score >= 70 ? '#3b82f6' : score >= 55 ? '#eab308' : score >= 40 ? '#f97316' : '#ef4444';
+  const { color, label: scoreLabel, stroke: strokeColor } = getScoreColor(score);
 
   return (
     <div className="flex flex-col items-center gap-2" title={title || undefined}>

@@ -5,7 +5,7 @@ const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
 const OSRM_TIMEOUT_MS = 12000;
 
-const round = (value, places = 5) => Number(value).toFixed(places);
+const round = (value, places = 5) => +Number(value).toFixed(places);
 
 function routeCacheKey(points = []) {
   const first = points[0];

@@ -36,6 +36,18 @@ describe('HTML escaping', () => {
     expect(html).not.toContain('Limit: 0 km/h');
   });
 
+  it('omits invalid speed limits from speed popups', () => {
+    const html = buildSpeedSegmentPopupHtml({
+      label: 'Fast',
+      speedKmh: 88,
+      speedLimitKmh: undefined,
+    });
+
+    expect(html).toContain('Fast: 88 km/h');
+    expect(html).not.toContain('NaN km/h');
+    expect(html).not.toContain('Limit:');
+  });
+
   it('renders danger zone popup values as text instead of HTML', () => {
     const html = buildDangerZonePopupHtml({
       riskLevel: '<b>critical</b>',

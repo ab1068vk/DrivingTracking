@@ -3830,10 +3830,11 @@ export function detectNearMisses(cleanPoints = [], thresholds = DEFAULT_THRESHOL
 export function calculateFatigueScore(durationSeconds, routePoints = []) {
   const durationMinutes = (durationSeconds || 0) / 60;
   const durationScore = Math.min(5, durationMinutes / 30);
+  const points = Array.isArray(routePoints) ? routePoints : [];
 
   let timeScore = 0;
-  if (routePoints.length > 0) {
-    const startHour = new Date(routePoints[0].timestamp).getHours();
+  if (points.length > 0) {
+    const startHour = new Date(points[0].timestamp).getHours();
     if (startHour >= 2 && startHour < 5) timeScore = 5;
     else if (startHour >= 5 && startHour < 7) timeScore = 3;
     else if (startHour >= 13 && startHour < 15) timeScore = 2;
@@ -3841,7 +3842,32 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
     // FIX: Raise the 10pm-2am fatigue bucket to the elevated late-night risk tier.
   }
 
-  return Math.min(10, Math.round((durationScore + timeScore) * 10) / 10);
+  const movingSpeeds = points
+    .map((point) => Number(point?.speed_kmh))
+    .filter((speed) => Number.isFinite(speed) && speed >= 15);
+  const meanSpeed = movingSpeeds.length
+    ? movingSpeeds.reduce((sum, speed) => sum + speed, 0) / movingSpeeds.length
+    : 0;
+  const speedCv = movingSpeeds.length >= 5 && meanSpeed > 0
+    ? speedStdDev(movingSpeeds) / meanSpeed
+    : 0;
+  const speedVarianceScore = speedCv >= 0.70 ? 2 : speedCv >= 0.45 ? 1 : 0;
+
+  const headingDeltas = [];
+  for (let i = 1; i < points.length; i++) {
+    const prevHeading = Number(points[i - 1]?.heading ?? points[i - 1]?.bearing);
+    const currHeading = Number(points[i]?.heading ?? points[i]?.bearing);
+    const speed = Number(points[i]?.speed_kmh);
+    if (Number.isFinite(prevHeading) && Number.isFinite(currHeading) && Number.isFinite(speed) && speed >= 30) {
+      headingDeltas.push(headingDiff(prevHeading, currHeading));
+    }
+  }
+  const avgHeadingDrift = headingDeltas.length
+    ? headingDeltas.reduce((sum, delta) => sum + delta, 0) / headingDeltas.length
+    : 0;
+  const headingDriftScore = avgHeadingDrift >= 14 ? 1.5 : avgHeadingDrift >= 8 ? 0.75 : 0;
+
+  return Math.min(10, Math.round((durationScore + timeScore + speedVarianceScore + headingDriftScore) * 10) / 10);
 }
 
 function parseClockMinutes(value, fallbackHour) {
@@ -4526,11 +4552,11 @@ export function calculateTripScores(
 
 // ─── Score Color Utility ───────────────────────────────────────────────────────
 export function getScoreColor(score) {
-  if (score >= 85) return { color: 'text-green-500', fill: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-950/30', label: 'Excellent' };
-  if (score >= 70) return { color: 'text-blue-500', fill: 'bg-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30', label: 'Good' };
-  if (score >= 55) return { color: 'text-yellow-500', fill: 'bg-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30', label: 'Fair' };
-  if (score >= 40) return { color: 'text-orange-500', fill: 'bg-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30', label: 'Poor' };
-  return { color: 'text-red-500', fill: 'bg-red-500', bg: 'bg-red-50 dark:bg-red-950/30', label: 'Risky' };
+  if (score >= 85) return { color: 'text-green-500', fill: 'bg-green-500', stroke: '#22c55e', bg: 'bg-green-50 dark:bg-green-950/30', label: 'Excellent' };
+  if (score >= 70) return { color: 'text-blue-500', fill: 'bg-blue-500', stroke: '#3b82f6', bg: 'bg-blue-50 dark:bg-blue-950/30', label: 'Good' };
+  if (score >= 55) return { color: 'text-yellow-500', fill: 'bg-yellow-500', stroke: '#eab308', bg: 'bg-yellow-50 dark:bg-yellow-950/30', label: 'Fair' };
+  if (score >= 40) return { color: 'text-orange-500', fill: 'bg-orange-500', stroke: '#f97316', bg: 'bg-orange-50 dark:bg-orange-950/30', label: 'Poor' };
+  return { color: 'text-red-500', fill: 'bg-red-500', stroke: '#ef4444', bg: 'bg-red-50 dark:bg-red-950/30', label: 'Risky' };
 }
 
 export function getScoreGradient(score) {

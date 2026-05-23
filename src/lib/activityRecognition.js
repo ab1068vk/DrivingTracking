@@ -20,7 +20,7 @@ export const ACTIVITY_TYPES = {
   WALKING: 'walking',
   RUNNING: 'running',
   STILL: 'still',
-  ON_BICYCLE: 'cycling',
+  ON_BICYCLE: 'on_bicycle',
   CYCLING: 'cycling',
   UNKNOWN: 'unknown',
 };
@@ -178,6 +178,7 @@ export function shouldAutoStopTracking({
     ACTIVITY_TYPES.WALKING,
     ACTIVITY_TYPES.RUNNING,
     ACTIVITY_TYPES.ON_BICYCLE,
+    ACTIVITY_TYPES.CYCLING,
   ].includes(type) && confidence >= 75;
   if (onFoot && speed <= WALKING_SPEED_CUTOFF_KMH && secondsStopped >= 10) return true;
 

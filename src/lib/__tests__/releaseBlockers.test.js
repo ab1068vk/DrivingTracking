@@ -19,7 +19,7 @@ import {
   detectDrivingEvents,
   PHONE_USE_SAFETY_WEIGHT,
 } from '@/lib/tripEngine';
-import { estimateTripEconomics } from '@/lib/tripInsights';
+import { calculateCarbonImpact, estimateTripEconomics } from '@/lib/tripInsights';
 
 const routePoints = [
   { lat: 43.6500, lng: -79.3800, speed_kmh: 20, accuracy: 8, timestamp: '2026-01-01T12:00:00.000Z' },
@@ -313,6 +313,19 @@ describe('release blocker regressions', () => {
     expect(ev.grid_co2_kg).toBe(1);
     expect(ev.co2_saved_kg).toBe(17);
     expect(ev.grid_co2_kg_per_kwh).toBe(0.05);
+  });
+
+  it('computes carbon impact for legacy trips saved before co2_saved_kg existed', () => {
+    const carbon = estimateTripEconomics(
+      { distance_km: 100, eco_driving_score: 80 },
+      { fuel_type: 'electric' },
+      { co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 },
+    );
+    const impact = calculateCarbonImpact([
+      { status: 'completed', distance_km: 100, eco_driving_score: 80 },
+    ], { fuel_type: 'electric', co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 });
+
+    expect(impact.total_co2_saved_kg).toBeCloseTo(carbon.co2_saved_kg, 1);
   });
 
   it('retries transient external operations once', async () => {

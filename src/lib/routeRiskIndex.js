@@ -6,6 +6,9 @@ export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
 const MAX_SERIALIZED_LENGTH = 2_000_000;
 const MAX_STORED_SEGMENTS = 5000;
 const HARSH_EVENT_TYPES = new Set(['harsh_brake', 'near_miss', 'aggressive_overtake']);
+const SPEED_RISK_START_KMH = 100;
+const SPEED_RISK_FULL_KMH = 160;
+const SPEED_RISK_MAX_POINTS = 15;
 
 const roundCoord = (value) => Number(value).toFixed(GRID_PRECISION);
 
@@ -26,6 +29,13 @@ const nearestSegmentKey = (lat, lng, midpoints = []) => {
     if (!best || distanceM < best.distanceM) best = { key: midpoint.key, distanceM };
   }
   return best?.key || null;
+};
+
+export const speedRiskBonus = (avgSpeedKmh = 0) => {
+  const speed = Number(avgSpeedKmh) || 0;
+  if (speed <= SPEED_RISK_START_KMH) return 0;
+  const ratio = Math.min(1, (speed - SPEED_RISK_START_KMH) / (SPEED_RISK_FULL_KMH - SPEED_RISK_START_KMH));
+  return Math.round(ratio * SPEED_RISK_MAX_POINTS);
 };
 
 export function buildRouteRiskIndex(trips = []) {
@@ -80,7 +90,7 @@ export function buildRouteRiskIndex(trips = []) {
     item.riskScore = Math.min(100, Math.round(
       eventRate * 20 +
       harshRate * 40 +
-      (item.avgSpeed >= 100 ? 10 : 0)
+      speedRiskBonus(item.avgSpeed)
     ));
     item.riskLevel = item.riskScore >= 60 ? 'high' : item.riskScore >= 30 ? 'moderate' : 'low';
   }

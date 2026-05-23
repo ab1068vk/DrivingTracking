@@ -34,6 +34,8 @@ describe('mapMatching', () => {
     const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://example.test' });
 
     expect(result.status).toBe('matched');
+    expect(typeof result.confidence).toBe('number');
+    expect(typeof result.snapped_coverage).toBe('number');
     expect(result.routePoints[0].lat).toBe(route[0].lat);
     expect(result.routePoints[0].lng).toBe(route[0].lng);
     expect(result.routePoints[0].matched_lat).toBeCloseTo(43.651, 3);

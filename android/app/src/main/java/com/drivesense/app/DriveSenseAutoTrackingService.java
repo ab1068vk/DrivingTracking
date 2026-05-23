@@ -110,6 +110,10 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long PHONE_NOTIFY_COOLDOWN_MS = 120_000L;
     private static final long PHONE_WINDOW_COUNT_COOLDOWN_MS = 15_000L;
     private static final long LIVE_NOTIFICATION_MIN_INTERVAL_MS = 10_000L;
+    private static final long STATS_MAX_SAMPLE_GAP_SECONDS = 120L;
+    private static final long ANDROID_USAGE_ACCESS_LOOKBACK_MS = 120_000L;
+    private static final double SUSTAINED_TURN_HEADING_CHANGE_DEG = 35.0d;
+    private static final float TTS_SPEECH_RATE = 0.95f;
 
     private ActivityRecognitionClient activityClient;
     private FusedLocationProviderClient locationClient;
@@ -930,9 +934,8 @@ public class DriveSenseAutoTrackingService extends Service {
             if (!Double.isFinite(distance)) continue;
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
-            long dt = Math.max(0L, (currMs - prevMs) / 1000L);
-            if (dt == 0L) continue;
-            if (dt <= 0L || dt >= 120L) continue;
+            long dt = (currMs - prevMs) / 1000L;
+            if (dt <= 0L || dt >= STATS_MAX_SAMPLE_GAP_SECONDS) continue;
 
             double impliedSpeed = distance / (dt / 3600d);
             double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
@@ -1042,7 +1045,7 @@ public class DriveSenseAutoTrackingService extends Service {
         }
 
         double netHeadingChange = first != null && last != null ? Math.abs(signedHeadingDiff(first[0], last[0])) : 0.0d;
-        boolean sustainedTurnLike = netHeadingChange >= 35.0d && oscillations < PHONE_MICRO_STEER_MIN_COUNT;
+        boolean sustainedTurnLike = netHeadingChange >= SUSTAINED_TURN_HEADING_CHANGE_DEG && oscillations < PHONE_MICRO_STEER_MIN_COUNT;
         if (sustainedTurnLike) return;
 
         if (oscillations >= PHONE_MICRO_STEER_MIN_COUNT) {
@@ -1070,7 +1073,7 @@ public class DriveSenseAutoTrackingService extends Service {
             textToSpeech = new TextToSpeech(this, status -> {
                 if (status == TextToSpeech.SUCCESS && textToSpeech != null) {
                     textToSpeech.setLanguage(Locale.getDefault());
-                    textToSpeech.setSpeechRate(0.95f);
+                    textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
                     textToSpeechReady = true;
                     speakNativeAlertNow(text);
                 }
@@ -1285,7 +1288,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private void checkAndroidUsageAccessPhoneUse(long nowMs) {
         if (!isSettingEnabled("phone_use_detection_enabled", true) || !isSettingEnabled("phone_use_live_alert_enabled", true)) return;
         if (activeStartMs <= 0L || !DriveSensePhoneUsageTracker.hasUsageAccess(this)) return;
-        JSONObject usage = DriveSensePhoneUsageTracker.queryTripUsage(this, Math.max(activeStartMs, nowMs - 120_000L), nowMs);
+        JSONObject usage = DriveSensePhoneUsageTracker.queryTripUsage(this, Math.max(activeStartMs, nowMs - ANDROID_USAGE_ACCESS_LOOKBACK_MS), nowMs);
         JSONArray sessions = usage.optJSONArray("events");
         if (sessions == null || sessions.length() == 0) return;
 
