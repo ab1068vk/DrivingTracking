@@ -35,7 +35,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 - Local trip storage uses IndexedDB when available, with a migration runner and localStorage fallback. Trip schema versioning triggers rescoring for completed trips when scoring, phone-use, map, or privacy behavior changes.
 - API behavior is local-first by default. Trips and vehicles use local repositories when `VITE_API_URL` is absent or the app is running natively; configured backends fail clearly instead of silently falling back to localhost.
 - Auth tokens are session-scoped. Legacy `localStorage` tokens are migrated into `sessionStorage` and removed, and logout clears both token names from browser storage.
-- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. OSRM route snapping is opt-in, disabled without a configured endpoint, and the public demo requires confirmation because sampled GPS points leave the device.
+- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. OSRM route snapping is opt-in, disabled without a configured endpoint, the public demo requires confirmation, and the custom endpoint field warns that raw sampled GPS coordinate pairs are sent to the configured OSRM server.
 - Trip Detail and Map no longer silently hide additional route-risk stretches or risk hotspots: initial lists remain compact, and show-all controls report hidden counts. Drowsy risk color and fatigue critical markers now follow actual levels and exported thresholds, and compliance bars use the canonical score color tiers.
 - Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, currency/economics, advanced models, and data controls with searchable sections and safer validation.
 - Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, named notification identifiers, fixed-hour night classification aligned to the shared 22:00-04:59 window, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, and native diagnostics surfaced in the app. Android Gradle setup now removes obsolete AGP flags and reapplies clean AGP 9-compatible plugin DSL patches after install or sync.
@@ -79,7 +79,7 @@ node scripts/generate-technical-reference.mjs
 
 - Trips, vehicles, settings, diagnostics, and reports stay local by default.
 - No ads, analytics, or automatic trip upload are implemented in this repository.
-- OSRM route snapping is disabled until the user enables it and provides or confirms an endpoint.
+- OSRM route snapping is disabled until the user enables it and provides or confirms an endpoint; the custom endpoint input warns that raw sampled GPS coordinate pairs go to that server.
 - Automatic road/weather context fetch is off by default; manual Get Road Data prompts before sending route context to external services.
 - Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones.
 - Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and disclose any field truncation.

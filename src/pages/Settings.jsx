@@ -1685,14 +1685,22 @@ export default function Settings() {
             />
           </SettingRow>
           <div className="px-1 py-3 border-b border-border/50">
-            <div className="mb-1 text-xs font-medium">OSRM endpoint</div>
-            <input
-              value={cfg.osrm_map_matching_url || ''}
-              onChange={event => updateCfg({ osrm_map_matching_url: event.target.value })}
-              disabled={cfg.map_matching_enabled === false}
-              placeholder="https://your-osrm.example"
-              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
-            />
+            <div className="mb-1 text-xs font-medium">Custom OSRM endpoint</div>
+            <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
+              <input
+                value={cfg.osrm_map_matching_url || ''}
+                onChange={event => updateCfg({ osrm_map_matching_url: event.target.value })}
+                disabled={cfg.map_matching_enabled === false}
+                placeholder="https://your-osrm.example"
+                className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
+              />
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <span>
+                  Custom endpoints receive raw sampled GPS coordinate pairs. Only use an OSRM server you trust.
+                </span>
+              </div>
+            </div>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"

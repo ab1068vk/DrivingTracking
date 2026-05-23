@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-23T21:48:27.456Z
+Updated: 2026-05-23T22:18:50.339Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -6174,7 +6174,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 799 | Settings | score = terms.reduce((sum, term) => ( | `const score = terms.reduce((sum, term) => (` |
 | 805 | Settings | }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6) | `}).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6);` |
 | 1539 | Settings | Re-score completed trips | `Re-score completed trips` |
-| 1849 | Settings | <SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score"> | `<SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score">` |
+| 1857 | Settings | <SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score"> | `<SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score">` |
 
 #### src/pages/TripDetail.jsx
 
@@ -7206,21 +7206,21 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 1562 | Settings | ].map(({ key, label, unit, min, max, step }) => ( | `].map(({ key, label, unit, min, max, step }) => (` |
 | 1597 | Settings | { key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg / s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to c... | `{ key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as a near-miss manoeuvre.' },` |
 | 1602 | Settings | ].map(({ key, label, unit, min, max, step, help }) => ( | `].map(({ key, label, unit, min, max, step, help }) => (` |
-| 1717 | Settings | ? 'Off: Get Road Data will not contact OSRM, and map / playback use the original GPS line.' | `? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` |
-| 1821 | Settings | ].map((option) => ( | `].map((option) => (` |
-| 1842 | Settings | <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps"> | `<SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">` |
-| 1878 | Settings | ].map(({ key, label, min, max, step, unit }) => ( | `].map(({ key, label, min, max, step, unit }) => (` |
-| 1916 | Settings | sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits" | `sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` |
-| 1936 | Settings | sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual." | `sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` |
-| 1949 | Settings | ? 'skips OpenStreetMap; scoring and map colors use GPS / fallback limits only.' | `? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` |
-| 1961 | Settings | ? 'skips OSRM; map / playback keep the original GPS line.' | `? 'skips OSRM; map/playback keep the original GPS line.'` |
-| 1963 | Settings | ? 'sends sampled GPS points to OSRM and may make map / playback follow roads more cleanly.' | `? 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` |
-| 1969 | Settings | ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.' | `? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` |
-| 1970 | Settings | : 'new saved trips stay local for map / weather services until the user taps Get Road Data.'} | `: 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}` |
-| 2055 | Settings | Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside t... | `Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.` |
-| 2078 | Settings | {privacyZones.map((zone) => ( | `{privacyZones.map((zone) => (` |
-| 2198 | Settings | {DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => ( | `{DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => (` |
-| 2212 | Settings | <div>Map: OpenStreetMap + Leaflet (free, open-source)< / div> | `<div>Map: OpenStreetMap + Leaflet (free, open-source)</div>` |
+| 1725 | Settings | ? 'Off: Get Road Data will not contact OSRM, and map / playback use the original GPS line.' | `? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` |
+| 1829 | Settings | ].map((option) => ( | `].map((option) => (` |
+| 1850 | Settings | <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps"> | `<SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">` |
+| 1886 | Settings | ].map(({ key, label, min, max, step, unit }) => ( | `].map(({ key, label, min, max, step, unit }) => (` |
+| 1924 | Settings | sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits" | `sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` |
+| 1944 | Settings | sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual." | `sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` |
+| 1957 | Settings | ? 'skips OpenStreetMap; scoring and map colors use GPS / fallback limits only.' | `? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` |
+| 1969 | Settings | ? 'skips OSRM; map / playback keep the original GPS line.' | `? 'skips OSRM; map/playback keep the original GPS line.'` |
+| 1971 | Settings | ? 'sends sampled GPS points to OSRM and may make map / playback follow roads more cleanly.' | `? 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` |
+| 1977 | Settings | ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.' | `? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` |
+| 1978 | Settings | : 'new saved trips stay local for map / weather services until the user taps Get Road Data.'} | `: 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}` |
+| 2063 | Settings | Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside t... | `Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.` |
+| 2086 | Settings | {privacyZones.map((zone) => ( | `{privacyZones.map((zone) => (` |
+| 2206 | Settings | {DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => ( | `{DRIVING_PATTERN_DEFINITIONS.map(({ term, definition }) => (` |
+| 2220 | Settings | <div>Map: OpenStreetMap + Leaflet (free, open-source)< / div> | `<div>Map: OpenStreetMap + Leaflet (free, open-source)</div>` |
 
 #### src/pages/TripDetail.jsx
 
@@ -7866,11 +7866,11 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 1561 | Settings | { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km / h', min: 0, max: 40, step: 5 }, | `{ key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },` |
 | 1587 | Settings | sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included... | `sublabel={cfg.advanced_safety_detection_enabled === false ? 'Near-miss, drowsy, phone-proxy, speed-creep, and overtake detection are off' : 'Extra safety signatures are included in detection and scoring'}` |
 | 1600 | Settings | { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km / h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road... | `{ key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },` |
-| 1873 | Settings | { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km / h / s' }, | `{ key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },` |
-| 1901 | Settings | { / x Speed Warning x / } | `{/* Speed Warning */}` |
-| 1902 | Settings | <SectionTitle id="settings-speed-warning">Speed Warning< / SectionTitle> | `<SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>` |
-| 1935 | Settings | label="Automatically get speed limits + weather" | `label="Automatically get speed limits + weather"` |
-| 1983 | Settings | onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}` |
+| 1881 | Settings | { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km / h / s' }, | `{ key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },` |
+| 1909 | Settings | { / x Speed Warning x / } | `{/* Speed Warning */}` |
+| 1910 | Settings | <SectionTitle id="settings-speed-warning">Speed Warning< / SectionTitle> | `<SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>` |
+| 1943 | Settings | label="Automatically get speed limits + weather" | `label="Automatically get speed limits + weather"` |
+| 1991 | Settings | onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })} | `onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}` |
 
 #### src/pages/TripDetail.jsx
 
@@ -22613,186 +22613,186 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `src/
 | 1679 | `"Snap route to roads (OSRM)"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1680 | `"Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1683 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1690 | `''` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1692 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1693 | `"https://your-osrm.example"` | inline URL | placeholder | External service endpoint or help text; changing may redirect data or break integration. |
-| 1698 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1700 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1691 | `''` | string literal | value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1693 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1694 | `"https://your-osrm.example"` | inline URL | placeholder | External service endpoint or help text; changing may redirect data or break integration. |
 | 1706 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1707 | `false` | boolean flag | onClick | Inline state/default flag; changing can flip behavior. |
-| 1707 | `''` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1708 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1716 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 1717 | `'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` | string constant/key | Off | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1719 | `'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'` | string constant/key | On | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1720 | `'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'` | string constant/key | link | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1725 | `"Predictive route risk"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1726 | `"Estimate safest route window from history, danger zones, and context"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1729 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1735 | `"Live voice alerts"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1736 | `"Speaks during active trips for live coaching, phone use, speeding, drowsy, long-drive, danger-zone, and incident alerts"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1740 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1750 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1762 | `"OBD-II Bluetooth"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1763 | `'BLE OBD-II parsing is available for compatible adapters'` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1777 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1791 | `"settings-phone-use"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1795 | `"Detect phone use while driving"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1796 | `"Use Android Usage Access when allowed, with GPS behaviour signals as a fallback"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1799 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1805 | `"Phone use live alert"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1806 | `"Send an immediate warning when phone-use patterns are detected"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1809 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1811 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1818 | `'low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1818 | `'Low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1818 | `'Fewer false positives'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1819 | `'medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1819 | `'Medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1819 | `'Recommended'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1820 | `'high'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1820 | `'High'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1820 | `'More sensitive'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1824 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1826 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1828 | `'medium'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1829 | `'border-primary bg-primary/5 text-primary'` | string literal | border | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1830 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | hover | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'low'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'0.60'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'high'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'0.25'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1839 | `'0.40'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1842 | `"Show on trip map"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1842 | `"Mark suspected phone-use windows on route maps"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1844 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1846 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1849 | `"Include in trip score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1849 | `"Apply phone-use penalties to the Safety score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1851 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1853 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1867 | `'Editable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1867 | `'Locked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1872 | `'phone_micro_steer_count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1872 | `'Micro-steer count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1872 | `2` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1872 | `8` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1872 | `1` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1872 | `'turns'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1873 | `'phone_creep_rate_kmh_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1873 | `'Speed creep rate'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1873 | `0.5` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1873 | `4` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1873 | `0.25` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1873 | `'km/h/s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1874 | `'phone_lane_drift_deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1874 | `'Lane drift angle'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1874 | `3` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1874 | `18` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1874 | `1` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1874 | `'deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1875 | `'phone_coupling_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1875 | `'Coupling threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1875 | `0.05` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1875 | `0.4` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1875 | `0.05` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1875 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1876 | `'phone_confidence_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1876 | `'Confidence threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1876 | `0.15` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1876 | `0.8` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1876 | `0.05` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1876 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1877 | `'phone_min_window_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1877 | `'Minimum window'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1877 | `2` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1877 | `12` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1877 | `1` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1877 | `'s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1885 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1890 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1902 | `"settings-speed-warning"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1905 | `"Live Speed Warning"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1906 | `false` | boolean flag | sublabel | Inline state/default flag; changing can flip behavior. |
-| 1906 | `'Dashboard speed warnings are disabled'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1906 | `'Warn during a trip when speed exceeds the fallback limit plus margin'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1909 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1915 | `"Get posted speed limits"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1916 | `"When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1919 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1925 | `"Get trip weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1926 | `"When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1929 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1935 | `"Automatically get speed limits + weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1936 | `"Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1939 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 1948 | `false` | boolean flag | speed_limit_lookup_enabled | Inline state/default flag; changing can flip behavior. |
-| 1949 | `'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` | string constant/key | GPS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1950 | `'sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits.'` | string literal | route | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1954 | `false` | boolean flag | weather_context_enabled | Inline state/default flag; changing can flip behavior. |
-| 1955 | `'skips Open-Meteo; scores do not get weather adjustment.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1956 | `'sends trip midpoint and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1960 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
-| 1961 | `'skips OSRM; map/playback keep the original GPS line.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1963 | `'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1964 | `'will be skipped until an OSRM endpoint is added.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1968 | `true` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
-| 1969 | `'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` | string constant/key | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1970 | `'new saved trips stay local for map/weather services until the user taps Get Road Data.'` | string literal | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1980 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1980 | `5` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1980 | `30` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1980 | `5` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1981 | `5` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1982 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
-| 1987 | `5` | numeric literal | span | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1988 | `30` | numeric literal | span | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1993 | `"settings-privacy-data"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1997 | `"Privacy Policy"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1998 | `"All data is stored locally on your device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2019 | `"Home, work, school"` | string literal | placeholder | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2022 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2023 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2026 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2030 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2038 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2043 | `"Privacy zone radius in meters"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2047 | `50` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2047 | `1000` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2055 | `50` | numeric literal | 50 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2055 | `-1000` | numeric literal | 50 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2059 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1714 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1715 | `false` | boolean flag | onClick | Inline state/default flag; changing can flip behavior. |
+| 1715 | `''` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1716 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1724 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 1725 | `'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'` | string constant/key | Off | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1727 | `'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'` | string constant/key | On | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1728 | `'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'` | string constant/key | link | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1733 | `"Predictive route risk"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1734 | `"Estimate safest route window from history, danger zones, and context"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1737 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1743 | `"Live voice alerts"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1744 | `"Speaks during active trips for live coaching, phone use, speeding, drowsy, long-drive, danger-zone, and incident alerts"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1748 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1758 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1770 | `"OBD-II Bluetooth"` | string constant/key | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1771 | `'BLE OBD-II parsing is available for compatible adapters'` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1785 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1799 | `"settings-phone-use"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1803 | `"Detect phone use while driving"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1804 | `"Use Android Usage Access when allowed, with GPS behaviour signals as a fallback"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1807 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1813 | `"Phone use live alert"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1814 | `"Send an immediate warning when phone-use patterns are detected"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1817 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1819 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1826 | `'low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1826 | `'Low'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1826 | `'Fewer false positives'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1827 | `'medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1827 | `'Medium'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1827 | `'Recommended'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1828 | `'high'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1828 | `'High'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1828 | `'More sensitive'` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1832 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1834 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1836 | `'medium'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1837 | `'border-primary bg-primary/5 text-primary'` | string literal | border | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1838 | `'border-border text-muted-foreground hover:border-primary/40'` | string literal | hover | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'low'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'0.60'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'medium'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'high'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'0.25'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1847 | `'0.40'` | string literal | Threshold | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1850 | `"Show on trip map"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1850 | `"Mark suspected phone-use windows on route maps"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1852 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1854 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1857 | `"Include in trip score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1857 | `"Apply phone-use penalties to the Safety score"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1859 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1861 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1875 | `'Editable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1875 | `'Locked'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1880 | `'phone_micro_steer_count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1880 | `'Micro-steer count'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1880 | `2` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1880 | `8` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1880 | `1` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1880 | `'turns'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1881 | `'phone_creep_rate_kmh_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1881 | `'Speed creep rate'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1881 | `0.5` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1881 | `4` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1881 | `0.25` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1881 | `'km/h/s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1882 | `'phone_lane_drift_deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1882 | `'Lane drift angle'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1882 | `3` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1882 | `18` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1882 | `1` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1882 | `'deg'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1883 | `'phone_coupling_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1883 | `'Coupling threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1883 | `0.05` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1883 | `0.4` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1883 | `0.05` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1883 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1884 | `'phone_confidence_threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1884 | `'Confidence threshold'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1884 | `0.15` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1884 | `0.8` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1884 | `0.05` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1884 | `''` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1885 | `'phone_min_window_s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1885 | `'Minimum window'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1885 | `2` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1885 | `12` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1885 | `1` | numeric literal | key | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1885 | `'s'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1893 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1898 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1910 | `"settings-speed-warning"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1913 | `"Live Speed Warning"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1914 | `false` | boolean flag | sublabel | Inline state/default flag; changing can flip behavior. |
+| 1914 | `'Dashboard speed warnings are disabled'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1914 | `'Warn during a trip when speed exceeds the fallback limit plus margin'` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1917 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1923 | `"Get posted speed limits"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1924 | `"When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1927 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1933 | `"Get trip weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1934 | `"When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1937 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1943 | `"Automatically get speed limits + weather"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1944 | `"Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1947 | `true` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
+| 1956 | `false` | boolean flag | speed_limit_lookup_enabled | Inline state/default flag; changing can flip behavior. |
+| 1957 | `'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'` | string constant/key | GPS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1958 | `'sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits.'` | string literal | route | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1962 | `false` | boolean flag | weather_context_enabled | Inline state/default flag; changing can flip behavior. |
+| 1963 | `'skips Open-Meteo; scores do not get weather adjustment.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1964 | `'sends trip midpoint and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'` | string literal | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1968 | `false` | boolean flag | map_matching_enabled | Inline state/default flag; changing can flip behavior. |
+| 1969 | `'skips OSRM; map/playback keep the original GPS line.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1971 | `'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'` | string constant/key | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1972 | `'will be skipped until an OSRM endpoint is added.'` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1976 | `true` | boolean flag | external_context_auto_fetch_enabled | Inline state/default flag; changing can flip behavior. |
+| 1977 | `'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'` | string constant/key | Open | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1978 | `'new saved trips stay local for map/weather services until the user taps Get Road Data.'` | string literal | map | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1988 | `"range"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1988 | `5` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1988 | `30` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1988 | `5` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1989 | `5` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1990 | `false` | boolean flag | disabled | Inline state/default flag; changing can flip behavior. |
+| 1995 | `5` | numeric literal | span | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1996 | `30` | numeric literal | span | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2001 | `"settings-privacy-data"` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2005 | `"Privacy Policy"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2006 | `"All data is stored locally on your device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2027 | `"Home, work, school"` | string literal | placeholder | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2030 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2031 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2034 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2038 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2046 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2051 | `"Privacy zone radius in meters"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2055 | `50` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2055 | `1000` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2063 | `50` | numeric literal | 50 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2063 | `-1000` | numeric literal | 50 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 2067 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2068 | `'Parked location'` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2076 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2086 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2087 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2090 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2104 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2109 | ``Radius in meters for ${zone.label}`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2112 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2115 | ``Delete ${zone.label} privacy zone`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2132 | `"Export All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2133 | `"Download as CSV file"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2140 | `"Export Full Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2141 | `"JSON with trips, GPS route points, events, vehicles, and settings"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2148 | `"Import Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2149 | `"Restore a Road Sage JSON backup into local storage"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2156 | `"Data Retention"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2157 | `"Keep local trip history on this device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2164 | `90` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2164 | `90` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2165 | `365` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2165 | `1` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2166 | `0` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2171 | `"Delete All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2172 | `"Permanently removes all trip data"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2183 | `"file"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2184 | `"application/json,.json"` | string literal | accept | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2211 | `1.0` | numeric literal | div | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 2211 | `0` | numeric literal | div | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2075 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2076 | `'Parked location'` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2084 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2094 | `"number"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2095 | `"numeric"` | string literal | inputMode | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2098 | `"10"` | string literal | step | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2112 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2117 | ``Radius in meters for ${zone.label}`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2120 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2123 | ``Delete ${zone.label} privacy zone`` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2140 | `"Export All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2141 | `"Download as CSV file"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2148 | `"Export Full Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2149 | `"JSON with trips, GPS route points, events, vehicles, and settings"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2156 | `"Import Backup"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2157 | `"Restore a Road Sage JSON backup into local storage"` | string constant/key | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2164 | `"Data Retention"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2165 | `"Keep local trip history on this device"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2172 | `90` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2172 | `90` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2173 | `365` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2173 | `1` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2174 | `0` | numeric literal | value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2179 | `"Delete All Trips"` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2180 | `"Permanently removes all trip data"` | string literal | sublabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2191 | `"file"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2192 | `"application/json,.json"` | string literal | accept | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 2219 | `1.0` | numeric literal | div | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 2219 | `0` | numeric literal | div | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 
 </details>
 
@@ -24858,7 +24858,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/pages/Settings.jsx | 690 | } catch (error) { | handled fallback or diagnostic logging |
 | src/pages/Settings.jsx | 752 | try { | protected operation |
 | src/pages/Settings.jsx | 768 | } catch (error) { | handled fallback or diagnostic logging |
-| src/pages/Settings.jsx | 2030 | setPrivacyDraftRadiusError(''); | protected operation |
+| src/pages/Settings.jsx | 2038 | setPrivacyDraftRadiusError(''); | protected operation |
 | src/pages/TripDetail.jsx | 342 | setJson(DISMISSED_TAG_SUGGESTIONS_KEY, next).catch(() => {}); | silent optional fallback; verify low impact |
 | src/pages/TripDetail.jsx | 994 | message="Something went wrong while preparing this trip's score summary. Reload to try again." | protected operation |
 | src/pages/TripHistory.jsx | 177 | setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {}); | silent optional fallback; verify low impact |
@@ -24873,10 +24873,10 @@ Critical async operations should call `logError(context, error, extra)` when a f
 - Authorization: no in-repo backend role matrix exists. The local app is single-user local-first; backend authorization must be enforced by the external API if configured.
 - User-controlled data surfaces: backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, CSV/PDF export content, and Android native intent extras.
 - Leaflet popups: route labels, event metadata, speed-limit road/source data, route-risk segments, danger zones, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.
-- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled GPS points only when route snapping is explicitly enabled and requested.
+- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled raw GPS coordinate pairs only when route snapping is explicitly enabled and requested. Settings shows a warning beside the custom OSRM endpoint input because user-provided endpoints can be untrusted external servers.
 - Backup restore: schema versions 1 through 5 are migrated before merge; untrusted records are whitelisted and field-limited, and any text truncation is reported to the user.
 - Secrets: no secrets are checked into this repo by the scanner; `VITE_API_URL` is configuration, not a secret.
-- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled route points by design.
+- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled raw coordinate pairs by design, with an explicit in-app warning at the custom endpoint control.
 
 ---
 ## Performance Characteristics
