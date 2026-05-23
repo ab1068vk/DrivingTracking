@@ -15,6 +15,7 @@ import { openExportLocation } from '@/lib/nativeDownloads';
 import { Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
@@ -104,7 +105,15 @@ const AuthenticatedApp = () => {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/trips" element={<TripHistory />} />
-        <Route path="/trips/:id" element={<TripDetail />} />
+        <Route path="/trips/:id" element={(
+          <SectionErrorBoundary
+            context="trip_detail_page"
+            title="Trip detail unavailable"
+            message="Something went wrong while opening this trip. Reload to try again."
+          >
+            <TripDetail />
+          </SectionErrorBoundary>
+        )} />
         <Route path="/map" element={<MapScreen />} />
         <Route path="/coach" element={<DrivingCoach />} />
         <Route path="/insights" element={<Insights />} />

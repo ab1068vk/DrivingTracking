@@ -365,4 +365,22 @@ describe('release blocker regressions', () => {
     expect(coachSource).toContain("logError('driver_signature_save'");
     expect(coachSource).not.toContain('setJson(DRIVER_SIGNATURE_KEY, driverSignature).catch(() => {})');
   });
+
+  it('wraps heavy trip and dashboard sections in recoverable error boundaries', () => {
+    const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
+    const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
+    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
+
+    expect(appSource).toContain('context="trip_detail_page"');
+    expect(tripDetailSource).toContain('context="trip_detail_score_overview"');
+    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} />');
+    expect(dashboardSource).toContain('context="dashboard_risk_panel"');
+    expect(dashboardSource).toContain('<DashboardRiskPanel');
+    expect(tripMapSource).toContain('context="trip_map"');
+    expect(tripMapSource).toContain('function TripMapContent');
+    expect(tripPlaybackSource).toContain('context="trip_playback"');
+    expect(tripPlaybackSource).toContain('function TripPlaybackContent');
+  });
 });

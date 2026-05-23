@@ -9,6 +9,7 @@ import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -123,7 +124,20 @@ const endpointIconHtml = (label, color) => `
   <div style="width:24px;height:24px;border-radius:999px;background:${color};border:3px solid white;box-shadow:0 5px 14px rgba(15,23,42,.28);color:white;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900">${label}</div>
 `;
 
-export default function TripPlayback({ trip, secondaryTrip = null, height = '380px' }) {
+export default function TripPlayback(props) {
+  return (
+    <SectionErrorBoundary
+      context="trip_playback"
+      title="Playback unavailable"
+      message="Something went wrong while preparing this trip playback. Reload to try again."
+      resetKey={`${props.trip?.id || 'trip'}:${props.secondaryTrip?.id || 'none'}`}
+    >
+      <TripPlaybackContent {...props} />
+    </SectionErrorBoundary>
+  );
+}
+
+function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
   const markerRef = useRef(null);

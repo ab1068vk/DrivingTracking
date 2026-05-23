@@ -56,6 +56,7 @@ import ScoreRing from '@/components/ScoreRing';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import TripMap from '@/components/TripMap';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import {
@@ -231,17 +232,6 @@ export default function Dashboard() {
   );
   const todayTrips = getTodayTrips(completedTrips);
   const dailyFatigue = computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
-  const predictiveRouteRisk = estimatePredictiveRouteRisk({
-    trips: completedTrips,
-    dangerZones,
-    weatherRiskScore: 0,
-    currentLocation,
-    habitProfile,
-  });
-  const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue, {
-    nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
-    predictiveRouteRisk,
-  }, habitProfile);
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch(() => {});
@@ -1625,93 +1615,23 @@ export default function Dashboard() {
       </AnimatePresence>
 
       {!tracking && completedTrips.length >= 5 && !readinessDismissed && (
-        <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
-          <div className="flex items-start gap-4">
-            <div
-              className="grid h-14 w-14 flex-shrink-0 place-items-center rounded-full text-sm font-bold text-white"
-              style={{
-                background: preTripRisk.riskLevel === 'low'
-                  ? '#22c55e'
-                  : preTripRisk.riskLevel === 'moderate'
-                    ? '#eab308'
-                    : '#ef4444',
-              }}
-            >
-              {preTripRisk.readinessScore}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="min-w-0 break-words font-semibold">Trip readiness</h2>
-                <button
-                  onClick={() => setReadinessDismissed(true)}
-                  className="flex-shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-secondary"
-                  aria-label="Dismiss readiness card"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="break-words text-sm font-medium capitalize">
-                {preTripRisk.readinessScore}/100 · {preTripRisk.riskLevel} risk
-              </div>
-              {preTripRisk.dataQuality?.personalised === false && (
-                <div className="mt-1 break-words text-xs text-muted-foreground">
-                  Learning your habits - readiness will personalise after a few more trips.
-                </div>
-              )}
-              {preTripRisk.dataQuality?.personalised && preTripRisk.dataQuality.confidence < 1 && (
-                <div className="mt-1 break-words text-xs text-muted-foreground">
-                  Readiness is personalising ({completedTrips.length} trips recorded).
-                </div>
-              )}
-              {preTripRisk.riskLevel !== 'low' && (
-                <>
-                  <div className="mt-1 break-words text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
-                  <div className="mt-1 break-words text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
-                </>
-              )}
-              <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-3 text-xs">
-                <div className="font-semibold">Recommended before starting</div>
-                <div className="mt-1 text-muted-foreground">
-                  {preTripRisk.riskLevel === 'low'
-                    ? 'Conditions look steady. Start when your phone is mounted and GPS has a clear signal.'
-                    : preTripRisk.tipText || 'Take a short reset before driving, then start when you feel focused.'}
-                </div>
-              </div>
-              {preTripRisk.topSignals?.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  {preTripRisk.topSignals.map((signal) => (
-                    <div key={signal.key} className="flex items-start gap-2 text-xs">
-                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
-                      <span className="min-w-0 flex-1 break-words leading-snug text-muted-foreground">{signal.label}</span>
-                      <span className="max-w-[45%] break-words text-right font-semibold leading-snug">{signal.value}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {settings.predictive_route_risk_enabled !== false && (
-                <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 break-words font-semibold">Predictive route risk</span>
-                    <span className={`flex-shrink-0 font-bold capitalize ${
-                      predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
-                    }`}>
-                      {predictiveRouteRisk.riskScore}/100
-                    </span>
-                  </div>
-                  <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
-                  <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
-                  {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
-                    <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
-                      {predictiveRouteRisk.nearbyDangerZoneCount} nearby hotspot{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <SectionErrorBoundary
+          context="dashboard_risk_panel"
+          title="Trip readiness unavailable"
+          message="Something went wrong while preparing the readiness score. Reload to try again."
+          resetKey={`${completedTrips[0]?.id || 'none'}:${dangerZones.length}:${currentLocation?.timestamp || 'no-location'}`}
+        >
+          <DashboardRiskPanel
+            completedTrips={completedTrips}
+            currentLocation={currentLocation}
+            dailyFatigue={dailyFatigue}
+            dangerZones={dangerZones}
+            habitProfile={habitProfile}
+            onDismiss={() => setReadinessDismissed(true)}
+            settings={settings}
+          />
+        </SectionErrorBoundary>
       )}
-
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
@@ -1973,6 +1893,117 @@ export default function Dashboard() {
           tripStartTime={activeTrip?.start_time}
         />
       )}
+    </div>
+  );
+}
+
+function DashboardRiskPanel({
+  completedTrips,
+  currentLocation,
+  dailyFatigue,
+  dangerZones,
+  habitProfile,
+  onDismiss,
+  settings,
+}) {
+  const predictiveRouteRisk = useMemo(() => estimatePredictiveRouteRisk({
+    trips: completedTrips,
+    dangerZones,
+    weatherRiskScore: 0,
+    currentLocation,
+    habitProfile,
+  }), [completedTrips, currentLocation, dangerZones, habitProfile]);
+
+  const preTripRisk = useMemo(() => computePreTripRisk(completedTrips, settings, dailyFatigue, {
+    nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
+    predictiveRouteRisk,
+  }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
+
+  return (
+    <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
+      <div className="flex items-start gap-4">
+        <div
+          className="grid h-14 w-14 flex-shrink-0 place-items-center rounded-full text-sm font-bold text-white"
+          style={{
+            background: preTripRisk.riskLevel === 'low'
+              ? '#22c55e'
+              : preTripRisk.riskLevel === 'moderate'
+                ? '#eab308'
+                : '#ef4444',
+          }}
+        >
+          {preTripRisk.readinessScore}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="min-w-0 break-words font-semibold">Trip readiness</h2>
+            <button
+              onClick={onDismiss}
+              className="flex-shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-secondary"
+              aria-label="Dismiss readiness card"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="break-words text-sm font-medium capitalize">
+            {preTripRisk.readinessScore}/100 - {preTripRisk.riskLevel} risk
+          </div>
+          {preTripRisk.dataQuality?.personalised === false && (
+            <div className="mt-1 break-words text-xs text-muted-foreground">
+              Learning your habits - readiness will personalise after a few more trips.
+            </div>
+          )}
+          {preTripRisk.dataQuality?.personalised && preTripRisk.dataQuality.confidence < 1 && (
+            <div className="mt-1 break-words text-xs text-muted-foreground">
+              Readiness is personalising ({completedTrips.length} trips recorded).
+            </div>
+          )}
+          {preTripRisk.riskLevel !== 'low' && (
+            <>
+              <div className="mt-1 break-words text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
+              <div className="mt-1 break-words text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
+            </>
+          )}
+          <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-3 text-xs">
+            <div className="font-semibold">Recommended before starting</div>
+            <div className="mt-1 text-muted-foreground">
+              {preTripRisk.riskLevel === 'low'
+                ? 'Conditions look steady. Start when your phone is mounted and GPS has a clear signal.'
+                : preTripRisk.tipText || 'Take a short reset before driving, then start when you feel focused.'}
+            </div>
+          </div>
+          {preTripRisk.topSignals?.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {preTripRisk.topSignals.map((signal) => (
+                <div key={signal.key} className="flex items-start gap-2 text-xs">
+                  <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
+                  <span className="min-w-0 flex-1 break-words leading-snug text-muted-foreground">{signal.label}</span>
+                  <span className="max-w-[45%] break-words text-right font-semibold leading-snug">{signal.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {settings.predictive_route_risk_enabled !== false && (
+            <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 break-words font-semibold">Predictive route risk</span>
+                <span className={`flex-shrink-0 font-bold capitalize ${
+                  predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
+                }`}>
+                  {predictiveRouteRisk.riskScore}/100
+                </span>
+              </div>
+              <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
+              <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
+              {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
+                <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
+                  {predictiveRouteRisk.nearbyDangerZoneCount} nearby hotspot{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import TripMap from '@/components/TripMap';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import {
   calculateSegmentMetrics,
   formatDistance,
@@ -961,64 +962,14 @@ export default function TripDetail() {
       )}
 
       {/* Score overview */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+      <SectionErrorBoundary
+        context="trip_detail_score_overview"
+        title="Score summary unavailable"
+        message="Something went wrong while preparing this trip's score summary. Reload to try again."
+        resetKey={trip.id}
       >
-        <div className="flex items-center gap-6">
-          <ScoreRing
-            score={trip.score_overall || 0}
-            size={100}
-            strokeWidth={8}
-            sublabel="overall"
-            title={buildScoreExplanation(trip, 'score_overall')}
-          />
-          <div className="flex-1 grid grid-cols-3 gap-3">
-            {[
-              { label: 'Safety', key: 'score_safety', value: trip.score_safety },
-              { label: 'Smooth', key: 'score_smoothness', value: trip.score_smoothness },
-              { label: 'Eco', key: 'score_eco', value: trip.score_eco },
-            ].map(({ label, key, value }) => {
-              const { color: c } = getScoreColor(value || 0);
-              return (
-                <div key={label} className="text-center" title={buildScoreExplanation(trip, key)}>
-                  <div className={`font-grotesk font-bold text-xl ${c}`}>{value ?? '—'}</div>
-                  <div className="text-xs text-muted-foreground">{label}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 mt-5 sm:grid-cols-2">
-          {[
-            { label: 'Aggression', score: trip.aggressive_driving_score, grade: trip.aggressive_grade },
-            { label: 'Defensive', score: trip.defensive_driving_score, grade: trip.defensive_grade },
-          ].map(({ label, score, grade }) => (
-            <div key={label} className="flex min-w-0 items-center gap-3 rounded-2xl bg-secondary/50 p-3">
-              <div className="shrink-0">
-                <ScoreRing
-                  score={score ?? 0}
-                  size={56}
-                  strokeWidth={5}
-                  title={buildScoreExplanation(trip, label === 'Aggression' ? 'aggressive_driving_score' : 'defensive_driving_score')}
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold leading-tight">{label}</div>
-                <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
-                  ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
-                    grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :
-                      ['assertive', 'average'].includes(grade) ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' :
-                        'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
-                }`}>{grade || 'unknown'}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </motion.div>
-
+        <TripScoreOverview trip={trip} />
+      </SectionErrorBoundary>
       {roadTypeScores.length > 0 && (
         <motion.details
           initial={{ opacity: 0, y: 16 }}
@@ -1480,5 +1431,67 @@ export default function TripDetail() {
         <span className="text-right text-sm font-semibold">{tripPointSummary}</span>
       </motion.div>
     </div>
+  );
+}
+
+function TripScoreOverview({ trip }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.15 }}
+      className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+    >
+      <div className="flex items-center gap-6">
+        <ScoreRing
+          score={trip.score_overall || 0}
+          size={100}
+          strokeWidth={8}
+          sublabel="overall"
+          title={buildScoreExplanation(trip, 'score_overall')}
+        />
+        <div className="flex-1 grid grid-cols-3 gap-3">
+          {[
+            { label: 'Safety', key: 'score_safety', value: trip.score_safety },
+            { label: 'Smooth', key: 'score_smoothness', value: trip.score_smoothness },
+            { label: 'Eco', key: 'score_eco', value: trip.score_eco },
+          ].map(({ label, key, value }) => {
+            const { color: c } = getScoreColor(value || 0);
+            return (
+              <div key={label} className="text-center" title={buildScoreExplanation(trip, key)}>
+                <div className={`font-grotesk font-bold text-xl ${c}`}>{value ?? '-'}</div>
+                <div className="text-xs text-muted-foreground">{label}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 mt-5 sm:grid-cols-2">
+        {[
+          { label: 'Aggression', score: trip.aggressive_driving_score, grade: trip.aggressive_grade },
+          { label: 'Defensive', score: trip.defensive_driving_score, grade: trip.defensive_grade },
+        ].map(({ label, score, grade }) => (
+          <div key={label} className="flex min-w-0 items-center gap-3 rounded-2xl bg-secondary/50 p-3">
+            <div className="shrink-0">
+              <ScoreRing
+                score={score ?? 0}
+                size={56}
+                strokeWidth={5}
+                title={buildScoreExplanation(trip, label === 'Aggression' ? 'aggressive_driving_score' : 'defensive_driving_score')}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold leading-tight">{label}</div>
+              <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
+                ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
+                  grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :
+                    ['assertive', 'average'].includes(grade) ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' :
+                      'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+              }`}>{grade || 'unknown'}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </motion.div>
   );
 }

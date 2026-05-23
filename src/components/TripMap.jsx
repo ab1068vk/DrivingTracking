@@ -15,6 +15,7 @@ import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -282,7 +283,24 @@ function loadLeaflet() {
   return loadPromise;
 }
 
-export default function TripMap({
+export default function TripMap(props) {
+  const resetKey = Array.isArray(props.routes)
+    ? props.routes.map((route) => `${route.id || route.label || 'route'}:${route.selected ? '1' : '0'}:${route.route_points?.length || 0}`).join('|')
+    : `${props.routePoints?.length || 0}:${props.currentLocation?.timestamp || ''}`;
+
+  return (
+    <SectionErrorBoundary
+      context="trip_map"
+      title="Map unavailable"
+      message="Something went wrong while drawing this route. Reload to try again."
+      resetKey={resetKey}
+    >
+      <TripMapContent {...props} />
+    </SectionErrorBoundary>
+  );
+}
+
+function TripMapContent({
   routePoints = [],
   routes = null,
   events = [],
