@@ -26,6 +26,7 @@ import {
   detectTailgateCycles,
   DEFAULT_THRESHOLDS,
   EVENT_TYPES,
+  getScoreColor,
   TRIP_STATES,
   haversineDistance,
   isNearRecentParkedLocation,
@@ -505,6 +506,14 @@ describe('tripEngine', () => {
     expect(isNightDrivingTime(torontoWinterNoon, sunsetThresholds)).toBe(false);
   });
 
+  it('uses the shared fixed-hour fallback boundary when coordinates are unavailable', () => {
+    const beforeEnd = { timestamp: new Date(2026, 0, 1, 4, 59, 0).toISOString() };
+    const atEnd = { timestamp: new Date(2026, 0, 1, 5, 0, 0).toISOString() };
+
+    expect(isNightDrivingTime(beforeEnd)).toBe(true);
+    expect(isNightDrivingTime(atEnd)).toBe(false);
+  });
+
   it('keeps 2,000-point trip stats and scoring stable under the route hot-path budget', () => {
     const startMs = Date.UTC(2026, 0, 1, 17, 0, 0);
     const points = Array.from({ length: 2000 }, (_, index) => ({
@@ -903,6 +912,14 @@ describe('tripEngine', () => {
     expect(trimmed.removedPoints).toBe(2);
     expect(trimmed.points.at(-1).timestamp).toBe(route[2].timestamp);
   });
+
+  it('provides fill classes from the canonical score color tiers', () => {
+    expect(getScoreColor(85).fill).toBe('bg-green-500');
+    expect(getScoreColor(70).fill).toBe('bg-blue-500');
+    expect(getScoreColor(55).fill).toBe('bg-yellow-500');
+    expect(getScoreColor(40).fill).toBe('bg-orange-500');
+    expect(getScoreColor(39).fill).toBe('bg-red-500');
+  });
 });
 
 describe('auto tracking decision logic', () => {
@@ -1106,6 +1123,8 @@ describe('trip insights', () => {
     }));
 
     expect(suggestTripTag(commute).auto_tag).toBe('commute');
+    expect(suggestTripTag({ ...commute, start_time: new Date(2026, 0, 5, 19, 0, 0).toISOString() }).auto_tag).toBe('city');
+    expect(suggestTripTag({ ...commute, start_time: new Date(2026, 0, 5, 5, 0, 0).toISOString() }).auto_tag).not.toBe('night');
     expect(estimateTripEconomics(commute, { fuel_efficiency_l_per_100km: 10 }).fuel_saved_liters).toBeGreaterThan(0);
     expect(computePersonalBaseline(trips).baseline_avg).not.toBeNull();
     expect(calculateVehicleHealthImpact([commute], {}).extra_wear_km).toBe(32);

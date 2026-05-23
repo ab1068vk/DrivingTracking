@@ -2,6 +2,7 @@ import { saveExportToDownloads } from './nativeDownloads';
 import { clamp } from './mathUtils';
 import { detectTripStops, estimateTripEconomics } from './tripInsights';
 import { maskTripForPrivacy } from './privacyZones';
+import { NIGHT_END_HOUR, NIGHT_END_TIME, NIGHT_START_HOUR, NIGHT_START_TIME } from './appConstants';
 
 const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
 const SPEED_VARIABILITY_INDEX_MULTIPLIER = 1.5;
@@ -46,12 +47,12 @@ export const DEFAULT_THRESHOLDS = {
   IDLE_EVENT_SECONDS: 90,
   // Long drive: > 120 continuous minutes
   LONG_DRIVE_MINUTES: 120,
-  // Night driving defaults: sunset/sunrise when coordinates exist, otherwise 22:00 - 06:00.
+  // Night driving defaults: sunset/sunrise when coordinates exist, otherwise the shared fixed-hour window.
   NIGHT_DETECTION_MODE: 'sunset',
-  NIGHT_START_TIME: '22:00',
-  NIGHT_END_TIME: '06:00',
-  NIGHT_START_HOUR: 22,
-  NIGHT_END_HOUR: 6,
+  NIGHT_START_TIME,
+  NIGHT_END_TIME,
+  NIGHT_START_HOUR,
+  NIGHT_END_HOUR,
   NIGHT_SUNSET_OFFSET_MINUTES: 0,
   NIGHT_SUNRISE_OFFSET_MINUTES: 0,
   // Minimum trip distance to save (< 0.1 km = likely noise)
@@ -4525,11 +4526,11 @@ export function calculateTripScores(
 
 // ─── Score Color Utility ───────────────────────────────────────────────────────
 export function getScoreColor(score) {
-  if (score >= 85) return { color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-950/30', label: 'Excellent' };
-  if (score >= 70) return { color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30', label: 'Good' };
-  if (score >= 55) return { color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30', label: 'Fair' };
-  if (score >= 40) return { color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30', label: 'Poor' };
-  return { color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30', label: 'Risky' };
+  if (score >= 85) return { color: 'text-green-500', fill: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-950/30', label: 'Excellent' };
+  if (score >= 70) return { color: 'text-blue-500', fill: 'bg-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30', label: 'Good' };
+  if (score >= 55) return { color: 'text-yellow-500', fill: 'bg-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30', label: 'Fair' };
+  if (score >= 40) return { color: 'text-orange-500', fill: 'bg-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30', label: 'Poor' };
+  return { color: 'text-red-500', fill: 'bg-red-500', bg: 'bg-red-50 dark:bg-red-950/30', label: 'Risky' };
 }
 
 export function getScoreGradient(score) {

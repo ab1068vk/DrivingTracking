@@ -1,4 +1,11 @@
 import { clamp } from '@/lib/mathUtils';
+import {
+  isEveningRushHour,
+  isMorningRushHour,
+  isNightRiskHour,
+  NIGHT_END_HOUR,
+  NIGHT_START_HOUR,
+} from '@/lib/appConstants';
 
 export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
 export const DEFAULT_L_PER_100KM = 8.5;
@@ -442,9 +449,9 @@ export function suggestTripTag(trip = {}) {
   const distanceKm = Number(trip.distance_km) || 0;
   const weekday = dow >= 1 && dow <= 5;
   const weekend = dow === 0 || dow === 6;
-  const rushHour = (hour >= 6 && hour <= 9) || (hour >= 16 && hour <= 19);
+  const rushHour = isMorningRushHour(hour) || isEveningRushHour(hour);
 
-  if (trip.night_driving || hour >= 21 || hour <= 5) {
+  if (trip.night_driving || isNightRiskHour(hour)) {
     return { auto_tag: 'night', auto_tag_confidence: trip.night_driving ? 'high' : 'medium' };
   }
   if (trip.slippery_proxy === 'likely_wet' || trip.slippery_proxy === 'possible_wet') {
@@ -612,14 +619,14 @@ export function analyzeTimeOfDay(trips = []) {
     { id: 'morning', label: 'Morning', range: '5a-12p', from: 5, to: 12 },
     { id: 'afternoon', label: 'Afternoon', range: '12p-5p', from: 12, to: 17 },
     { id: 'evening', label: 'Evening', range: '5p-10p', from: 17, to: 22 },
-    { id: 'night', label: 'Night', range: '10p-5a', from: 22, to: 29 },
+    { id: 'night', label: 'Night', range: '10p-5a', from: NIGHT_START_HOUR, to: NIGHT_END_HOUR + 24 },
   ];
 
   return buckets.map((bucket) => {
     const bucketTrips = trips.filter((trip) => {
       if (trip.status !== 'completed') return false;
       const hour = new Date(trip.start_time).getHours();
-      const normalized = hour < 5 ? hour + 24 : hour;
+      const normalized = hour < NIGHT_END_HOUR ? hour + 24 : hour;
       return normalized >= bucket.from && normalized < bucket.to;
     });
     const scoreCount = bucketTrips.filter((trip) => trip.score_overall > 0).length;

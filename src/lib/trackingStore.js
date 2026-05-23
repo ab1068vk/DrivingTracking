@@ -6,6 +6,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
+import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -17,6 +18,7 @@ const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
 let lastNativeSettingsSync = '';
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 3;
 
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;
@@ -37,7 +39,7 @@ const syncSettingsForNative = (settings) => {
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
-  settings_defaults_version: 2,
+  settings_defaults_version: CURRENT_SETTINGS_DEFAULTS_VERSION,
   tracking_mode: 'manual',
   units: 'metric',
   currencySymbol: '$',
@@ -70,8 +72,8 @@ export const DEFAULT_SETTINGS = {
   threshold_idle_seconds: 90,
   threshold_long_drive_minutes: 120,
   night_detection_mode: 'sunset',
-  night_start_time: '22:00',
-  night_end_time: '06:00',
+  night_start_time: NIGHT_START_TIME,
+  night_end_time: NIGHT_END_TIME,
   night_sunset_offset_minutes: 0,
   night_sunrise_offset_minutes: 0,
   threshold_near_miss_brake_ms2: 3.5,
@@ -143,6 +145,32 @@ export const DEFAULT_SETTINGS = {
   tree_co2_kg_per_year: DEFAULT_TREE_CO2_KG_PER_YEAR,
   privacy_zones: [],
 };
+
+/**
+ * @param {Record<string, any>} parsed
+ * @returns {{settings: Record<string, any>, changed: boolean}}
+ */
+export function migrateDefaultSettings(parsed = {}) {
+  const merged = { ...DEFAULT_SETTINGS, ...parsed };
+  const version = Number(parsed.settings_defaults_version) || 1;
+
+  if (version < 2) {
+    if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
+    if (parsed.threshold_rapid_accel_ms2 == null || parsed.threshold_rapid_accel_ms2 === 3.5) merged.threshold_rapid_accel_ms2 = 3.0;
+    if (parsed.threshold_speeding_kmh == null || parsed.threshold_speeding_kmh === 130) merged.threshold_speeding_kmh = 100;
+    if (parsed.threshold_speed_over_kmh == null || parsed.threshold_speed_over_kmh === 10) merged.threshold_speed_over_kmh = 5;
+    if (parsed.threshold_speed_creep_kmh == null || parsed.threshold_speed_creep_kmh === 10) merged.threshold_speed_creep_kmh = 5;
+    if (parsed.threshold_sharp_turn_g_low == null || parsed.threshold_sharp_turn_g_low === 0.30) merged.threshold_sharp_turn_g_low = 0.35;
+  }
+
+  if (version < 3 && parsed.night_detection_mode !== 'custom') {
+    if (parsed.night_start_time == null || parsed.night_start_time === '22:00') merged.night_start_time = NIGHT_START_TIME;
+    if (parsed.night_end_time == null || parsed.night_end_time === '06:00') merged.night_end_time = NIGHT_END_TIME;
+  }
+
+  merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
+  return { settings: merged, changed: version < CURRENT_SETTINGS_DEFAULTS_VERSION };
+}
 
 const IMPORT_NUMBER_RANGES = {
   data_retention_days: [1, 3650],
@@ -338,9 +366,10 @@ export const localSettings = {
       if (!value) return this.get();
 
       const parsed = JSON.parse(value);
-      const merged = { ...DEFAULT_SETTINGS, ...parsed };
+      const { settings: merged, changed } = migrateDefaultSettings(parsed);
       const serialized = JSON.stringify(merged);
       localStorage.setItem(SETTINGS_KEY, serialized);
+      if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
       return merged;
     } catch {
@@ -352,15 +381,8 @@ export const localSettings = {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        const merged = { ...DEFAULT_SETTINGS, ...parsed };
-        if ((parsed.settings_defaults_version || 1) < 2) {
-          if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
-          if (parsed.threshold_rapid_accel_ms2 == null || parsed.threshold_rapid_accel_ms2 === 3.5) merged.threshold_rapid_accel_ms2 = 3.0;
-          if (parsed.threshold_speeding_kmh == null || parsed.threshold_speeding_kmh === 130) merged.threshold_speeding_kmh = 100;
-          if (parsed.threshold_speed_over_kmh == null || parsed.threshold_speed_over_kmh === 10) merged.threshold_speed_over_kmh = 5;
-          if (parsed.threshold_speed_creep_kmh == null || parsed.threshold_speed_creep_kmh === 10) merged.threshold_speed_creep_kmh = 5;
-          if (parsed.threshold_sharp_turn_g_low == null || parsed.threshold_sharp_turn_g_low === 0.30) merged.threshold_sharp_turn_g_low = 0.35;
-          merged.settings_defaults_version = 2;
+        const { settings: merged, changed } = migrateDefaultSettings(parsed);
+        if (changed) {
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
           syncSettingsForNative(merged);
         }

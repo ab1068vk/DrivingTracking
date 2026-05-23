@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/use-toast';
 import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
+import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
@@ -1356,7 +1357,7 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-2">
             {[
               { id: 'sunset', label: 'Sunset', sub: 'GPS-based' },
-              { id: 'custom', label: 'Custom', sub: `${cfg.night_start_time || '22:00'} to ${cfg.night_end_time || '06:00'}` },
+              { id: 'custom', label: 'Custom', sub: `${cfg.night_start_time || NIGHT_START_TIME} to ${cfg.night_end_time || NIGHT_END_TIME}` },
             ].map(opt => (
               <button
                 key={opt.id}
@@ -1384,7 +1385,7 @@ export default function Settings() {
                 Start
                 <input
                   type="time"
-                  value={cfg.night_start_time || '22:00'}
+                  value={cfg.night_start_time || NIGHT_START_TIME}
                   disabled={cfg.night_detection_mode !== 'custom'}
                   onChange={e => updateCfg({ night_start_time: e.target.value })}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
@@ -1394,7 +1395,7 @@ export default function Settings() {
                 End
                 <input
                   type="time"
-                  value={cfg.night_end_time || '06:00'}
+                  value={cfg.night_end_time || NIGHT_END_TIME}
                   disabled={cfg.night_detection_mode !== 'custom'}
                   onChange={e => updateCfg({ night_end_time: e.target.value })}
                   className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"

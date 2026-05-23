@@ -53,6 +53,8 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final int NOTIF_ID_TRACKING_START = 4101;
     private static final int ACTIVITY_RECOGNITION_REQUEST_CODE = 4102;
     private static final int NOTIF_ID_AUTO_STATUS = 4103;
+    private static final int NIGHT_START_HOUR = 22;
+    private static final int NIGHT_END_HOUR = 5;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
     private static final String AUTO_STATUS_CHANNEL_ID = "drivesense_auto_status";
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
@@ -948,7 +950,7 @@ public class DriveSenseAutoTrackingService extends Service {
             if (speed < STATIONARY_SPEED_KMH) stats.idleSeconds += dt;
 
             int hour = Instant.ofEpochMilli(currMs).atZone(ZoneOffset.UTC).getHour();
-            if (hour >= 22 || hour < 6) stats.nightDriving = true;
+            if (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR) stats.nightDriving = true;
         }
 
         JSONObject last = points.optJSONObject(points.length() - 1);

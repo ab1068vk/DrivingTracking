@@ -1138,9 +1138,7 @@ export default function TripDetail() {
                 </div>
                 <div className="h-2 rounded-full bg-background">
                   <div
-                    className={`h-full rounded-full ${
-                      (data.score || 0) >= 80 ? 'bg-emerald-500' : (data.score || 0) >= 60 ? 'bg-yellow-500' : 'bg-red-500'
-                    }`}
+                    className={`h-full rounded-full ${getScoreColor(data.score || 0).fill}`}
                     style={{ width: `${Math.max(0, Math.min(100, (data.rate || 0) * 100))}%` }}
                   />
                 </div>
