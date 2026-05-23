@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
 import {
   calculateNightPenalty,
@@ -502,6 +503,38 @@ describe('tripEngine', () => {
 
     expect(isNightDrivingTime(torontoWinterEvening, sunsetThresholds)).toBe(true);
     expect(isNightDrivingTime(torontoWinterNoon, sunsetThresholds)).toBe(false);
+  });
+
+  it('keeps 2,000-point trip stats and scoring stable under the route hot-path budget', () => {
+    const startMs = Date.UTC(2026, 0, 1, 17, 0, 0);
+    const points = Array.from({ length: 2000 }, (_, index) => ({
+      lat: 43.6532 + index * 0.0001497,
+      lng: -79.3832,
+      speed_kmh: 60,
+      accuracy: 6,
+      timestamp: new Date(startMs + index * 1000).toISOString(),
+    }));
+
+    const startedAt = performance.now();
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
+    const scores = calculateTripScores([], stats, points, DEFAULT_THRESHOLDS, stats.duration_seconds, {}, { includeRoadTypeSegments: false });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(500);
+    expect(stats.distance_km).toBeCloseTo(33.3, 1);
+    expect(stats.avg_speed_kmh).toBe(59.9);
+    expect(stats.avg_running_speed_kmh).toBe(59.9);
+    expect(stats.max_speed_kmh).toBe(60);
+    expect(stats.idle_time_seconds).toBe(0);
+    expect(stats.night_driving).toBe(false);
+    expect(stats.speed_zones[0]).toMatchObject({
+      inferredZone: 'zone_60_70',
+      inferredZoneKmh: 70,
+      confidence: 'high',
+      road_type: 'urban',
+    });
+    expect(scores.score_overall).toBeGreaterThanOrEqual(90);
+    expect(scores.score_safety).toBe(99);
   });
 
   it('applies configured detection thresholds to event calculations', () => {

@@ -212,12 +212,19 @@ function sourceText(lines, node) {
   return lineAt(lines, node.loc.start.line);
 }
 
+function stripComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
+}
+
 function functionFact(file, sourceLines, node, name, kind) {
   const start = node.loc.start.line;
   const end = node.loc.end.line;
   const snippet = sourceLines.slice(start - 1, Math.min(end, start + 60)).join('\n');
-  const loopCount = (snippet.match(/\b(for|while|forEach|map|reduce|filter|sort)\b/g) || []).length;
-  const nested = /for[\s\S]{0,400}for|while[\s\S]{0,400}while/.test(snippet);
+  const codeOnlySnippet = stripComments(snippet);
+  const loopCount = (codeOnlySnippet.match(/\b(for|while|forEach|map|reduce|filter|sort)\b/g) || []).length;
+  const nested = /for[\s\S]{0,400}for|while[\s\S]{0,400}while/.test(codeOnlySnippet);
   const sideEffects = [];
   if (/\b(fetch|apiClient\.|LocalNotifications|Geolocation|Preferences|localStorage|sessionStorage|indexedDB|getSharedPreferences|SharedPreferences)\b/.test(snippet)) sideEffects.push('storage/network/native I/O');
   if (/\bset[A-Z]\w*\(|\.push\(|\.splice\(|\.sort\(|\.set\(|\.delete\(|\.remove\(|\.create\(|\.update\(/.test(snippet)) sideEffects.push('mutation');
@@ -837,7 +844,8 @@ function buildDoc() {
 
   doc.push('## Performance Characteristics');
   doc.push('');
-  doc.push('- Critical loops: trip scoring and route playback are O(n) over route points; route-risk index creation is O(trips x route segments x events proximity checks) candidate; import/export and full-history reports are O(number of local records).');
+  doc.push('- Critical loops: trip stats, trip scoring, night detection, fatigue progression, and route playback are O(n) over route points; route-risk index creation is O(trips x route segments x events proximity checks) candidate; import/export and full-history reports are O(number of local records).');
+  doc.push('- Long-trip scoring has a regression budget: a synthetic 2,000-point trip must complete stats plus score calculation in under 500 ms in the trip engine test suite.');
   doc.push('- Frontend bundle splitting: `vite.config.js` manually chunks React, charts, html2canvas, jsPDF, and Capacitor vendors.');
   doc.push('- Map rendering: `prepareMapRoutePoints`, `downsampleRoutePoints`, route smoothing, and privacy masking constrain heavy routes before Leaflet/SVG playback rendering.');
   doc.push('- Native background tracking: Android service filters noisy points and stores compact event/trip records, reducing JS wakeups.');
@@ -900,6 +908,7 @@ function buildReadme() {
     '- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.',
     '- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, route-risk, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
     '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.',
+    '- Trip-stat hot paths now stay linear over route points: sunset night driving windows are cached once per trip date, speed-zone windows use sliding summaries, drowsy detection uses a moving window, and fatigue progression uses direct segment scoring instead of recursively rescoring three sub-trips.',
     '- Eco driving scoring now exposes cruise-band, moving-speed floor, cruise-score multiplier, idle-penalty multiplier, and idle-penalty cap settings, and returns `idle_penalty_points` for diagnostics and tests.',
     '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
     '- Predictive route risk now sorts completed trips newest-first inside the estimator before applying the recent-trip window, so dashboard and map pre-trip risk stay based on fresh history even when callers pass unsorted trip arrays.',

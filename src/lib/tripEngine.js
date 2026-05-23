@@ -1055,6 +1055,99 @@ function zoneFromP85(p85Speed) {
   return { inferredZone: 'zone_highway', inferredZoneKmh: 120 };
 }
 
+function sortedInsert(values, value) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (values[mid] < value) low = mid + 1;
+    else high = mid;
+  }
+  values.splice(low, 0, value);
+}
+
+function sortedRemove(values, value) {
+  let low = 0;
+  let high = values.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (values[mid] < value) low = mid + 1;
+    else if (values[mid] > value) high = mid - 1;
+    else {
+      values.splice(mid, 1);
+      return;
+    }
+  }
+}
+
+function percentileFromSorted(sortedValues, p) {
+  if (!sortedValues.length) return 0;
+  const index = (p / 100) * (sortedValues.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sortedValues[lower];
+  return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (index - lower);
+}
+
+function speedStdDevFromSummary(count, sum, sumSq) {
+  if (count < 2) return 0;
+  const mean = sum / count;
+  const variance = Math.max(0, (sumSq / count) - (mean * mean));
+  return Math.sqrt(variance);
+}
+
+function createRoadTypeWindowSummary() {
+  return {
+    total: 0,
+    sum: 0,
+    highway: 0,
+    urban: 0,
+    residential: 0,
+  };
+}
+
+function updateRoadTypeWindowSummary(summary, point, direction) {
+  const speed = Number(point?.speed_kmh);
+  if (!Number.isFinite(speed) || speed <= 0) return;
+  summary.total += direction;
+  summary.sum += speed * direction;
+  if (speed >= 80) summary.highway += direction;
+  else if (speed >= 20) summary.urban += direction;
+  else summary.residential += direction;
+}
+
+function roadTypeFromWindowSummary(summary) {
+  if (!summary.total) {
+    return {
+      road_type: 'urban',
+      highway_fraction: 0,
+    };
+  }
+
+  const fHighway = summary.highway / summary.total;
+  const fUrban = summary.urban / summary.total;
+  const fResidential = summary.residential / summary.total;
+  const avgSpeed = summary.sum / summary.total;
+  let roadType = 'urban';
+  if (fHighway >= 0.60) roadType = 'highway';
+  else if (fHighway >= 0.30 && fUrban >= 0.30) roadType = 'mixed';
+  else if (fResidential >= 0.50 && avgSpeed < 30) roadType = 'residential';
+
+  return {
+    road_type: roadType,
+    highway_fraction: round1(fHighway * 100) / 100,
+  };
+}
+
+function createZoneLookup(zones = []) {
+  let cursor = 0;
+  return (index) => {
+    while (cursor < zones.length && index > zones[cursor].endIndex) cursor++;
+    const zone = zones[cursor];
+    return zone && index >= zone.startIndex && index <= zone.endIndex ? zone : null;
+  };
+}
+
 export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const points = (routePoints || [])
     .map((point, index) => ({ point, index, ts: timestampMs(point), speed: reliablePointSpeed(routePoints, index, thresholds) }))
@@ -1062,24 +1155,57 @@ export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLD
   if (points.length < 2) return [];
 
   const zones = [];
+  const speeds = [];
+  const roadSummary = createRoadTypeWindowSummary();
+  let speedSum = 0;
+  let speedSumSq = 0;
+  let speedCount = 0;
+  let end = -1;
+
+  const addEntry = (entry) => {
+    if (Number.isFinite(entry.speed)) {
+      sortedInsert(speeds, entry.speed);
+      speedSum += entry.speed;
+      speedSumSq += entry.speed * entry.speed;
+      speedCount++;
+    }
+    updateRoadTypeWindowSummary(roadSummary, entry.point, 1);
+  };
+
+  const removeEntry = (entry) => {
+    if (Number.isFinite(entry.speed)) {
+      sortedRemove(speeds, entry.speed);
+      speedSum -= entry.speed;
+      speedSumSq -= entry.speed * entry.speed;
+      speedCount--;
+    }
+    updateRoadTypeWindowSummary(roadSummary, entry.point, -1);
+  };
+
   for (let start = 0; start < points.length - 1; start++) {
     const startTs = points[start].ts;
-    let end = start;
-    while (end + 1 < points.length && points[end + 1].ts - startTs <= 60000) end++;
-    if (end <= start) continue;
+    while (end + 1 < points.length && points[end + 1].ts - startTs <= 60000) {
+      end++;
+      addEntry(points[end]);
+    }
+    if (end <= start) {
+      removeEntry(points[start]);
+      continue;
+    }
 
-    const windowEntries = points.slice(start, end + 1);
-    const speeds = windowEntries.map((entry) => entry.speed).filter((speed) => Number.isFinite(speed));
-    if (speeds.length < 2) continue;
+    if (speeds.length < 2) {
+      removeEntry(points[start]);
+      continue;
+    }
 
-    const medianSpeed = percentileValue(speeds, 50);
-    const p85Speed = percentileValue(speeds, 85);
-    const deviation = speedStdDev(speeds);
-    const { road_type: roadType, highway_fraction: highwayFraction } = classifyRoadType(windowEntries.map((entry) => entry.point));
+    const medianSpeed = percentileFromSorted(speeds, 50);
+    const p85Speed = percentileFromSorted(speeds, 85);
+    const deviation = speedStdDevFromSummary(speedCount, speedSum, speedSumSq);
+    const { road_type: roadType, highway_fraction: highwayFraction } = roadTypeFromWindowSummary(roadSummary);
     const zone = zoneFromP85(p85Speed);
     zones.push({
-      startIndex: windowEntries[0].index,
-      endIndex: windowEntries[windowEntries.length - 1].index,
+      startIndex: points[start].index,
+      endIndex: points[end].index,
       inferredZone: zone.inferredZone,
       inferredZoneKmh: zone.inferredZoneKmh,
       confidence: deviation < 8 ? 'high' : deviation < 18 ? 'medium' : 'low',
@@ -1092,6 +1218,8 @@ export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLD
         ? thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH
         : zone.inferredZoneKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH),
     });
+
+    removeEntry(points[start]);
   }
 
   return zones;
@@ -1816,12 +1944,14 @@ export function detectSpeedCreep(cleanPoints = [], thresholds = DEFAULT_THRESHOL
   let maxCreep = 0;
   const severityCounts = { low: 0, medium: 0, high: 0 };
   let lastEventTime = 0;
+  let end = -1;
 
   for (let i = 0; i < samples.length; i++) {
     const start = samples[i];
     if (start.timestamp - lastEventTime < 30000) continue;
+    while (end + 1 < samples.length && samples[end + 1].timestamp <= start.timestamp + 30000) end++;
 
-    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 30000);
+    const window = samples.slice(i, end + 1);
     if (window.length < 3 || window[window.length - 1].timestamp - start.timestamp < 25000) continue;
 
     const headingStdDev = calculateAngularStdDev(window.map((sample) => sample.heading));
@@ -2664,13 +2794,14 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
   };
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
+  const zoneForIndex = createZoneLookup(zones);
 
   points.forEach((point, index) => {
     const speed = reliablePointSpeed(points, index, thresholds);
     if (!Number.isFinite(speed)) return;
     if (speed <= (thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH)) return;
     const roadType = roadTypes[index] || 'urban';
-    const zone = zones.find((item) => index >= item.startIndex && index <= item.endIndex);
+    const zone = zoneForIndex(index);
     const speedLimit = speedLimitForIndex(points, index);
     const limit = speedLimit?.limitKmh ?? zone?.inferredZoneKmh ?? complianceFallbackLimit(roadType, thresholds);
     const bucket = byType[roadType];
@@ -3031,6 +3162,45 @@ export function scoreSegmentPoints(points = [], thresholds = DEFAULT_THRESHOLDS)
   return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, phoneUse).score_overall;
 }
 
+function scoreFatigueSegment(points = [], thresholds = DEFAULT_THRESHOLDS) {
+  if (!points || points.length < 3) return 0;
+
+  const harshBrakeThreshold = thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
+  const rapidAccelThreshold = thresholds.RAPID_ACCEL_MS2 ?? DEFAULT_THRESHOLDS.RAPID_ACCEL_MS2;
+  let distanceKm = 0;
+  let penalty = 0;
+  const speeds = [];
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const segment = calculateSegmentMetrics(prev, curr, thresholds);
+    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
+
+    distanceKm += segment.distanceKm;
+    const prevSpeed = reliablePointSpeed(points, i - 1, thresholds) ?? finiteSpeed(prev);
+    const currSpeed = reliablePointSpeed(points, i, thresholds) ?? finiteSpeed(curr);
+    speeds.push(currSpeed);
+
+    const accelMs2 = calculateAcceleration(prevSpeed, currSpeed, segment.dt);
+    if (accelMs2 < -harshBrakeThreshold) penalty += 6;
+    if (accelMs2 > rapidAccelThreshold) penalty += 5;
+
+    const { h1, h2 } = headingBetweenPair(prev, curr, points[i - 2] || null);
+    const headingRate = headingDiff(h1, h2) / segment.dt;
+    if (currSpeed > 30 && headingRate > 25) penalty += 4;
+  }
+
+  if (speeds.length >= 3) {
+    const variability = speedStdDev(speeds);
+    if (variability > 25) penalty += 8;
+    else if (variability > 15) penalty += 4;
+  }
+
+  const distFactor = Math.max(1, distanceKm);
+  return Math.max(20, Math.round(100 - Math.min((penalty / distFactor) * 8, 80)));
+}
+
 export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTimeMs, thresholds = DEFAULT_THRESHOLDS) {
   const start = Number.isFinite(startTimeMs) ? startTimeMs : timestampMs(cleanPoints[0]);
   const end = Number.isFinite(endTimeMs) ? endTimeMs : timestampMs(cleanPoints[cleanPoints.length - 1]);
@@ -3051,7 +3221,7 @@ export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTime
     return { fatigue_progression: 'unknown', segment_scores: [] };
   }
 
-  const scores = segments.map((segment) => scoreSegmentPoints(segment, thresholds));
+  const scores = segments.map((segment) => scoreFatigueSegment(segment, thresholds));
   const degradation = scores[0] - scores[2];
   const fatigueProgression = degradation >= 20
     ? 'significant'
@@ -3075,27 +3245,76 @@ export function detectDrowsyDrivingSignature(cleanPoints = [], durationSeconds =
 
   const headingThreshold = thresholds.threshold_drowsy_heading_std ?? DEFAULT_THRESHOLDS.threshold_drowsy_heading_std;
   const startTime = timestampMs(cleanPoints[0]);
+  const timestamps = cleanPoints.map((point) => timestampMs(point));
+  const speeds = cleanPoints.map((point) => finiteSpeed(point));
+  const headingRadians = cleanPoints.map((_, index) => toRad(headingForIndex(cleanPoints, index)));
   let drowsyWindowCount = 0;
   let weightedScore = 0;
+  let end = -1;
+  let speedSum = 0;
+  let speedSumSq = 0;
+  let fastSpeedCount = 0;
+  let sinSum = 0;
+  let cosSum = 0;
+
+  const addIndex = (index) => {
+    const speed = speeds[index];
+    speedSum += speed;
+    speedSumSq += speed * speed;
+    if (speed > 80) fastSpeedCount++;
+    sinSum += Math.sin(headingRadians[index]);
+    cosSum += Math.cos(headingRadians[index]);
+  };
+
+  const removeIndex = (index) => {
+    const speed = speeds[index];
+    speedSum -= speed;
+    speedSumSq -= speed * speed;
+    if (speed > 80) fastSpeedCount--;
+    sinSum -= Math.sin(headingRadians[index]);
+    cosSum -= Math.cos(headingRadians[index]);
+  };
 
   for (let i = 0; i < cleanPoints.length; i++) {
-    const start = cleanPoints[i];
-    const startMs = timestampMs(start);
-    const window = cleanPoints
-      .slice(i)
-      .filter((point) => timestampMs(point) >= startMs && timestampMs(point) <= startMs + 60000);
-    if (window.length < 4) continue;
-    if ((timestampMs(window[window.length - 1]) - startMs) < 45000) continue;
-    if (!window.every((point) => finiteSpeed(point) > 80)) continue;
+    const startMs = timestamps[i];
+    while (end + 1 < cleanPoints.length && timestamps[end + 1] <= startMs + 60000) {
+      end++;
+      addIndex(end);
+    }
 
-    const windowHeadingStdDev = headingStdDev(window.map((_, offset) => headingForIndex(cleanPoints, i + offset)));
-    const windowSpeedStdDev = speedStdDev(window.map((point) => finiteSpeed(point)));
+    const windowLength = end - i + 1;
+    if (windowLength < 4) {
+      removeIndex(i);
+      continue;
+    }
+    if ((timestamps[end] - startMs) < 45000) {
+      removeIndex(i);
+      continue;
+    }
+    if (fastSpeedCount !== windowLength) {
+      removeIndex(i);
+      continue;
+    }
+
+    const sinMean = sinSum / windowLength;
+    const cosMean = cosSum / windowLength;
+    const R = Math.sqrt(sinMean * sinMean + cosMean * cosMean);
+    const windowHeadingStdDev = (R < 1 ? Math.sqrt(-2 * Math.log(Math.max(R, 1e-9))) : 0) * 180 / Math.PI;
+    const windowSpeedStdDev = speedStdDevFromSummary(windowLength, speedSum, speedSumSq);
     if (windowHeadingStdDev > headingThreshold && windowSpeedStdDev < 6) {
       const elapsedFraction = Math.max(0, (startMs - startTime) / 1000) / Math.max(1, durationSeconds);
       weightedScore += 1 + elapsedFraction;
       drowsyWindowCount++;
-      i += Math.max(1, window.length - 1);
+      const nextIndex = i + Math.max(1, windowLength - 1);
+      while (i < nextIndex && i < cleanPoints.length) {
+        removeIndex(i);
+        i++;
+      }
+      i--;
+      continue;
     }
+
+    removeIndex(i);
   }
 
   const riskScore = Math.min(100, Math.round(weightedScore * 15));
@@ -3231,7 +3450,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   const smoothedAccels = computeSmoothedAccelerations(points, thresholds);
   const configuredSpeedThreshold = thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH;
   const inferredZones = inferSpeedZones(points, thresholds);
-  const zoneForIndex = (index) => inferredZones.find((zone) => index >= zone.startIndex && index <= zone.endIndex) || null;
+  const zoneForIndex = createZoneLookup(inferredZones);
   const roadTypesByPoint = classifyRoadTypesByPoint(points);
 
   let idleStart = null;
@@ -3574,6 +3793,10 @@ function isWithinClockWindow(minutes, startMinutes, endMinutes) {
     : normalized >= start || normalized < end;
 }
 
+function localDateKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
 function dayOfYear(date) {
   const start = Date.UTC(date.getFullYear(), 0, 0);
   const current = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
@@ -3613,6 +3836,63 @@ function sunEventMinutes(date, lat, lng, isSunrise) {
   return ((utcMinutes - date.getTimezoneOffset()) % (24 * 60) + (24 * 60)) % (24 * 60);
 }
 
+function createTripNightChecker(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+  const fallbackStart = parseClockMinutes(
+    thresholds.NIGHT_START_TIME,
+    thresholds.NIGHT_START_HOUR ?? DEFAULT_THRESHOLDS.NIGHT_START_HOUR
+  );
+  const fallbackEnd = parseClockMinutes(
+    thresholds.NIGHT_END_TIME,
+    thresholds.NIGHT_END_HOUR ?? DEFAULT_THRESHOLDS.NIGHT_END_HOUR
+  );
+
+  if (thresholds.NIGHT_DETECTION_MODE !== 'sunset') {
+    return (point) => {
+      if (!point?.timestamp) return false;
+      const date = new Date(point.timestamp);
+      if (Number.isNaN(date.getTime())) return false;
+      return isWithinClockWindow(date.getHours() * 60 + date.getMinutes(), fallbackStart, fallbackEnd);
+    };
+  }
+
+  const representativeCoordinatesByDate = new Map();
+  for (const point of routePoints || []) {
+    if (!point?.timestamp || !hasValidCoordinates(point)) continue;
+    const date = new Date(point.timestamp);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = localDateKey(date);
+    if (!representativeCoordinatesByDate.has(key)) {
+      representativeCoordinatesByDate.set(key, { lat: Number(point.lat), lng: Number(point.lng) });
+    }
+  }
+
+  const sunWindowByDate = new Map();
+  return (point) => {
+    if (!point?.timestamp) return false;
+    const date = new Date(point.timestamp);
+    if (Number.isNaN(date.getTime())) return false;
+
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    const key = localDateKey(date);
+    if (!sunWindowByDate.has(key)) {
+      const coords = representativeCoordinatesByDate.get(key) || { lat: Number(point.lat), lng: Number(point.lng) };
+      const sunset = sunEventMinutes(date, coords.lat, coords.lng, false);
+      const sunrise = sunEventMinutes(date, coords.lat, coords.lng, true);
+      sunWindowByDate.set(key, sunset != null && sunrise != null
+        ? {
+          start: sunset + (thresholds.NIGHT_SUNSET_OFFSET_MINUTES ?? 0),
+          end: sunrise + (thresholds.NIGHT_SUNRISE_OFFSET_MINUTES ?? 0),
+        }
+        : null);
+    }
+
+    const sunWindow = sunWindowByDate.get(key);
+    return sunWindow
+      ? isWithinClockWindow(minutes, sunWindow.start, sunWindow.end)
+      : isWithinClockWindow(minutes, fallbackStart, fallbackEnd);
+  };
+}
+
 export function isNightDrivingTime(point, thresholds = DEFAULT_THRESHOLDS) {
   if (!point?.timestamp) return false;
 
@@ -3642,11 +3922,12 @@ export function isNightDrivingTime(point, thresholds = DEFAULT_THRESHOLDS) {
 export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!routePoints || routePoints.length === 0) return 0;
 
+  const isNightForTrip = createTripNightChecker(routePoints, thresholds);
   let nightPoints = 0;
   let deepNightPoints = 0;
   for (const point of routePoints) {
     const hour = new Date(point.timestamp).getHours();
-    if (isNightDrivingTime(point, thresholds)) nightPoints++;
+    if (isNightForTrip(point)) nightPoints++;
     if (hour >= 2 && hour < 5) deepNightPoints++;
   }
 
@@ -3784,7 +4065,8 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   // FIX: Keep legacy idle_time_seconds as the sum of traffic and sustained idle buckets.
   const effectiveMovingSeconds = movingSeconds;
   // FIX: gap_seconds is noise-filtered time excluded from moving and idle buckets; it is debug-only and does not affect scores.
-  const nightDriving = routePoints.some(p => isNightDrivingTime(p, thresholds));
+  const isNightForTrip = createTripNightChecker(routePoints, thresholds);
+  const nightDriving = routePoints.some(p => isNightForTrip(p));
   const avgSpeed = durationSeconds > 0 && totalDistance > 0
     ? calculateSpeedKmh(totalDistance, durationSeconds)
     : 0;
