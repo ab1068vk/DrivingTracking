@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 12 * * 1'
 
 jobs:
   security-and-build:
@@ -39,6 +42,12 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke e2e
+        run: npm run test:e2e
+
       - name: Build
         run: npm run build
 
@@ -48,3 +57,57 @@ jobs:
             echo "Production bundle must not contain a localhost API fallback."
             exit 1
           fi
+
+  live-external-contracts:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test live Overpass, Open-Meteo, and OSRM contracts
+        run: npm run test:contracts:live
+
+  android-instrumentation:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Enable Gradle wrapper
+        run: chmod +x android/gradlew
+
+      - name: Run Android instrumentation on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          script: cd android && ./gradlew connectedDebugAndroidTest --no-daemon

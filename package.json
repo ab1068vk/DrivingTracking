@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
+    "test:contracts:live": "node scripts/run-live-contracts.mjs",
     "test:e2e": "node ./node_modules/vite/bin/vite.js build && node ./node_modules/playwright/cli.js test",
     "postinstall": "node scripts/patch-android-gradle.mjs",
     "check:repo-hygiene": "node scripts/check-repository-hygiene.mjs",

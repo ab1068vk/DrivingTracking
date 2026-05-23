@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-23T22:45:53.333Z
+Updated: 2026-05-23T22:59:02.673Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -27,13 +27,13 @@ This document is generated from the current repository. It keeps the reference r
 ---
 ## Coverage And Reading Guide
 
-- Text/code files scanned: 231
-- App/source files scanned: 195
+- Text/code files scanned: 233
+- App/source files scanned: 197
 - Machine-local files excluded from scanning: `android/local.properties`
 - Production calculation lines indexed: 1534
 - Test calculation/assertion lines indexed separately: 159
 - Hard-coded production literals indexed: 14200
-- Functions/methods catalogued: 1194
+- Functions/methods catalogued: 1195
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -142,6 +142,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | scripts/check-repository-hygiene.mjs | Repository automation script. | node:child_process | none | 1 | 0 | 0 |
 | scripts/generate-technical-reference.mjs | Repository automation script. | node:fs, node:path, @babel/parser, @babel/traverse | none | 60 | 0 | 0 |
 | scripts/patch-android-gradle.mjs | Repository automation script. | node:fs, node:path | none | 2 | 0 | 0 |
+| scripts/run-live-contracts.mjs | Repository automation script. | node:child_process | none | 0 | 0 | 0 |
 | src/api/__tests__/clientFallback.test.js | API service adapter with local-first fallback behavior. | vitest, @/api/client, @/api/trips, @/api/vehicles | none | 0 | 0 | 0 |
 | src/api/auth.js | API service adapter with local-first fallback behavior. | @/api/client | migrateLegacyAuthTokens, authService | 1 | 0 | 5 |
 | src/api/client.js | API service adapter with local-first fallback behavior. | none | API_BASE_URL, ApiError, getAuthToken, apiClient | 5 | 0 | 22 |
@@ -227,6 +228,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/__tests__/fatigueHeatmapData.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/tripInsights | none | 1 | 0 | 0 |
 | src/lib/__tests__/feedbackRescore.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/localTripRepository, @/lib/tripEngine | none | 2 | 0 | 0 |
 | src/lib/__tests__/htmlUtils.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/htmlUtils, @/lib/mapPopupHtml | none | 0 | 0 | 0 |
+| src/lib/__tests__/liveExternalContracts.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest | none | 1 | 0 | 0 |
 | src/lib/__tests__/localTripRepositoryIndexedDb.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/localTripRepository | none | 17 | 0 | 0 |
 | src/lib/__tests__/mapMatching.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/mapMatching | none | 1 | 0 | 0 |
 | src/lib/__tests__/mapPlaybackInsights.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/mapPlaybackInsights | none | 1 | 0 | 0 |
@@ -543,6 +545,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - scripts/patch-android-gradle.mjs:1 imports `existsSync as existsSync, readFileSync as readFileSync, readdirSync as readdirSync, writeFileSync as writeFileSync` from `node:fs`
 - scripts/patch-android-gradle.mjs:2 imports `resolve as resolve` from `node:path`
+
+- No exports.
+
+### scripts/run-live-contracts.mjs
+
+- scripts/run-live-contracts.mjs:1 imports `spawnSync as spawnSync` from `node:child_process`
 
 - No exports.
 
@@ -1486,6 +1494,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/__tests__/htmlUtils.test.js:1 imports `describe as describe, expect as expect, it as it` from `vitest`
 - src/lib/__tests__/htmlUtils.test.js:2 imports `escapeHtml as escapeHtml` from `@/lib/htmlUtils`
 - src/lib/__tests__/htmlUtils.test.js:3 imports `buildDangerZonePopupHtml as buildDangerZonePopupHtml, buildRouteRiskSegmentPopupHtml as buildRouteRiskSegmentPopupHtml, buildSpeedSegmentPopupHtml as buildSpeedSegmentPopupHtml` from `@/lib/mapPopupHtml`
+
+- No exports.
+
+### src/lib/__tests__/liveExternalContracts.test.js
+
+- src/lib/__tests__/liveExternalContracts.test.js:1 imports `describe as describe, expect as expect, it as it` from `vitest`
 
 - No exports.
 
@@ -3423,6 +3437,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 5 | arrow function | `feedbackKey(event, index)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 11 | arrow function | `completedTrip(routePoints, patch = patch = {})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+
+### src/lib/__tests__/liveExternalContracts.test.js
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 6 | function | `async fetchJson(url, options = options = {})` | storage/network/native I/O, mutation, throws | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/__tests__/localTripRepositoryIndexedDb.test.js
 
@@ -24648,6 +24668,7 @@ Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic
 | VITE_API_URL | Vite string | No | empty means local-first storage | Optional backend API base URL. | src/api/client.js:1 `export const API_BASE_URL = (import.meta.env.VITE_API_URL \|\| "").trim();` |
 | DEV | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | src/App.jsx:20 `const showDebugRoutes = import.meta.env.DEV \|\| import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';` |
 | VITE_SHOW_DEBUG_ROUTES | Vite string | No | false/undefined unless set | Feature/debug/build-time switch. | src/App.jsx:20 `const showDebugRoutes = import.meta.env.DEV \|\| import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';` |
+| LIVE_EXTERNAL_CONTRACTS | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | src/lib/__tests__/liveExternalContracts.test.js:3 `const runLive = process.env.LIVE_EXTERNAL_CONTRACTS === 'true';` |
 
 App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.
 
@@ -25119,6 +25140,9 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/__tests__/htmlUtils.test.js | 26 | it | renders route labels and segment labels as text in speed popups |
 | src/lib/__tests__/htmlUtils.test.js | 39 | it | omits invalid speed limits from speed popups |
 | src/lib/__tests__/htmlUtils.test.js | 51 | it | renders danger zone popup values as text instead of HTML |
+| src/lib/__tests__/liveExternalContracts.test.js | 33 | it | checks the Open-Meteo forecast JSON contract |
+| src/lib/__tests__/liveExternalContracts.test.js | 49 | it | checks the Overpass interpreter JSON contract |
+| src/lib/__tests__/liveExternalContracts.test.js | 68 | it | checks the public OSRM match JSON contract |
 | src/lib/__tests__/localTripRepositoryIndexedDb.test.js | 162 | describe | localTripRepository IndexedDB migrations |
 | src/lib/__tests__/localTripRepositoryIndexedDb.test.js | 167 | it | opens an empty IndexedDB and creates the trip store with required indexes |
 | src/lib/__tests__/localTripRepositoryIndexedDb.test.js | 187 | it | runs only migrations newer than the existing IndexedDB version |
@@ -25405,7 +25429,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/pages/__tests__/Vehicles.test.jsx | 38 | describe | vehicle score summaries |
 | src/pages/__tests__/Vehicles.test.jsx | 39 | it | returns null for a vehicle with no completed trips |
 
-Coverage gaps inferred from source shape: browser e2e currently covers smoke navigation only, Android instrumentation focuses on native trip-store persistence, and external API tests mock Overpass/Open-Meteo/OSRM contracts rather than calling live services.
+Coverage boundaries inferred from source shape: browser e2e currently covers smoke navigation, Android instrumentation focuses on native trip-store persistence, deterministic tests mock Overpass/Open-Meteo/OSRM request/response contracts, and opt-in live contract tests call all three public services through `npm run test:contracts:live`.
 
 ---
 ## Dependency Audit
@@ -25479,7 +25503,9 @@ Coverage gaps inferred from source shape: browser e2e currently covers smoke nav
 | input-otp | ^1.4.2 | 1.4.2 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | jspdf | ^4.2.1 | 4.2.1 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | leaflet | ^1.9.4 | 1.9.4 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
+| lodash | ^4.17.21 | 4.17.21 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | lucide-react | ^0.475.0 | 0.475.0 | production | React runtime, routing, forms, charts, or UI integration. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
+| moment | ^2.30.1 | 2.30.1 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | next-themes | ^0.4.4 | 0.4.6 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | postcss | ^8.5.3 | 8.5.14 | development/test | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | react | ^18.2.0 | 18.3.1 | production | React runtime, routing, forms, charts, or UI integration. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
@@ -25496,6 +25522,7 @@ Coverage gaps inferred from source shape: browser e2e currently covers smoke nav
 | tailwind-merge | ^3.0.2 | 3.6.0 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | tailwindcss | ^3.4.17 | 3.4.19 | development/test | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | tailwindcss-animate | ^1.0.7 | 1.0.7 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
+| three | ^0.171.0 | 0.171.0 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | typescript | ^5.8.2 | 5.9.3 | development/test | Build, lint, typecheck, or test tool. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | vaul | ^1.1.2 | 1.1.2 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | vite | ^6.1.0 | 6.4.2 | development/test | Build, lint, typecheck, or test tool. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
@@ -25508,7 +25535,7 @@ Coverage gaps inferred from source shape: browser e2e currently covers smoke nav
 - Web build: `npm run build` runs Vite and emits `dist/`.
 - Android sync: `npm run android:sync` builds web assets, runs Capacitor sync, and reapplies the tracked AGP 9 compatibility patch for generated/plugin Gradle scripts.
 - Android debug build: run `android/gradlew.bat assembleDebug` from the repository root or Android directory as configured.
-- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, tests, builds, and scans the production bundle for localhost API fallback.
+- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, unit/component tests, Playwright browser smoke e2e, Android instrumentation on an emulator, builds, and scans the production bundle for localhost API fallback on pushes and pull requests. Live public-service contracts run on the weekly schedule or manual workflow dispatch so third-party outages do not block ordinary changes.
 - Docker/container setup: no Dockerfile found in the scanned repository.
 - Rollback: deploy previous web artifact or Android build; local data is stored client-side and should not require backend rollback unless `VITE_API_URL` points at a managed API.
 

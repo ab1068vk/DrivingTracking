@@ -896,7 +896,7 @@ function buildDoc() {
   doc.push('');
   doc.push(testCoverage());
   doc.push('');
-  doc.push('Coverage gaps inferred from source shape: browser e2e currently covers smoke navigation only, Android instrumentation focuses on native trip-store persistence, and external API tests mock Overpass/Open-Meteo/OSRM contracts rather than calling live services.');
+  doc.push('Coverage boundaries inferred from source shape: browser e2e currently covers smoke navigation, Android instrumentation focuses on native trip-store persistence, deterministic tests mock Overpass/Open-Meteo/OSRM request/response contracts, and opt-in live contract tests call all three public services through `npm run test:contracts:live`.');
   doc.push('');
   doc.push('---');
 
@@ -911,7 +911,7 @@ function buildDoc() {
   doc.push('- Web build: `npm run build` runs Vite and emits `dist/`.');
   doc.push('- Android sync: `npm run android:sync` builds web assets, runs Capacitor sync, and reapplies the tracked AGP 9 compatibility patch for generated/plugin Gradle scripts.');
   doc.push('- Android debug build: run `android/gradlew.bat assembleDebug` from the repository root or Android directory as configured.');
-  doc.push('- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, tests, builds, and scans the production bundle for localhost API fallback.');
+  doc.push('- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, unit/component tests, Playwright browser smoke e2e, Android instrumentation on an emulator, builds, and scans the production bundle for localhost API fallback on pushes and pull requests. Live public-service contracts run on the weekly schedule or manual workflow dispatch so third-party outages do not block ordinary changes.');
   doc.push('- Docker/container setup: no Dockerfile found in the scanned repository.');
   doc.push('- Rollback: deploy previous web artifact or Android build; local data is stored client-side and should not require backend rollback unless `VITE_API_URL` points at a managed API.');
   doc.push('');
@@ -971,7 +971,8 @@ function buildReadme() {
     '- Score rings now use the canonical `getScoreColor()` metadata, including SVG stroke colors, so score labels, fills, and circular rings share one color policy.',
     '- Vehicle fuel/energy price validation now uses a currency-neutral 100-per-unit cap instead of a narrow 20-per-litre cap.',
     '- Android native tracking constants now name the 120-second stats gap, 2-minute Usage Access lookback, sustained-turn heading threshold, TTS speech rate, and 30-minute terminal idle cap; the stats loop uses one explicit duration guard and an else branch for moving vs idle time.',
-    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, external service contract mocks, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.',
+    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, deterministic and opt-in live external service contract tests, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.',
+    '- CI runs stable unit/component, Playwright browser smoke, and Android emulator instrumentation checks on pushes and pull requests. Live Overpass, Open-Meteo, and OSRM checks are manual or weekly because they depend on public external services.',
     '- Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.',
     '',
     '## Documentation',
@@ -1034,6 +1035,20 @@ function buildReadme() {
     '```bash',
     'npm run test:e2e',
     '```',
+    '',
+    'Run live external contract tests (hits Overpass, Open-Meteo, and OSRM):',
+    '',
+    '```bash',
+    'npm run test:contracts:live',
+    '```',
+    '',
+    '### Test Strategy',
+    '',
+    '- `npm run test` runs deterministic Vitest coverage for calculations, repositories, security safeguards, page rendering, and mocked Overpass/Open-Meteo/OSRM request-response contracts. The live external-service file is skipped in this fast default suite.',
+    '- `npm run test:e2e` builds the app, starts a local preview server, and drives Chromium through core Dashboard, Settings, and Trips navigation flows.',
+    '- `npm run test:contracts:live` makes real network requests to Open-Meteo forecast, Overpass interpreter, and the public OSRM matching endpoint to detect upstream response-contract changes.',
+    '- Android instrumentation tests exercise native trip-store persistence and malformed-storage recovery; compile them with `android/gradlew.bat assembleDebugAndroidTest` and execute them on an emulator or device with `connectedDebugAndroidTest`.',
+    '- CI runs deterministic tests, browser smoke e2e, and Android instrumentation on an emulator for pushes and pull requests. Live external checks run weekly or by manual dispatch because public service availability is outside the app release boundary.',
     '',
     'Run lint and type checking:',
     '',

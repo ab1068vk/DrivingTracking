@@ -46,7 +46,8 @@ The markdown is regenerated from the current source tree and reflects the latest
 - Score rings now use the canonical `getScoreColor()` metadata, including SVG stroke colors, so score labels, fills, and circular rings share one color policy.
 - Vehicle fuel/energy price validation now uses a currency-neutral 100-per-unit cap instead of a narrow 20-per-litre cap.
 - Android native tracking constants now name the 120-second stats gap, 2-minute Usage Access lookback, sustained-turn heading threshold, TTS speech rate, and 30-minute terminal idle cap; the stats loop uses one explicit duration guard and an else branch for moving vs idle time.
-- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, external service contract mocks, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.
+- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, deterministic and opt-in live external service contract tests, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.
+- CI runs stable unit/component, Playwright browser smoke, and Android emulator instrumentation checks on pushes and pull requests. Live Overpass, Open-Meteo, and OSRM checks are manual or weekly because they depend on public external services.
 - Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.
 
 ## Documentation
@@ -109,6 +110,20 @@ Run browser smoke e2e tests:
 ```bash
 npm run test:e2e
 ```
+
+Run live external contract tests (hits Overpass, Open-Meteo, and OSRM):
+
+```bash
+npm run test:contracts:live
+```
+
+### Test Strategy
+
+- `npm run test` runs deterministic Vitest coverage for calculations, repositories, security safeguards, page rendering, and mocked Overpass/Open-Meteo/OSRM request-response contracts. The live external-service file is skipped in this fast default suite.
+- `npm run test:e2e` builds the app, starts a local preview server, and drives Chromium through core Dashboard, Settings, and Trips navigation flows.
+- `npm run test:contracts:live` makes real network requests to Open-Meteo forecast, Overpass interpreter, and the public OSRM matching endpoint to detect upstream response-contract changes.
+- Android instrumentation tests exercise native trip-store persistence and malformed-storage recovery; compile them with `android/gradlew.bat assembleDebugAndroidTest` and execute them on an emulator or device with `connectedDebugAndroidTest`.
+- CI runs deterministic tests, browser smoke e2e, and Android instrumentation on an emulator for pushes and pull requests. Live external checks run weekly or by manual dispatch because public service availability is outside the app release boundary.
 
 Run lint and type checking:
 
