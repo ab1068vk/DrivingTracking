@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-23T21:15:06.847Z
+Updated: 2026-05-23T21:28:04.008Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -33,7 +33,7 @@ This document is generated from the current repository. It keeps the reference r
 - Production calculation lines indexed: 1527
 - Test calculation/assertion lines indexed separately: 145
 - Hard-coded production literals indexed: 14177
-- Functions/methods catalogued: 1179
+- Functions/methods catalogued: 1181
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -139,7 +139,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | README.md | Human entry-point documentation. | none | none | 0 | 0 | 0 |
 | scripts/check-repository-hygiene.mjs | Repository automation script. | node:child_process | none | 1 | 0 | 0 |
 | scripts/generate-technical-reference.mjs | Repository automation script. | node:fs, node:path, @babel/parser, @babel/traverse | none | 60 | 0 | 0 |
-| scripts/patch-android-gradle.mjs | Repository automation script. | node:fs, node:path | none | 0 | 0 | 0 |
+| scripts/patch-android-gradle.mjs | Repository automation script. | node:fs, node:path | none | 2 | 0 | 0 |
 | src/api/__tests__/clientFallback.test.js | API service adapter with local-first fallback behavior. | vitest, @/api/client, @/api/trips, @/api/vehicles | none | 0 | 0 | 0 |
 | src/api/auth.js | API service adapter with local-first fallback behavior. | @/api/client | migrateLegacyAuthTokens, authService | 1 | 0 | 5 |
 | src/api/client.js | API service adapter with local-first fallback behavior. | none | API_BASE_URL, ApiError, getAuthToken, apiClient | 5 | 0 | 22 |
@@ -515,7 +515,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 ### scripts/patch-android-gradle.mjs
 
-- scripts/patch-android-gradle.mjs:1 imports `existsSync as existsSync, readFileSync as readFileSync, writeFileSync as writeFileSync` from `node:fs`
+- scripts/patch-android-gradle.mjs:1 imports `existsSync as existsSync, readFileSync as readFileSync, readdirSync as readdirSync, writeFileSync as writeFileSync` from `node:fs`
 - scripts/patch-android-gradle.mjs:2 imports `resolve as resolve` from `node:path`
 
 - No exports.
@@ -2948,6 +2948,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 667 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
 | 690 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
 | 914 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
+
+### scripts/patch-android-gradle.mjs
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 4 | arrow function | `replaceInFile(file, transforms)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 17 | arrow function | `containsLocalLibrary(directories)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/api/auth.js
 
@@ -25326,7 +25333,7 @@ Coverage gaps inferred from source shape: no browser e2e suite for the full rout
 ## Deployment And Infra
 
 - Web build: `npm run build` runs Vite and emits `dist/`.
-- Android sync: `npm run android:sync` builds web assets and runs Capacitor sync.
+- Android sync: `npm run android:sync` builds web assets, runs Capacitor sync, and reapplies the tracked AGP 9 compatibility patch for generated/plugin Gradle scripts.
 - Android debug build: run `android/gradlew.bat assembleDebug` from the repository root or Android directory as configured.
 - CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, tests, builds, and scans the production bundle for localhost API fallback.
 - Docker/container setup: no Dockerfile found in the scanned repository.
