@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateAverageVehicleScore, getVehicleFormWarnings, validateVehicleForm } from '@/pages/Vehicles';
+import { calculateAverageVehicleScore, getVehicleFormWarnings, MAX_FUEL_PRICE_PER_UNIT, validateVehicleForm } from '@/pages/Vehicles';
 
 const validVehicleForm = {
   name: 'Commuter',
@@ -13,12 +13,13 @@ const validVehicleForm = {
 };
 
 describe('vehicle form validation', () => {
-  it('allows higher international-market fuel prices up to 20 per litre', () => {
-    expect(validateVehicleForm({ ...validVehicleForm, fuel_price_per_liter: 15 })).toEqual([]);
+  it('allows higher international-market fuel prices up to the currency-neutral cap', () => {
+    expect(validateVehicleForm({ ...validVehicleForm, fuel_price_per_liter: 75 })).toEqual([]);
   });
 
   it('rejects fuel prices above the raised cap', () => {
-    expect(validateVehicleForm({ ...validVehicleForm, fuel_price_per_liter: 20.01 })).toContain('Fuel price must be between 0 and 20.');
+    expect(validateVehicleForm({ ...validVehicleForm, fuel_price_per_liter: MAX_FUEL_PRICE_PER_UNIT + 0.01 }))
+      .toContain(`Fuel price must be between 0 and ${MAX_FUEL_PRICE_PER_UNIT}.`);
   });
 
   it('rejects physically implausible ICE efficiency below 3 L/100km', () => {

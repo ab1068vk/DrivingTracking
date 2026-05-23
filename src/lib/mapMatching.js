@@ -108,11 +108,15 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
         map_matching_provider: 'osrm',
       };
     });
+    const matchedConfidence = Number(matching.confidence);
+    const rawConfidence = Number.isFinite(matchedConfidence)
+      ? matchedConfidence
+      : snappedCount / valid.length;
     const result = {
       routePoints: matched,
       status: 'matched',
       provider: 'osrm',
-      confidence: Math.round((matching.confidence ?? snappedCount / valid.length) * 100) / 100,
+      confidence: Math.round(rawConfidence * 100) / 100,
       snapped_coverage: Math.round((snappedCount / valid.length) * 100),
     };
     await setJson(CACHE_KEY, { ...cache, [key]: result });

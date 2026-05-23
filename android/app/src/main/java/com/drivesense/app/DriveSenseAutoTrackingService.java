@@ -114,6 +114,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long ANDROID_USAGE_ACCESS_LOOKBACK_MS = 120_000L;
     private static final double SUSTAINED_TURN_HEADING_CHANGE_DEG = 35.0d;
     private static final float TTS_SPEECH_RATE = 0.95f;
+    private static final long MAX_TERMINAL_IDLE_SECONDS = 1800L;
 
     private ActivityRecognitionClient activityClient;
     private FusedLocationProviderClient locationClient;
@@ -950,7 +951,7 @@ public class DriveSenseAutoTrackingService extends Service {
             stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
 
             if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
-            if (speed < STATIONARY_SPEED_KMH) stats.idleSeconds += dt;
+            else stats.idleSeconds += dt;
 
             int hour = Instant.ofEpochMilli(currMs).atZone(ZoneOffset.UTC).getHour();
             if (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR) stats.nightDriving = true;
@@ -962,7 +963,7 @@ public class DriveSenseAutoTrackingService extends Service {
             long terminalIdleSeconds = Math.max(0L, (endMs - lastMs) / 1000L);
             double lastSpeed = last.optDouble("speed_kmh", 0d);
             if (lastSpeed < STATIONARY_SPEED_KMH && terminalIdleSeconds > 0L) {
-                stats.idleSeconds += Math.min(terminalIdleSeconds, 1800L);
+                stats.idleSeconds += Math.min(terminalIdleSeconds, MAX_TERMINAL_IDLE_SECONDS);
             }
         }
 

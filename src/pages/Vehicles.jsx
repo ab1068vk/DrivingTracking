@@ -15,6 +15,7 @@ import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 let odometerSyncFailureCount = 0;
 let odometerSyncFailureToastShown = false;
+export const MAX_FUEL_PRICE_PER_UNIT = 100;
 
 const FUEL_TYPES = [
   { value: 'gasoline', label: 'Gasoline' },
@@ -41,7 +42,9 @@ export function validateVehicleForm(form) {
   if (!FUEL_TYPES.some((type) => type.value === fuelType)) errors.push('Fuel type is not supported.');
   if (!isElectric && (!Number.isFinite(efficiency) || efficiency < 3 || efficiency > 40)) errors.push('Fuel efficiency must be between 3 and 40 L/100km.');
   if (isElectric && (!Number.isFinite(evEfficiency) || evEfficiency < 5 || evEfficiency > 40)) errors.push('EV efficiency must be between 5 and 40 kWh/100km.');
-  if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > 20) errors.push('Fuel price must be between 0 and 20.');
+  if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > MAX_FUEL_PRICE_PER_UNIT) {
+    errors.push(`Fuel price must be between 0 and ${MAX_FUEL_PRICE_PER_UNIT}.`);
+  }
   if (!Number.isFinite(reserve) || reserve < 0 || reserve > 5) errors.push('Maintenance reserve must be between 0 and 5 per km.');
   return errors;
 }

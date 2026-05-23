@@ -43,4 +43,29 @@ describe('mapMatching', () => {
     expect(result.routePoints[0].original_lat).toBe(route[0].lat);
     expect(result.routePoints[0].original_lng).toBe(route[0].lng);
   });
+
+  it('falls back to snapped coverage when OSRM confidence is non-finite', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        matchings: [{
+          confidence: Number.POSITIVE_INFINITY,
+          geometry: {
+            coordinates: [
+              [-79.401, 43.701],
+              [-79.402, 43.702],
+              [-79.403, 43.703],
+            ],
+          },
+        }],
+      }),
+    })));
+
+    const route = [point(70), point(71), point(72)];
+    const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://example.test' });
+
+    expect(result.status).toBe('matched');
+    expect(result.confidence).toBe(1);
+    expect(Number.isFinite(result.confidence)).toBe(true);
+  });
 });
