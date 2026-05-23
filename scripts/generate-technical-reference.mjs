@@ -606,8 +606,8 @@ function apiReference() {
 
 function topCalculationSnippets() {
   const snippets = [
-    ['Trip scoring weights and final score', 'src/lib/tripEngine.js', 2910, 2965, 'js'],
-    ['Eco score, cruise band, idle penalty', 'src/lib/tripEngine.js', 1243, 1279, 'js'],
+    ['Trip scoring weights and final score', 'src/lib/tripEngine.js', 3925, 4135, 'js'],
+    ['Eco score, cruise band, idle penalty', 'src/lib/tripEngine.js', 1253, 1325, 'js'],
     ['Map playback position interpolation', 'src/lib/mapPlaybackInsights.js', 248, 354, 'js'],
     ['Predictive route risk', 'src/lib/predictiveRouteRisk.js', 90, 170, 'js'],
     ['Pre-trip readiness risk', 'src/lib/preTripRisk.js', 118, 202, 'js'],
@@ -899,6 +899,7 @@ function buildReadme() {
     '- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.',
     '- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, route-risk, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
     '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.',
+    '- Eco driving scoring now exposes cruise-band, moving-speed floor, cruise-score multiplier, idle-penalty multiplier, and idle-penalty cap settings, and returns `idle_penalty_points` for diagnostics and tests.',
     '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
     '- Predictive route risk now sorts completed trips newest-first inside the estimator before applying the recent-trip window, so dashboard and map pre-trip risk stay based on fresh history even when callers pass unsorted trip arrays.',
     '- Vehicle engine-health summaries now average only finite stored engine stress scores. Trips without a usable score are excluded, and vehicles with no scored samples show `N/A` instead of a misleading maximum-stress fallback.',

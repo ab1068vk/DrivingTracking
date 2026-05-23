@@ -16,4 +16,13 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.grid_co2_kg_per_kwh).toBe(0.04);
     expect(DEFAULT_SETTINGS.tree_co2_kg_per_year).toBe(21);
   });
+
+  it('defines configurable eco scoring defaults', () => {
+    expect(DEFAULT_SETTINGS.threshold_eco_cruise_min_kmh).toBe(55);
+    expect(DEFAULT_SETTINGS.threshold_eco_cruise_max_kmh).toBe(110);
+    expect(DEFAULT_SETTINGS.eco_cruise_score_multiplier).toBe(130);
+    expect(DEFAULT_SETTINGS.eco_idle_penalty_multiplier).toBe(150);
+    expect(DEFAULT_SETTINGS.eco_idle_max_penalty).toBe(25);
+    expect(DEFAULT_SETTINGS.eco_min_moving_kmh).toBe(15);
+  });
 });

@@ -181,6 +181,49 @@ describe('tripEngine', () => {
     expect(result.cruise_score).toBeGreaterThan(0);
   });
 
+  it('uses the named eco cruise multiplier to give full cruise credit at roughly 77% cruise-band samples', () => {
+    const points = Array.from({ length: 100 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, index < 77 ? 80 : 40, 6)
+    ));
+
+    expect(DEFAULT_THRESHOLDS.ECO_CRUISE_SCORE_MULTIPLIER).toBe(130);
+    expect(calculateEcoDrivingScore(points).cruise_score).toBe(100);
+  });
+
+  it('keeps 50% cruise-band driving near 65 cruise points with the default multiplier', () => {
+    const points = Array.from({ length: 100 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, index < 50 ? 80 : 40, 6)
+    ));
+
+    expect(calculateEcoDrivingScore(points).cruise_score).toBe(65);
+  });
+
+  it('keeps the default 1% avoidable idle eco penalty under two points', () => {
+    const points = Array.from({ length: 10 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, 80, 6)
+    ));
+
+    const result = calculateEcoDrivingScore(points, {
+      duration_seconds: 1000,
+      sustained_idle_seconds: 10,
+    });
+
+    expect(result.idle_penalty_points).toBe(1.5);
+    expect(result.idle_penalty_points).toBeLessThan(2);
+  });
+
+  it('can lower the eco moving-speed floor for stop-and-go city scoring', () => {
+    const points = Array.from({ length: 6 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, 10, 6)
+    ));
+
+    expect(calculateEcoDrivingScore(points).eco_driving_score).toBe(50);
+    expect(calculateEcoDrivingScore(points, {}, {
+      ...DEFAULT_THRESHOLDS,
+      ECO_MIN_MOVING_KMH: 5,
+    }).eco_driving_score).toBeGreaterThan(50);
+  });
+
   it('ignores low-quality altitude samples for hill control', () => {
     const points = [40, 45, 50, 45, 40].map((speed, index) => ({
       ...point(43.6532 + index * 0.001, -79.3832, index * 10, speed, 6),

@@ -1532,6 +1532,12 @@ export default function Settings() {
             { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', min: 0.35, max: 1.0, step: 0.05 },
             { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 160, step: 5 },
             { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
+            { key: 'threshold_eco_cruise_min_kmh', label: 'Eco Cruise Min', unit: 'km/h', min: 20, max: 90, step: 5 },
+            { key: 'threshold_eco_cruise_max_kmh', label: 'Eco Cruise Max', unit: 'km/h', min: 80, max: 140, step: 5 },
+            { key: 'eco_min_moving_kmh', label: 'Eco Moving Floor', unit: 'km/h', min: 0, max: 30, step: 1 },
+            { key: 'eco_cruise_score_multiplier', label: 'Eco Cruise Multiplier', unit: 'x', min: 50, max: 200, step: 5 },
+            { key: 'eco_idle_penalty_multiplier', label: 'Eco Idle Multiplier', unit: 'x', min: 0, max: 300, step: 5 },
+            { key: 'eco_idle_max_penalty', label: 'Eco Idle Cap', unit: 'pts', min: 0, max: 50, step: 1 },
             { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },
             { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },
           ].map(({ key, label, unit, min, max, step }) => (
