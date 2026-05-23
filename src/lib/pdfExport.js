@@ -3,6 +3,7 @@ import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { calculateNoHarshBrakeStreak, estimateTripEconomics } from '@/lib/tripInsights';
 import { formatDate, formatDistance, formatDuration, generateReportSummary } from '@/lib/tripEngine';
+import { formatCurrencyAmount } from '@/lib/currency';
 
 function periodLabel(period) {
   if (period === 'week') return 'This Week';
@@ -176,7 +177,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
     ['Worst trip', summary.worst_trip ? `${formatDate(summary.worst_trip.start_time)} (${summary.worst_trip.score_overall})` : 'None'],
     ['Longest trip', sortedByDistance[0] ? `${formatDate(sortedByDistance[0].start_time)} - ${formatDistance(sortedByDistance[0].distance_km ?? 0, settings.units)}` : 'None'],
     ['Most improved week', mostImprovedWeek(tripList)],
-    ['Total estimated fuel cost', `$${economics.cost.toFixed(2)}`],
+    ['Total estimated fuel cost', formatCurrencyAmount(economics.cost, settings)],
     ['Total CO2', `${economics.co2.toFixed(1)} kg`],
     ['No-harsh-brake streak', `${streak} day${streak === 1 ? '' : 's'}`],
   ];

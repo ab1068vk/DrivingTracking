@@ -5,6 +5,7 @@
  */
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { clamp as clampNumber } from '@/lib/mathUtils';
+import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -39,6 +40,7 @@ export const DEFAULT_SETTINGS = {
   settings_defaults_version: 2,
   tracking_mode: 'manual',
   units: 'metric',
+  currencySymbol: '$',
   dark_mode: 'system',
   notifications_enabled: true,
   notification_permission_granted: false,
@@ -192,6 +194,7 @@ const IMPORT_NUMBER_RANGES = {
 const SETTINGS_ENUMS = {
   tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
+  currencySymbol: CURRENCY_SYMBOL_OPTIONS.map((option) => option.value),
   dark_mode: ['system', 'light', 'dark'],
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],

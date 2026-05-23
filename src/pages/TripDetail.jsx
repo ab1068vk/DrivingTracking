@@ -26,6 +26,7 @@ import {
   splitTripAtStops,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
+import { formatCurrencyAmount } from '@/lib/currency';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
@@ -1073,7 +1074,7 @@ export default function TripDetail() {
             },
             // FIX: Add overall average as a secondary line while keeping moving speed primary.
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
-            { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}` },
+            { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings) },
             { icon: Leaf, label: 'Fuel Saved', value: `${economics.fuel_saved_liters.toFixed(2)} L` },
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
             { icon: Leaf, label: 'CO2 Saved vs Average', value: `${trip.co2_saved_kg ?? economics.co2_saved_kg ?? 0} kg` },

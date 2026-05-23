@@ -11,6 +11,7 @@ describe('tracking store default settings', () => {
   });
 
   it('defines configurable CO2 economics defaults', () => {
+    expect(DEFAULT_SETTINGS.currencySymbol).toBe('$');
     expect(DEFAULT_SETTINGS.co2_baseline_kg_per_100km).toBe(12);
     expect(DEFAULT_SETTINGS.default_ev_kwh_per_100km).toBe(18);
     expect(DEFAULT_SETTINGS.grid_co2_kg_per_kwh).toBe(0.04);

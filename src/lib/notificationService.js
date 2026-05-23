@@ -3,6 +3,7 @@ import { isNativePlatform } from '@/lib/nativePlatform';
 import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
 import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
+import { formatCurrencyAmount } from '@/lib/currency';
 
 export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
 export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
@@ -635,11 +636,11 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
         extra: { tripId: trip.id },
       };
     } else if (settings.notif_post_trip_fuel_saving !== false && (trip.score_eco ?? trip.eco_score ?? 0) >= 85 && (trip.fuel_saved_liters ?? 0) >= 0.3) {
-      const saved = ((trip.fuel_saved_liters ?? 0) * resolveFuelPricePerLiter(trip, settings)).toFixed(2);
+      const saved = (trip.fuel_saved_liters ?? 0) * resolveFuelPricePerLiter(trip, settings);
       notification = {
         id: NOTIFICATION_IDS.TRIP_FUEL_SAVING,
         title: 'Eco Drive',
-        body: `Smooth driving saved ~$${saved} in fuel on this trip. Eco score: ${trip.score_eco ?? trip.eco_score}.`,
+        body: `Smooth driving saved ~${formatCurrencyAmount(saved, settings)} in fuel on this trip. Eco score: ${trip.score_eco ?? trip.eco_score}.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },

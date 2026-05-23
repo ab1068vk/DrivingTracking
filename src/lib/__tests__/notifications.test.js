@@ -183,9 +183,15 @@ describe('advanced notifications', () => {
       ...settings,
       fuel_price_per_liter: 3.25,
     });
+    const euroPrice = await dispatchPostTripNotification(baseTrip, recentTrips, {
+      ...settings,
+      currencySymbol: '€',
+      fuel_price_per_liter: 3.25,
+    });
 
     expect(lowPrice.body).toContain('~$1.00');
     expect(highPrice.body).toContain('~$3.25');
+    expect(euroPrice.body).toContain('~€3.25');
   });
 
   it('summarizes following gap, merge, and rapid acceleration risks after higher-priority alerts', async () => {

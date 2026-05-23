@@ -15,6 +15,7 @@ import {
 import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import ScoreRing from '@/components/ScoreRing';
 import { localSettings } from '@/lib/trackingStore';
+import { formatCurrencyAmount } from '@/lib/currency';
 import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 import { computeUBIReport } from '@/lib/ubiReport';
 import { notifyExportSaved } from '@/lib/notificationService';
@@ -362,7 +363,7 @@ export default function Reports() {
               { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score, gradient: getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
               { icon: Gauge, label: 'Avg Moving Speed', value: formatSpeed(avgMovingSpeedKmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
               // FIX: Display Avg Moving Speed in the report instead of an overall average including stops.
-              { icon: Fuel, label: 'Fuel Cost', value: `$${economics.cost.toFixed(2)}`, gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
+              { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
               { icon: Leaf, label: 'Fuel Saved', value: `${economics.saved.toFixed(2)} L`, gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
               { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },
             ].map(({ icon: Icon, label, value, gradient }, i) => (

@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote
 } from 'lucide-react';
 import {
   Dialog,
@@ -55,6 +55,7 @@ import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL } from '@/lib/openSourceTripContext';
+import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -780,7 +781,7 @@ export default function Settings() {
     { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', detail: 'Manual, foreground auto-detect, background auto, and pause controls.', keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement' },
     { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', detail: 'Location, background location, activity, battery, and native auto service setup.', keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt' },
     { label: 'Feature permissions', section: 'Feature Permissions', sectionId: 'settings-feature-permissions', detail: 'See which features are blocked by missing permissions.', keywords: 'blocked unavailable permission feature status' },
-    { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },
+    { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Currency, fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'currency symbol money cost price co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },
     { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
     { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },
     { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle near miss drowsy calibration rescore feedback accurate wrong false positive' },
@@ -1108,6 +1109,21 @@ export default function Settings() {
         {/* Economics */}
         <SectionTitle id="settings-economics">Economics</SectionTitle>
         <div className="space-y-1">
+          <SettingRow
+            icon={Banknote}
+            label="Currency symbol"
+            sublabel="Used for fuel, energy, maintenance, and report cost totals"
+          >
+            <select
+              value={cfg.currencySymbol || '$'}
+              onChange={e => updateCfg({ currencySymbol: e.target.value })}
+              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
+            >
+              {CURRENCY_SYMBOL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </SettingRow>
           <SettingRow
             icon={Leaf}
             label="Average vehicle CO2 baseline"

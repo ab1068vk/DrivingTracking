@@ -9,6 +9,8 @@ import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calc
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
+import { localSettings } from '@/lib/trackingStore';
+import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 let odometerSyncFailureCount = 0;
@@ -21,7 +23,7 @@ const FUEL_TYPES = [
   { value: 'electric', label: 'Electric' },
 ];
 
-function validateVehicleForm(form) {
+export function validateVehicleForm(form) {
   const errors = [];
   const year = Number(form.year);
   const currentYear = new Date().getFullYear() + 1;
@@ -39,12 +41,12 @@ function validateVehicleForm(form) {
   if (!FUEL_TYPES.some((type) => type.value === fuelType)) errors.push('Fuel type is not supported.');
   if (!isElectric && (!Number.isFinite(efficiency) || efficiency <= 0 || efficiency > 40)) errors.push('Fuel efficiency must be between 0 and 40 L/100km.');
   if (isElectric && (!Number.isFinite(evEfficiency) || evEfficiency < 5 || evEfficiency > 40)) errors.push('EV efficiency must be between 5 and 40 kWh/100km.');
-  if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > 10) errors.push('Fuel price must be between 0 and 10.');
+  if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > 20) errors.push('Fuel price must be between 0 and 20.');
   if (!Number.isFinite(reserve) || reserve < 0 || reserve > 5) errors.push('Maintenance reserve must be between 0 and 5 per km.');
   return errors;
 }
 
-function VehicleForm({ initial = {}, onSave, onCancel }) {
+function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
   const [form, setForm] = useState({
     name: '',
     make: '',
@@ -66,6 +68,7 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
   const isElectric = ['electric', 'ev'].includes(String(form.fuel_type || '').toLowerCase());
   const errors = validateVehicleForm(form);
   const canSave = errors.length === 0;
+  const displayCurrencySymbol = normalizeCurrencySymbol(currencySymbol);
 
   return (
     <div className="bg-secondary/50 rounded-2xl p-4 space-y-3">
@@ -122,12 +125,12 @@ function VehicleForm({ initial = {}, onSave, onCancel }) {
           />
         </div>
         <div className="col-span-2">
-          <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? 'Energy Price ($/kWh)' : 'Fuel Price ($/L)'}</label>
+          <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? `Energy Price (${displayCurrencySymbol}/kWh)` : `Fuel Price (${displayCurrencySymbol}/L)`}</label>
           <input value={form.fuel_price_per_liter} onChange={e => set('fuel_price_per_liter', e.target.value)} placeholder="1.65" type="number" step="0.01"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
         <div className="col-span-2">
-          <label className="text-xs text-muted-foreground mb-1 block">Maintenance reserve ($/km)</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Maintenance reserve ({displayCurrencySymbol}/km)</label>
           <input value={form.maintenance_reserve_per_km} onChange={e => set('maintenance_reserve_per_km', e.target.value)} placeholder="0.08" type="number" step="0.01"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
@@ -186,6 +189,8 @@ export default function Vehicles() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
+  const settings = localSettings.get();
+  const currencySymbol = normalizeCurrencySymbol(settings.currencySymbol);
 
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
@@ -299,7 +304,7 @@ export default function Vehicles() {
     return Math.round(vTrips.reduce((s, t) => s + (t.score_overall || 0), 0) / vTrips.length);
   };
   const fuelTotalsFor = (vehicle) => tripListFor(vehicle).reduce((totals, trip) => {
-    const estimate = estimateTripEconomics(trip, vehicle);
+    const estimate = estimateTripEconomics(trip, vehicle, settings);
     return {
       cost: totals.cost + estimate.cost,
       co2: totals.co2 + estimate.co2_kg,
@@ -324,7 +329,7 @@ export default function Vehicles() {
       <AnimatePresence>
         {showAdd && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-            <VehicleForm onSave={(d) => createMut.mutate(d)} onCancel={() => setShowAdd(false)} />
+            <VehicleForm onSave={(d) => createMut.mutate(d)} onCancel={() => setShowAdd(false)} currencySymbol={currencySymbol} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -391,6 +396,7 @@ export default function Vehicles() {
                     initial={v}
                     onSave={(d) => updateMut.mutate({ id: v.id, d })}
                     onCancel={() => setEditId(null)}
+                    currencySymbol={currencySymbol}
                   />
                 </div>
               ) : (
@@ -458,7 +464,7 @@ export default function Vehicles() {
                         {isElectricVehicle ? <Zap className="w-3.5 h-3.5" /> : <Fuel className="w-3.5 h-3.5" />}
                         {isElectricVehicle ? 'Energy estimate' : 'Fuel estimate'}
                       </div>
-                      <div className="font-semibold text-sm mt-1">${fuelTotals.cost.toFixed(2)}</div>
+                      <div className="font-semibold text-sm mt-1">{formatCurrencyAmount(fuelTotals.cost, currencySymbol)}</div>
                       <div className="text-xs text-muted-foreground">{fuelTotals.co2.toFixed(1)} kg CO2</div>
                     </div>
                     <div className="bg-secondary/50 rounded-xl p-3">
@@ -522,19 +528,19 @@ export default function Vehicles() {
                     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                       <div className="rounded-xl bg-secondary/50 p-3">
                         <div className="text-xs text-muted-foreground">Monthly cost</div>
-                        <div className="mt-1 text-sm font-semibold">${costSummary.monthly_cost.toFixed(2)}</div>
+                        <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.monthly_cost, currencySymbol)}</div>
                       </div>
                       <div className="rounded-xl bg-secondary/50 p-3">
                         <div className="text-xs text-muted-foreground">Cost per km</div>
-                        <div className="mt-1 text-sm font-semibold">${costSummary.cost_per_km.toFixed(2)}</div>
+                        <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.cost_per_km, currencySymbol)}</div>
                       </div>
                       <div className="rounded-xl bg-secondary/50 p-3">
                         <div className="text-xs text-muted-foreground">Fuel estimate</div>
-                        <div className="mt-1 text-sm font-semibold">${costSummary.fuel_cost.toFixed(2)}</div>
+                        <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.fuel_cost, currencySymbol)}</div>
                       </div>
                       <div className="rounded-xl bg-secondary/50 p-3">
                         <div className="text-xs text-muted-foreground">Maintenance reserve</div>
-                        <div className="mt-1 text-sm font-semibold">${costSummary.maintenance_reserve.toFixed(2)}</div>
+                        <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.maintenance_reserve, currencySymbol)}</div>
                       </div>
                     </div>
                   </div>
