@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
+import { escapeHtml } from '@/lib/htmlUtils';
 import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
+import { buildSpeedSegmentPopupHtml, titleCase } from '@/lib/mapPopupHtml';
 import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -37,20 +39,9 @@ const EVENT_LABELS = {
   possible_crash: '!!',
 };
 
-const titleCase = (value) => String(value || '')
-  .replace(/_/g, ' ')
-  .replace(/\b\w/g, (char) => char.toUpperCase());
-
 const privacyZonePopupHtml = (zone) => (
   `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.radius_m) || 150)} m radius<br>Playback starts at the circle edge to hide the exact private location.`
 );
-
-const escapeHtml = (value) => String(value ?? '')
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;')
-  .replaceAll("'", '&#039;');
 
 const formatEventTime = (value) => {
   const date = value ? new Date(value) : null;
@@ -242,7 +233,11 @@ export default function TripPlayback({ trip, secondaryTrip = null, height = '380
               lineJoin: 'round',
             }
           )
-            .bindPopup(`${segment.band.label}: ${Math.round(segment.speedKmh)} km/h${segment.speedLimitKmh ? `<br>Limit: ${Math.round(segment.speedLimitKmh)} km/h` : ''}`)
+            .bindPopup(buildSpeedSegmentPopupHtml({
+              label: segment.band.label,
+              speedKmh: segment.speedKmh,
+              speedLimitKmh: segment.speedLimitKmh,
+            }))
             .on('click', () => setSelectedSegmentId(segment.id))
             .addTo(map);
         });

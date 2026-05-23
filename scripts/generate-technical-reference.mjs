@@ -828,6 +828,7 @@ function buildDoc() {
   doc.push('- Auth: optional backend bearer token is read from `sessionStorage`; legacy `localStorage` tokens are migrated and removed.');
   doc.push('- Authorization: no in-repo backend role matrix exists. The local app is single-user local-first; backend authorization must be enforced by the external API if configured.');
   doc.push('- User-controlled data surfaces: backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, CSV/PDF export content, and Android native intent extras.');
+  doc.push('- Leaflet popups: route labels, event metadata, speed-limit road/source data, route-risk segments, danger zones, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.');
   doc.push('- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled GPS points only when route snapping is explicitly enabled and requested.');
   doc.push('- Secrets: no secrets are checked into this repo by the scanner; `VITE_API_URL` is configuration, not a secret.');
   doc.push('- Main residual risks: inline constants make scoring policy harder to review; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled route points by design.');
@@ -884,7 +885,7 @@ function buildReadme() {
     '- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, diagnostics, settings, and vehicles pages.',
     '- Manual trip capture, foreground auto-detect, and Android native background auto tracking with activity recognition, GPS fallback, quick settings tile support, pause/resume controls, and native trip import.',
     '- Trip scoring for safety, smoothness, eco driving, phone-use distraction, speed compliance, road-type segments, reaction proxy, cornering, braking efficiency, overtake quality, tailgating, fatigue, drowsy risk, slippery-condition proxy, and route risk.',
-    '- Map playback with route simplification, stop handling, privacy-masked coordinate handling, speed-limit coloring, fatigue overlays, event markers, and repeated-route comparison support.',
+    '- Map playback with route simplification, stop handling, privacy-masked coordinate handling, HTML-escaped Leaflet popups, speed-limit coloring, fatigue overlays, event markers, and repeated-route comparison support.',
     '- Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, localized per-car cost, CO2, and engine-health summaries, default vehicle handling, and vehicle comparison.',
     '- Reports with CSV export, monthly PDF export, UBI score-card PDF export, rolling baseline comparison, carbon impact, configurable-currency fuel cost, and CO2 savings.',
     '- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, and reviewed event feedback.',
@@ -911,7 +912,7 @@ function buildReadme() {
     '- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. OSRM route snapping is opt-in, disabled without a configured endpoint, and the public demo requires confirmation because sampled GPS points leave the device.',
     '- Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, currency/economics, advanced models, and data controls with searchable sections and safer validation.',
     '- Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, and native diagnostics surfaced in the app.',
-    '- Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
+    '- Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
     '- Test coverage now includes backend fallback, auth migration, backup import security, settings import security, IndexedDB migrations, UBI mileage windows, notifications, currency formatting, vehicle fuel-price validation, scoring consistency, privacy zones, OSRM opt-in behavior, route risk, tracking diagnostics, and release-blocker regressions.',
     '',
     '## Documentation',
@@ -948,6 +949,7 @@ function buildReadme() {
     '- Automatic road/weather context fetch is off by default; manual Get Road Data prompts before sending route context to external services.',
     '- Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones.',
     '- Imported backups and settings are treated as untrusted input and sanitized before merge.',
+    '- Leaflet popup values from trips, routes, events, danger zones, privacy zones, and parked locations are escaped before rendering as HTML.',
     '',
     '## Local Setup',
     '',

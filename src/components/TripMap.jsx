@@ -2,7 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
+import { escapeHtml } from '@/lib/htmlUtils';
 import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
+import {
+  buildDangerZonePopupHtml,
+  buildRouteRiskSegmentPopupHtml,
+  buildSpeedSegmentPopupHtml,
+  routeLabelPopupPrefix,
+  titleCase,
+} from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -70,23 +78,12 @@ const CORNERING_HEATMAP_BANDS = [
   { min: 0.06, label: 'Light', color: '#22c55e', weight: 5 },
 ];
 
-const titleCase = (value) => String(value || '')
-  .replace(/_/g, ' ')
-  .replace(/\b\w/g, (char) => char.toUpperCase());
-
 const phoneUseColor = (event) => {
   const level = event.confidence_level || event.severity || 'medium';
   if (level === 'high') return '#dc2626';
   if (level === 'medium') return '#ea580c';
   return '#f97316';
 };
-
-const escapeHtml = (value) => String(value ?? '')
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;')
-  .replaceAll("'", '&#039;');
 
 const phoneUseIconHtml = (color) => `
   <div style="width:28px;height:28px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center">
@@ -538,7 +535,6 @@ export default function TripMap({
             const color = segment.color || segment.band?.color;
             const label = segment.band?.label || segment.label || 'Segment';
             const speedKmh = segment.speedKmh ?? segment.speed_kmh ?? 0;
-            const limitText = segment.speedLimitKmh ? `<br>Limit: ${Math.round(segment.speedLimitKmh)} km/h` : '';
             window.L.polyline(
               [[from.lat, from.lng], [to.lat, to.lng]],
               {
@@ -550,7 +546,12 @@ export default function TripMap({
                 lineJoin: 'round',
               }
             )
-              .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${label}: ${Math.round(speedKmh)} km/h${limitText}`)
+              .bindPopup(buildSpeedSegmentPopupHtml({
+                routeLabel: route.label,
+                label,
+                speedKmh,
+                speedLimitKmh: segment.speedLimitKmh,
+              }))
               .on('click', () => {
                 if (segment.band) setSelectedSegment(segment);
               })
@@ -578,7 +579,7 @@ export default function TripMap({
                   lineJoin: 'round',
                 }
               )
-                .bindPopup(`${route.label ? `<b>${route.label}</b><br>` : ''}${escapeHtml(roadName)}<br>Limit: ${Math.round(limit)} km/h (${escapeHtml(source)})<br>Speed: ${Math.round(speed)} km/h`)
+                .bindPopup(`${routeLabelPopupPrefix(route.label)}${escapeHtml(roadName)}<br>Limit: ${escapeHtml(Math.round(limit))} km/h (${escapeHtml(source)})<br>Speed: ${escapeHtml(Math.round(speed))} km/h`)
                 .addTo(layers);
             }
           }
@@ -591,7 +592,7 @@ export default function TripMap({
             lineCap: 'round',
             lineJoin: 'round',
           })
-            .bindPopup(route.label ? `<b>${route.label}</b>` : 'Trip route')
+            .bindPopup(route.label ? `<b>${escapeHtml(route.label)}</b>` : 'Trip route')
             .addTo(layers);
         }
       });
@@ -678,12 +679,11 @@ export default function TripMap({
         .filter((segment) => segment.riskLevel !== 'low' && !segmentTouchesPrivacy(segment))
         .forEach((segment) => {
           const color = segment.riskLevel === 'high' ? '#ef4444' : '#f97316';
-          const perPass = segment.tripCount ? segment.totalEvents / segment.tripCount : 0;
           window.L.polyline(
             [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
             { color, weight: 5, opacity: 0.55, smoothFactor: 1.5 }
           )
-            .bindPopup(`<b>${titleCase(segment.riskLevel)} risk segment</b><br>Seen across ${segment.tripCount} trips<br>Total events: ${segment.totalEvents || 0}<br>Avg ${perPass.toFixed(1)} events per pass<br>Most common: ${titleCase(segment.dominantEventType || 'none')}`)
+            .bindPopup(buildRouteRiskSegmentPopupHtml(segment))
             .addTo(layers);
         });
     }
@@ -692,7 +692,6 @@ export default function TripMap({
       dangerZones.filter((zone) => !isPrivatePoint(zone)).forEach((zone) => {
         if (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng))) return;
         const color = RISK_COLORS[zone.riskLevel] || RISK_COLORS.low;
-        const lastSeen = zone.lastSeen ? new Date(zone.lastSeen).toLocaleDateString() : 'Unknown';
         window.L.circle([zone.lat, zone.lng], {
           radius: zone.radiusM || 100,
           color,
@@ -701,7 +700,7 @@ export default function TripMap({
           weight: 1.5,
           opacity: 0.6,
         })
-          .bindPopup(`<b>${titleCase(zone.riskLevel)} danger zone</b><br>${zone.eventCount || 0} repeated events<br>Dominant event: ${titleCase(zone.dominantType || 'risk event')}<br>Radius: ${Math.round(zone.radiusM || 100)} m<br>Last seen: ${lastSeen}`)
+          .bindPopup(buildDangerZonePopupHtml(zone))
           .addTo(layers);
       });
     }
@@ -725,7 +724,7 @@ export default function TripMap({
         iconAnchor: [11, 11],
       });
       window.L.marker([safeParkedLocation.lat, safeParkedLocation.lng], { icon: parkedIcon })
-        .bindPopup(`<b>Parked here</b><br>${safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`}`)
+        .bindPopup(`<b>Parked here</b><br>${escapeHtml(safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`)}`)
         .addTo(layers);
     }
   }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
