@@ -8,6 +8,7 @@
     "build": "vite build",
     "test": "vitest run",
     "postinstall": "node scripts/patch-android-gradle.mjs",
+    "check:repo-hygiene": "node scripts/check-repository-hygiene.mjs",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",

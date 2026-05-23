@@ -8,6 +8,7 @@ const ROOT = process.cwd();
 const now = new Date().toISOString();
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.gradle-home', '.codex-smoke', '.idea']);
+const MACHINE_LOCAL_FILES = new Set(['android/local.properties']);
 const TEXT_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.java', '.gradle', '.xml', '.json', '.css', '.html',
   '.properties', '.md', '.yml', '.yaml', '.config', '.txt',
@@ -28,6 +29,7 @@ function walk(dir, out = []) {
     }
     const full = path.join(dir, entry.name);
     const relative = rel(full);
+    if (MACHINE_LOCAL_FILES.has(relative)) continue;
     if (relative.startsWith('android/app/src/main/assets/')) continue;
     if (EXCLUDE_GENERATED_DOCS.has(relative)) continue;
     const ext = path.extname(entry.name);
@@ -704,6 +706,7 @@ function buildDoc() {
   doc.push('');
   doc.push(`- Text/code files scanned: ${files.length}`);
   doc.push(`- App/source files scanned: ${sourceFiles.length}`);
+  doc.push(`- Machine-local files excluded from scanning: ${[...MACHINE_LOCAL_FILES].map((file) => `\`${file}\``).join(', ')}`);
   doc.push(`- Production calculation lines indexed: ${productionCalculations.length}`);
   doc.push(`- Test calculation/assertion lines indexed separately: ${testCalculations.length}`);
   doc.push(`- Hard-coded production literals indexed: ${literals.length}`);
@@ -820,6 +823,8 @@ function buildDoc() {
   doc.push('');
   doc.push('App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.');
   doc.push('');
+  doc.push('Android SDK location is intentionally machine-local. `android/local.properties` is ignored by `android/.gitignore`, excluded from this generator, and checked by `npm run check:repo-hygiene` so local `sdk.dir` paths are not committed.');
+  doc.push('');
   doc.push('---');
 
   doc.push('## Error Handling Catalogue');
@@ -872,7 +877,7 @@ function buildDoc() {
   doc.push('- Web build: `npm run build` runs Vite and emits `dist/`.');
   doc.push('- Android sync: `npm run android:sync` builds web assets and runs Capacitor sync.');
   doc.push('- Android debug build: run `android/gradlew.bat assembleDebug` from the repository root or Android directory as configured.');
-  doc.push('- CI/CD: `.github` exists, but this generated reference should be checked against workflow files if release automation changes.');
+  doc.push('- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, tests, builds, and scans the production bundle for localhost API fallback.');
   doc.push('- Docker/container setup: no Dockerfile found in the scanned repository.');
   doc.push('- Rollback: deploy previous web artifact or Android build; local data is stored client-side and should not require backend rollback unless `VITE_API_URL` points at a managed API.');
   doc.push('');
@@ -923,6 +928,7 @@ function buildReadme() {
     '- Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, and native diagnostics surfaced in the app.',
     '- Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
     '- Test coverage now includes backend fallback, auth migration, backup import security, settings import security, IndexedDB migrations, UBI mileage windows, notifications, currency formatting, vehicle fuel-price validation, scoring consistency, privacy zones, OSRM opt-in behavior, route risk, tracking diagnostics, and release-blocker regressions.',
+    '- Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.',
     '',
     '## Documentation',
     '',
@@ -986,6 +992,12 @@ function buildReadme() {
     'npm run typecheck',
     '```',
     '',
+    'Check repository hygiene before pushing machine-specific files:',
+    '',
+    '```bash',
+    'npm run check:repo-hygiene',
+    '```',
+    '',
     '## Android Setup',
     '',
     'After changing web or native code, sync Capacitor:',
@@ -999,6 +1011,8 @@ function buildReadme() {
     '```bash',
     '.\\\\gradlew.bat assembleDebug',
     '```',
+    '',
+    '`android/local.properties` is generated locally by Android tooling and contains your Android SDK path. Keep it untracked; `android/.gitignore` ignores it and CI fails if it is ever committed.',
     '',
     'Android tracking needs Location, Background Location, Physical Activity, Notifications, and background tracking permissions. Disable or relax battery optimization for best background reliability.',
     '',

@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-23T00:36:15.762Z
+Updated: 2026-05-23T00:40:07.035Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -28,11 +28,12 @@ This document is generated from the current repository. It keeps the reference r
 ## Coverage And Reading Guide
 
 - Text/code files scanned: 223
-- App/source files scanned: 186
+- App/source files scanned: 187
+- Machine-local files excluded from scanning: `android/local.properties`
 - Production calculation lines indexed: 1524
 - Test calculation/assertion lines indexed separately: 140
 - Hard-coded production literals indexed: 14085
-- Functions/methods catalogued: 1158
+- Functions/methods catalogued: 1159
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -121,7 +122,6 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | android/capacitor.settings.gradle | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/gradle.properties | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/gradle/wrapper/gradle-wrapper.properties | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
-| android/local.properties | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/settings.gradle | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/variables.gradle | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | capacitor.config.ts | Project configuration or static asset metadata. | @capacitor/cli | config | 0 | 0 | 0 |
@@ -133,6 +133,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | package.json | Node package metadata, scripts, and dependency declarations. | none | none | 0 | 0 | 0 |
 | postcss.config.js | Project configuration or static asset metadata. | none | ObjectExpression | 0 | 0 | 0 |
 | README.md | Human entry-point documentation. | none | none | 0 | 0 | 0 |
+| scripts/check-repository-hygiene.mjs | Repository automation script. | node:child_process | none | 1 | 0 | 0 |
 | scripts/generate-technical-reference.mjs | Repository automation script. | node:fs, node:path, @babel/parser, @babel/traverse | none | 59 | 0 | 0 |
 | scripts/patch-android-gradle.mjs | Repository automation script. | node:fs, node:path | none | 0 | 0 | 0 |
 | src/api/__tests__/clientFallback.test.js | API service adapter with local-first fallback behavior. | vitest, @/api/client, @/api/trips, @/api/vehicles | none | 0 | 0 | 0 |
@@ -489,6 +490,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - No imports.
 
 - postcss.config.js:1 exports `ObjectExpression` (default export)
+
+### scripts/check-repository-hygiene.mjs
+
+- scripts/check-repository-hygiene.mjs:1 imports `execFileSync as execFileSync` from `node:child_process`
+
+- No exports.
 
 ### scripts/generate-technical-reference.mjs
 
@@ -2791,69 +2798,75 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 15 | java method | `public void addition_isCorrect()` | none detected | Time: inspect method body; Space: inspect method body |
 
+### scripts/check-repository-hygiene.mjs
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 7 | function | `git(args)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+
 ### scripts/generate-technical-reference.mjs
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 19 | function | `rel(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 23 | function | `walk(dir, out = out = [])` | mutation | Time: O(n) candidate; Space: context dependent |
-| 48 | function | `read(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 52 | function | `linesOf(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 56 | function | `lineAt(lines, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 60 | function | `escapeCell(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 66 | function | `mdLink(file, line = line = null)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 71 | function | `headingId(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 75 | function | `parseJs(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 101 | function | `nodeName(node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 114 | function | `paramsOf(node, sourceLines)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 126 | function | `nearestFunction(functions, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 130 | function | `collectJsFacts(file)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 144 | object method | `ImportDeclaration(p)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 152 | object method | `ExportNamedDeclaration(p)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 163 | object method | `ExportDefaultDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 166 | object method | `FunctionDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 169 | object method | `VariableDeclarator(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 174 | object method | `ObjectMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 177 | object method | `ClassMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 180 | object method | `CallExpression(p)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 190 | object method | `JSXOpeningElement(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 196 | object method | `MemberExpression(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 207 | function | `sourceText(lines, node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 215 | function | `stripComments(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 221 | function | `functionFact(file, sourceLines, node, name, kind)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 246 | function | `collectJavaFacts(file)` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 276 | function | `calculationKind(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 287 | function | `extractFormula(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 303 | function | `isCalculationLine(line)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 313 | function | `collectCalculations(includeTests = includeTests = false)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 339 | function | `literalKind(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 349 | function | `semanticName(code, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 357 | function | `collectLiterals()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 387 | function | `collectEnv()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 401 | function | `collectTests()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 415 | function | `packageFacts()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 430 | function | `purposeFor(file)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 445 | function | `table(headers, rows)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 453 | function | `groupedDetails(title, rows, renderRow, empty = empty = 'None found.')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 458 | function | `codeBlock(code, lang = lang = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 462 | function | `extractSnippet(file, start, end)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 467 | function | `calcRowsByKind(kind)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 471 | function | `renderCalcIndex(rows)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 479 | function | `moduleMap()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 492 | function | `importExportMap()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 506 | function | `functionCatalog()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 516 | function | `literalRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 540 | function | `constantsRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 548 | function | `dependencyTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 566 | function | `testCoverage()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 573 | function | `envTable()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 588 | function | `routeReference()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 602 | function | `apiReference()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 614 | function | `topCalculationSnippets()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 634 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 646 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
-| 669 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 884 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
+| 20 | function | `rel(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 24 | function | `walk(dir, out = out = [])` | mutation | Time: O(n) candidate; Space: context dependent |
+| 50 | function | `read(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 54 | function | `linesOf(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 58 | function | `lineAt(lines, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 62 | function | `escapeCell(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 68 | function | `mdLink(file, line = line = null)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 73 | function | `headingId(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 77 | function | `parseJs(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 103 | function | `nodeName(node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 116 | function | `paramsOf(node, sourceLines)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 128 | function | `nearestFunction(functions, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 132 | function | `collectJsFacts(file)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 146 | object method | `ImportDeclaration(p)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 154 | object method | `ExportNamedDeclaration(p)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 165 | object method | `ExportDefaultDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 168 | object method | `FunctionDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 171 | object method | `VariableDeclarator(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 176 | object method | `ObjectMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 179 | object method | `ClassMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 182 | object method | `CallExpression(p)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 192 | object method | `JSXOpeningElement(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 198 | object method | `MemberExpression(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 209 | function | `sourceText(lines, node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 217 | function | `stripComments(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 223 | function | `functionFact(file, sourceLines, node, name, kind)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 248 | function | `collectJavaFacts(file)` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
+| 278 | function | `calculationKind(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 289 | function | `extractFormula(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 305 | function | `isCalculationLine(line)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 315 | function | `collectCalculations(includeTests = includeTests = false)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 341 | function | `literalKind(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 351 | function | `semanticName(code, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 359 | function | `collectLiterals()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 389 | function | `collectEnv()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 403 | function | `collectTests()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 417 | function | `packageFacts()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 432 | function | `purposeFor(file)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 447 | function | `table(headers, rows)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 455 | function | `groupedDetails(title, rows, renderRow, empty = empty = 'None found.')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 460 | function | `codeBlock(code, lang = lang = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 464 | function | `extractSnippet(file, start, end)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 469 | function | `calcRowsByKind(kind)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 473 | function | `renderCalcIndex(rows)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 481 | function | `moduleMap()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 494 | function | `importExportMap()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 508 | function | `functionCatalog()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 518 | function | `literalRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 542 | function | `constantsRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 550 | function | `dependencyTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 568 | function | `testCoverage()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 575 | function | `envTable()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 590 | function | `routeReference()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 604 | function | `apiReference()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 616 | function | `topCalculationSnippets()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 636 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 648 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
+| 671 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
+| 889 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
 
 ### src/api/auth.js
 
@@ -24777,6 +24790,8 @@ Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic
 
 App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.
 
+Android SDK location is intentionally machine-local. `android/local.properties` is ignored by `android/.gitignore`, excluded from this generator, and checked by `npm run check:repo-hygiene` so local `sdk.dir` paths are not committed.
+
 ---
 ## Error Handling Catalogue
 
@@ -25577,7 +25592,7 @@ Coverage gaps inferred from source shape: no browser e2e suite for the full rout
 - Web build: `npm run build` runs Vite and emits `dist/`.
 - Android sync: `npm run android:sync` builds web assets and runs Capacitor sync.
 - Android debug build: run `android/gradlew.bat assembleDebug` from the repository root or Android directory as configured.
-- CI/CD: `.github` exists, but this generated reference should be checked against workflow files if release automation changes.
+- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, tests, builds, and scans the production bundle for localhost API fallback.
 - Docker/container setup: no Dockerfile found in the scanned repository.
 - Rollback: deploy previous web artifact or Android build; local data is stored client-side and should not require backend rollback unless `VITE_API_URL` points at a managed API.
 

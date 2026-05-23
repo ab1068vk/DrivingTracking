@@ -37,6 +37,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 - Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, and native diagnostics surfaced in the app.
 - Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.
 - Test coverage now includes backend fallback, auth migration, backup import security, settings import security, IndexedDB migrations, UBI mileage windows, notifications, currency formatting, vehicle fuel-price validation, scoring consistency, privacy zones, OSRM opt-in behavior, route risk, tracking diagnostics, and release-blocker regressions.
+- Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.
 
 ## Documentation
 
@@ -100,6 +101,12 @@ npm run lint
 npm run typecheck
 ```
 
+Check repository hygiene before pushing machine-specific files:
+
+```bash
+npm run check:repo-hygiene
+```
+
 ## Android Setup
 
 After changing web or native code, sync Capacitor:
@@ -113,5 +120,7 @@ Build the Android debug APK from the `android` directory:
 ```bash
 .\\gradlew.bat assembleDebug
 ```
+
+`android/local.properties` is generated locally by Android tooling and contains your Android SDK path. Keep it untracked; `android/.gitignore` ignores it and CI fails if it is ever committed.
 
 Android tracking needs Location, Background Location, Physical Activity, Notifications, and background tracking permissions. Disable or relax battery optimization for best background reliability.
