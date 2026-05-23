@@ -7,7 +7,7 @@ const traverse = traverseModule.default || traverseModule;
 const ROOT = process.cwd();
 const now = new Date().toISOString();
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.gradle-home', '.codex-smoke', '.idea']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.gradle-home', '.codex-smoke', '.idea', 'test-results', 'playwright-report']);
 const MACHINE_LOCAL_FILES = new Set(['android/local.properties']);
 const TEXT_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.java', '.gradle', '.xml', '.json', '.css', '.html',
@@ -45,7 +45,14 @@ const productionBehaviorFiles = appSourceFiles.filter((file) => {
   const relative = rel(file);
   return relative.startsWith('src/') || relative.startsWith('android/app/src/main/java/');
 });
-const testFiles = sourceFiles.filter((file) => rel(file).includes('__tests__/') || rel(file).endsWith('.test.js') || rel(file).includes('/test/'));
+const testFiles = sourceFiles.filter((file) => {
+  const relative = rel(file);
+  return relative.startsWith('e2e/')
+    || relative.includes('__tests__/')
+    || relative.endsWith('.test.js')
+    || relative.endsWith('.spec.js')
+    || relative.includes('/test/');
+});
 
 function read(file) {
   return fs.readFileSync(file, 'utf8');
@@ -438,6 +445,7 @@ function purposeFor(file) {
   if (file.startsWith('src/api/')) return 'API service adapter with local-first fallback behavior.';
   if (file.startsWith('src/lib/')) return 'Domain/service library for scoring, tracking, storage, reports, context, or native integration.';
   if (file.startsWith('src/hooks/')) return 'Reusable React hook.';
+  if (file.startsWith('e2e/')) return 'Playwright browser smoke test for the built application shell.';
   if (file.startsWith('android/')) return 'Android Capacitor shell, native service, resource, Gradle, or manifest file.';
   if (file.startsWith('scripts/')) return 'Repository automation script.';
   if (name === 'package.json') return 'Node package metadata, scripts, and dependency declarations.';
@@ -888,7 +896,7 @@ function buildDoc() {
   doc.push('');
   doc.push(testCoverage());
   doc.push('');
-  doc.push('Coverage gaps inferred from source shape: no browser e2e suite for the full route workflow, no real-device Android instrumentation assertions beyond generated examples, and no live external API contract tests for Overpass/Open-Meteo/OSRM.');
+  doc.push('Coverage gaps inferred from source shape: browser e2e currently covers smoke navigation only, Android instrumentation focuses on native trip-store persistence, and external API tests mock Overpass/Open-Meteo/OSRM contracts rather than calling live services.');
   doc.push('');
   doc.push('---');
 
@@ -963,7 +971,7 @@ function buildReadme() {
     '- Score rings now use the canonical `getScoreColor()` metadata, including SVG stroke colors, so score labels, fills, and circular rings share one color policy.',
     '- Vehicle fuel/energy price validation now uses a currency-neutral 100-per-unit cap instead of a narrow 20-per-litre cap.',
     '- Android native tracking constants now name the 120-second stats gap, 2-minute Usage Access lookback, sustained-turn heading threshold, TTS speech rate, and 30-minute terminal idle cap; the stats loop uses one explicit duration guard and an else branch for moving vs idle time.',
-    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, and release-blocker regressions.',
+    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, external service contract mocks, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.',
     '- Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.',
     '',
     '## Documentation',
@@ -1019,6 +1027,12 @@ function buildReadme() {
     '',
     '```bash',
     'npm run test',
+    '```',
+    '',
+    'Run browser smoke e2e tests:',
+    '',
+    '```bash',
+    'npm run test:e2e',
     '```',
     '',
     'Run lint and type checking:',

@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-23T22:18:50.339Z
+Updated: 2026-05-23T22:45:53.333Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -27,13 +27,13 @@ This document is generated from the current repository. It keeps the reference r
 ---
 ## Coverage And Reading Guide
 
-- Text/code files scanned: 226
-- App/source files scanned: 190
+- Text/code files scanned: 231
+- App/source files scanned: 195
 - Machine-local files excluded from scanning: `android/local.properties`
 - Production calculation lines indexed: 1534
-- Test calculation/assertion lines indexed separately: 145
+- Test calculation/assertion lines indexed separately: 159
 - Hard-coded production literals indexed: 14200
-- Functions/methods catalogued: 1182
+- Functions/methods catalogued: 1194
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -97,7 +97,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | android/.gradle/vcs-1/gc.properties | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/app/build.gradle | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/app/capacitor.build.gradle | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
-| android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | static org.junit.Assert.*, android.content.Context, androidx.test.ext.junit.runners.AndroidJUnit4, androidx.test.platform.app.InstrumentationRegistry, org.junit.Test, org.junit.runner.RunWith | none | 1 | 0 | 0 |
+| android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | static org.junit.Assert.assertEquals, static org.junit.Assert.assertFalse, static org.junit.Assert.assertNotNull, static org.junit.Assert.assertNull, static org.junit.Assert.assertTrue, android.content.Context, android.content.SharedPreferences, androidx.test.ext.junit.runners.AndroidJUnit4 | none | 8 | 0 | 0 |
 | android/app/src/main/AndroidManifest.xml | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/app/src/main/java/com/drivesense/app/DriveSenseActivityReceiver.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.BroadcastReceiver, android.content.Context, android.content.Intent, com.google.android.gms.location.ActivityRecognitionResult, com.google.android.gms.location.DetectedActivity | none | 1 | 0 | 0 |
 | android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.Manifest, android.app.PendingIntent, android.content.ContentResolver, android.content.ContentValues, android.content.ActivityNotFoundException, android.content.Context, android.content.Intent, android.content.pm.PackageManager | none | 39 | 0 | 95 |
@@ -130,11 +130,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | android/variables.gradle | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | capacitor.config.ts | Project configuration or static asset metadata. | @capacitor/cli | config | 0 | 0 | 0 |
 | components.json | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
+| e2e/app-smoke.spec.js | Playwright browser smoke test for the built application shell. | @playwright/test | none | 0 | 0 | 0 |
 | eslint.config.js | Project configuration or static asset metadata. | globals, @eslint/js, eslint-plugin-react, eslint-plugin-react-hooks, eslint-plugin-unused-imports | ArrayExpression | 0 | 0 | 0 |
 | index.html | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | jsconfig.json | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | package-lock.json | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | package.json | Node package metadata, scripts, and dependency declarations. | none | none | 0 | 0 | 0 |
+| playwright.config.js | Project configuration or static asset metadata. | @playwright/test | CallExpression | 0 | 0 | 0 |
 | postcss.config.js | Project configuration or static asset metadata. | none | ObjectExpression | 0 | 0 | 0 |
 | README.md | Human entry-point documentation. | none | none | 0 | 0 | 0 |
 | scripts/check-repository-hygiene.mjs | Repository automation script. | node:child_process | none | 1 | 0 | 0 |
@@ -221,6 +223,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/__tests__/dataBackupImportSecurity.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/dataBackup | none | 1 | 0 | 0 |
 | src/lib/__tests__/driverSignature.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/tripInsights | none | 1 | 0 | 0 |
 | src/lib/__tests__/drivingConsistency.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/tripInsights | none | 1 | 0 | 0 |
+| src/lib/__tests__/externalContracts.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/retry, @/lib/mapMatching, @/lib/speedLimitSource, @/lib/weatherContext | none | 1 | 0 | 0 |
 | src/lib/__tests__/fatigueHeatmapData.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/tripInsights | none | 1 | 0 | 0 |
 | src/lib/__tests__/feedbackRescore.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/localTripRepository, @/lib/tripEngine | none | 2 | 0 | 0 |
 | src/lib/__tests__/htmlUtils.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/htmlUtils, @/lib/mapPopupHtml | none | 0 | 0 | 0 |
@@ -247,6 +250,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/__tests__/thresholdCalibration.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/thresholdCalibration | none | 2 | 0 | 0 |
 | src/lib/__tests__/trackingDiagnostics.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/trackingDiagnostics | none | 0 | 0 | 0 |
 | src/lib/__tests__/trackingStoreDefaults.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/trackingStore | none | 0 | 0 | 0 |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/tripEngine | none | 2 | 0 | 0 |
 | src/lib/__tests__/ubiReport.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/ubiReport | none | 1 | 0 | 0 |
 | src/lib/__tests__/voiceAlerts.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/voiceAlerts | none | 3 | 0 | 0 |
 | src/lib/activityRecognition.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @/lib/nativePlatform, @/lib/permissions, @/lib/tripEngine | ACTIVITY_POLL_INTERVAL_MS, AUTO_START_IN_VEHICLE_CONFIDENCE, AUTO_START_SPEED_KMH, AUTO_START_IN_VEHICLE_SECONDS, AUTO_START_GPS_FALLBACK_SECONDS, WALKING_SPEED_CUTOFF_KMH, ACTIVITY_TYPES, startActivityRecognition, startNativeAutoTracking, stopNativeAutoTracking | 17 | 12 | 92 |
@@ -299,6 +303,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/weatherContext.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/mobileStorage, @/lib/retry | fetchWeatherContextForTrip, applyWeatherRiskToScores | 11 | 20 | 168 |
 | src/lib/weeklyCoaching.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripInsights | buildWeeklyCoachSummary | 2 | 4 | 96 |
 | src/main.jsx | Project configuration or static asset metadata. | react, react-dom/client, @/App.jsx, @/index.css, @/lib/errorReporting, @/api/auth | none | 0 | 0 | 1 |
+| src/pages/__tests__/corePages.render.test.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, react-dom/server, vitest | none | 2 | 0 | 0 |
 | src/pages/__tests__/Vehicles.test.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | vitest, @/pages/Vehicles | none | 0 | 0 | 0 |
 | src/pages/Achievements.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, lucide-react, @/api/trips, @/lib/tripInsights, @/lib/notificationService | Achievements | 4 | 6 | 39 |
 | src/pages/AndroidReference.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, lucide-react, react-router-dom | AndroidReference | 3 | 22 | 0 |
@@ -315,19 +320,28 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/pages/Vehicles.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/VehicleCompare, @/lib/tripInsights | MAX_FUEL_PRICE_PER_UNIT, validateVehicleForm, getVehicleFormWarnings, calculateAverageVehicleScore, Vehicles | 16 | 17 | 230 |
 | src/utils/index.ts | Project configuration or static asset metadata. | none | createPageUrl | 1 | 0 | 2 |
 | tailwind.config.js | Project configuration or static asset metadata. | tailwindcss-animate | ObjectExpression | 0 | 0 | 0 |
-| vite.config.js | Project configuration or static asset metadata. | @vitejs/plugin-react, vite, node:path, node:url | CallExpression | 0 | 0 | 0 |
+| vite.config.js | Project configuration or static asset metadata. | @vitejs/plugin-react, vitest/config, node:path, node:url | CallExpression | 0 | 0 | 0 |
 
 ---
 ## Import Export Map
 
-### android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java
+### android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java
 
-- android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java:3 imports `Java import` from `static org.junit.Assert.*`
-- android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java:5 imports `Java import` from `android.content.Context`
-- android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java:6 imports `Java import` from `androidx.test.ext.junit.runners.AndroidJUnit4`
-- android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java:7 imports `Java import` from `androidx.test.platform.app.InstrumentationRegistry`
-- android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java:8 imports `Java import` from `org.junit.Test`
-- android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java:9 imports `Java import` from `org.junit.runner.RunWith`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:3 imports `Java import` from `static org.junit.Assert.assertEquals`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:4 imports `Java import` from `static org.junit.Assert.assertFalse`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:5 imports `Java import` from `static org.junit.Assert.assertNotNull`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:6 imports `Java import` from `static org.junit.Assert.assertNull`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:7 imports `Java import` from `static org.junit.Assert.assertTrue`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:9 imports `Java import` from `android.content.Context`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:10 imports `Java import` from `android.content.SharedPreferences`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:12 imports `Java import` from `androidx.test.ext.junit.runners.AndroidJUnit4`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:13 imports `Java import` from `androidx.test.platform.app.InstrumentationRegistry`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:15 imports `Java import` from `org.json.JSONArray`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:16 imports `Java import` from `org.json.JSONObject`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:17 imports `Java import` from `org.junit.After`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:18 imports `Java import` from `org.junit.Before`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:19 imports `Java import` from `org.junit.Test`
+- android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java:20 imports `Java import` from `org.junit.runner.RunWith`
 
 - No exports.
 
@@ -482,6 +496,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - capacitor.config.ts:24 exports `config` (default export)
 
+### e2e/app-smoke.spec.js
+
+- e2e/app-smoke.spec.js:1 imports `expect as expect, test as test` from `@playwright/test`
+
+- No exports.
+
 ### eslint.config.js
 
 - eslint.config.js:1 imports `globals` from `globals`
@@ -491,6 +511,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - eslint.config.js:5 imports `pluginUnusedImports` from `eslint-plugin-unused-imports`
 
 - eslint.config.js:7 exports `ArrayExpression` (default export)
+
+### playwright.config.js
+
+- playwright.config.js:1 imports `defineConfig as defineConfig, devices as devices` from `@playwright/test`
+
+- playwright.config.js:3 exports `CallExpression` (default export)
 
 ### postcss.config.js
 
@@ -1430,6 +1456,16 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - No exports.
 
+### src/lib/__tests__/externalContracts.test.js
+
+- src/lib/__tests__/externalContracts.test.js:1 imports `afterEach as afterEach, beforeEach as beforeEach, describe as describe, expect as expect, it as it, vi as vi` from `vitest`
+- src/lib/__tests__/externalContracts.test.js:2 imports `resetRetryCircuits as resetRetryCircuits` from `@/lib/retry`
+- src/lib/__tests__/externalContracts.test.js:3 imports `mapMatchRoute as mapMatchRoute` from `@/lib/mapMatching`
+- src/lib/__tests__/externalContracts.test.js:4 imports `annotateRouteSpeedLimits as annotateRouteSpeedLimits` from `@/lib/speedLimitSource`
+- src/lib/__tests__/externalContracts.test.js:5 imports `fetchWeatherContextForTrip as fetchWeatherContextForTrip` from `@/lib/weatherContext`
+
+- No exports.
+
 ### src/lib/__tests__/fatigueHeatmapData.test.js
 
 - src/lib/__tests__/fatigueHeatmapData.test.js:1 imports `describe as describe, expect as expect, it as it` from `vitest`
@@ -1635,6 +1671,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - src/lib/__tests__/trackingStoreDefaults.test.js:1 imports `describe as describe, expect as expect, it as it` from `vitest`
 - src/lib/__tests__/trackingStoreDefaults.test.js:2 imports `DEFAULT_SETTINGS as DEFAULT_SETTINGS, migrateDefaultSettings as migrateDefaultSettings` from `@/lib/trackingStore`
+
+- No exports.
+
+### src/lib/__tests__/tripEngineCalculationCoverage.test.js
+
+- src/lib/__tests__/tripEngineCalculationCoverage.test.js:1 imports `describe as describe, expect as expect, it as it` from `vitest`
+- src/lib/__tests__/tripEngineCalculationCoverage.test.js:2 imports `DEFAULT_THRESHOLDS as DEFAULT_THRESHOLDS, calculateAcceleration as calculateAcceleration, calculateAggressiveDrivingScore as calculateAggressiveDrivingScore, calculateBearing as calculateBearing, calculateDefensiveDrivingScore as calculateDefensiveDrivingScore, calculateEcoDrivingScore as calculateEcoDrivingScore, calculateFuelBandScore as calculateFuelBandScore, calculateJerkScore as calculateJerkScore, calculateNightPenalty as calculateNightPenalty, calculateRouteSummary as calculateRouteSummary, calculateSpeedKmh as calculateSpeedKmh, calculateTripScores as calculateTripScores, calculateTripStats as calculateTripStats, classifyRoadType as classifyRoadType, detectDrivingEvents as detectDrivingEvents, extractBrakingSequences as extractBrakingSequences, headingDiff as headingDiff, inferSpeedZones as inferSpeedZones, splitTripAtStops as splitTripAtStops, trimParkedTail as trimParkedTail, validateCandidateTrip as validateCandidateTrip` from `@/lib/tripEngine`
 
 - No exports.
 
@@ -2385,6 +2428,14 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - No exports.
 
+### src/pages/__tests__/corePages.render.test.jsx
+
+- src/pages/__tests__/corePages.render.test.jsx:1 imports `React` from `react`
+- src/pages/__tests__/corePages.render.test.jsx:2 imports `renderToStaticMarkup as renderToStaticMarkup` from `react-dom/server`
+- src/pages/__tests__/corePages.render.test.jsx:3 imports `beforeEach as beforeEach, describe as describe, expect as expect, it as it, vi as vi` from `vitest`
+
+- No exports.
+
 ### src/pages/__tests__/Vehicles.test.jsx
 
 - src/pages/__tests__/Vehicles.test.jsx:1 imports `describe as describe, expect as expect, it as it` from `vitest`
@@ -2676,7 +2727,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 ### vite.config.js
 
 - vite.config.js:1 imports `react` from `@vitejs/plugin-react`
-- vite.config.js:2 imports `defineConfig as defineConfig` from `vite`
+- vite.config.js:2 imports `configDefaults as configDefaults, defineConfig as defineConfig` from `vitest/config`
 - vite.config.js:3 imports `path` from `node:path`
 - vite.config.js:4 imports `fileURLToPath as fileURLToPath` from `node:url`
 
@@ -2685,11 +2736,18 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 ---
 ## Function And Method Catalogue
 
-### android/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java
+### android/app/src/androidTest/java/com/drivesense/app/DriveSenseNativeTripStoreInstrumentedTest.java
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 20 | java method | `public void useAppContext()` | none detected | Time: inspect method body; Space: inspect method body |
+| 27 | java method | `public void setUp()` | none detected | Time: inspect method body; Space: inspect method body |
+| 34 | java method | `public void tearDown()` | none detected | Time: inspect method body; Space: inspect method body |
+| 40 | java method | `public void packageNameMatchesConfiguredApplicationId()` | none detected | Time: inspect method body; Space: inspect method body |
+| 45 | java method | `public void serviceEnabledFlagPersists()` | none detected | Time: inspect method body; Space: inspect method body |
+| 54 | java method | `public void completedTripsRecoverFromMalformedStorage()` | none detected | Time: inspect method body; Space: inspect method body |
+| 70 | java method | `public void diagnosticEventsArePrependedAndCapped()` | none detected | Time: inspect method body; Space: inspect method body |
+| 83 | java method | `public void lastParkedLocationFallsBackToSharedCapacitorStorage()` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 100 | java method | `public void invalidLastParkedPayloadReturnsNull()` | none detected | Time: inspect method body; Space: inspect method body |
 
 ### android/app/src/main/java/com/drivesense/app/DriveSenseActivityReceiver.java
 
@@ -2892,64 +2950,64 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 20 | function | `rel(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 24 | function | `walk(dir, out = out = [])` | mutation | Time: O(n) candidate; Space: context dependent |
-| 50 | function | `read(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 54 | function | `linesOf(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 58 | function | `lineAt(lines, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 62 | function | `escapeCell(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 68 | function | `mdLink(file, line = line = null)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 73 | function | `headingId(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 77 | function | `parseJs(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 103 | function | `nodeName(node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 116 | function | `paramsOf(node, sourceLines)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 128 | function | `nearestFunction(functions, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 132 | function | `collectJsFacts(file)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 146 | object method | `ImportDeclaration(p)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 154 | object method | `ExportNamedDeclaration(p)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 165 | object method | `ExportDefaultDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 168 | object method | `FunctionDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 171 | object method | `VariableDeclarator(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 176 | object method | `ObjectMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 179 | object method | `ClassMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 182 | object method | `CallExpression(p)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 192 | object method | `JSXOpeningElement(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 198 | object method | `MemberExpression(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 209 | function | `sourceText(lines, node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 217 | function | `stripComments(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 223 | function | `functionFact(file, sourceLines, node, name, kind)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 248 | function | `collectJavaFacts(file)` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 278 | function | `calculationKind(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 289 | function | `extractFormula(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 305 | function | `isCalculationLine(line)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 315 | function | `collectCalculations(includeTests = includeTests = false)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 341 | function | `literalKind(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 351 | function | `semanticName(code, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 360 | function | `collectLiterals()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 390 | function | `collectEnv()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 404 | function | `collectTests()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 418 | function | `packageFacts()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 433 | function | `purposeFor(file)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 448 | function | `table(headers, rows)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 456 | function | `groupedDetails(title, rows, renderRow, empty = empty = 'None found.')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 461 | function | `codeBlock(code, lang = lang = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 465 | function | `extractSnippet(file, start, end)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 470 | function | `calcRowsByKind(kind)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 474 | function | `renderCalcIndex(rows)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 482 | function | `moduleMap()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 495 | function | `importExportMap()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 509 | function | `functionCatalog()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 519 | function | `literalRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 537 | function | `reasonForLiteral(row)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 550 | function | `constantsRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 569 | function | `dependencyTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 587 | function | `testCoverage()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 594 | function | `envTable()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 609 | function | `routeReference()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 623 | function | `apiReference()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 635 | function | `topCalculationSnippets()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 655 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 667 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
-| 690 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 915 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
+| 57 | function | `read(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 61 | function | `linesOf(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 65 | function | `lineAt(lines, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 69 | function | `escapeCell(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 75 | function | `mdLink(file, line = line = null)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 80 | function | `headingId(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 84 | function | `parseJs(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 110 | function | `nodeName(node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 123 | function | `paramsOf(node, sourceLines)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 135 | function | `nearestFunction(functions, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 139 | function | `collectJsFacts(file)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 153 | object method | `ImportDeclaration(p)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 161 | object method | `ExportNamedDeclaration(p)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 172 | object method | `ExportDefaultDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 175 | object method | `FunctionDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 178 | object method | `VariableDeclarator(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 183 | object method | `ObjectMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 186 | object method | `ClassMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 189 | object method | `CallExpression(p)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 199 | object method | `JSXOpeningElement(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 205 | object method | `MemberExpression(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 216 | function | `sourceText(lines, node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 224 | function | `stripComments(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 230 | function | `functionFact(file, sourceLines, node, name, kind)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 255 | function | `collectJavaFacts(file)` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
+| 285 | function | `calculationKind(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 296 | function | `extractFormula(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 312 | function | `isCalculationLine(line)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 322 | function | `collectCalculations(includeTests = includeTests = false)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 348 | function | `literalKind(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 358 | function | `semanticName(code, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 367 | function | `collectLiterals()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 397 | function | `collectEnv()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 411 | function | `collectTests()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 425 | function | `packageFacts()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 440 | function | `purposeFor(file)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 456 | function | `table(headers, rows)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 464 | function | `groupedDetails(title, rows, renderRow, empty = empty = 'None found.')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 469 | function | `codeBlock(code, lang = lang = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 473 | function | `extractSnippet(file, start, end)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 478 | function | `calcRowsByKind(kind)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 482 | function | `renderCalcIndex(rows)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 490 | function | `moduleMap()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 503 | function | `importExportMap()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 517 | function | `functionCatalog()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 527 | function | `literalRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 545 | function | `reasonForLiteral(row)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 558 | function | `constantsRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 577 | function | `dependencyTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 595 | function | `testCoverage()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 602 | function | `envTable()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 617 | function | `routeReference()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 631 | function | `apiReference()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 643 | function | `topCalculationSnippets()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 663 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 675 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
+| 698 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 923 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
 
 ### scripts/patch-android-gradle.mjs
 
@@ -3347,6 +3405,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 4 | arrow function | `trip(score, roadType)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
+### src/lib/__tests__/externalContracts.test.js
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 13 | function | `stubStorage()` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+
 ### src/lib/__tests__/fatigueHeatmapData.test.js
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
@@ -3498,6 +3562,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 4 | arrow function | `point(seconds, speedKmh)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 12 | arrow function | `trip(index, distanceKm = distanceKm = 15, speeds = speeds = [20, 80, 20])` | none detected | Time: O(n) candidate; Space: context dependent |
+
+### src/lib/__tests__/tripEngineCalculationCoverage.test.js
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 26 | arrow function | `at(seconds)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 27 | arrow function | `point(index, patch = patch = {})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/__tests__/ubiReport.test.js
 
@@ -4389,6 +4460,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 3 | arrow function | `eventTotal(trips, key)` | none detected | Time: O(n) candidate; Space: context dependent |
 | 5 | function | `buildWeeklyCoachSummary(trips = trips = [])` | mutation | Time: O(n^2) candidate; Space: context dependent |
+
+### src/pages/__tests__/corePages.render.test.jsx
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 67 | arrow function | `passthrough(tag)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 75 | arrow function | `Box({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/pages/Achievements.jsx
 
@@ -8372,7 +8450,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 </details>
 
 <details>
-<summary>test calculation/assertion lines (145)</summary>
+<summary>test calculation/assertion lines (159)</summary>
 
 #### src/components/__tests__/SectionErrorBoundary.test.jsx
 
@@ -8441,6 +8519,16 @@ Every production calculation-like line found by the scanner is grouped by domain
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
 | 4 | trip | trip = (score, roadType) => ({ | `const trip = (score, roadType) => ({` |
+
+#### src/lib/__tests__/externalContracts.test.js
+
+| Line | Function | Formula / derived value | Exact code |
+|---|---|---|---|
+| 8 | (module scope) | { lat: 43.6500, lng: -79.3800, accuracy: 8, speed_kmh: 45, timestamp: '2026-05-23T14:00:00.000Z' }, | `{ lat: 43.6500, lng: -79.3800, accuracy: 8, speed_kmh: 45, timestamp: '2026-05-23T14:00:00.000Z' },` |
+| 9 | (module scope) | { lat: 43.6504, lng: -79.3801, accuracy: 12, speed_kmh: 47, timestamp: '2026-05-23T14:05:00.000Z' }, | `{ lat: 43.6504, lng: -79.3801, accuracy: 12, speed_kmh: 47, timestamp: '2026-05-23T14:05:00.000Z' },` |
+| 10 | (module scope) | { lat: 43.6508, lng: -79.3802, accuracy: 9, speed_kmh: 44, timestamp: '2026-05-23T14:10:00.000Z' }, | `{ lat: 43.6508, lng: -79.3802, accuracy: 9, speed_kmh: 44, timestamp: '2026-05-23T14:10:00.000Z' },` |
+| 43 | (module scope) | { lat: 43.6499, lon: -79.3801 }, | `{ lat: 43.6499, lon: -79.3801 },` |
+| 44 | (module scope) | { lat: 43.6510, lon: -79.3803 }, | `{ lat: 43.6510, lon: -79.3803 },` |
 
 #### src/lib/__tests__/fatigueHeatmapData.test.js
 
@@ -8619,6 +8707,15 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 6 | point | lng: -79.3832, | `lng: -79.3832,` |
 | 18 | trip | route_points: speeds.map((speed, i) => point(i x 5, speed)), | `route_points: speeds.map((speed, i) => point(i * 5, speed)),` |
 
+#### src/lib/__tests__/tripEngineCalculationCoverage.test.js
+
+| Line | Function | Formula / derived value | Exact code |
+|---|---|---|---|
+| 28 | point | lat: 43.65 + index x 0.00018, | `lat: 43.65 + index * 0.00018,` |
+| 29 | point | lng: -79.38, | `lng: -79.38,` |
+| 48 | (module scope) | lat: moving.at(-1).lat + index x 0.000001, | `lat: moving.at(-1).lat + index * 0.000001,` |
+| 148 | (module scope) | lat: firstLeg.at(-1).lat, | `lat: firstLeg.at(-1).lat,` |
+
 #### src/lib/tripEngine.test.js
 
 | Line | Function | Formula / derived value | Exact code |
@@ -8656,6 +8753,16 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 890 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
 | 1030 | (module scope) | lat: 43.6532 + index x 0.0001, | `lat: 43.6532 + index * 0.0001,` |
 | 1031 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
+
+#### src/pages/__tests__/corePages.render.test.jsx
+
+| Line | Function | Formula / derived value | Exact code |
+|---|---|---|---|
+| 47 | (module scope) | { lat: 43.65, lng: -79.38, speed_kmh: 42, timestamp: '2026-01-01T12:00:00.000Z' }, | `{ lat: 43.65, lng: -79.38, speed_kmh: 42, timestamp: '2026-01-01T12:00:00.000Z' },` |
+| 48 | (module scope) | { lat: 43.651, lng: -79.381, speed_kmh: 46, timestamp: '2026-01-01T12:06:00.000Z' }, | `{ lat: 43.651, lng: -79.381, speed_kmh: 46, timestamp: '2026-01-01T12:06:00.000Z' },` |
+| 49 | (module scope) | { lat: 43.652, lng: -79.382, speed_kmh: 40, timestamp: '2026-01-01T12:12:00.000Z' }, | `{ lat: 43.652, lng: -79.382, speed_kmh: 40, timestamp: '2026-01-01T12:12:00.000Z' },` |
+| 107 | (module scope) | default: ({ score, label }) => <div>{label OR 'Score'} {score}< / div>, | `default: ({ score, label }) => <div>{label \|\| 'Score'} {score}</div>,` |
+| 111 | (module scope) | default: () => <div>Trip map placeholder< / div>, | `default: () => <div>Trip map placeholder</div>,` |
 
 #### src/pages/__tests__/Vehicles.test.jsx
 
@@ -24536,6 +24643,8 @@ Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic
 
 | Variable | Type | Required | Default | Description | Used in |
 | --- | --- | --- | --- | --- | --- |
+| CI | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | playwright.config.js:10 `reporter: process.env.CI ? 'github' : 'list',` |
+| CI | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | playwright.config.js:18 `reuseExistingServer: !process.env.CI,` |
 | VITE_API_URL | Vite string | No | empty means local-first storage | Optional backend API base URL. | src/api/client.js:1 `export const API_BASE_URL = (import.meta.env.VITE_API_URL \|\| "").trim();` |
 | DEV | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | src/App.jsx:20 `const showDebugRoutes = import.meta.env.DEV \|\| import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';` |
 | VITE_SHOW_DEBUG_ROUTES | Vite string | No | false/undefined unless set | Feature/debug/build-time switch. | src/App.jsx:20 `const showDebugRoutes = import.meta.env.DEV \|\| import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';` |
@@ -24895,6 +25004,8 @@ Critical async operations should call `logError(context, error, extra)` when a f
 
 | File | Line | Kind | Scenario / invariant |
 | --- | --- | --- | --- |
+| e2e/app-smoke.spec.js | 16 | test | navigates the core dashboard and settings flow |
+| e2e/app-smoke.spec.js | 31 | test | opens empty trip history without leaving the app shell |
 | src/api/__tests__/clientFallback.test.js | 6 | describe | API backend fallback |
 | src/api/__tests__/clientFallback.test.js | 7 | it | does not fall back to a localhost backend URL |
 | src/api/__tests__/clientFallback.test.js | 12 | it | uses local stores when no backend URL is configured |
@@ -24988,6 +25099,10 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/__tests__/drivingConsistency.test.js | 10 | describe | driving consistency |
 | src/lib/__tests__/drivingConsistency.test.js | 11 | it | does not over-penalize stop-and-go urban score spread |
 | src/lib/__tests__/drivingConsistency.test.js | 24 | it | keeps highway consistency scoring aligned with narrower speed bands |
+| src/lib/__tests__/externalContracts.test.js | 22 | describe | external service contracts |
+| src/lib/__tests__/externalContracts.test.js | 35 | it | calls Overpass with the expected speed-limit query envelope |
+| src/lib/__tests__/externalContracts.test.js | 70 | it | calls Open-Meteo forecast with midpoint, day, timezone, and hourly fields |
+| src/lib/__tests__/externalContracts.test.js | 106 | it | calls OSRM match with ordered lon-lat coordinates and per-point radiuses |
 | src/lib/__tests__/fatigueHeatmapData.test.js | 10 | describe | fatigue heatmap data |
 | src/lib/__tests__/fatigueHeatmapData.test.js | 11 | it | handles missing fatigue progression |
 | src/lib/__tests__/fatigueHeatmapData.test.js | 15 | it | handles a single route point |
@@ -25193,6 +25308,16 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/__tests__/trackingStoreDefaults.test.js | 21 | it | defines configurable eco scoring defaults |
 | src/lib/__tests__/trackingStoreDefaults.test.js | 30 | it | uses the shared fixed-hour night fallback by default |
 | src/lib/__tests__/trackingStoreDefaults.test.js | 35 | it | migrates legacy sunset defaults without overwriting custom night windows |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 37 | describe | trip engine calculation coverage |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 38 | it | keeps base geometry calculations finite and direction-aware |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 45 | it | preserves route points when parked-tail evidence is absent |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 59 | it | validates candidate trips using movement, duration, and distance |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 75 | it | detects braking sequences and harsher event scores on abrupt speed drops |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 92 | it | scores smooth eco cruising above stop-and-go driving |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 106 | it | classifies route types and speed zones from observed speeds |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 116 | it | combines stats, events, and phone-use evidence into finite trip scores |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 132 | it | summarizes full routes and applies night penalties to overnight samples |
+| src/lib/__tests__/tripEngineCalculationCoverage.test.js | 145 | it | splits trips around long parked stops |
 | src/lib/__tests__/ubiReport.test.js | 18 | describe | ubiReport |
 | src/lib/__tests__/ubiReport.test.js | 23 | it | handles empty trips without NaN |
 | src/lib/__tests__/ubiReport.test.js | 29 | it | zero night trips gives timeOfDay score 100 |
@@ -25268,6 +25393,10 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/tripEngine.test.js | 1028 | it | unlocks expanded achievement milestones from driving behavior |
 | src/lib/tripEngine.test.js | 1064 | it | detects stops and summarizes driver-focused analytics |
 | src/lib/tripEngine.test.js | 1107 | it | computes auto tags, baselines, fuel savings, and vehicle stress impact |
+| src/pages/__tests__/corePages.render.test.jsx | 203 | describe | core page component renders |
+| src/pages/__tests__/corePages.render.test.jsx | 213 | it | renders Dashboard readiness and recent-trip surfaces |
+| src/pages/__tests__/corePages.render.test.jsx | 223 | it | renders TripDetail with road, weather, and feedback sections |
+| src/pages/__tests__/corePages.render.test.jsx | 234 | it | renders Settings tracking, permission, and external-context controls |
 | src/pages/__tests__/Vehicles.test.jsx | 15 | describe | vehicle form validation |
 | src/pages/__tests__/Vehicles.test.jsx | 16 | it | allows higher international-market fuel prices up to the currency-neutral cap |
 | src/pages/__tests__/Vehicles.test.jsx | 20 | it | rejects fuel prices above the raised cap |
@@ -25276,7 +25405,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/pages/__tests__/Vehicles.test.jsx | 38 | describe | vehicle score summaries |
 | src/pages/__tests__/Vehicles.test.jsx | 39 | it | returns null for a vehicle with no completed trips |
 
-Coverage gaps inferred from source shape: no browser e2e suite for the full route workflow, no real-device Android instrumentation assertions beyond generated examples, and no live external API contract tests for Overpass/Open-Meteo/OSRM.
+Coverage gaps inferred from source shape: browser e2e currently covers smoke navigation only, Android instrumentation focuses on native trip-store persistence, and external API tests mock Overpass/Open-Meteo/OSRM contracts rather than calling live services.
 
 ---
 ## Dependency Audit
@@ -25296,6 +25425,7 @@ Coverage gaps inferred from source shape: no browser e2e suite for the full rout
 | @eslint/js | ^9.19.0 | 9.39.4 | development/test | Build, lint, typecheck, or test tool. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | @hello-pangea/dnd | ^17.0.0 | 17.0.0 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | @hookform/resolvers | ^4.1.2 | 4.1.3 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
+| @playwright/test | ^1.60.0 | 1.60.0 | development/test | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | @radix-ui/react-accordion | ^1.2.3 | 1.2.12 | production | Accessible UI primitive. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | @radix-ui/react-alert-dialog | ^1.1.6 | 1.1.15 | production | Accessible UI primitive. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | @radix-ui/react-aspect-ratio | ^1.1.2 | 1.1.8 | production | Accessible UI primitive. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
@@ -25349,9 +25479,7 @@ Coverage gaps inferred from source shape: no browser e2e suite for the full rout
 | input-otp | ^1.4.2 | 1.4.2 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | jspdf | ^4.2.1 | 4.2.1 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | leaflet | ^1.9.4 | 1.9.4 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
-| lodash | ^4.17.21 | 4.18.1 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | lucide-react | ^0.475.0 | 0.475.0 | production | React runtime, routing, forms, charts, or UI integration. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
-| moment | ^2.30.1 | 2.30.1 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | next-themes | ^0.4.4 | 0.4.6 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | postcss | ^8.5.3 | 8.5.14 | development/test | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | react | ^18.2.0 | 18.3.1 | production | React runtime, routing, forms, charts, or UI integration. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
@@ -25368,7 +25496,6 @@ Coverage gaps inferred from source shape: no browser e2e suite for the full rout
 | tailwind-merge | ^3.0.2 | 3.6.0 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | tailwindcss | ^3.4.17 | 3.4.19 | development/test | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | tailwindcss-animate | ^1.0.7 | 1.0.7 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
-| three | ^0.171.0 | 0.171.0 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | typescript | ^5.8.2 | 5.9.3 | development/test | Build, lint, typecheck, or test tool. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | vaul | ^1.1.2 | 1.1.2 | production | Application feature dependency. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |
 | vite | ^6.1.0 | 6.4.2 | development/test | Build, lint, typecheck, or test tool. | No live CVE lookup performed; lockfile pins the installed version for audit tooling. |

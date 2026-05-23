@@ -46,7 +46,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 - Score rings now use the canonical `getScoreColor()` metadata, including SVG stroke colors, so score labels, fills, and circular rings share one color policy.
 - Vehicle fuel/energy price validation now uses a currency-neutral 100-per-unit cap instead of a narrow 20-per-litre cap.
 - Android native tracking constants now name the 120-second stats gap, 2-minute Usage Access lookback, sustained-turn heading threshold, TTS speech rate, and 30-minute terminal idle cap; the stats loop uses one explicit duration guard and an else branch for moving vs idle time.
-- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, and release-blocker regressions.
+- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, external service contract mocks, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.
 - Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.
 
 ## Documentation
@@ -102,6 +102,12 @@ Run tests:
 
 ```bash
 npm run test
+```
+
+Run browser smoke e2e tests:
+
+```bash
+npm run test:e2e
 ```
 
 Run lint and type checking:
