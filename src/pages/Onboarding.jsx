@@ -13,6 +13,8 @@ import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sen
 import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidBatteryOptimizationStatus, openAndroidBatteryOptimizationSettings, openAndroidUsageAccessSettings, startNativeAutoTracking } from '@/lib/activityRecognition';
 import { useNavigate } from 'react-router-dom';
+import { getJson, setJson } from '@/lib/mobileStorage';
+import { FIRST_LAUNCH_PERMISSION_PROMPTED_KEY } from '@/lib/appConstants';
 
 const STEPS = [
   {
@@ -221,14 +223,22 @@ export default function Onboarding({ onComplete }) {
   };
 
   useEffect(() => {
-    if (localStorage.getItem('drivesense_first_launch_permission_prompted') === 'true') return undefined;
-    localStorage.setItem('drivesense_first_launch_permission_prompted', 'true');
-    const timer = setTimeout(() => {
-      handleRecommendedSetup({ autoOpenUsageAccess: true }).catch(() => {
-        setRequesting(false);
-      });
-    }, 700);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+    let timer;
+    getJson(FIRST_LAUNCH_PERMISSION_PROMPTED_KEY, false).then(async (prompted) => {
+      if (cancelled || prompted === true) return;
+      await setJson(FIRST_LAUNCH_PERMISSION_PROMPTED_KEY, true);
+      if (cancelled) return;
+      timer = setTimeout(() => {
+        handleRecommendedSetup({ autoOpenUsageAccess: true }).catch(() => {
+          setRequesting(false);
+        });
+      }, 700);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {

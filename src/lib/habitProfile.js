@@ -1,4 +1,5 @@
 import { clamp } from '@/lib/mathUtils';
+import { isEveningRushHour, isMorningRushHour, isNightRiskHour } from '@/lib/appConstants';
 
 const HABIT_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,
@@ -92,9 +93,9 @@ export function getTimeBucket(hour) {
 }
 
 const hardcodedFallback = (hour) => {
-  if (hour >= 22 || hour < 5) return HABIT_CONSTANTS.FALLBACK_NIGHT_RISK;
-  if (hour >= 7 && hour <= 9) return HABIT_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
-  if (hour >= 16 && hour <= 18) return HABIT_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
+  if (isNightRiskHour(hour)) return HABIT_CONSTANTS.FALLBACK_NIGHT_RISK;
+  if (isMorningRushHour(hour)) return HABIT_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
+  if (isEveningRushHour(hour)) return HABIT_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
   return HABIT_CONSTANTS.FALLBACK_DEFAULT_RISK;
 };
 

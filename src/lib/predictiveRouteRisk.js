@@ -1,6 +1,7 @@
 import { checkDangerZoneProximity } from '@/lib/dangerZoneEngine';
 import { getFallbackTimeRisk } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
+import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
 
 const ROUTE_RISK_CONSTANTS = {
   RECENT_TRIP_WINDOW: 20,
@@ -23,8 +24,8 @@ const ROUTE_RISK_CONSTANTS = {
 
 function personalTimeRisk(hour, profile) {
   if (!profile || Number(profile.confidence) < ROUTE_RISK_CONSTANTS.MIN_PERSONAL_CONFIDENCE) {
-    if (hour >= 22 || hour < 5) return ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK;
-    if (hour >= 16 && hour < 19) return ROUTE_RISK_CONSTANTS.EVENING_RUSH_TIME_RISK;
+    if (isNightRiskHour(hour)) return ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK;
+    if (isEveningRushHour(hour)) return ROUTE_RISK_CONSTANTS.EVENING_RUSH_TIME_RISK;
     return 0;
   }
 
@@ -49,10 +50,10 @@ function saferWindowText(currentHour, profile) {
     Number(profile.confidence) < ROUTE_RISK_CONSTANTS.MIN_TEXT_CONFIDENCE ||
     Object.keys(profile.hourlyRisk || {}).length < ROUTE_RISK_CONSTANTS.MIN_HOURLY_RISK_HOURS
   ) {
-    if (currentHour >= 22 || currentHour < 5) {
+    if (isNightRiskHour(currentHour)) {
       return 'Late night is higher risk. Consider waiting until daylight or after a proper rest.';
     }
-    if (currentHour >= 16 && currentHour < 19) {
+    if (isEveningRushHour(currentHour)) {
       return 'After 7 PM or before rush hour';
     }
     return 'Current time looks acceptable';

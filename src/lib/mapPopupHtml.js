@@ -8,6 +8,9 @@ export const routeLabelPopupPrefix = (label) => (
   label ? `<b>${escapeHtml(label)}</b><br>` : ''
 );
 
+/**
+ * @param {{routeLabel?:string|null,label?:string,speedKmh?:number,speedLimitKmh?:number|null}} options
+ */
 export const buildSpeedSegmentPopupHtml = ({ routeLabel = null, label = 'Segment', speedKmh = 0, speedLimitKmh } = {}) => {
   const limit = Number(speedLimitKmh);
   return `${routeLabelPopupPrefix(routeLabel)}${escapeHtml(label)}: ${escapeHtml(Math.round(Number(speedKmh) || 0))} km/h${speedLimitKmh != null && Number.isFinite(limit) ? `<br>Limit: ${escapeHtml(Math.round(limit))} km/h` : ''}`;

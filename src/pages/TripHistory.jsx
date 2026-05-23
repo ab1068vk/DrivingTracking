@@ -7,6 +7,8 @@ import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide
 import TripCard from '@/components/TripCard';
 import { localSettings } from '@/lib/trackingStore';
 import { getScoreColor } from '@/lib/tripEngine';
+import { getJson, setJson } from '@/lib/mobileStorage';
+import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
 import {
   TRIP_TAG_OPTIONS,
@@ -43,8 +45,6 @@ const SCORE_SPARKLINES = [
   { key: 'score_eco', label: 'Eco' },
 ];
 
-const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
-
 const startOfWeek = () => {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
@@ -79,13 +79,8 @@ export default function TripHistory() {
   const [selectedTag, setSelectedTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [presetName, setPresetName] = useState('');
-  const [savedFilters, setSavedFilters] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) || '[]');
-    } catch {
-      return [];
-    }
-  });
+  const [savedFilters, setSavedFilters] = useState([]);
+  const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const qc = useQueryClient();
@@ -166,10 +161,21 @@ export default function TripHistory() {
   };
 
   useEffect(() => {
-    try {
-      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
-    } catch {}
-  }, [savedFilters]);
+    let cancelled = false;
+    getJson(SAVED_FILTERS_KEY, []).then((storedFilters) => {
+      if (cancelled) return;
+      setSavedFilters(Array.isArray(storedFilters) ? storedFilters : []);
+      setSavedFiltersLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!savedFiltersLoaded) return;
+    setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {});
+  }, [savedFilters, savedFiltersLoaded]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();

@@ -93,6 +93,11 @@ function recentTripTrendRows(trips = []) {
     }));
 }
 
+/**
+ * @param {Array<object>} trips
+ * @param {string} period
+ * @param {{units?:string,currencySymbol?:string}} settings
+ */
 export async function exportMonthlyReportPDF(trips = [], period = 'month', settings = {}) {
   const tripList = Array.isArray(trips) ? trips : [];
   const doc = new jsPDF();

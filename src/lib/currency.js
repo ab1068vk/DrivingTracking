@@ -16,6 +16,10 @@ export function normalizeCurrencySymbol(value, fallback = DEFAULT_CURRENCY_SYMBO
   return ALLOWED_SYMBOLS.has(symbol) ? symbol : fallback;
 }
 
+/**
+ * @param {number} amount
+ * @param {string|{currencySymbol?:string}} settingsOrSymbol
+ */
 export function formatCurrencyAmount(amount, settingsOrSymbol = DEFAULT_CURRENCY_SYMBOL) {
   const symbol = normalizeCurrencySymbol(
     typeof settingsOrSymbol === 'string' ? settingsOrSymbol : settingsOrSymbol?.currencySymbol

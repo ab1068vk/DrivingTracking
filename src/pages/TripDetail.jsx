@@ -28,6 +28,8 @@ import {
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount } from '@/lib/currency';
+import { getJson, setJson } from '@/lib/mobileStorage';
+import { DAILY_FATIGUE_THRESHOLDS } from '@/lib/dailyFatigueEngine';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
@@ -55,6 +57,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { DISMISSED_TAG_SUGGESTIONS_KEY, MAX_ROUTE_RISK_SEGMENTS_SHOWN } from '@/lib/appConstants';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -69,6 +72,7 @@ const fatigueText = {
   improving: 'You warmed up well',
   slight: 'Fairly consistent',
 };
+const CRITICAL_FATIGUE_CHART_LEVEL = DAILY_FATIGUE_THRESHOLDS.CRITICAL * 10;
 
 export default function TripDetail() {
   const { id } = useParams();
@@ -83,6 +87,8 @@ export default function TripDetail() {
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('');
+  const [showAllRouteRiskSegments, setShowAllRouteRiskSegments] = useState(false);
+  const [dismissedTagsLoaded, setDismissedTagsLoaded] = useState(false);
   const metadataSectionRef = useRef(null);
 
   const { data: trip, isLoading } = useQuery({
@@ -200,13 +206,7 @@ export default function TripDetail() {
       setTimeout(() => setOsmFetchStatus(''), 2500);
     },
   });
-  const [dismissedTags, setDismissedTags] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('drivesense_dismissed_tag_suggestions') || '[]');
-    } catch {
-      return [];
-    }
-  });
+  const [dismissedTags, setDismissedTags] = useState([]);
 
   const confirmAndFetchRoadContext = () => {
     const latestSettings = localSettings.get();
@@ -255,13 +255,30 @@ export default function TripDetail() {
   const routeRiskSegments = useMemo(() => (
     trip ? getSegmentsForTrip(trip, routeRiskIndex).filter((segment) => segment.riskLevel === 'high' || segment.riskLevel === 'moderate') : []
   ), [routeRiskIndex, trip]);
+  const displayedRouteRiskSegments = showAllRouteRiskSegments
+    ? routeRiskSegments
+    : routeRiskSegments.slice(0, MAX_ROUTE_RISK_SEGMENTS_SHOWN);
+  const hiddenRouteRiskSegmentCount = routeRiskSegments.length - displayedRouteRiskSegments.length;
 
   useEffect(() => {
     loadRouteRiskIndex().then(setRouteRiskIndex);
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    getJson(DISMISSED_TAG_SUGGESTIONS_KEY, []).then((storedTags) => {
+      if (cancelled) return;
+      setDismissedTags(Array.isArray(storedTags) ? storedTags : []);
+      setDismissedTagsLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!trip) return;
+    setShowAllRouteRiskSegments(false);
     setMetadataDraft({
       nickname: trip.nickname || '',
       notes: trip.notes || '',
@@ -298,7 +315,7 @@ export default function TripDetail() {
   const tagSuggestion = suggestTripTag(trip);
   const tripTags = normalizeTripTags(trip);
   const tripTitle = getTripDisplayName(trip);
-  const showTagSuggestion = tripTags.length === 0 &&
+  const showTagSuggestion = dismissedTagsLoaded && tripTags.length === 0 &&
     ['high', 'medium'].includes(tagSuggestion.auto_tag_confidence) &&
     !dismissedTags.includes(String(trip.id));
   const toggleDraftTag = (tagId) => {
@@ -322,7 +339,7 @@ export default function TripDetail() {
   const dismissTagSuggestion = () => {
     const next = [...new Set([...dismissedTags, String(trip.id)])];
     setDismissedTags(next);
-    localStorage.setItem('drivesense_dismissed_tag_suggestions', JSON.stringify(next));
+    setJson(DISMISSED_TAG_SUGGESTIONS_KEY, next).catch(() => {});
   };
   const openTagEditorWithSuggestion = () => {
     setEditingMetadata(true);
@@ -943,7 +960,7 @@ export default function TripDetail() {
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <h2 className="font-semibold mb-3">Route history</h2>
           <div className="space-y-2">
-            {routeRiskSegments.slice(0, 3).map((segment, index) => {
+            {displayedRouteRiskSegments.map((segment, index) => {
               const perPass = segment.tripCount ? segment.totalEvents / segment.tripCount : 0;
               return (
                 <div key={`${segment.from.lat}-${segment.to.lat}-${index}`} className="flex gap-3 rounded-2xl bg-secondary/50 p-3">
@@ -958,6 +975,15 @@ export default function TripDetail() {
               );
             })}
           </div>
+          {routeRiskSegments.length > MAX_ROUTE_RISK_SEGMENTS_SHOWN && (
+            <button
+              type="button"
+              onClick={() => setShowAllRouteRiskSegments((value) => !value)}
+              className="mt-3 text-xs font-semibold text-primary"
+            >
+              {showAllRouteRiskSegments ? 'Show fewer stretches' : `Show all stretches (${hiddenRouteRiskSegmentCount} hidden)`}
+            </button>
+          )}
         </div>
       )}
 
@@ -1149,7 +1175,7 @@ export default function TripDetail() {
             { icon: Fuel, label: 'fuel band', value: trip.fuel_band_score ?? '-', color: 'text-lime-500' },
             { icon: Car, label: 'engine stress', value: trip.engine_stress_score ?? '-', color: 'text-orange-500' },
             { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
-            { icon: AlertTriangle, label: 'drowsy risk', value: trip.drowsy_risk_level ?? 'none', color: 'text-red-500', capitalize: true },
+            { icon: AlertTriangle, label: 'drowsy risk', value: trip.drowsy_risk_level ?? 'none', color: trip.drowsy_risk_level === 'high' ? 'text-red-500' : trip.drowsy_risk_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             ...(trip.hill_driving_score != null ? [{ icon: Milestone, label: 'hill control', value: trip.hill_driving_score, color: 'text-emerald-500' }] : []),
           ].map(({ icon: Icon, label, value, color, capitalize }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3">
@@ -1186,7 +1212,7 @@ export default function TripDetail() {
                   strokeWidth={2}
                   dot={(props) => {
                     const { cx, cy, payload } = props;
-                    return payload.fatigueLevel >= 60
+                    return payload.fatigueLevel >= CRITICAL_FATIGUE_CHART_LEVEL
                       ? <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="white" strokeWidth={1.5} />
                       : null;
                   }}

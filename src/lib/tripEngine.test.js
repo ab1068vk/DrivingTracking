@@ -683,6 +683,14 @@ describe('tripEngine', () => {
     expect(detectErraticSpeedWindows(steady)).toHaveLength(0);
   });
 
+  it('flags repeated speed oscillation in a sliding city-speed window', () => {
+    const oscillating = [20, 60, 20, 60, 20, 60, 20].map((speed, index) => (
+      point(43.6532 + index * 0.00022, -79.3832, index * 5, speed)
+    ));
+
+    expect(detectErraticSpeedWindows(oscillating)).toHaveLength(1);
+  });
+
   it('simplifies straight route points while preserving corners', () => {
     const straight = Array.from({ length: 10 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index, 40));
     const corner = point(43.6542, -79.3822, 10, 40);

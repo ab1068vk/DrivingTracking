@@ -733,7 +733,7 @@ function buildDoc() {
   doc.push('');
   doc.push('> WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.');
   doc.push('');
-  doc.push('> NOTE: Scoring thresholds and many domain-significant constants now live in named registries such as `DEFAULT_THRESHOLDS`, `ROUTE_RISK_CONSTANTS`, `RISK_CONSTANTS`, `PRE_TRIP_RISK_SIGNAL_GATES`, `HABIT_CONSTANTS`, and danger-zone constants. The literal registry below remains useful for auditing labels, keys, Android IDs, and any remaining inline scoring values before policy changes.');
+  doc.push('> NOTE: Scoring thresholds and domain-significant constants now live in named registries such as `DEFAULT_THRESHOLDS`, `src/lib/appConstants.js` clock/display/storage constants, `ROUTE_RISK_CONSTANTS`, `RISK_CONSTANTS`, `PRE_TRIP_RISK_SIGNAL_GATES`, `HABIT_CONSTANTS`, `DAILY_FATIGUE_THRESHOLDS`, and danger-zone constants. The literal registry below remains useful for auditing labels, keys, Android IDs, and remaining inline policy values.');
   doc.push('');
   doc.push('---');
 
@@ -752,6 +752,9 @@ function buildDoc() {
       ['Predictive route risk window', '`estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history.'],
       ['UI section recovery', '`src/components/SectionErrorBoundary.jsx` isolates calculation-heavy route maps, trip playback, Trip Detail score summaries, the Trip Detail page shell, and the Dashboard readiness/risk panel. Caught render errors are logged through `logError` and show a reloadable fallback instead of blanking the app.'],
       ['Handled operation failures', '`src/lib/errorReporting.js` exports `logError(context, error, extra)` for critical async failures. Post-trip notifications, achievement sync, odometer sync, and driver-signature persistence now write tracking diagnostics instead of disappearing behind bare catches.'],
+      ['Shared time-risk windows', '`src/lib/appConstants.js` owns night (22:00-04:59), morning-rush (07:00-09:59 by hourly bucket), and evening-rush (16:00-18:59) boundaries used by habit, pre-trip, and predictive route risk.'],
+      ['Backup migrations', '`src/lib/dataBackup.js` migrates schema versions 1 through 5 before import, accepts trip notes up to 10,000 characters, and returns truncation warnings surfaced in Settings.'],
+      ['Bounded UI lists', 'Risk hotspots initially show 6 and route history stretches initially show 3 through named constants, with a show-all control and hidden-item count.'],
     ],
   ));
   doc.push('');
@@ -807,7 +810,7 @@ function buildDoc() {
 
   doc.push('## Hard-Coded Values And Constants Registry');
   doc.push('');
-  doc.push('Named scoring thresholds are centralized around `DEFAULT_THRESHOLDS` plus route-risk, pre-trip-risk, habit-profile, and danger-zone constants. The app also contains intentional literals for route labels, storage keys, feature flags, UI labels, Android IDs, and tests; these are grouped by file so reviewers can see why each value exists.');
+  doc.push('Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `src/lib/appConstants.js`, daily-fatigue, route-risk, pre-trip-risk, habit-profile, and danger-zone constants. The app also contains intentional literals for route labels, feature flags, UI labels, named Android notification IDs, and tests; these are grouped by file so reviewers can see why each value exists.');
   doc.push('');
   doc.push(literalRegistry());
   doc.push('');
@@ -862,6 +865,7 @@ function buildDoc() {
   doc.push('- User-controlled data surfaces: backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, CSV/PDF export content, and Android native intent extras.');
   doc.push('- Leaflet popups: route labels, event metadata, speed-limit road/source data, route-risk segments, danger zones, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.');
   doc.push('- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled GPS points only when route snapping is explicitly enabled and requested.');
+  doc.push('- Backup restore: schema versions 1 through 5 are migrated before merge; untrusted records are whitelisted and field-limited, and any text truncation is reported to the user.');
   doc.push('- Secrets: no secrets are checked into this repo by the scanner; `VITE_API_URL` is configuration, not a secret.');
   doc.push('- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled route points by design.');
   doc.push('');
@@ -869,7 +873,7 @@ function buildDoc() {
 
   doc.push('## Performance Characteristics');
   doc.push('');
-  doc.push('- Critical loops: trip stats, trip scoring, night detection, fatigue progression, and route playback are O(n) over route points; route-risk index creation is O(trips x route segments x events proximity checks) candidate; import/export and full-history reports are O(number of local records).');
+  doc.push('- Critical loops: trip stats, erratic-speed sliding windows, braking-sequence scoring, night detection, fatigue progression, and route playback are linear over route points; road-type scores partition cached full-trip events rather than rerunning detection for each type. Route-risk index creation remains an O(trips x route segments x event-proximity checks) candidate; import/export and full-history reports are O(number of local records).');
   doc.push('- Long-trip scoring has a regression budget: a synthetic 2,000-point trip must complete stats plus score calculation in under 500 ms in the trip engine test suite.');
   doc.push('- Frontend bundle splitting: `vite.config.js` manually chunks React, charts, html2canvas, jsPDF, and Capacitor vendors.');
   doc.push('- Map rendering: `prepareMapRoutePoints`, `downsampleRoutePoints`, route smoothing, and privacy masking constrain heavy routes before Leaflet/SVG playback rendering.');
@@ -930,27 +934,29 @@ function buildReadme() {
     'The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.',
     '',
     '- Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.',
-    '- Documentation now reflects the constants cleanup: scoring thresholds are described around `DEFAULT_THRESHOLDS` and the route-risk, pre-trip-risk, habit-profile, and danger-zone constant groups, while remaining literals are indexed with reasons for review.',
+    '- Shared application policy now lives in `src/lib/appConstants.js`: fallback night and rush-hour risk boundaries are consistent across habit, predictive-route, and pre-trip models; saved UI preference keys and initial display limits are named in one place.',
     '- Calculation-heavy UI is isolated with `SectionErrorBoundary`: TripMap, TripPlayback, the Trip Detail score summary, the Trip Detail page shell, and the Dashboard readiness/risk panel now show a friendly reloadable fallback and log the caught error instead of blanking the whole app.',
     '- Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, phone-use pattern alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed.',
     '- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.',
     '- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, route-risk, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
     '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, stable phone-use merges, finite anomaly/sensor scores, and reviewed-event rescoring.',
-    '- Trip-stat hot paths now stay linear over route points: sunset night driving windows are cached once per trip date, speed-zone windows use sliding summaries, drowsy detection uses a moving window, and fatigue progression uses direct segment scoring instead of recursively rescoring three sub-trips.',
+    '- Trip-stat hot paths now avoid repeated route rescans: sunset night windows are cached once per trip date, erratic-speed windows maintain sliding summaries, event-to-point lookup is binary-search based, and road-type scores partition full-trip detected events rather than rerunning detection per type.',
     '- Eco driving scoring now exposes cruise-band, moving-speed floor, cruise-score multiplier, idle-penalty multiplier, and idle-penalty cap settings, and returns `idle_penalty_points` for diagnostics and tests.',
     '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
     '- Predictive route risk now sorts completed trips newest-first inside the estimator before applying the recent-trip window, so dashboard and map pre-trip risk stay based on fresh history even when callers pass unsorted trip arrays.',
     '- Vehicle engine-health summaries now average only finite stored engine stress scores. Trips without a usable score are excluded, and vehicles with no scored samples show `N/A` instead of a misleading maximum-stress fallback.',
-    '- Currency and economics baselines are configurable in Settings, including cost symbol, average vehicle CO2 per 100 km, EV kWh per 100 km, grid CO2 intensity, and tree-year equivalents. Vehicle fuel type is used for trip CO2 and savings estimates, and vehicle fuel/energy price validation now allows values up to 20 per litre or kWh for high-price markets.',
-    '- Backup import is hardened: files larger than 50 MB are rejected from the Settings file picker before the JSON body is read, malformed or non-backup JSON gets clear errors, trips/settings are sanitized, unknown fields are stripped, prototype-pollution keys are ignored, route/event arrays are capped, unsafe thresholds are clamped, imported OSRM endpoints are stripped, and imported background auto tracking requires in-app consent.',
+    '- Currency and economics baselines are configurable in Settings, including cost symbol, average vehicle CO2 per 100 km, EV kWh per 100 km, grid CO2 intensity, and tree-year equivalents. Vehicle fuel type is used for trip CO2 and savings estimates; ICE economy below 3 L/100km is rejected and unusually high values receive a confirmation warning.',
+    '- Backup import is hardened and versioned: v1-v5 backups migrate before merge, files over 50 MB are rejected before reading, records are sanitized, trip notes allow 10,000 characters, truncation is disclosed in the import summary, route/event arrays are capped, unsafe settings are clamped, and background auto tracking still requires in-app consent.',
+    '- Native-safe UI preferences now use the mobile storage layer for saved trip filters, dismissed tag suggestions, and first-launch permission prompting. Backup export/import reads and writes saved filters through that same layer on Android.',
     '- Local trip storage uses IndexedDB when available, with a migration runner and localStorage fallback. Trip schema versioning triggers rescoring for completed trips when scoring, phone-use, map, or privacy behavior changes.',
     '- API behavior is local-first by default. Trips and vehicles use local repositories when `VITE_API_URL` is absent or the app is running natively; configured backends fail clearly instead of silently falling back to localhost.',
     '- Auth tokens are session-scoped. Legacy `localStorage` tokens are migrated into `sessionStorage` and removed, and logout clears both token names from browser storage.',
     '- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. OSRM route snapping is opt-in, disabled without a configured endpoint, and the public demo requires confirmation because sampled GPS points leave the device.',
+    '- Trip Detail and Map no longer silently hide additional route-risk stretches or risk hotspots: initial lists remain compact, and show-all controls report hidden counts. Drowsy risk color and fatigue critical markers now follow actual levels and exported thresholds.',
     '- Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, currency/economics, advanced models, and data controls with searchable sections and safer validation.',
     '- Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, and native diagnostics surfaced in the app.',
     '- Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
-    '- Test coverage now includes backend fallback, auth migration, backup import security, settings import security, IndexedDB migrations, UBI mileage windows, notifications, currency formatting, vehicle fuel-price validation, scoring consistency, privacy zones, OSRM opt-in behavior, route risk, tracking diagnostics, section error boundaries, and release-blocker regressions.',
+    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, shared time-risk boundaries, scoring consistency, privacy zones, route risk, tracking diagnostics, and release-blocker regressions.',
     '- Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.',
     '',
     '## Documentation',
@@ -986,7 +992,7 @@ function buildReadme() {
     '- OSRM route snapping is disabled until the user enables it and provides or confirms an endpoint.',
     '- Automatic road/weather context fetch is off by default; manual Get Road Data prompts before sending route context to external services.',
     '- Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones.',
-    '- Imported backups and settings are treated as untrusted input and sanitized before merge.',
+    '- Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and disclose any field truncation.',
     '- Leaflet popup values from trips, routes, events, danger zones, privacy zones, and parked locations are escaped before rendering as HTML.',
     '',
     '## Local Setup',

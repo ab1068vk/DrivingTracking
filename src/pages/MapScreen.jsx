@@ -20,6 +20,7 @@ import {
   isOsrmMapMatchingConfigured,
 } from '@/lib/openSourceTripContext';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
+import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -71,6 +72,7 @@ export default function MapScreen() {
   const [showRouteRisk, setShowRouteRisk] = useState(false);
   const [showSpeedLimits, setShowSpeedLimits] = useState(false);
   const [showLayerPanel, setShowLayerPanel] = useState(true);
+  const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const settings = localSettings.get();
   const units = settings.units || 'metric';
@@ -142,6 +144,10 @@ export default function MapScreen() {
     () => dangerZones.filter((zone) => !isPointInPrivacyZone(zone, privacyZones)),
     [dangerZones, privacyZones]
   );
+  const displayedDangerZones = showAllDangerZones
+    ? visibleDangerZones
+    : visibleDangerZones.slice(0, MAX_VISIBLE_DANGER_ZONES);
+  const hiddenDangerZoneCount = visibleDangerZones.length - displayedDangerZones.length;
   const parkedLocationIsPrivate = parkedLocation && isPointInPrivacyZone(parkedLocation, privacyZones);
   const commutePatterns = useMemo(() => identifyCommutePatterns(allCompleted), [allCompleted]);
   const compareOptions = useMemo(() => {
@@ -501,7 +507,7 @@ export default function MapScreen() {
           </div>
         ) : (
           <div className="grid gap-2 md:grid-cols-3">
-            {visibleDangerZones.slice(0, 6).map((zone) => (
+            {displayedDangerZones.map((zone) => (
               <div key={zone.id} className="rounded-2xl bg-secondary/50 p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold capitalize">{String(zone.dominantType || 'risk').replace(/_/g, ' ')}</span>
@@ -522,6 +528,15 @@ export default function MapScreen() {
               </div>
             ))}
           </div>
+        )}
+        {visibleDangerZones.length > MAX_VISIBLE_DANGER_ZONES && (
+          <button
+            type="button"
+            onClick={() => setShowAllDangerZones((value) => !value)}
+            className="mt-3 text-xs font-semibold text-primary"
+          >
+            {showAllDangerZones ? 'Show fewer hotspots' : `Show all hotspots (${hiddenDangerZoneCount} hidden)`}
+          </button>
         )}
       </div>
 

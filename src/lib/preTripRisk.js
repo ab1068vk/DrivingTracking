@@ -1,6 +1,7 @@
 import { analyzeDayOfWeek, analyzeTimeOfDay, computePersonalBaseline } from '@/lib/tripInsights';
 import { getFallbackTimeRisk, getTimeBucket } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
+import { isEveningRushHour, isMorningRushHour, isNightRiskHour } from '@/lib/appConstants';
 
 const RISK_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,
@@ -74,9 +75,9 @@ const last90Days = (trips = [], now = new Date()) => {
 };
 
 const fallbackTimeRisk = (hour) => {
-  if (hour >= 22 || hour < 5) return RISK_CONSTANTS.FALLBACK_NIGHT_RISK;
-  if (hour >= 7 && hour <= 9) return RISK_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
-  if (hour >= 16 && hour <= 18) return RISK_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
+  if (isNightRiskHour(hour)) return RISK_CONSTANTS.FALLBACK_NIGHT_RISK;
+  if (isMorningRushHour(hour)) return RISK_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
+  if (isEveningRushHour(hour)) return RISK_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
   return RISK_CONSTANTS.FALLBACK_DEFAULT_RISK;
 };
 

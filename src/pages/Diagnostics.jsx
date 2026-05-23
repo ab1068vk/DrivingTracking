@@ -35,6 +35,7 @@ import {
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
 import { localSettings } from '@/lib/trackingStore';
+import { formatDateTime } from '@/lib/tripEngine';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -61,12 +62,6 @@ const typeIcon = {
   traffic_stop: Clock,
 };
 
-function formatTime(value) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return 'time unknown';
-  return date.toLocaleString();
-}
-
 function EventRow({ event }) {
   const Icon = typeIcon[event.type] || Activity;
   const metricBits = [
@@ -86,7 +81,7 @@ function EventRow({ event }) {
           <div className="font-semibold text-sm">{event.title || event.type}</div>
           <span className="text-[11px] font-medium uppercase text-muted-foreground">{event.source || 'web'}</span>
         </div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{formatTime(event.timestamp)}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{formatDateTime(event.timestamp) || 'time unknown'}</div>
         {(event.detail || metricBits.length > 0) && (
           <div className="mt-1 text-xs text-muted-foreground">
             {[event.detail, ...metricBits].filter(Boolean).join(' - ')}

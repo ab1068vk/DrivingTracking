@@ -39,11 +39,25 @@ export function validateVehicleForm(form) {
   if (form.year && (!Number.isInteger(year) || year < 1900 || year > currentYear)) errors.push(`Year must be between 1900 and ${currentYear}.`);
   if (!Number.isFinite(odometer) || odometer < 0) errors.push('Odometer must be zero or higher.');
   if (!FUEL_TYPES.some((type) => type.value === fuelType)) errors.push('Fuel type is not supported.');
-  if (!isElectric && (!Number.isFinite(efficiency) || efficiency <= 0 || efficiency > 40)) errors.push('Fuel efficiency must be between 0 and 40 L/100km.');
+  if (!isElectric && (!Number.isFinite(efficiency) || efficiency < 3 || efficiency > 40)) errors.push('Fuel efficiency must be between 3 and 40 L/100km.');
   if (isElectric && (!Number.isFinite(evEfficiency) || evEfficiency < 5 || evEfficiency > 40)) errors.push('EV efficiency must be between 5 and 40 kWh/100km.');
   if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > 20) errors.push('Fuel price must be between 0 and 20.');
   if (!Number.isFinite(reserve) || reserve < 0 || reserve > 5) errors.push('Maintenance reserve must be between 0 and 5 per km.');
   return errors;
+}
+
+export function getVehicleFormWarnings(form) {
+  const fuelType = String(form.fuel_type || 'gasoline').toLowerCase();
+  const efficiency = Number(form.fuel_efficiency_l_per_100km);
+  if (!['electric', 'ev'].includes(fuelType) && Number.isFinite(efficiency) && efficiency > 25 && efficiency <= 40) {
+    return ['Fuel efficiency above 25 L/100km is unusual. Confirm this value before saving.'];
+  }
+  return [];
+}
+
+export function calculateAverageVehicleScore(trips = []) {
+  if (!trips.length) return null;
+  return Math.round(trips.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0), 0) / trips.length);
 }
 
 function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
@@ -67,6 +81,7 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const isElectric = ['electric', 'ev'].includes(String(form.fuel_type || '').toLowerCase());
   const errors = validateVehicleForm(form);
+  const warnings = getVehicleFormWarnings(form);
   const canSave = errors.length === 0;
   const displayCurrencySymbol = normalizeCurrencySymbol(currencySymbol);
 
@@ -159,6 +174,11 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
       {errors.length > 0 && (
         <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-300">
           {errors[0]}
+        </div>
+      )}
+      {errors.length === 0 && warnings.length > 0 && (
+        <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-700 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-300">
+          {warnings[0]}
         </div>
       )}
       <div className="flex gap-2">
@@ -299,9 +319,7 @@ export default function Vehicles() {
   ));
   const tripCountFor = (vehicle) => tripListFor(vehicle).length;
   const avgScoreFor = (vehicle) => {
-    const vTrips = tripListFor(vehicle);
-    if (!vTrips.length) return null;
-    return Math.round(vTrips.reduce((s, t) => s + (t.score_overall || 0), 0) / vTrips.length);
+    return calculateAverageVehicleScore(tripListFor(vehicle));
   };
   const fuelTotalsFor = (vehicle) => tripListFor(vehicle).reduce((totals, trip) => {
     const estimate = estimateTripEconomics(trip, vehicle, settings);

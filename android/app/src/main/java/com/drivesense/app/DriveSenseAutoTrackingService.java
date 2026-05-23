@@ -50,9 +50,9 @@ public class DriveSenseAutoTrackingService extends Service {
     static final String EXTRA_ACTIVITY_TYPE = "activityType";
     static final String EXTRA_ACTIVITY_CONFIDENCE = "activityConfidence";
 
-    private static final int NOTIFICATION_ID = 4101;
-    private static final int ACTIVITY_REQUEST_CODE = 4102;
-    private static final int AUTO_STATUS_NOTIFICATION_ID = 4103;
+    private static final int NOTIF_ID_TRACKING_START = 4101;
+    private static final int ACTIVITY_RECOGNITION_REQUEST_CODE = 4102;
+    private static final int NOTIF_ID_AUTO_STATUS = 4103;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
     private static final String AUTO_STATUS_CHANNEL_ID = "drivesense_auto_status";
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
@@ -144,13 +144,13 @@ public class DriveSenseAutoTrackingService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        startForeground(NOTIFICATION_ID, buildNotification("Ready when you start moving"));
+        startForeground(NOTIF_ID_TRACKING_START, buildNotification("Ready when you start moving"));
         ensureSafetyAlertsChannel();
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
         activityIntent = PendingIntent.getBroadcast(
             this,
-            ACTIVITY_REQUEST_CODE,
+            ACTIVITY_RECOGNITION_REQUEST_CODE,
             new Intent(this, DriveSenseActivityReceiver.class),
             PendingIntent.FLAG_UPDATE_CURRENT | mutableFlag()
         );
@@ -169,7 +169,7 @@ public class DriveSenseAutoTrackingService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : null;
         startForeground(
-            NOTIFICATION_ID,
+            NOTIF_ID_TRACKING_START,
             buildNotification(isTripActive() ? buildLiveTripStatus(System.currentTimeMillis()) : "Ready when you start moving")
         );
 
@@ -268,11 +268,11 @@ public class DriveSenseAutoTrackingService extends Service {
             .setAutoCancel(true)
             .setContentIntent(pendingIntent);
 
-        NotificationManagerCompat.from(context).notify(AUTO_STATUS_NOTIFICATION_ID, builder.build());
+        NotificationManagerCompat.from(context).notify(NOTIF_ID_AUTO_STATUS, builder.build());
     }
 
     private static void cancelAutoTrackingOffNotification(Context context) {
-        NotificationManagerCompat.from(context).cancel(AUTO_STATUS_NOTIFICATION_ID);
+        NotificationManagerCompat.from(context).cancel(NOTIF_ID_AUTO_STATUS);
     }
 
     private static void ensureAutoStatusChannel(Context context) {
@@ -1263,7 +1263,7 @@ public class DriveSenseAutoTrackingService extends Service {
 
     private void updateNotification(String text) {
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.notify(NOTIFICATION_ID, buildNotification(text));
+        manager.notify(NOTIF_ID_TRACKING_START, buildNotification(text));
     }
 
     private boolean isParkedStopReason(String reason) {

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { computePreTripRisk, deriveSignalGates, deriveWeights, PRE_TRIP_RISK_WEIGHTS } from '@/lib/preTripRisk';
+import { getFallbackTimeRisk } from '@/lib/habitProfile';
+import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
+import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
 
 const trip = (score, offsetDays = 0) => {
   const date = new Date(2026, 0, 10 - offsetDays, 12, 0, 0);
@@ -33,6 +36,26 @@ const profile = (patch = {}) => ({
 });
 
 describe('preTripRisk', () => {
+  it('uses the shared evening-rush boundary at hour 18 across risk modules', () => {
+    const atSixPm = new Date(2026, 0, 10, 18);
+    const atSevenPm = new Date(2026, 0, 10, 19);
+    const preTripAtSix = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: atSixPm });
+    const routeAtSix = estimatePredictiveRouteRisk({ now: atSixPm });
+    const routeAtSeven = estimatePredictiveRouteRisk({ now: atSevenPm });
+
+    expect(isEveningRushHour(18)).toBe(true);
+    expect(isEveningRushHour(19)).toBe(false);
+    expect(getFallbackTimeRisk(18)).toBe(40);
+    expect(preTripAtSix.signals.timeOfDay).toBe(40);
+    expect(routeAtSix.riskScore).toBeGreaterThan(routeAtSeven.riskScore);
+  });
+
+  it('uses the shared overnight window boundary', () => {
+    expect(isNightRiskHour(22)).toBe(true);
+    expect(isNightRiskHour(4)).toBe(true);
+    expect(isNightRiskHour(5)).toBe(false);
+  });
+
   it('returns low risk with all-good signals', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 12));
     const state = computePreTripRisk(Array.from({ length: 6 }, (_, i) => trip(95, i)), {}, { fatigueLevel: 'low' });

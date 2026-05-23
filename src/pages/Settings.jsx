@@ -755,12 +755,14 @@ export default function Settings() {
       await qc.invalidateQueries();
       toast({
         title: 'Import complete',
-        description: !result.savedFiltersRestored && result.savedFilters
+        description: result.truncatedFields
+          ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
+          : !result.savedFiltersRestored && result.savedFilters
           ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
           : result.privacy_zones_need_reconfiguration
           ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
           : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
-        variant: (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
+        variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
       });
     } catch (error) {
       toast({

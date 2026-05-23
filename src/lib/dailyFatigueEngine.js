@@ -1,6 +1,11 @@
 import { clamp } from '@/lib/mathUtils';
 
 const startOfLocalDay = (date = new Date()) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+export const DAILY_FATIGUE_THRESHOLDS = Object.freeze({
+  MODERATE: 3,
+  HIGH: 5,
+  CRITICAL: 7,
+});
 
 /**
  * Return completed trips that started during the current local day.
@@ -67,11 +72,11 @@ export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnset
     0,
     10
   );
-  const fatigueLevel = cumulativeFatigueScore >= 7
+  const fatigueLevel = cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.CRITICAL
     ? 'critical'
-    : cumulativeFatigueScore >= 5
+    : cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.HIGH
       ? 'high'
-      : cumulativeFatigueScore >= 3
+      : cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.MODERATE
         ? 'moderate'
         : 'low';
   const recommendedBreakMinutes = fatigueLevel === 'critical'

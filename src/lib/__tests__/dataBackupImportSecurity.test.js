@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   importDriveSenseBackup,
+  BACKUP_VERSION,
   MAX_BACKUP_BYTES,
   MAX_IMPORTED_TRIP_DRIVING_EVENTS,
+  MAX_IMPORTED_TRIP_NOTES_LENGTH,
   MAX_IMPORTED_TRIP_ROUTE_POINTS,
+  migrateBackup,
   parseDriveSenseBackup,
 } from '@/lib/dataBackup';
 
@@ -115,5 +118,49 @@ describe('backup trip import sanitization', () => {
   it('rejects imported trips without a non-empty string id', () => {
     expect(() => parseTrips([{ id: '', status: 'completed' }])).toThrow('valid id');
     expect(() => parseTrips([{ id: 123, status: 'completed' }])).toThrow('valid id');
+  });
+
+  it('preserves legitimate long trip notes and reports truncation above their field limit', () => {
+    const acceptableNote = 'a'.repeat(MAX_IMPORTED_TRIP_NOTES_LENGTH);
+    const [acceptable] = parseTrips([{ id: 'trip-note-ok', notes: acceptableNote }]);
+    expect(acceptable.notes).toHaveLength(MAX_IMPORTED_TRIP_NOTES_LENGTH);
+
+    const parsed = parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      trips: [{ id: 'trip-note-long', notes: 'b'.repeat(MAX_IMPORTED_TRIP_NOTES_LENGTH + 1) }],
+    }));
+    expect(parsed.trips[0].notes).toHaveLength(MAX_IMPORTED_TRIP_NOTES_LENGTH);
+    expect(parsed.warnings[0]).toContain('notes');
+  });
+});
+
+describe('backup schema migrations', () => {
+  it('migrates a v3 trip through scoring refresh to v5', () => {
+    const parsed = parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: 3,
+      trips: [{ id: 'trip-v3', status: 'completed' }],
+    }));
+
+    expect(parsed.version).toBe(BACKUP_VERSION);
+    expect(parsed.sourceVersion).toBe(3);
+    expect(parsed.trips[0].needs_rescore).toBe(true);
+  });
+
+  it('leaves current v5 content unchanged during migration', () => {
+    const v5 = { app: 'Road Sage', version: 5, trips: [{ id: 'trip-v5', notes: 'kept' }] };
+    expect(migrateBackup(v5, 5)).toEqual(v5);
+  });
+
+  it('treats a versionless backup as v1', () => {
+    const parsed = parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      trips: [{ id: 'trip-v1', status: 'completed' }],
+    }));
+
+    expect(parsed.sourceVersion).toBe(1);
+    expect(parsed.version).toBe(BACKUP_VERSION);
+    expect(parsed.trips[0].needs_rescore).toBe(true);
   });
 });

@@ -1035,16 +1035,21 @@ function nearestPointIndexByTimestamp(routePoints = [], event = {}) {
   }
   const eventMs = timestampMs(event);
   if (!Number.isFinite(eventMs)) return -1;
-  let nearestIndex = -1;
-  let nearestDelta = Infinity;
-  routePoints.forEach((point, index) => {
-    const delta = Math.abs(timestampMs(point) - eventMs);
-    if (delta < nearestDelta) {
-      nearestDelta = delta;
-      nearestIndex = index;
-    }
-  });
-  return nearestIndex;
+  let low = 0;
+  let high = routePoints.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const middleMs = timestampMs(routePoints[middle]);
+    if (middleMs === eventMs) return middle;
+    if (middleMs < eventMs) low = middle + 1;
+    else high = middle - 1;
+  }
+  const candidates = [low, high].filter((index) => index >= 0 && index < routePoints.length);
+  return candidates.reduce((nearest, index) => (
+    nearest < 0 || Math.abs(timestampMs(routePoints[index]) - eventMs) < Math.abs(timestampMs(routePoints[nearest]) - eventMs)
+      ? index
+      : nearest
+  ), -1);
 }
 
 function zoneFromP85(p85Speed) {
@@ -1865,7 +1870,11 @@ export function detectErraticSpeedWindows(cleanPoints = [], thresholds = DEFAULT
       timestamp: timestampMs(point),
       speed_kmh: reliablePointSpeed(cleanPoints, index, thresholds) ?? finiteSpeed(point),
     }))
-    .filter((sample) => Number.isFinite(sample.timestamp) && sample.speed_kmh > 0)
+    .filter((sample) => (
+      Number.isFinite(sample.timestamp) &&
+      sample.speed_kmh >= 15 &&
+      sample.speed_kmh <= 65
+    ))
     .sort((a, b) => a.timestamp - b.timestamp);
 
   const events = [];
@@ -1875,30 +1884,66 @@ export function detectErraticSpeedWindows(cleanPoints = [], thresholds = DEFAULT
   const flagged = [];
   const firstTime = samples[0].timestamp;
   const lastTime = samples[samples.length - 1].timestamp;
+  const reversalAt = new Array(samples.length).fill(0);
+  const directionChangeIndexes = [];
+  let priorDirection = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const delta = samples[i].speed_kmh - samples[i - 1].speed_kmh;
+    const direction = Math.abs(delta) >= 4 ? Math.sign(delta) : 0;
+    if (direction === 0) continue;
+    if (priorDirection !== 0 && direction !== priorDirection) reversalAt[i] = 1;
+    priorDirection = direction;
+    directionChangeIndexes.push(i);
+  }
+  const reversalPrefix = reversalAt.reduce((prefix, value) => {
+    prefix.push(prefix[prefix.length - 1] + value);
+    return prefix;
+  }, [0]);
+  let left = 0;
+  let right = 0;
+  let sum = 0;
+  let sumSquares = 0;
+  let directionCursor = 0;
+  const minDeque = [];
+  const maxDeque = [];
+  let minHead = 0;
+  let maxHead = 0;
   for (let start = firstTime; start <= lastTime - 30000; start += 5000) {
     const end = start + 30000;
-    const windowSamples = samples.filter((sample) => (
-      sample.timestamp >= start &&
-      sample.timestamp <= end &&
-      sample.speed_kmh >= 15 &&
-      sample.speed_kmh <= 65
-    ));
-    if (windowSamples.length < 4) continue;
-    if (windowSamples[windowSamples.length - 1].timestamp - windowSamples[0].timestamp < 25000) continue;
-
-    const stats = calculateWindowStats(windowSamples.map((sample) => sample.speed_kmh));
-    const speedRange = Math.max(...windowSamples.map((sample) => sample.speed_kmh)) -
-      Math.min(...windowSamples.map((sample) => sample.speed_kmh));
-    let reversals = 0;
-    let previousSign = 0;
-    for (let i = 1; i < windowSamples.length; i++) {
-      const delta = windowSamples[i].speed_kmh - windowSamples[i - 1].speed_kmh;
-      const sign = Math.abs(delta) >= 4 ? Math.sign(delta) : 0;
-      if (sign !== 0 && previousSign !== 0 && sign !== previousSign) reversals++;
-      if (sign !== 0) previousSign = sign;
+    while (right < samples.length && samples[right].timestamp <= end) {
+      const speed = samples[right].speed_kmh;
+      sum += speed;
+      sumSquares += speed * speed;
+      while (minDeque.length > minHead && samples[minDeque[minDeque.length - 1]].speed_kmh >= speed) minDeque.pop();
+      while (maxDeque.length > maxHead && samples[maxDeque[maxDeque.length - 1]].speed_kmh <= speed) maxDeque.pop();
+      minDeque.push(right);
+      maxDeque.push(right);
+      right++;
     }
-    if (stats.oscillationRatio > 0.28 && stats.stddev >= 8 && speedRange >= 18 && reversals >= 2) {
-      flagged.push({ start, end, point: windowSamples[0].point });
+    while (left < right && samples[left].timestamp < start) {
+      const speed = samples[left].speed_kmh;
+      sum -= speed;
+      sumSquares -= speed * speed;
+      if (minDeque[minHead] === left) minHead++;
+      if (maxDeque[maxHead] === left) maxHead++;
+      left++;
+    }
+    while (directionCursor < directionChangeIndexes.length && directionChangeIndexes[directionCursor] <= left) {
+      directionCursor++;
+    }
+    const count = right - left;
+    if (count < 4 || samples[right - 1].timestamp - samples[left].timestamp < 25000) continue;
+
+    const mean = sum / count;
+    const deviation = Math.sqrt(Math.max(0, sumSquares / count - mean * mean));
+    const oscillationRatio = deviation / Math.max(1, mean);
+    const speedRange = samples[maxDeque[maxHead]].speed_kmh - samples[minDeque[minHead]].speed_kmh;
+    const firstDirectionChange = directionChangeIndexes[directionCursor];
+    const reversals = firstDirectionChange != null && firstDirectionChange < right
+      ? reversalPrefix[right] - reversalPrefix[firstDirectionChange + 1]
+      : 0;
+    if (oscillationRatio > 0.28 && deviation >= 8 && speedRange >= 18 && reversals >= 2) {
+      flagged.push({ start, end, point: samples[left].point });
     }
   }
 
@@ -2028,6 +2073,31 @@ function emptyPhoneUseResult() {
     phone_use_risk: 'none',
     phone_use_score: 100,
     phone_use_pct_of_trip: 0,
+  };
+}
+
+function summarizePhoneUseEvents(events = [], durationSeconds = 0) {
+  const phoneEvents = events.filter((event) => event.type === EVENT_TYPES.PHONE_USE);
+  if (!phoneEvents.length) return emptyPhoneUseResult();
+  const totalSeconds = phoneEvents.reduce((sum, event) => sum + Number(event.durationS || event.duration_seconds || 0), 0);
+  const highConfidenceCount = phoneEvents.filter((event) => Number(event.confidence) >= 0.75).length;
+  const anyVeryFast = phoneEvents.some((event) => Number(event.speed_kmh) >= 100);
+  const phoneUseRisk = highConfidenceCount >= 3 || totalSeconds > 90 || anyVeryFast
+    ? 'high'
+    : highConfidenceCount >= 1 || totalSeconds >= 30
+      ? 'medium'
+      : 'low';
+  const scorePenalty = phoneEvents.reduce((sum, event) => (
+    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 8 : 3)
+  ), 0) + (anyVeryFast ? 15 : 0);
+  return {
+    phone_use_events: phoneEvents,
+    phone_use_window_count: phoneEvents.length,
+    phone_use_total_seconds: Math.round(totalSeconds),
+    phone_use_high_confidence_count: highConfidenceCount,
+    phone_use_risk: phoneUseRisk,
+    phone_use_score: Math.max(0, Math.round(100 - scorePenalty)),
+    phone_use_pct_of_trip: round2((totalSeconds / Math.max(1, durationSeconds)) * 100),
   };
 }
 
@@ -3064,7 +3134,8 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
       intersection_score: 100,
       idle_time_seconds: 0,
     };
-    const { events: segmentEvents, phoneUse: segmentPhoneUse } = detectDrivingEvents(slice, thresholds);
+    const segmentEvents = eventBuckets[type];
+    const segmentPhoneUse = summarizePhoneUseEvents(segmentEvents, segmentStats.duration_seconds);
     const segmentScores = calculateTripScores(segmentEvents, segmentStats, slice, thresholds, segmentStats.duration_seconds, segmentPhoneUse, {
       includeRoadTypeSegments: false,
     });
@@ -4497,12 +4568,14 @@ export function formatSpeed(kmh, units = 'metric') {
 export function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
+  if (!Number.isFinite(d.getTime())) return '';
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 export function formatTime(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
+  if (!Number.isFinite(d.getTime())) return '';
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
