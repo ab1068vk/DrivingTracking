@@ -349,7 +349,8 @@ function literalKind(value) {
 }
 
 function semanticName(code, value) {
-  const left = code.match(/(?:const|let|var|static final|private static final)\s+([A-Z0-9_a-z]+)/)?.[1]
+  const left = code.match(/\b(?:public|private|protected)?\s*static\s+final\s+[A-Za-z0-9_<>\[\]]+\s+([A-Z0-9_a-z]+)/)?.[1]
+    || code.match(/(?:const|let|var)\s+([A-Z0-9_a-z]+)/)?.[1]
     || code.match(/([A-Z0-9_a-z]+)\s*[:=]/)?.[1]
     || code.match(/([A-Z0-9_a-z]+)\s*[<>=!+\-*/]/)?.[1]
     || 'inline_value';
@@ -527,24 +528,42 @@ function literalRegistry() {
         `\`${row.value}\``,
         row.type,
         row.semanticName,
-        row.type === 'inline URL'
-          ? 'External service endpoint or help text; changing may redirect data or break integration.'
-          : row.type === 'numeric literal'
-            ? 'Threshold, scale, layout, ID, or test value; changing can alter scoring, UX, timing, or native behavior.'
-            : row.type === 'boolean flag'
-              ? 'Inline state/default flag; changing can flip behavior.'
-              : 'Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts.',
+        reasonForLiteral(row),
       ]),
     ),
   )).join('\n\n');
 }
 
+function reasonForLiteral(row) {
+  if (row.type === 'inline URL') {
+    return 'External service endpoint or help text; changing may redirect data or break integration.';
+  }
+  if (row.type === 'numeric literal') {
+    return 'Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior.';
+  }
+  if (row.type === 'boolean flag') {
+    return 'Inline state/default flag; changing can flip behavior.';
+  }
+  return 'Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts.';
+}
+
 function constantsRegistry() {
-  const named = literals
-    .filter((row) => /^[A-Z0-9_]+$/.test(row.semanticName) || /\bconst\b|\bstatic final\b/.test(row.code))
+  const namedRows = literals
+    .filter((row) => {
+      const declaresNamedConst = /\b(?:export\s+)?(?:const|let|var)\s+[A-Z0-9_]+\b/.test(row.code)
+        || /\b(?:public|private|protected)?\s*static\s+final\b/.test(row.code);
+      const uppercaseObjectEntry = /^[A-Z0-9_]+\s*:/.test(row.code);
+      return declaresNamedConst || uppercaseObjectEntry;
+    })
     .slice(0, 500)
-    .map((row) => `/** Source: ${row.file}:${row.line}. */\nconst ${row.semanticName.toUpperCase()} = ${row.value};`);
-  return codeBlock(named.join('\n'), 'js');
+    .map((row) => [
+      `${row.file}:${row.line}`,
+      row.semanticName,
+      `\`${row.value}\``,
+      reasonForLiteral(row),
+      `\`${row.code}\``,
+    ]);
+  return table(['Source', 'Name', 'Value', 'Reason', 'Exact code'], namedRows);
 }
 
 function dependencyTable() {
@@ -714,7 +733,7 @@ function buildDoc() {
   doc.push('');
   doc.push('> WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.');
   doc.push('');
-  doc.push('> TECH DEBT: repository-wide - many calculation constants are inline in scoring/reporting files. The constants registry below identifies names that should be promoted into domain-level constants when the app is next refactored.');
+  doc.push('> NOTE: Scoring thresholds and many domain-significant constants now live in named registries such as `DEFAULT_THRESHOLDS`, `ROUTE_RISK_CONSTANTS`, `RISK_CONSTANTS`, `PRE_TRIP_RISK_SIGNAL_GATES`, `HABIT_CONSTANTS`, and danger-zone constants. The literal registry below remains useful for auditing labels, keys, Android IDs, and any remaining inline scoring values before policy changes.');
   doc.push('');
   doc.push('---');
 
@@ -788,11 +807,11 @@ function buildDoc() {
 
   doc.push('## Hard-Coded Values And Constants Registry');
   doc.push('');
-  doc.push('The app contains many intentional literals: route labels, storage keys, feature flags, thresholds, scoring weights, UI labels, Android IDs, and test constants. They are grouped by file to keep the document readable.');
+  doc.push('Named scoring thresholds are centralized around `DEFAULT_THRESHOLDS` plus route-risk, pre-trip-risk, habit-profile, and danger-zone constants. The app also contains intentional literals for route labels, storage keys, feature flags, UI labels, Android IDs, and tests; these are grouped by file so reviewers can see why each value exists.');
   doc.push('');
   doc.push(literalRegistry());
   doc.push('');
-  doc.push('### Consolidated Constants Registry Draft');
+  doc.push('### Generated Named Constants Index');
   doc.push('');
   doc.push(constantsRegistry());
   doc.push('');
@@ -844,7 +863,7 @@ function buildDoc() {
   doc.push('- Leaflet popups: route labels, event metadata, speed-limit road/source data, route-risk segments, danger zones, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.');
   doc.push('- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled GPS points only when route snapping is explicitly enabled and requested.');
   doc.push('- Secrets: no secrets are checked into this repo by the scanner; `VITE_API_URL` is configuration, not a secret.');
-  doc.push('- Main residual risks: inline constants make scoring policy harder to review; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled route points by design.');
+  doc.push('- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled route points by design.');
   doc.push('');
   doc.push('---');
 
@@ -911,6 +930,7 @@ function buildReadme() {
     'The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.',
     '',
     '- Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.',
+    '- Documentation now reflects the constants cleanup: scoring thresholds are described around `DEFAULT_THRESHOLDS` and the route-risk, pre-trip-risk, habit-profile, and danger-zone constant groups, while remaining literals are indexed with reasons for review.',
     '- Calculation-heavy UI is isolated with `SectionErrorBoundary`: TripMap, TripPlayback, the Trip Detail score summary, the Trip Detail page shell, and the Dashboard readiness/risk panel now show a friendly reloadable fallback and log the caught error instead of blanking the whole app.',
     '- Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, phone-use pattern alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed.',
     '- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.',
@@ -940,7 +960,7 @@ function buildReadme() {
     '- source/module inventory, import/export map, and function/method catalogue',
     '- actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking',
     '- grouped calculation index with file/line references',
-    '- hard-coded values and a constants-registry draft',
+    '- named constants, hard-coded values, and literal rationale for scoring and integration review',
     '- routes, optional REST/external calls, storage surfaces, security analysis, performance notes, test coverage, dependencies, and deployment notes',
     '',
     'Regenerate it after meaningful code or README changes:',

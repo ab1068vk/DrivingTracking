@@ -18,6 +18,7 @@ Road Sage is a local-first driving tracker built with React, Vite, Capacitor, an
 The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.
 
 - Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.
+- Documentation now reflects the constants cleanup: scoring thresholds are described around `DEFAULT_THRESHOLDS` and the route-risk, pre-trip-risk, habit-profile, and danger-zone constant groups, while remaining literals are indexed with reasons for review.
 - Calculation-heavy UI is isolated with `SectionErrorBoundary`: TripMap, TripPlayback, the Trip Detail score summary, the Trip Detail page shell, and the Dashboard readiness/risk panel now show a friendly reloadable fallback and log the caught error instead of blanking the whole app.
 - Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, phone-use pattern alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed.
 - Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.
@@ -47,7 +48,7 @@ The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFEREN
 - source/module inventory, import/export map, and function/method catalogue
 - actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking
 - grouped calculation index with file/line references
-- hard-coded values and a constants-registry draft
+- named constants, hard-coded values, and literal rationale for scoring and integration review
 - routes, optional REST/external calls, storage surfaces, security analysis, performance notes, test coverage, dependencies, and deployment notes
 
 Regenerate it after meaningful code or README changes:
