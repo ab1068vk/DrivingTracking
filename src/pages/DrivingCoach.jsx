@@ -78,10 +78,14 @@ export default function DrivingCoach() {
   const avgMergeScore = completed.length
     ? Math.round(completed.reduce((sum, trip) => sum + (trip.merge_score ?? 100), 0) / completed.length)
     : null;
-  const avgSvi = completed.length
-    ? Math.round(completed.reduce((sum, trip) => sum + (trip.speed_variability_index || 0), 0) / completed.length * 10) / 10
+  const sviValues = completed
+    .map((trip) => trip.speed_variability_index)
+    .filter((value) => value != null && value !== '' && Number.isFinite(Number(value)))
+    .map(Number);
+  const avgSvi = sviValues.length
+    ? Math.round(sviValues.reduce((sum, value) => sum + value, 0) / sviValues.length * 10) / 10
     : null;
-  const latestSviLabel = completed.find((trip) => trip.svi_label)?.svi_label || 'unknown';
+  const latestSviLabel = completed.find((trip) => trip.svi_score != null && trip.svi_label)?.svi_label || 'unknown';
 
   return (
     <div className="space-y-6 pb-4">

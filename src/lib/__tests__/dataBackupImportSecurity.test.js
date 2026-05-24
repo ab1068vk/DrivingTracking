@@ -127,6 +127,26 @@ describe('backup trip import sanitization', () => {
     expect(trip.jerk_score_confidence).toBe('insufficient_data');
   });
 
+  it('preserves road-type-stratified SVI evidence through sanitized backup imports', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-svi-confidence',
+      status: 'completed',
+      speed_variability_index: 6.2,
+      svi_score: 91,
+      svi_label: 'very smooth',
+      svi_score_confidence: 'road_type_stratified',
+      svi_moving_sample_count: 42,
+    }]);
+
+    expect(trip).toMatchObject({
+      speed_variability_index: 6.2,
+      svi_score: 91,
+      svi_label: 'very smooth',
+      svi_score_confidence: 'road_type_stratified',
+      svi_moving_sample_count: 42,
+    });
+  });
+
   it('preserves traffic-stop intersection results through sanitized backup imports', () => {
     const [trip] = parseTrips([{
       id: 'trip-intersection-stops',

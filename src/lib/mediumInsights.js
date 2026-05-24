@@ -219,13 +219,24 @@ export function buildWeeklyDriverSummary(trips = [], settings = {}) {
     acceleration: completed.reduce((sum, trip) => sum + (trip.rapid_accel_count || 0), 0),
   };
   const mainIssue = Object.entries(issueCounts).sort((a, b) => b[1] - a[1])[0];
-  const avgFor = (items, field) => average(items.map((trip) => Number(trip[field])).filter(Number.isFinite));
+  const avgFor = (items, field) => average(
+    items
+      .map((trip) => trip[field])
+      .filter((value) => value != null && value !== '')
+      .map(Number)
+      .filter(Number.isFinite)
+  );
+  const improvementFor = (label, field) => {
+    const current = avgFor(completed, field);
+    const baseline = avgFor(previous, field);
+    return current == null || baseline == null ? null : { label, delta: current - baseline };
+  };
   const improvements = previous.length === 0 ? [] : [
-    { label: 'smoother turns', delta: (avgFor(completed, 'cornering_consistency_score') ?? 0) - (avgFor(previous, 'cornering_consistency_score') ?? 0) },
-    { label: 'better braking', delta: (avgFor(completed, 'braking_efficiency_score') ?? 0) - (avgFor(previous, 'braking_efficiency_score') ?? 0) },
-    { label: 'steadier speed', delta: (avgFor(completed, 'svi_score') ?? 0) - (avgFor(previous, 'svi_score') ?? 0) },
-    { label: 'higher safety score', delta: (avgFor(completed, 'score_safety') ?? 0) - (avgFor(previous, 'score_safety') ?? 0) },
-  ].sort((a, b) => b.delta - a.delta);
+    improvementFor('smoother turns', 'cornering_consistency_score'),
+    improvementFor('better braking', 'braking_efficiency_score'),
+    improvementFor('steadier speed', 'svi_score'),
+    improvementFor('higher safety score', 'score_safety'),
+  ].filter(Boolean).sort((a, b) => b.delta - a.delta);
 
   return {
     trip_count: completed.length,

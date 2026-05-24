@@ -5,7 +5,6 @@ import { maskTripForPrivacy } from './privacyZones';
 import { NIGHT_END_HOUR, NIGHT_END_TIME, NIGHT_START_HOUR, NIGHT_START_TIME } from './appConstants';
 
 const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
-const SPEED_VARIABILITY_INDEX_MULTIPLIER = 1.5;
 const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.4;
 const REACTION_SCORE_FLOOR = 20;
 const FOLLOWING_DISTANCE_MIN_TRIP_KM = 0.5;
@@ -15,6 +14,14 @@ export const ECO_DEFAULTS = Object.freeze({
   CRUISE_SCORE_MULTIPLIER: 130,
   IDLE_PENALTY_MULTIPLIER: 150,
   IDLE_MAX_PENALTY: 25,
+});
+export const SVI_DEFAULTS = Object.freeze({
+  MOVING_SPEED_FLOOR_KMH: 5,
+  MIN_MOVING_SAMPLES: 10,
+  MIN_STRATUM_SAMPLES: 6,
+  HIGHWAY_MIN_KMH: 80,
+  CITY_MULTIPLIER: 1,
+  HIGHWAY_MULTIPLIER: 2,
 });
 let reportedInvalidEcoThresholds = false;
 
@@ -1483,34 +1490,84 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, threshold
   };
 }
 
-export function calculateSpeedVariabilityIndex(cleanPoints = []) {
-  const samples = cleanPoints
-    .map((_, index) => reliablePointSpeed(cleanPoints, index))
-    .filter((speed) => Number.isFinite(speed) && speed > 0);
+function unavailableSvi(sampleCount) {
+  return {
+    speed_variability_index: null,
+    svi_score: null,
+    svi_label: 'unknown',
+    svi_score_confidence: 'insufficient_data',
+    svi_moving_sample_count: sampleCount,
+  };
+}
 
-  if (samples.length < 3) {
-    return { speed_variability_index: 0, svi_score: 100, svi_label: 'unknown' };
-  }
-
+function standardDeviation(samples) {
   const mean = average(samples);
-  const variance = average(samples.map((speed) => (speed - mean) ** 2));
-  const svi = round1(Math.sqrt(variance));
-  // SVI uses raw km/h standard deviation; it complements CV stability by preserving absolute speed swings.
-  const sviScore = Math.max(0, Math.round(100 - svi * SPEED_VARIABILITY_INDEX_MULTIPLIER));
-  const sviLabel = svi < 10
+  return Math.sqrt(average(samples.map((speed) => (speed - mean) ** 2)));
+}
+
+function sviDistanceKm(samples, cleanPoints, thresholds) {
+  return samples.reduce((distance, sample) => {
+    if (sample.index === 0) return distance;
+    const segment = calculateSegmentMetrics(cleanPoints[sample.index - 1], cleanPoints[sample.index], thresholds);
+    return segment.dt > 0 && segment.dt <= 120 && !segment.isNoise ? distance + segment.distanceKm : distance;
+  }, 0);
+}
+
+export function calculateSpeedVariabilityIndex(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+  const samples = cleanPoints
+    .map((_, index) => ({ index, speed: reliablePointSpeed(cleanPoints, index, thresholds) }))
+    .filter((sample) => Number.isFinite(sample.speed) && sample.speed > SVI_DEFAULTS.MOVING_SPEED_FLOOR_KMH);
+
+  if (samples.length < SVI_DEFAULTS.MIN_MOVING_SAMPLES) return unavailableSvi(samples.length);
+
+  const groupedSamples = [
+    {
+      multiplier: SVI_DEFAULTS.CITY_MULTIPLIER,
+      samples: samples.filter((sample) => sample.speed < SVI_DEFAULTS.HIGHWAY_MIN_KMH),
+    },
+    {
+      multiplier: SVI_DEFAULTS.HIGHWAY_MULTIPLIER,
+      samples: samples.filter((sample) => sample.speed >= SVI_DEFAULTS.HIGHWAY_MIN_KMH),
+    },
+  ];
+  const scorableGroups = groupedSamples
+    .filter((group) => group.samples.length >= SVI_DEFAULTS.MIN_STRATUM_SAMPLES)
+    .map((group) => {
+      const deviation = standardDeviation(group.samples.map((sample) => sample.speed));
+      return {
+        ...group,
+        deviation,
+        distanceKm: sviDistanceKm(group.samples, cleanPoints, thresholds),
+        score: clamp(Math.round(100 - deviation * group.multiplier), 0, 100),
+      };
+    });
+
+  if (!scorableGroups.length) return unavailableSvi(samples.length);
+
+  const scoredDistanceKm = scorableGroups.reduce((sum, group) => sum + group.distanceKm, 0);
+  const scoredSampleCount = scorableGroups.reduce((sum, group) => sum + group.samples.length, 0);
+  const weightFor = (group) => (
+    scoredDistanceKm > 0 ? group.distanceKm / scoredDistanceKm : group.samples.length / scoredSampleCount
+  );
+  const svi = round1(scorableGroups.reduce((sum, group) => sum + group.deviation * weightFor(group), 0));
+  const sviScore = Math.round(scorableGroups.reduce((sum, group) => sum + group.score * weightFor(group), 0));
+  const sviLabel = sviScore >= 85
     ? 'very smooth'
-    : svi < 20
+    : sviScore >= 70
       ? 'smooth'
-      : svi < 35
+      : sviScore >= 50
         ? 'variable'
-        : svi < 50
+        : sviScore >= 25
           ? 'erratic'
           : 'very erratic';
+  const scoredSamples = scorableGroups.reduce((sum, group) => sum + group.samples.length, 0);
 
   return {
     speed_variability_index: svi,
     svi_score: sviScore,
     svi_label: sviLabel,
+    svi_score_confidence: scoredSamples === samples.length ? 'road_type_stratified' : 'partial_road_type_data',
+    svi_moving_sample_count: samples.length,
   };
 }
 
@@ -4569,7 +4626,7 @@ export function calculateTripScores(
   const baseEco = Math.round(normalize(ecoPenalty));
   const jerk = calculateJerkScore(routePoints, stats.distance_km || distKm);
   const ecoDriving = calculateEcoDrivingScore(routePoints, stats, thresholds);
-  const svi = calculateSpeedVariabilityIndex(routePoints);
+  const svi = calculateSpeedVariabilityIndex(routePoints, thresholds);
   const fuelBand = calculateFuelBandScore(routePoints, thresholds);
   const merge = detectHighwayMergeBehavior(routePoints, thresholds);
   const smoothBraking = calculateSmoothBrakingRatio(routePoints, thresholds);
@@ -4607,6 +4664,7 @@ export function calculateTripScores(
   const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
   const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false ? 100 : (phoneUseResult.phone_use_score ?? 100);
   const jerkScoreForSmoothness = jerk.jerk_score ?? 100;
+  const sviScoreForSmoothness = svi.svi_score ?? 100;
   const followingDistanceScoreForSafety = followingDistanceScore ?? 100;
   const safetyWithoutOvertake = Math.round(
     baseSafety * 0.60 +
@@ -4622,7 +4680,7 @@ export function calculateTripScores(
   const smoothness = Math.round(
     baseSmoothness * 0.45 +
     jerkScoreForSmoothness * 0.25 +
-    svi.svi_score * 0.10 +
+    sviScoreForSmoothness * 0.10 +
     reaction.reaction_score * 0.10 +
     (cornering.cornering_consistency_score ?? 100) * 0.10
   );

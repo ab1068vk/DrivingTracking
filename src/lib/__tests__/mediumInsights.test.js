@@ -64,6 +64,29 @@ describe('mediumInsights', () => {
     expect(summary.biggest_improvement).toBe('more trips needed');
   });
 
+  it('does not compare an observed SVI week with an unavailable SVI baseline', () => {
+    const current = new Date();
+    const previous = new Date(current.getTime() - 8 * 24 * 60 * 60 * 1000);
+    const summary = buildWeeklyDriverSummary([
+      trip({
+        start_time: current.toISOString(),
+        cornering_consistency_score: 78,
+        braking_efficiency_score: 80,
+        score_safety: 82,
+        svi_score: 98,
+      }),
+      trip({
+        start_time: previous.toISOString(),
+        cornering_consistency_score: 78,
+        braking_efficiency_score: 80,
+        score_safety: 82,
+        svi_score: null,
+      }),
+    ]);
+
+    expect(summary.biggest_improvement).toBe('more trips needed');
+  });
+
   it('builds risk hotspots from repeated harsh or speeding events', () => {
     const hotspots = buildRiskHotspots([
       trip({

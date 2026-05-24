@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 14;
+export const TRIP_SCHEMA_VERSION = 15;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -62,6 +62,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 14 recalculates eco scores with named fallback multipliers, bounded
  * idle ratios, and unavailable handling for invalid zero-multiplier settings.
+ *
+ * Version 15 recalculates SVI from moving samples within city/highway strata,
+ * with distance-weighted mixed-route scoring and nullable insufficient data.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

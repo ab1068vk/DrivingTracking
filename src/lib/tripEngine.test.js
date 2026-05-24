@@ -27,6 +27,7 @@ import {
   detectTailgateCycles,
   DEFAULT_THRESHOLDS,
   ECO_DEFAULTS,
+  SVI_DEFAULTS,
   EVENT_TYPES,
   getScoreColor,
   TRIP_STATES,
@@ -698,12 +699,67 @@ describe('tripEngine', () => {
       point(43.6572, -79.3832, 20, 0),
     ];
 
-    expect(calculateSpeedVariabilityIndex(points).svi_score).toBeLessThan(100);
+    expect(calculateSpeedVariabilityIndex(points)).toMatchObject({
+      speed_variability_index: null,
+      svi_score: null,
+      svi_score_confidence: 'insufficient_data',
+    });
     expect(calculateFuelBandScore(points).fuel_band_score).toBeGreaterThan(0);
     expect(calculateSmoothBrakingRatio(points).total_stops_detected).toBe(1);
     const scores = calculateTripScores([], { distance_km: 2, fatigue_risk_score: 0, intersection_score: 100 }, points);
     expect(scores.defensive_driving_score).toBeGreaterThan(0);
     expect(scores.aggressive_driving_score).toBeGreaterThan(0);
+  });
+
+  it('excludes stopped samples and leaves undersampled SVI unavailable', () => {
+    const parkingLot = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.00001, -79.3832, index * 5, 0, 6)
+    ));
+    const shortDrive = Array.from({ length: 9 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, 45, 6)
+    ));
+    const signalledCityDrive = Array.from({ length: 20 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, index % 2 === 0 ? 0 : 50, 6)
+    ));
+
+    expect(calculateSpeedVariabilityIndex(parkingLot).svi_score).toBeNull();
+    expect(calculateSpeedVariabilityIndex(shortDrive).svi_score).toBeNull();
+    expect(calculateSpeedVariabilityIndex(signalledCityDrive)).toMatchObject({
+      speed_variability_index: 0,
+      svi_score: 100,
+      svi_score_confidence: 'road_type_stratified',
+      svi_moving_sample_count: 10,
+    });
+  });
+
+  it('uses a stricter SVI multiplier for highway variability than city variability', () => {
+    const city = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, index % 2 === 0 ? 40 : 60, 6)
+    ));
+    const highway = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 5, index % 2 === 0 ? 90 : 110, 6)
+    ));
+
+    expect(SVI_DEFAULTS).toMatchObject({ CITY_MULTIPLIER: 1, HIGHWAY_MULTIPLIER: 2 });
+    expect(calculateSpeedVariabilityIndex(city).svi_score).toBe(90);
+    expect(calculateSpeedVariabilityIndex(highway).svi_score).toBe(80);
+  });
+
+  it('weights mixed-route SVI by segment distance rather than sample count', () => {
+    const speeds = [
+      ...Array.from({ length: 10 }, (_, index) => index % 2 === 0 ? 40 : 60),
+      ...Array.from({ length: 10 }, () => 100),
+    ];
+    let lat = 43.6532;
+    const mixed = speeds.map((speed, index) => {
+      if (index > 0) lat += speed >= SVI_DEFAULTS.HIGHWAY_MIN_KMH ? 0.001 : 0.0001;
+      return point(lat, -79.3832, index * 5, speed, 6);
+    });
+
+    const result = calculateSpeedVariabilityIndex(mixed);
+
+    expect(result.svi_score).toBeGreaterThan(95);
+    expect(result.svi_score_confidence).toBe('road_type_stratified');
   });
 
   it('scores 50 percent optimal fuel-band time as 70', () => {

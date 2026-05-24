@@ -161,8 +161,8 @@ export default function Reports() {
           map[key].score += t.score_overall;
           map[key].scoreCount += 1;
         }
-        if (t.svi_score) {
-          map[key].svi += t.svi_score;
+        if (t.svi_score != null && t.svi_score !== '' && Number.isFinite(Number(t.svi_score))) {
+          map[key].svi += Number(t.svi_score);
           map[key].sviCount += 1;
         }
       }
