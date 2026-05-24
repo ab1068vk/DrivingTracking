@@ -1664,8 +1664,10 @@ export default function Dashboard() {
               <h2 className="font-semibold text-base">Personal Baseline</h2>
               <p className="text-xs text-muted-foreground mt-1">
                 {baseline.baseline_avg == null
-                  ? 'Record at least 3 trips in 4 weeks to unlock your baseline.'
-                  : `This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} vs your 4-week average.`}
+                  ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
+                  : baseline.delta == null
+                    ? `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; record a trip this week for a comparison.`
+                    : `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; this week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`}
               </p>
             </div>
             <div className={`text-sm font-bold capitalize ${
@@ -1680,7 +1682,7 @@ export default function Dashboard() {
               <div className="text-xs text-muted-foreground">this week</div>
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg ?? '-'}</div>
+              <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}`}</div>
               <div className="text-xs text-muted-foreground">baseline</div>
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
@@ -1690,7 +1692,8 @@ export default function Dashboard() {
             <div className="bg-secondary/50 rounded-xl p-3">
               <div className="flex items-center gap-2">
                 <TrafficCone className={`w-4 h-4 ${
-                  peakStress.peak_stress_label === 'consistent' ? 'text-emerald-500' :
+                  peakStress.insufficient_data ? 'text-muted-foreground' :
+                    peakStress.peak_stress_label === 'consistent' ? 'text-emerald-500' :
                     peakStress.peak_stress_label === 'slightly stressed' ? 'text-yellow-500' :
                       peakStress.peak_stress_label === 'traffic-affected' ? 'text-orange-500' : 'text-red-500'
                 }`} />

@@ -50,6 +50,7 @@ describe('speed-limit compliance', () => {
     const result = calculateSpeedLimitCompliance(points, {}, DEFAULT_THRESHOLDS);
     const buckets = [result.highway_compliance, result.urban_compliance, result.residential_compliance].filter(Boolean);
     expect(buckets.some((bucket) => bucket.limit_source === 'openstreetmap')).toBe(true);
+    expect(buckets.every((bucket) => bucket.confidence > 0 && bucket.confidence <= 1)).toBe(true);
     expect(result.overall_compliance_score).toBeLessThan(100);
   });
 

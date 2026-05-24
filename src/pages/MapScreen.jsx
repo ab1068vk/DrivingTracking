@@ -11,7 +11,7 @@ import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
-import { buildRiskHotspots } from '@/lib/mediumInsights';
+import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
   buildOpenSourceTripContextPatch,
   buildRoadContextPrivacyMessage,
@@ -29,13 +29,6 @@ const MAP_FILTERS = [
 ];
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
-const routeCell = (point) => `${Math.round(point.lat * 200) / 200},${Math.round(point.lng * 200) / 200}`;
-const routeKeyForTrip = (trip) => {
-  const points = trip?.route_points || [];
-  if (points.length < 2) return null;
-  return `${routeCell(points[0])}|${routeCell(points[points.length - 1])}`;
-};
-
 const relativeTime = (value) => {
   const elapsed = Date.now() - new Date(value).getTime();
   if (!Number.isFinite(elapsed)) return 'recently';

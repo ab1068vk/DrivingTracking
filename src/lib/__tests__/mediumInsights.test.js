@@ -5,6 +5,7 @@ import {
   buildRiskHotspots,
   buildRouteComparisons,
   buildWeeklyDriverSummary,
+  COMMUTE_MATCH_RADIUS_M,
   routeKeyForTrip,
 } from '@/lib/mediumInsights';
 
@@ -28,6 +29,9 @@ const trip = (overrides = {}) => ({
 });
 
 describe('mediumInsights', () => {
+  it('documents the commute matching radius', () => {
+    expect(COMMUTE_MATCH_RADIUS_M).toBe(150);
+  });
   it('uses route shape to compare repeated routes and detect commutes without addresses', () => {
     const trips = [
       trip({ id: 'm1', start_time: '2026-05-11T08:30:00', score_overall: 86 }),

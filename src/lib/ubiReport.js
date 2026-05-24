@@ -4,13 +4,14 @@ const MILEAGE_SCORE_WINDOW_DAYS = 365;
 const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 const OPTIMAL_ANNUAL_KM = 10000;
 const MILEAGE_SCORE_SPREAD_KM = 8000;
+export const MIN_UBI_REPORT_DISTANCE_KM = 50;
 
 export const UBI_CATEGORY_WEIGHTS = {
   mileage: 0.15,
   timeOfDay: 0.20,
-  hardBraking: 0.25,
+  hardBraking: 0.30,
   acceleration: 0.20,
-  cornering: 0.10,
+  cornering: 0.05,
   speedCompliance: 0.10,
 };
 
@@ -33,18 +34,21 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const totalKm = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const totalDrivingMinutes = completed.reduce((sum, trip) => sum + (Number(trip.duration_seconds) || 0) / 60, 0);
+  const starts = completed.map((trip) => new Date(trip.start_time).getTime()).filter(Number.isFinite);
+  const ends = completed.map((trip) => new Date(trip.end_time || trip.start_time).getTime()).filter(Number.isFinite);
 
   if (!completed.length) {
     return {
       generatedAt: new Date().toISOString(),
-      periodStart: null,
-      periodEnd: null,
+      periodStart: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
+      periodEnd: ends.length ? new Date(Math.max(...ends)).toISOString() : null,
       tripCount: 0,
       totalKm: 0,
       totalDrivingMinutes: 0,
       ubiScore: 0,
       ubiGrade: 'D',
       ubiTier: 'Non-preferred',
+      insufficientData: true,
       categories: {
         mileage: category(0, 'Total mileage', '0.0 km'),
         timeOfDay: category(0, 'Time of day', '0% night'),
@@ -57,6 +61,31 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     };
   }
 
+  if (totalKm < MIN_UBI_REPORT_DISTANCE_KM) {
+    return {
+      generatedAt: new Date().toISOString(),
+      periodStart: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
+      periodEnd: ends.length ? new Date(Math.max(...ends)).toISOString() : null,
+      tripCount: completed.length,
+      totalKm: Math.round(totalKm * 10) / 10,
+      totalDrivingMinutes: Math.round(totalDrivingMinutes),
+      ubiScore: null,
+      ubiGrade: 'N/A',
+      ubiTier: 'Insufficient data',
+      insufficientData: true,
+      minimumDistanceKm: MIN_UBI_REPORT_DISTANCE_KM,
+      categories: {
+        mileage: category(0, 'Total mileage', `${totalKm.toFixed(1)} km`),
+        timeOfDay: category(0, 'Time of day', 'Insufficient data'),
+        hardBraking: category(0, 'Hard braking', 'Insufficient data'),
+        acceleration: category(0, 'Rapid acceleration', 'Insufficient data'),
+        cornering: category(0, 'Cornering', 'Insufficient data'),
+        speedCompliance: category(0, 'Speed compliance', 'Insufficient data'),
+      },
+      disclaimer: `Complete at least ${MIN_UBI_REPORT_DISTANCE_KM} km before generating a UBI-style score.`,
+    };
+  }
+
   const nightDrivingMinutes = completed
     .filter((trip) => trip.night_driving === true)
     .reduce((sum, trip) => sum + (Number(trip.duration_seconds) || 0) / 60, 0);
@@ -65,7 +94,7 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
   const totalRapidAccel = completed.reduce((sum, trip) => sum + (Number(trip.rapid_accel_count) || 0), 0);
   const totalSharpTurns = completed.reduce((sum, trip) => sum + (Number(trip.sharp_turns_count) || 0), 0);
   const speedingEvents = completed.reduce((sum, trip) => sum + (Number(trip.speeding_events_count) || 0), 0);
-  const per100 = (count) => (count / Math.max(1, totalKm)) * 100;
+  const per100 = (count) => (count / totalKm) * 100;
   const brakesPer100Km = per100(totalHarshBrakes);
   const accelPer100Km = per100(totalRapidAccel);
   const turnsPer100Km = per100(totalSharpTurns);
@@ -97,9 +126,6 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     corneringScore * UBI_CATEGORY_WEIGHTS.cornering +
     speedScore * UBI_CATEGORY_WEIGHTS.speedCompliance
   );
-  const starts = completed.map((trip) => new Date(trip.start_time).getTime()).filter(Number.isFinite);
-  const ends = completed.map((trip) => new Date(trip.end_time || trip.start_time).getTime()).filter(Number.isFinite);
-
   return {
     generatedAt: generatedAt.toISOString(),
     periodStart: starts.length ? new Date(Math.min(...starts)).toISOString() : null,
@@ -110,6 +136,7 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     ubiScore,
     ubiGrade: ubiGrade(ubiScore),
     ubiTier: ubiScore >= 85 ? 'Preferred' : ubiScore >= 70 ? 'Standard' : 'Non-preferred',
+    insufficientData: false,
     categories: {
       mileage: category(mileageScore, '12-month mileage', `${mileageWindowKm.toFixed(1)} km`),
       timeOfDay: category(timeOfDayScore, 'Time of day', `${(nightRatio * 100).toFixed(0)}% night`),

@@ -71,6 +71,8 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'driving_events',
   'event_feedback',
   'duration_seconds',
+  'wall_clock_duration_seconds',
+  'gap_seconds',
   'distance_km',
   'avg_speed_kmh',
   'avg_running_speed_kmh',
@@ -81,9 +83,14 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'road_type',
   'speed_zones',
   'score_overall',
+  'score_confidence',
+  'score_confidence_label',
   'score_safety',
+  'score_safety_confidence',
   'score_smoothness',
+  'score_smoothness_confidence',
   'score_eco',
+  'score_eco_confidence',
   'harsh_brakes_count',
   'rapid_accel_count',
   'sharp_turns_count',
@@ -95,12 +102,16 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'following_distance_score_confidence',
   'distraction_events_count',
   'distraction_score',
+  'distraction_score_confidence',
   'near_miss_count',
   'near_miss_score',
+  'near_miss_score_confidence',
   'close_proximity_count',
   'close_proximity_score',
+  'close_proximity_score_confidence',
   'overtake_event_count',
   'overtake_score',
+  'overtake_score_confidence',
   'intersection_score',
   'intersection_score_confidence',
   'stop_count',
@@ -110,30 +121,49 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'jerk_score',
   'jerk_score_confidence',
   'eco_driving_score',
+  'eco_driving_score_confidence',
   'speed_variability_index',
   'svi_score',
   'svi_label',
   'svi_score_confidence',
   'svi_moving_sample_count',
   'fuel_band_score',
+  'fuel_band_score_confidence',
   'smooth_braking_ratio',
+  'smooth_braking_score',
+  'smooth_braking_score_confidence',
+  'merge_score',
+  'merge_score_confidence',
   'engine_stress_score',
+  'engine_stress_score_confidence',
   'trip_tire_wear_units',
   'drowsy_risk_level',
   'drowsy_score',
+  'drowsy_risk_score',
+  'drowsy_risk_score_confidence',
   'hill_score',
+  'hill_driving_score',
+  'hill_driving_score_confidence',
+  'climb_distance_km',
+  'descent_distance_km',
+  'hill_infraction_count',
   'parking_approach_score',
+  'parking_approach_score_confidence',
   'reaction_score',
+  'reaction_score_confidence',
   'avg_reaction_seconds',
   'reaction_grade',
   'reaction_sample_count',
   'cornering_consistency_score',
+  'cornering_consistency_score_confidence',
   'cornering_grade',
   'mean_lateral_g',
   'peak_lateral_g',
   'corner_sample_count',
   'braking_efficiency_score',
+  'braking_efficiency_score_confidence',
   'braking_efficiency_grade',
+  'braking_context',
   'braking_sequence_count',
   'avg_braking_smoothness',
   'highway_score',
@@ -144,7 +174,9 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'urban_compliance',
   'residential_compliance',
   'overall_compliance_score',
+  'overall_compliance_score_confidence',
   'overtake_quality_score',
+  'overtake_quality_score_confidence',
   'overtake_quality_grade',
   'overtake_count',
   'unsafe_reentry_count',
@@ -154,8 +186,10 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'safety_condition_bonus',
   'avg_distance_ratio',
   'aggressive_driving_score',
+  'aggressive_driving_score_confidence',
   'aggressive_grade',
   'defensive_driving_score',
+  'defensive_driving_score_confidence',
   'defensive_grade',
   'phone_proxy_risk',
   'native_phone_proxy_count',
@@ -164,6 +198,7 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'phone_use_total_seconds',
   'phone_use_risk',
   'phone_use_score',
+  'phone_use_score_confidence',
   'phone_use_pct_of_trip',
   'phone_use_high_confidence_count',
   'native_phone_usage_events',
@@ -177,7 +212,13 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'co2_kg',
   'co2_saved_kg',
   'fatigue_progression',
+  'fatigue_heatmap',
+  'fatigue_risk_score',
+  'fatigue_risk_score_confidence',
+  'speed_creep_score',
+  'speed_creep_score_confidence',
   'segment_scores',
+  'hill_route',
   'map_matching_status',
   'map_matching_provider',
   'speed_limit_context',
@@ -470,6 +511,9 @@ export function parseDriveSenseBackup(text) {
   const sourceVersion = Number(parsed.version) || 1;
   const migrated = migrateBackup(parsed, sourceVersion);
   const warnings = [];
+  const truncatedNoteTripCount = migrated.trips.filter((trip) => (
+    typeof trip?.notes === 'string' && trip.notes.length > MAX_IMPORTED_TRIP_NOTES_LENGTH
+  )).length;
 
   return {
     version: migrated.version,
@@ -479,15 +523,24 @@ export function parseDriveSenseBackup(text) {
     vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
     trips: migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings)),
     warnings,
+    truncatedNoteTripCount,
   };
 }
 
-export async function importDriveSenseBackup(file, { includeSettings = true } = {}) {
+export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
   const text = await file.text();
   const backup = parseDriveSenseBackup(text);
+  if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {
+    return {
+      requiresAcknowledgement: true,
+      truncatedNoteTripCount: backup.truncatedNoteTripCount,
+      warnings: backup.warnings,
+      truncatedFields: backup.warnings.length,
+    };
+  }
 
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
   const importedTrips = await tripService.upsertMany(backup.trips);
@@ -525,6 +578,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true } = 
     savedFiltersRestored,
     warnings: backup.warnings,
     truncatedFields: backup.warnings.length,
+    truncatedNoteTripCount: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
   };
 }

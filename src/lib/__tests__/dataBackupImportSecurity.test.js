@@ -179,6 +179,40 @@ describe('backup trip import sanitization', () => {
     expect(trip.following_distance_score_confidence).toBe('insufficient_data');
   });
 
+  it('preserves corrected duration and numeric component confidence metadata', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-score-confidence',
+      status: 'completed',
+      duration_seconds: 120,
+      wall_clock_duration_seconds: 720,
+      gap_seconds: 600,
+      fatigue_risk_score: 30,
+      fatigue_risk_score_confidence: 0.8,
+      speed_creep_score: 88,
+      speed_creep_score_confidence: 0.8,
+      smooth_braking_score: 82,
+      smooth_braking_score_confidence: 0.8,
+      braking_efficiency_score: 74,
+      braking_efficiency_score_confidence: 0.8,
+      hill_driving_score: null,
+      hill_driving_score_confidence: 0,
+    }]);
+
+    expect(trip).toMatchObject({
+      duration_seconds: 120,
+      wall_clock_duration_seconds: 720,
+      gap_seconds: 600,
+      fatigue_risk_score: 30,
+      fatigue_risk_score_confidence: 0.8,
+      speed_creep_score: 88,
+      speed_creep_score_confidence: 0.8,
+      smooth_braking_score: 82,
+      smooth_braking_score_confidence: 0.8,
+      braking_efficiency_score_confidence: 0.8,
+      hill_driving_score_confidence: 0,
+    });
+  });
+
   it('rejects imported trips without a non-empty string id', () => {
     expect(() => parseTrips([{ id: '', status: 'completed' }])).toThrow('valid id');
     expect(() => parseTrips([{ id: 123, status: 'completed' }])).toThrow('valid id');
@@ -196,6 +230,22 @@ describe('backup trip import sanitization', () => {
     }));
     expect(parsed.trips[0].notes).toHaveLength(MAX_IMPORTED_TRIP_NOTES_LENGTH);
     expect(parsed.warnings[0]).toContain('notes');
+  });
+
+  it('requires acknowledgement before importing truncated trip notes', async () => {
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        trips: [{ id: 'long-note', notes: 'x'.repeat(MAX_IMPORTED_TRIP_NOTES_LENGTH + 1) }],
+      })),
+    };
+    const pending = await importDriveSenseBackup(file);
+    expect(pending).toMatchObject({ requiresAcknowledgement: true, truncatedNoteTripCount: 1 });
+
+    const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
+    expect(imported.trips).toBe(1);
   });
 });
 

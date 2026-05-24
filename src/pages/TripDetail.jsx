@@ -252,6 +252,9 @@ export default function TripDetail() {
   const fatigueHeatmapData = useMemo(() => (
     trip ? buildFatigueHeatmapData(trip) : []
   ), [trip]);
+  const fatigueProgressionLevel = typeof trip?.fatigue_progression === 'object'
+    ? trip.fatigue_progression.level
+    : trip?.fatigue_progression;
   const routeRiskSegments = useMemo(() => (
     trip ? getSegmentsForTrip(trip, routeRiskIndex).filter((segment) => segment.riskLevel === 'high' || segment.riskLevel === 'moderate') : []
   ), [routeRiskIndex, trip]);
@@ -422,9 +425,9 @@ export default function TripDetail() {
       { label: 'Last', score: trip.segment_scores[2] },
     ]
     : [];
-  const fatigueColor = trip.fatigue_progression === 'significant'
+  const fatigueColor = fatigueProgressionLevel === 'significant'
     ? '#ef4444'
-    : trip.fatigue_progression === 'moderate'
+    : fatigueProgressionLevel === 'moderate'
       ? '#f59e0b'
       : '#22c55e';
   const primaryAvgSpeedKmh = trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0;
@@ -1181,7 +1184,7 @@ export default function TripDetail() {
             { icon: Car, label: 'engine stress', value: trip.engine_stress_score ?? '-', color: 'text-orange-500' },
             { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
             { icon: AlertTriangle, label: 'drowsy risk', value: trip.drowsy_risk_level ?? 'none', color: trip.drowsy_risk_level === 'high' ? 'text-red-500' : trip.drowsy_risk_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
-            ...(trip.hill_driving_score != null ? [{ icon: Milestone, label: 'hill control', value: trip.hill_driving_score, color: 'text-emerald-500' }] : []),
+            { icon: Milestone, label: 'hill control', value: trip.hill_driving_score ?? 'N/A', color: trip.hill_driving_score == null ? 'text-muted-foreground' : 'text-emerald-500' },
           ].map(({ icon: Icon, label, value, color, capitalize }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3">
               <Icon className={`w-4 h-4 mb-2 ${color}`} />
@@ -1229,7 +1232,7 @@ export default function TripDetail() {
           <div className="mb-4 bg-secondary/50 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-sm font-medium">Driving quality over trip</div>
-              <span className="text-xs text-muted-foreground">{fatigueText[trip.fatigue_progression] || trip.fatigue_progression}</span>
+              <span className="text-xs text-muted-foreground">{fatigueText[fatigueProgressionLevel] || fatigueProgressionLevel}</span>
             </div>
             <ResponsiveContainer width="100%" height={120}>
               <AreaChart data={fatigueChartData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
@@ -1250,6 +1253,9 @@ export default function TripDetail() {
                 {trip.braking_efficiency_grade?.replace('_', ' ') || `${trip.smooth_braking_ratio}% smooth`}
               </span>
             </div>
+            {trip.braking_context && (
+              <div className="mb-2 text-xs text-muted-foreground">Graded for {trip.braking_context} driving conditions.</div>
+            )}
             {Number.isFinite(trip.braking_efficiency_score) && (
               <div className="mb-2 flex items-baseline gap-2">
                 <span className="font-grotesk text-2xl font-bold">{trip.braking_efficiency_score}</span>
@@ -1269,12 +1275,17 @@ export default function TripDetail() {
           </div>
         )}
 
-        {trip.hill_driving_score != null && (
+        {trip.hill_driving_score != null ? (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3 text-sm">
             <div className="font-medium">Hill Control</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {trip.climb_distance_km ?? 0} km climbing, {trip.descent_distance_km ?? 0} km descending. Use engine braking on descents rather than braking repeatedly.
             </div>
+          </div>
+        ) : (
+          <div className="mb-4 rounded-xl bg-secondary/50 p-3 text-sm">
+            <div className="font-medium">Hill Control</div>
+            <div className="mt-1 text-xs text-muted-foreground">Not applicable (flat route or insufficient altitude evidence).</div>
           </div>
         )}
 

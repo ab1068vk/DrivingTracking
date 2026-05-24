@@ -37,6 +37,7 @@ describe('road-type segmented scoring', () => {
     const scores = calculateRoadTypeSegmentedScores(points, events, stats, DEFAULT_THRESHOLDS);
 
     expect(scores.highway_score?.overall).toBeGreaterThan(0);
+    expect(scores.highway_score?.confidence).toBeGreaterThan(0);
     expect(scores.dominant_road_type).toBe('highway');
   });
 

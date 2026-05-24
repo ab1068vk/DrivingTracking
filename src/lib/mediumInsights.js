@@ -1,4 +1,6 @@
 import { buildDangerZones } from '@/lib/dangerZoneEngine';
+import { routeKeyForTrip } from '@/lib/commuteMatching';
+export { COMMUTE_MATCH_RADIUS_M, routeKeyForTrip } from '@/lib/commuteMatching';
 
 const DAY_MS = 86400000;
 
@@ -13,22 +15,6 @@ const startOfWeek = (value = new Date()) => {
   date.setDate(date.getDate() - date.getDay());
   return date;
 };
-
-const routeCell = (point) => {
-  const lat = Number(point?.lat);
-  const lng = Number(point?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return `${Math.round(lat * 200) / 200},${Math.round(lng * 200) / 200}`;
-};
-
-export function routeKeyForTrip(trip = {}) {
-  const points = Array.isArray(trip.route_points) ? trip.route_points : [];
-  if (points.length < 2) return null;
-  const start = routeCell(points[0]);
-  const end = routeCell(points[points.length - 1]);
-  if (!start || !end) return null;
-  return `${start}|${end}`;
-}
 
 const average = (values) => values.length
   ? values.reduce((sum, value) => sum + value, 0) / values.length

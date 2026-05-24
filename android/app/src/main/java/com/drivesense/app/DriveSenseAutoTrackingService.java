@@ -863,6 +863,8 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("start_time", iso(startMs));
             trip.put("end_time", iso(endMs));
             trip.put("duration_seconds", stats.durationSeconds);
+            trip.put("wall_clock_duration_seconds", stats.wallClockDurationSeconds);
+            trip.put("gap_seconds", stats.gapSeconds);
             trip.put("distance_km", round(stats.distanceKm, 3));
             trip.put("avg_speed_kmh", round(stats.avgSpeedKmh, 1));
             trip.put("avg_running_speed_kmh", round(stats.avgRunningSpeedKmh, 1));
@@ -918,7 +920,8 @@ public class DriveSenseAutoTrackingService extends Service {
 
     private TripStats calculateStats(JSONArray points, long startMs, long endMs) {
         TripStats stats = new TripStats();
-        stats.durationSeconds = Math.max(0L, (endMs - startMs) / 1000L);
+        stats.wallClockDurationSeconds = Math.max(0L, (endMs - startMs) / 1000L);
+        stats.durationSeconds = stats.wallClockDurationSeconds;
         if (points == null || points.length() < 2) return stats;
 
         for (int i = 1; i < points.length(); i++) {
@@ -936,7 +939,11 @@ public class DriveSenseAutoTrackingService extends Service {
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
             long dt = (currMs - prevMs) / 1000L;
-            if (dt <= 0L || dt >= STATS_MAX_SAMPLE_GAP_SECONDS) continue;
+            if (dt <= 0L) continue;
+            if (dt > STATS_MAX_SAMPLE_GAP_SECONDS) {
+                stats.gapSeconds += dt;
+                continue;
+            }
 
             double impliedSpeed = distance / (dt / 3600d);
             double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
@@ -966,6 +973,7 @@ public class DriveSenseAutoTrackingService extends Service {
             }
         }
 
+        stats.durationSeconds = Math.max(0L, stats.wallClockDurationSeconds - stats.gapSeconds);
         stats.avgSpeedKmh = stats.durationSeconds > 0L && stats.distanceKm > 0d
             ? stats.distanceKm / (stats.durationSeconds / 3600d)
             : 0d;
@@ -1432,6 +1440,8 @@ public class DriveSenseAutoTrackingService extends Service {
         double maxSpeedKmh = 0d;
         long idleSeconds = 0L;
         long movingSeconds = 0L;
+        long wallClockDurationSeconds = 0L;
+        long gapSeconds = 0L;
         long durationSeconds = 0L;
         int speedSamples = 0;
         boolean nightDriving = false;

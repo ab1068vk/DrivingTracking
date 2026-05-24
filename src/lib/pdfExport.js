@@ -244,7 +244,7 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(42);
-  doc.text(`${ubiReport.ubiScore || 0}`, 92, 70, { align: 'center' });
+  doc.text(ubiReport.ubiScore == null ? '-' : `${ubiReport.ubiScore}`, 92, 70, { align: 'center' });
   doc.setFontSize(12);
   doc.text('/ 100', 111, 70);
   doc.setFontSize(14);

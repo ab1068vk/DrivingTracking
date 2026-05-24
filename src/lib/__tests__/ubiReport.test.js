@@ -27,7 +27,7 @@ describe('ubiReport', () => {
   });
 
   it('zero night trips gives timeOfDay score 100', () => {
-    expect(computeUBIReport([trip(10)]).categories.timeOfDay.score).toBe(100);
+    expect(computeUBIReport([trip(50)]).categories.timeOfDay.score).toBe(100);
   });
 
   it('scores time-of-day exposure by night driving minutes instead of trip count', () => {
@@ -51,7 +51,14 @@ describe('ubiReport', () => {
   });
 
   it('ubiTier is Preferred when ubiScore >= 85', () => {
-    expect(computeUBIReport([trip(10), trip(20)]).ubiTier).toBe('Preferred');
+    expect(computeUBIReport([trip(30), trip(30)]).ubiTier).toBe('Preferred');
+  });
+
+  it('withholds rate-based scoring until at least 50 km are observed', () => {
+    const report = computeUBIReport([trip(4, { harsh_brakes_count: 1 })]);
+    expect(report.insufficientData).toBe(true);
+    expect(report.ubiScore).toBeNull();
+    expect(report.ubiTier).toBe('Insufficient data');
   });
 
   it('totalKm sums all trip distances', () => {

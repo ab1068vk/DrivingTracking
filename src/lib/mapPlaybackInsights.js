@@ -117,6 +117,13 @@ const progressForIndex = (index, total) => (
   total > 1 ? Math.max(0, Math.min(100, (index / (total - 1)) * 100)) : 0
 );
 
+const progressForTime = (point, firstMs, lastMs, fallback = 0) => {
+  const currentMs = pointTimeMs(point);
+  return firstMs != null && lastMs != null && currentMs != null && lastMs > firstMs
+    ? Math.max(0, Math.min(100, ((currentMs - firstMs) / (lastMs - firstMs)) * 100))
+    : fallback;
+};
+
 const distanceForKeys = (points = [], latKey = 'lat', lngKey = 'lng') => {
   const clean = (Array.isArray(points) ? points : [])
     .map((point) => ({
@@ -291,8 +298,8 @@ export function buildPlaybackTimeline(points = [], events = []) {
       heading,
       band,
       color: overLimitKmh > 10 ? '#ef4444' : overLimitKmh > 0 ? '#f97316' : band.color,
-      progressStart: progressForIndex(i - 1, clean.length),
-      progressEnd: progressForIndex(i, clean.length),
+      progressStart: progressForTime(prev, firstMs, lastMs, progressForIndex(i - 1, clean.length)),
+      progressEnd: progressForTime(curr, firstMs, lastMs, progressForIndex(i, clean.length)),
       startOffsetSeconds: firstMs != null && prevMs != null ? Math.max(0, (prevMs - firstMs) / 1000) : 0,
       endOffsetSeconds: firstMs != null && currMs != null ? Math.max(0, (currMs - firstMs) / 1000) : 0,
     };
@@ -318,7 +325,9 @@ export function buildPlaybackTimeline(points = [], events = []) {
       return {
         ...event,
         playbackIndex,
-        progress: progressForIndex(playbackIndex, clean.length),
+        progress: firstMs != null && lastMs != null && Number.isFinite(eventMs) && lastMs > firstMs
+          ? Math.max(0, Math.min(100, ((eventMs - firstMs) / (lastMs - firstMs)) * 100))
+          : progressForIndex(playbackIndex, clean.length),
         offsetSeconds: firstMs != null && Number.isFinite(eventMs) ? Math.max(0, Math.round((eventMs - firstMs) / 1000)) : 0,
       };
     })
@@ -327,8 +336,8 @@ export function buildPlaybackTimeline(points = [], events = []) {
   const stops = collectStops(segments).map((stop, index) => ({
       ...stop,
       id: `stop-${index}`,
-      progressStart: progressForIndex(stop.startIndex, clean.length),
-      progressEnd: progressForIndex(stop.endIndex, clean.length),
+      progressStart: progressForTime(clean[stop.startIndex], firstMs, lastMs, progressForIndex(stop.startIndex, clean.length)),
+      progressEnd: progressForTime(clean[stop.endIndex], firstMs, lastMs, progressForIndex(stop.endIndex, clean.length)),
       timeProgressStart: totalDurationSeconds > 0
         ? Math.max(0, Math.min(100, ((segments.find((segment) => segment.fromIndex === stop.startIndex)?.startOffsetSeconds || 0) / totalDurationSeconds) * 100))
         : progressForIndex(stop.startIndex, clean.length),

@@ -43,6 +43,7 @@ import {
   importDriveSenseBackup,
   MAX_BACKUP_BYTES,
 } from '@/lib/dataBackup';
+import { COMMUTE_MATCH_RADIUS_M } from '@/lib/mediumInsights';
 import {
   applyCalibrationProfile,
   clearCalibrationProfile,
@@ -750,7 +751,12 @@ export default function Settings() {
     if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
 
     try {
-      const result = await importDriveSenseBackup(file);
+      let result = await importDriveSenseBackup(file);
+      if (result.requiresAcknowledgement) {
+        const affected = result.truncatedNoteTripCount;
+        if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return;
+        result = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
+      }
       setCfg(localSettings.get());
       applyThemeMode(localSettings.get().dark_mode);
       await qc.invalidateQueries();
@@ -1621,6 +1627,9 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground mt-1">{help}</p>
                 </div>
               ))}
+              <p className="px-1 text-xs text-muted-foreground">
+                Commute route matching groups start/end locations within approximately {COMMUTE_MATCH_RADIUS_M} m.
+              </p>
             </div>
           </div>
         </div>

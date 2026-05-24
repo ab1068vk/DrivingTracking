@@ -6,6 +6,7 @@ import {
   NIGHT_END_HOUR,
   NIGHT_START_HOUR,
 } from '@/lib/appConstants';
+import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
 
 export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
 export const DEFAULT_L_PER_100KM = 8.5;
@@ -27,6 +28,14 @@ export const CO2_KG_PER_LITER = {
   ev: 0,
 };
 export const WEAR_KM_PER_STRESS_UNIT = 8;
+export const PERSONAL_BASELINE_MIN_TRIPS = 10;
+export const PERSONAL_BASELINE_DECAY = 0.85;
+export const PEAK_STRESS_MIN_TRIP_KM = 0.5;
+export const RISK_EVENT_RATE_MIN_DISTANCE_KM = 50;
+export const SCORE_TIP_MIN_TRIP_KM = 2;
+export const SCORE_TIP_MIN_CONFIDENCE = 0.5;
+export const FATIGUE_HEATMAP_SEGMENT_SECONDS = 30;
+export const FATIGUE_HEATMAP_MIN_SEGMENTS = 20;
 
 export const STRESS_UNITS = {
   harsh_brake: { low: 1.5, medium: 4, high: 8 },
@@ -59,6 +68,8 @@ const distanceWeightedScore = (trips = [], field = 'score_overall') => {
 };
 
 export const DRIVING_CONSISTENCY_IQR_MULTIPLIERS = {
+  // A 10-point IQR deducts 10 points on urban trips and 18 on highway trips,
+  // where sustained speeds make the same spread a stronger inconsistency signal.
   urban: 1.0,
   residential: 1.2,
   mixed: 1.4,
@@ -216,7 +227,7 @@ export function getMaintenanceStatus(vehicle, trips = []) {
 
 /**
  * Convert fatigue progression segments into timeline heatmap points.
- * @param {{fatigue_progression?:Array|{segments?:Array},segment_scores?:Array<number>,route_points?:Array,start_time?:string}} trip - Completed trip with route points.
+ * @param {{fatigue_progression?:Array|{segments?:Array},fatigue_heatmap?:{segments?:Array},segment_scores?:Array<number>,route_points?:Array,start_time?:string}} trip - Completed trip with route points.
  * @returns {Array<{minuteOffset:number,fatigueLevel:number,color:string,lat:number,lng:number}>} Timeline heatmap points.
  * @example
  * const heatmap = buildFatigueHeatmapData(trip);
@@ -226,6 +237,8 @@ export function buildFatigueHeatmapData(trip) {
     ? trip.fatigue_progression
     : Array.isArray(trip?.fatigue_progression?.segments)
       ? trip.fatigue_progression.segments
+      : Array.isArray(trip?.fatigue_heatmap?.segments)
+        ? trip.fatigue_heatmap.segments
       : [];
   const points = Array.isArray(trip?.route_points) ? trip.route_points : [];
   if (!segments.length && Array.isArray(trip?.segment_scores) && trip.segment_scores.length) {
@@ -236,7 +249,7 @@ export function buildFatigueHeatmapData(trip) {
       score,
     }));
   }
-  if (!segments.length || !points.length) return [];
+  if (segments.length < FATIGUE_HEATMAP_MIN_SEGMENTS || !points.length) return [];
 
   const tripStart = new Date(points[0]?.timestamp || trip.start_time || Date.now()).getTime();
   const raw = segments
@@ -556,14 +569,20 @@ export function suggestTripTag(trip = {}) {
 export function buildScoreTips(trips = []) {
   const completed = trips.filter((trip) => trip.status === 'completed');
   if (!completed.length) {
-    return ['Record a few trips to unlock personalized coaching tips.'];
+    return ['Not enough data yet. Record a few trips to unlock personalized coaching tips.'];
   }
+  const eligible = completed.filter((trip) => (
+    (Number(trip.distance_km) || 0) >= SCORE_TIP_MIN_TRIP_KM &&
+    Number.isFinite(Number(trip.score_confidence)) &&
+    Number(trip.score_confidence) >= SCORE_TIP_MIN_CONFIDENCE
+  ));
+  if (!eligible.length) return ['Not enough data yet. Complete a trip of at least 2 km for coaching tips.'];
 
   const totals = {
-    harsh_brake: completed.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0),
-    rapid_acceleration: completed.reduce((sum, trip) => sum + (trip.rapid_accel_count || 0), 0),
-    sharp_turn: completed.reduce((sum, trip) => sum + (trip.sharp_turns_count || 0), 0),
-    speeding: completed.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0),
+    harsh_brake: eligible.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0),
+    rapid_acceleration: eligible.reduce((sum, trip) => sum + (trip.rapid_accel_count || 0), 0),
+    sharp_turn: eligible.reduce((sum, trip) => sum + (trip.sharp_turns_count || 0), 0),
+    speeding: eligible.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0),
   };
 
   const worst = Object.entries(totals).sort((a, b) => b[1] - a[1])[0];
@@ -579,12 +598,12 @@ export function buildScoreTips(trips = []) {
     tips.push(messages[worst[0]]);
   }
 
-  const nightTrips = completed.filter((trip) => trip.night_driving).length;
-  if (nightTrips / completed.length >= 0.35) {
+  const nightTrips = eligible.filter((trip) => trip.night_driving).length;
+  if (nightTrips / eligible.length >= 0.35) {
     tips.push('A large share of trips happen at night, where Road Sage applies extra safety risk. Keep routes familiar and take breaks on longer drives.');
   }
 
-  const avgScore = distanceWeightedScore(completed) ?? 0;
+  const avgScore = distanceWeightedScore(eligible) ?? 0;
   if (avgScore >= 85) {
     tips.push('Your recent average is excellent. Keep the streak going by protecting smooth starts and early braking.');
   } else if (avgScore < 70) {
@@ -769,13 +788,16 @@ export function calculateRiskEventRate(trips = []) {
     aggressive_overtake: completed.reduce((sum, trip) => sum + (trip.overtake_event_count || 0), 0),
   };
   const totalEvents = Object.values(totals).reduce((sum, count) => sum + count, 0);
-  const per100Km = distanceKm > 0 ? Math.round((totalEvents / distanceKm) * 1000) / 10 : 0;
+  const sufficientData = distanceKm >= RISK_EVENT_RATE_MIN_DISTANCE_KM;
+  const per100Km = sufficientData ? Math.round((totalEvents / distanceKm) * 1000) / 10 : null;
   const worst = Object.entries(totals).sort((a, b) => b[1] - a[1])[0] || ['none', 0];
 
   return {
     distance_km: Math.round(distanceKm * 10) / 10,
     total_events: totalEvents,
     events_per_100km: per100Km,
+    insufficient_data: !sufficientData,
+    minimum_distance_km: RISK_EVENT_RATE_MIN_DISTANCE_KM,
     worst_event: worst[0],
     worst_event_count: worst[1],
     totals,
@@ -799,13 +821,30 @@ export function computePersonalBaseline(completedTrips = []) {
     const score = distanceWeightedScore(items);
     return score == null ? null : Math.round(score);
   };
+  const exponentiallyWeighted = (items) => {
+    const valid = items.filter((trip) => Number.isFinite(Number(trip.score_overall)));
+    if (!valid.length) return { average: null, interval: null };
+    const weighted = valid.map((trip, index) => ({
+      score: Number(trip.score_overall),
+      weight: Math.pow(PERSONAL_BASELINE_DECAY, index),
+    }));
+    const weightSum = weighted.reduce((sum, item) => sum + item.weight, 0);
+    const averageScore = weighted.reduce((sum, item) => sum + item.score * item.weight, 0) / weightSum;
+    const variance = weighted.reduce((sum, item) => sum + item.weight * ((item.score - averageScore) ** 2), 0) / weightSum;
+    const weightSquares = weighted.reduce((sum, item) => sum + item.weight ** 2, 0);
+    const effectiveSamples = weightSum ** 2 / Math.max(weightSquares, 1);
+    const interval = Math.ceil(1.96 * Math.sqrt(variance / Math.max(1, effectiveSamples)));
+    return { average: Math.round(averageScore), interval };
+  };
 
   const now = new Date();
   const fourWeeksAgo = new Date(now.getTime() - 28 * DAY_MS);
   const weekStart = startOfWeek(now);
   const baselineTrips = completed.filter((trip) => new Date(trip.start_time) >= fourWeeksAgo);
   const thisWeekTrips = completed.filter((trip) => new Date(trip.start_time) >= weekStart);
-  const baselineAvg = baselineTrips.length >= 3 ? avg(baselineTrips) : null;
+  const weightedBaseline = exponentiallyWeighted(baselineTrips);
+  const baselineAvg = baselineTrips.length >= PERSONAL_BASELINE_MIN_TRIPS ? weightedBaseline.average : null;
+  const baselineInterval = baselineAvg == null ? null : weightedBaseline.interval;
   const thisWeekAvg = avg(thisWeekTrips);
   const delta = thisWeekAvg != null && baselineAvg != null ? thisWeekAvg - baselineAvg : null;
   const trend = delta == null ? 'unknown' : delta >= 5 ? 'improving' : delta <= -5 ? 'declining' : 'steady';
@@ -829,6 +868,9 @@ export function computePersonalBaseline(completedTrips = []) {
 
   return {
     baseline_avg: baselineAvg,
+    baseline_confidence_interval: baselineInterval,
+    baseline_trip_count: baselineTrips.length,
+    baseline_confidence: baselineAvg == null ? 'insufficient_data' : baselineTrips.length >= 20 ? 'high' : 'developing',
     this_week_avg: thisWeekAvg,
     delta,
     trend,
@@ -845,7 +887,7 @@ export function calculatePeakHourStress(completedTrips = []) {
   const offPeakRates = [];
 
   completedTrips
-    .filter((trip) => trip.status === 'completed')
+    .filter((trip) => trip.status === 'completed' && (Number(trip.distance_km) || 0) >= PEAK_STRESS_MIN_TRIP_KM)
     .forEach((trip) => {
       const hour = new Date(trip.start_time).getHours();
       const eventCount =
@@ -853,7 +895,7 @@ export function calculatePeakHourStress(completedTrips = []) {
         (trip.rapid_accel_count || 0) +
         (trip.sharp_turns_count || 0) +
         (trip.speeding_events_count || 0);
-      const eventsPerKm = eventCount / Math.max(1, trip.distance_km || 0);
+      const eventsPerKm = eventCount / Number(trip.distance_km);
       if (peakHours.has(hour)) peakRates.push(eventsPerKm);
       else offPeakRates.push(eventsPerKm);
     });
@@ -861,15 +903,18 @@ export function calculatePeakHourStress(completedTrips = []) {
   const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   const peakAvg = mean(peakRates);
   const offPeakAvg = mean(offPeakRates);
+  const insufficientData = peakRates.length + offPeakRates.length === 0;
   const stressRatio = Math.min(5, offPeakAvg > 0.01 ? peakAvg / offPeakAvg : 1.0);
   const peakStressScore = Math.max(0, Math.round(100 - (stressRatio - 1) * 40));
 
   return {
-    peak_trips_event_rate: Math.round(peakAvg * 100) / 100,
-    off_peak_trips_event_rate: Math.round(offPeakAvg * 100) / 100,
-    stress_ratio: Math.round(stressRatio * 10) / 10,
-    peak_stress_score: peakStressScore,
-    peak_stress_label: peakStressScore >= 85
+    peak_trips_event_rate: insufficientData ? null : Math.round(peakAvg * 100) / 100,
+    off_peak_trips_event_rate: insufficientData ? null : Math.round(offPeakAvg * 100) / 100,
+    stress_ratio: insufficientData ? null : Math.round(stressRatio * 10) / 10,
+    peak_stress_score: insufficientData ? null : peakStressScore,
+    peak_stress_label: insufficientData
+      ? 'insufficient data'
+      : peakStressScore >= 85
       ? 'consistent'
       : peakStressScore >= 65
         ? 'slightly stressed'
@@ -878,19 +923,19 @@ export function calculatePeakHourStress(completedTrips = []) {
           : 'significantly stressed',
     peak_trip_count: peakRates.length,
     off_peak_trip_count: offPeakRates.length,
+    insufficient_data: insufficientData,
   };
 }
 
 export function identifyCommutePatterns(completedTrips = []) {
   const groups = new Map();
-  const cell = (point) => `${Math.round(point.lat * 200) / 200},${Math.round(point.lng * 200) / 200}`;
   const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 
   completedTrips
     .filter((trip) => trip.status === 'completed' && Array.isArray(trip.route_points) && trip.route_points.length >= 2)
     .forEach((trip) => {
-      const points = trip.route_points;
-      const routeKey = `${cell(points[0])}|${cell(points[points.length - 1])}`;
+      const routeKey = commuteRouteKeyForTrip(trip);
+      if (!routeKey) return;
       const group = groups.get(routeKey) || [];
       group.push(trip);
       groups.set(routeKey, group);
@@ -1061,7 +1106,7 @@ export function calculateSpeedDiscipline(trips = [], settings = {}) {
 
   return {
     sample_points: speeds.length,
-    max_speed_kmh: Math.round(speeds[speeds.length - 1]),
+    max_speed_kmh: Math.round(Math.max(...speeds)),
     avg_speed_kmh: Math.round(avgSpeed * 10) / 10,
     p85_speed_kmh: Math.round(p85Speed * 10) / 10,
     over_limit_points: overLimit,
@@ -1169,7 +1214,9 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
   const recentThirty = completed.filter((trip) => new Date(trip.start_time || trip.created_at || 0).getTime() >= thirtyDaysAgo);
   const poorReactionTrips = recentThirty.filter((trip) => ['reactive', 'delayed'].includes(trip.reaction_grade)).length;
-  const emergencyHeavyTrips = recentThirty.filter((trip) => trip.braking_efficiency_grade === 'emergency_heavy').length;
+  const emergencyHeavyTrips = recentThirty.filter((trip) =>
+    ['poor', 'emergency_heavy'].includes(trip.braking_efficiency_grade)
+  ).length;
   const common = (field) => {
     const counts = new Map();
     recentTen.forEach((trip) => counts.set(trip[field], (counts.get(trip[field]) || 0) + 1));

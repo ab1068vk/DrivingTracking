@@ -1,5 +1,7 @@
 import { analyzeTimeOfDay } from '@/lib/tripInsights';
 
+export const WEEKLY_COACH_MIN_SCORE_DELTA = 3;
+
 const eventTotal = (trips, key) => trips.reduce((sum, trip) => sum + (Number(trip[key]) || 0), 0);
 
 const distanceWeightedScore = (trips = []) => {
@@ -54,6 +56,11 @@ export function buildWeeklyCoachSummary(trips = []) {
   const windows = analyzeTimeOfDay(scope).sort((a, b) => (b.events || 0) - (a.events || 0));
   const pressureWindow = windows[0]?.label || (evening.length >= scope.length / 2 ? 'Evening' : 'mixed times');
   const avgScore = Math.round(distanceWeightedScore(scope) ?? 0);
+  const scopeIds = new Set(scope.map((trip) => trip.id).filter(Boolean));
+  const comparison = completed.filter((trip) => !scopeIds.has(trip.id)).slice(0, scope.length);
+  const priorScore = distanceWeightedScore(comparison);
+  const scoreDelta = priorScore == null ? null : Math.round(avgScore - priorScore);
+  const meaningfulScoreChange = scoreDelta != null && Math.abs(scoreDelta) > WEEKLY_COACH_MIN_SCORE_DELTA;
 
   const context = [
     cityShort.length >= 2 ? 'short city trips' : null,
@@ -82,10 +89,11 @@ export function buildWeeklyCoachSummary(trips = []) {
 
   return {
     headline,
-    insight: `Local rules analyzed ${scope.length} trip${scope.length === 1 ? '' : 's'} with average score ${avgScore}. No AI service was used.`,
-    actions,
+    insight: `Local rules analyzed ${scope.length} trip${scope.length === 1 ? '' : 's'} with average score ${avgScore}.${meaningfulScoreChange ? ` Score changed ${scoreDelta > 0 ? '+' : ''}${scoreDelta} points from the comparison period.` : ''} No AI service was used.`,
+    actions: [...new Set(actions)],
     plan,
     focus: biggest[0],
     confidence: scope.length >= 6 ? 'high' : 'medium',
+    decisionRule: `One focus metric per week; score-change commentary requires more than ${WEEKLY_COACH_MIN_SCORE_DELTA} points.`,
   };
 }

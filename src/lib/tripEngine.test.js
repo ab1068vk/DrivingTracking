@@ -19,7 +19,7 @@ import {
   cleanRoutePoints,
   computeSmoothedAccelerations,
   detectDrivingEvents,
-  detectSpeedCreep,
+  detectSpeedCreepWithThresholds,
   detectHighwayMergeBehavior,
   inferSpeedZones,
   detectLaneChanges,
@@ -55,6 +55,7 @@ import {
   calculateDrivingConsistency,
   calculateNoHarshBrakeStreak,
   calculateRiskEventRate,
+  calculatePeakHourStress,
   calculateSpeedDiscipline,
   calculateWeeklyDrivingGoals,
   calculateVehicleHealthImpact,
@@ -132,6 +133,19 @@ describe('tripEngine', () => {
     expect(stats.avg_running_speed_kmh).toBe(80.1);
     expect(stats.max_speed_kmh).toBe(40);
     expect(stats.idle_time_seconds).toBe(60);
+  });
+
+  it('excludes long background tracking gaps from effective driving duration', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 40),
+      point(43.6542, -79.3832, 10, 40),
+      point(43.6552, -79.3832, 610, 40),
+      point(43.6562, -79.3832, 620, 40),
+    ];
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
+    expect(stats.wall_clock_duration_seconds).toBe(620);
+    expect(stats.gap_seconds).toBe(600);
+    expect(stats.duration_seconds).toBe(20);
   });
 
   it('cleans noisy route points before calculating route summaries', () => {
@@ -333,7 +347,7 @@ describe('tripEngine', () => {
     };
 
     expect(calculateSpeedLimitCompliance(points, stats, DEFAULT_THRESHOLDS).overall_compliance_score).toBe(100);
-    expect(detectSpeedCreep(points, DEFAULT_THRESHOLDS).speed_creep_event_count).toBe(0);
+    expect(detectSpeedCreepWithThresholds(points, DEFAULT_THRESHOLDS).speed_creep_event_count).toBe(0);
   });
 
   it('detects sharp turns using lateral G-force at running speed', () => {
@@ -462,6 +476,34 @@ describe('tripEngine', () => {
     );
 
     expect(scores.distraction_score).toBe(100);
+  });
+
+  it('returns confidence metadata for exported component scores', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 5, fatigue_risk_score: 0, intersection_score: null },
+      [],
+      DEFAULT_THRESHOLDS,
+      600,
+      {},
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores).toMatchObject({
+      score_confidence: 1,
+      distraction_score_confidence: 1,
+      near_miss_score_confidence: 1,
+      fuel_band_score_confidence: 0,
+      smooth_braking_score_confidence: 0,
+      engine_stress_score_confidence: 1,
+      speed_creep_score_confidence: 0,
+      phone_use_score_confidence: 1,
+      hill_driving_score_confidence: 0,
+      reaction_score_confidence: 0,
+      cornering_consistency_score_confidence: 0,
+      braking_efficiency_score_confidence: 0,
+      defensive_driving_score_confidence: 1,
+    });
   });
 
   it('caps persistent phone-use distraction at a 30 point floor', () => {
@@ -762,7 +804,7 @@ describe('tripEngine', () => {
     expect(result.svi_score_confidence).toBe('road_type_stratified');
   });
 
-  it('scores 50 percent optimal fuel-band time as 70', () => {
+  it('does not award an inflated fuel-band score for 50 percent optimal time', () => {
     const points = [
       point(43.6532, -79.3832, 0, 70),
       point(43.6542, -79.3832, 10, 70),
@@ -772,7 +814,7 @@ describe('tripEngine', () => {
     const fuelBand = calculateFuelBandScore(points);
 
     expect(fuelBand.optimal_band_ratio).toBe(50);
-    expect(fuelBand.fuel_band_score).toBe(70);
+    expect(fuelBand.fuel_band_score).toBe(55);
   });
 
   it('scales night penalty by night and deep-night route share', () => {
@@ -1332,6 +1374,7 @@ describe('trip insights', () => {
         start_time: new Date().toISOString(),
         distance_km: 100,
         score_overall: 96,
+        score_confidence: 1,
         harsh_brakes_count: 0,
         rapid_accel_count: 0,
         sharp_turns_count: 0,
@@ -1351,6 +1394,7 @@ describe('trip insights', () => {
     expect(estimateTripEconomics(trips[0], vehicle).cost).toBe(20);
     expect(estimateTripEconomics(trips[0], vehicle).co2_kg).toBe(23.1);
     expect(buildScoreTips(trips)[0]).toContain('excellent');
+    expect(buildScoreTips([{ ...trips[0], score_confidence: undefined }])[0]).toContain('Not enough data yet');
     const badges = calculateAchievementBadges(trips);
     expect(badges).toHaveLength(26);
     expect(badges.find((badge) => badge.id === 'first_drive').earned).toBe(true);
@@ -1431,6 +1475,17 @@ describe('trip insights', () => {
       weekly_goal_max_night_trips: 0,
     }).find((goal) => goal.id === 'speeding').met).toBe(false);
     expect(calculateRiskEventRate([todayTrip]).events_per_100km).toBe(4);
+    expect(calculateRiskEventRate([{ ...todayTrip, distance_km: 4 }])).toMatchObject({
+      events_per_100km: null,
+      insufficient_data: true,
+      minimum_distance_km: 50,
+    });
+    expect(calculatePeakHourStress([{ ...todayTrip, distance_km: 0.3 }])).toMatchObject({
+      peak_stress_score: null,
+      stress_ratio: null,
+      peak_stress_label: 'insufficient data',
+      insufficient_data: true,
+    });
     expect(calculateSpeedDiscipline([todayTrip], { threshold_speeding_kmh: 130 }).level).toBe('needs_attention');
     expect(calculateDrivingConsistency([todayTrip]).consistency_score).toBeNull();
     expect(buildDrivingCoachInsights([todayTrip], { threshold_speeding_kmh: 130 }).focus_area).toBe('acceleration');
@@ -1449,7 +1504,7 @@ describe('trip insights', () => {
       eco_driving_score: 90,
       driving_events: [{ type: 'harsh_brake', severity: 'medium' }],
     };
-    const trips = Array.from({ length: 4 }, (_, index) => ({
+    const trips = Array.from({ length: 10 }, (_, index) => ({
       ...commute,
       id: `baseline-${index}`,
       start_time: new Date(Date.now() - index * 86400000).toISOString(),
@@ -1461,6 +1516,28 @@ describe('trip insights', () => {
     expect(suggestTripTag({ ...commute, start_time: new Date(2026, 0, 5, 5, 0, 0).toISOString() }).auto_tag).not.toBe('night');
     expect(estimateTripEconomics(commute, { fuel_efficiency_l_per_100km: 10 }).fuel_saved_liters).toBeGreaterThan(0);
     expect(computePersonalBaseline(trips).baseline_avg).not.toBeNull();
+    expect(computePersonalBaseline(trips).baseline_confidence_interval).not.toBeNull();
     expect(calculateVehicleHealthImpact([commute], {}).extra_wear_km).toBe(32);
+  });
+
+  it('does not unlock a personal baseline before ten completed trips', () => {
+    const trips = Array.from({ length: 9 }, (_, index) => ({
+      status: 'completed',
+      start_time: new Date(Date.now() - index * 86400000).toISOString(),
+      distance_km: 5,
+      score_overall: 80,
+    }));
+    expect(computePersonalBaseline(trips).baseline_avg).toBeNull();
+  });
+
+  it('weights personal baseline by recency without distance bias', () => {
+    const trips = Array.from({ length: 10 }, (_, index) => ({
+      status: 'completed',
+      start_time: new Date(Date.now() - index * 86400000).toISOString(),
+      distance_km: index === 9 ? 1 : 5,
+      score_overall: index === 0 ? 60 : 90,
+    }));
+    const longOldTrip = trips.map((trip, index) => (index === 9 ? { ...trip, distance_km: 1000 } : trip));
+    expect(computePersonalBaseline(trips).baseline_avg).toBe(computePersonalBaseline(longOldTrip).baseline_avg);
   });
 });

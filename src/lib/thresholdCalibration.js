@@ -70,7 +70,7 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
   const kmAnalyzedRaw = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const feedbackSummary = summarizeEventFeedback(completed);
 
-  if ((tripsAnalyzed < 15 || kmAnalyzedRaw < 200) && feedbackSummary.total < 3) {
+  if (tripsAnalyzed < 15 && kmAnalyzedRaw < 200 && feedbackSummary.total < 3) {
     return {
       insufficient: true,
       tripsNeeded: Math.max(0, 15 - tripsAnalyzed),

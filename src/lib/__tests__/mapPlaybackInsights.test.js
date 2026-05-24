@@ -50,6 +50,17 @@ describe('mapPlaybackInsights', () => {
     expect(position.point.speed_kmh).toBeCloseTo(30, 0);
   });
 
+  it('uses elapsed time rather than point index for timeline progress', () => {
+    const points = [
+      point(0, 30, { timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 0, { timestamp: '2026-01-01T12:00:10.000Z' }),
+      point(2, 30, { timestamp: '2026-01-01T12:01:40.000Z' }),
+    ];
+    const timeline = buildPlaybackTimeline(points);
+    expect(timeline.segments[0].progressEnd).toBeCloseTo(10, 3);
+    expect(timeline.segments[0].progressEnd).not.toBe(50);
+  });
+
   it('keeps traveled distance tied to route progress during stopped playback time', () => {
     const points = [
       point(0, 30, { timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString() }),

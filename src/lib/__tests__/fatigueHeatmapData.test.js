@@ -18,31 +18,44 @@ describe('fatigue heatmap data', () => {
 
   it('builds deterministic heatmap entries', () => {
     const trip = {
-      route_points: Array.from({ length: 9 }, (_, index) => p(index)),
-      fatigue_progression: [
-        { start_index: 0, end_index: 2, score: 80 },
-        { start_index: 3, end_index: 5, score: 50 },
-        { start_index: 6, end_index: 8, score: 20 },
-      ],
+      route_points: Array.from({ length: 20 }, (_, index) => p(index)),
+      fatigue_heatmap: {
+        segments: Array.from({ length: 20 }, (_, index) => ({
+          start_index: index,
+          end_index: index,
+          score: index < 7 ? 80 : index < 14 ? 50 : 20,
+        })),
+      },
     };
     const result = buildFatigueHeatmapData(trip);
-    expect(result).toHaveLength(3);
-    expect(result[2].fatigueLevel).toBeGreaterThan(result[0].fatigueLevel);
+    expect(result).toHaveLength(20);
+    expect(result.at(-1).fatigueLevel).toBeGreaterThan(result[0].fatigueLevel);
   });
 
   it('uses boundary colors for high fatigue', () => {
     const result = buildFatigueHeatmapData({
-      route_points: Array.from({ length: 3 }, (_, index) => p(index)),
-      fatigue_progression: [{ start_index: 0, end_index: 2, score: 30 }],
+      route_points: Array.from({ length: 20 }, (_, index) => p(index)),
+      fatigue_heatmap: {
+        segments: Array.from({ length: 20 }, (_, index) => ({ start_index: index, end_index: index, score: 30 })),
+      },
     });
     expect(result[0].color).toBe('#ef4444');
   });
 
   it('sorts heatmap entries by minute offset', () => {
     const result = buildFatigueHeatmapData({
-      route_points: Array.from({ length: 6 }, (_, index) => p(index)),
-      fatigue_progression: [{ start_index: 4, end_index: 5, score: 50 }, { start_index: 0, end_index: 1, score: 90 }],
+      route_points: Array.from({ length: 20 }, (_, index) => p(index)),
+      fatigue_heatmap: {
+        segments: Array.from({ length: 20 }, (_, index) => ({ start_index: 19 - index, end_index: 19 - index, score: 50 })),
+      },
     });
     expect(result[0].minuteOffset).toBeLessThan(result[1].minuteOffset);
+  });
+
+  it('suppresses heatmaps with fewer than 20 segments', () => {
+    expect(buildFatigueHeatmapData({
+      route_points: Array.from({ length: 19 }, (_, index) => p(index)),
+      fatigue_progression: Array.from({ length: 19 }, (_, index) => ({ start_index: index, end_index: index, score: 70 })),
+    })).toEqual([]);
   });
 });

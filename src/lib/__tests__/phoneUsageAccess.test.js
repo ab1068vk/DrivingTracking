@@ -85,6 +85,29 @@ describe('Android phone usage access merge', () => {
     expect(merged.phone_use_total_seconds).toBe(65);
   });
 
+  it('keeps only the higher-confidence signal when GPS and Android windows overlap', () => {
+    const gps = {
+      phone_use_events: [{
+        type: 'phone_use',
+        source: 'gps_proxy',
+        startTime: new Date(baseTime + 10_000).toISOString(),
+        endTime: new Date(baseTime + 30_000).toISOString(),
+        durationS: 20,
+        confidence: 0.62,
+      }],
+      phone_use_risk: 'medium',
+      phone_use_score: 88,
+    };
+    const usage = buildPhoneUseFromAndroidUsage({
+      events: [{ package_name: 'com.chat.app', start_ms: baseTime + 12_000, end_ms: baseTime + 32_000, duration_seconds: 20 }],
+    }, Array.from({ length: 40 }, (_, index) => routePoint(index)), 120);
+
+    const merged = mergePhoneUseSignals(gps, usage, 120);
+    expect(merged.phone_use_window_count).toBe(1);
+    expect(merged.phone_use_events[0].source).toBe('android_usage_access');
+    expect(merged.phone_use_total_seconds).toBe(20);
+  });
+
   it('adds usage-access phone events to the driving event list once', () => {
     const usage = buildPhoneUseFromAndroidUsage({
       events: [{ package_name: 'com.chat.app', start_ms: baseTime + 5_000, end_ms: baseTime + 15_000, duration_seconds: 10 }],

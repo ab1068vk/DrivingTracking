@@ -59,6 +59,16 @@ describe('routeRiskIndex', () => {
     expect(loaded.size).toBe(index.size);
   });
 
+  it('merges stored risk cells whose midpoints are within GPS-noise distance', async () => {
+    await saveRouteRiskIndex(new Map([
+      ['a', { lat: 43.6532, lng: -79.3832, tripCount: 1, totalEvents: 1, harshCount: 1, speedSum: 40, eventTypes: { harsh_brake: 1 }, riskScore: 50, riskLevel: 'moderate' }],
+      ['b', { lat: 43.65327, lng: -79.3832, tripCount: 1, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
+    ]));
+    const loaded = await loadRouteRiskIndex();
+    expect(loaded.size).toBe(1);
+    expect([...loaded.values()][0].tripCount).toBe(2);
+  });
+
   it('trims storage when serialized index exceeds 2 MB', async () => {
     const index = new Map();
     for (let i = 0; i < 6000; i++) {

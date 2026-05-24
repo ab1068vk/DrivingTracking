@@ -397,10 +397,15 @@ export default function Reports() {
                   <p className="mt-1 text-xs text-muted-foreground">UBI-style telematics report for insurance or personal records</p>
                 </div>
                 <div className="text-right">
-                  <div className="font-grotesk text-3xl font-bold">{ubiReport.ubiScore}</div>
+                  <div className="font-grotesk text-3xl font-bold">{ubiReport.ubiScore ?? '-'}</div>
                   <div className="text-xs font-semibold text-primary">{ubiReport.ubiGrade} · {ubiReport.ubiTier}</div>
                 </div>
               </div>
+              {ubiReport.insufficientData && (
+                <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+                  Complete at least {ubiReport.minimumDistanceKm ?? 50} km to calculate rate-based score-card grades.
+                </p>
+              )}
               <ResponsiveContainer width="100%" height={220}>
                 <RadarChart data={ubiRadarData} outerRadius={78}>
                   <PolarGrid />
@@ -413,8 +418,10 @@ export default function Reports() {
             <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
             <p className="text-xs text-muted-foreground mb-4">
               {baseline.baseline_avg == null
-                ? 'More recent trips are needed for a rolling 4-week baseline.'
-                : `This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from baseline.`}
+                ? `A baseline unlocks after 10 completed trips in 4 weeks (${baseline.baseline_trip_count}/10 recorded).`
+                : baseline.delta == null
+                  ? `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; no trip was recorded this week.`
+                  : `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; this week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`}
             </p>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
@@ -422,7 +429,7 @@ export default function Reports() {
                 <div className="text-xs text-muted-foreground">this week</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg ?? '-'}</div>
+                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}`}</div>
                 <div className="text-xs text-muted-foreground">baseline</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
@@ -634,6 +641,9 @@ export default function Reports() {
           >
             <h2 className="font-semibold mb-1">Peak Vs Off-Peak</h2>
             <p className="text-xs text-muted-foreground mb-4">Risk event rate per km by traffic window</p>
+            {peakHourStress.insufficient_data && (
+              <p className="mb-3 text-xs text-muted-foreground">Not enough eligible trip distance yet. Trips under 0.5 km are excluded.</p>
+            )}
             <ResponsiveContainer width="100%" height={150}>
               <BarChart data={peakComparisonData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />

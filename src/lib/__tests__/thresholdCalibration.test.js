@@ -32,10 +32,9 @@ describe('thresholdCalibration', () => {
     expect(computeCalibrationProfile([trip(1)], thresholds).insufficient).toBe(true);
   });
 
-  it('returns insufficient when trips exist but under 200 km total', () => {
+  it('allows calibration after the trip threshold even when total distance is short', () => {
     const profile = computeCalibrationProfile(Array.from({ length: 15 }, (_, i) => trip(i, 5)), thresholds);
-    expect(profile.insufficient).toBe(true);
-    expect(profile.kmNeeded).toBeGreaterThan(0);
+    expect(profile.insufficient).toBe(false);
   });
 
   it('clamps suggested harsh brake threshold to [3.0, 7.0]', () => {

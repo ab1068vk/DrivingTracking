@@ -642,17 +642,17 @@ function apiReference() {
 
 function topCalculationSnippets() {
   const snippets = [
-    ['Trip scoring weights and final score', 'src/lib/tripEngine.js', 3925, 4135, 'js'],
-    ['Eco score, cruise band, idle penalty', 'src/lib/tripEngine.js', 1253, 1325, 'js'],
-    ['Map playback position interpolation', 'src/lib/mapPlaybackInsights.js', 248, 354, 'js'],
-    ['Predictive route risk', 'src/lib/predictiveRouteRisk.js', 90, 170, 'js'],
+    ['Trip scoring weights, confidence, and final score', 'src/lib/tripEngine.js', 4597, 4900, 'js'],
+    ['Eco score, cruise band, idle penalty', 'src/lib/tripEngine.js', 1448, 1620, 'js'],
+    ['Map playback position interpolation', 'src/lib/mapPlaybackInsights.js', 254, 450, 'js'],
+    ['Predictive route risk', 'src/lib/predictiveRouteRisk.js', 110, 174, 'js'],
     ['Pre-trip readiness risk', 'src/lib/preTripRisk.js', 118, 202, 'js'],
     ['Daily fatigue readiness accumulation', 'src/lib/dailyFatigueEngine.js', 1, 126, 'js'],
-    ['Route risk segment index', 'src/lib/routeRiskIndex.js', 31, 108, 'js'],
-    ['Phone-use risk construction', 'src/lib/phoneUsageAccess.js', 36, 119, 'js'],
-    ['UBI report category scoring', 'src/lib/ubiReport.js', 1, 170, 'js'],
+    ['Route risk segment index and GPS snapping', 'src/lib/routeRiskIndex.js', 1, 185, 'js'],
+    ['Phone-use risk construction and signal merge', 'src/lib/phoneUsageAccess.js', 81, 325, 'js'],
+    ['UBI report category scoring and minimum-distance gate', 'src/lib/ubiReport.js', 1, 142, 'js'],
     ['Threshold calibration suggestions', 'src/lib/thresholdCalibration.js', 1, 135, 'js'],
-    ['Android native distance and speed service math', 'android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', 900, 1115, 'java'],
+    ['Android native distance, gap-corrected duration, and speed service math', 'android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', 921, 1115, 'java'],
   ];
   return snippets.map(([title, file, start, end, lang]) => {
     const full = path.join(ROOT, file);
@@ -766,12 +766,17 @@ function buildDoc() {
       ['Driver signature braking confidence', '`buildDriverSignature` excludes trips without measured braking efficiency from its braking dimension, keeps `dimensions.brakingStyle` null until at least three scored trips exist, and exposes `braking_confidence` from 0 to 1 based on up to ten observed braking trips. Driving Coach shows unavailable braking evidence as an em dash rather than a perfect score.'],
       ['Predictive maintenance brake evidence', '`calculatePredictiveMaintenance` excludes trips without finite braking efficiency from brake-stress averaging. `brake_stress_index` remains null until there are at least five completed trips and three observed braking scores; unavailable braking evidence is neutral in the combined service-interval adjustment.'],
       ['Predictive route risk window', '`estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history.'],
-      ['Predictive route danger-zone cap', '`estimatePredictiveRouteRisk` converts nearby danger-zone count into a diminishing-return score capped at 30 raw risk points and reports the nearby-zone count in `primaryFactor`, so dense areas no longer pin the total route risk to 100 by themselves.'],
-      ['UBI time and mileage scoring', '`computeUBIReport` scores night exposure from night-driving minutes divided by total driving minutes, and annual mileage uses a bell curve centered on 10,000 km/year instead of rewarding every sub-1,000 km driver with a perfect score.'],
+      ['Personal baseline confidence', '`computePersonalBaseline` withholds a dashboard baseline until 10 completed trips are available in the recent window, then uses exponential recency weighting and displays a confidence interval rather than an unstable simple mean.'],
+      ['Context-aware score evidence', 'Braking-efficiency grades use urban or highway thresholds and display their driving context. Hill-driving returns `hill_route: false` with a null score when not applicable; null component evidence stays out of composite decisions and score confidence metadata supports low-data UI suppression.'],
+      ['Fatigue and playback time integrity', '`calculateFatigueScore` stores a normalized 0-100 fatigue risk. Fatigue heatmaps use named 30-second segments and require 20 segments before display. Trip duration subtracts tracking gaps, including native Android stats, and map playback uses timestamp progress with index progress only as a missing-time fallback.'],
+      ['Phone-use deduplication', 'Android usage evidence and micro-steering phone-use detections are merged within a 30-second overlap window, retaining the stronger confidence signal so a single episode is not penalized twice.'],
+      ['Predictive route normalization', '`estimatePredictiveRouteRisk` normalizes and clamps baseline, event-density, danger-zone, weather, and time inputs before applying fractional weights. Route-risk indexing snaps nearby GPS cells within 15 m to limit same-road fragmentation.'],
+      ['UBI minimum evidence and weighting', '`computeUBIReport` returns insufficient data below 50 km, uses actual distance for event rates, and reduces GPS-heading-derived cornering weight to 5% while shifting weight toward braking.'],
+      ['Commute and coaching policy', '`COMMUTE_MATCH_RADIUS_M` documents the 150 m commute route-match radius shown in Settings. Weekly coaching uses one focus metric and requires a score delta greater than 3 points; score tips require at least 2 km and confidence of at least 0.5.'],
       ['UI section recovery', '`src/components/SectionErrorBoundary.jsx` isolates calculation-heavy route maps, trip playback, Trip Detail score summaries, the Trip Detail page shell, and the Dashboard readiness/risk panel. Caught render errors are logged through `logError` and show a reloadable fallback instead of blanking the app.'],
       ['Handled operation failures', '`src/lib/errorReporting.js` exports `logError(context, error, extra)` for critical async failures. Post-trip notifications, achievement sync, odometer sync, and driver-signature persistence now write tracking diagnostics instead of disappearing behind bare catches.'],
       ['Shared time-risk windows', '`src/lib/appConstants.js` owns night (22:00-04:59), morning-rush (07:00-09:59 by hourly bucket), and evening-rush (16:00-18:59) boundaries used by habit, pre-trip, predictive route risk, automatic trip tagging, and fixed-hour trip-engine fallback behavior. Android fixed-hour night classification now evaluates that same 22:00-04:59 boundary in the device local timezone, matching JavaScript `Date#getHours()` semantics for native and JS rescoring agreement. Legacy sunset-mode settings migrate to this fallback; custom night hours remain configurable.'],
-      ['Backup migrations', '`src/lib/dataBackup.js` migrates schema versions 1 through 5 before import, accepts trip notes up to 10,000 characters, and returns truncation warnings surfaced in Settings.'],
+      ['Backup migrations', '`src/lib/dataBackup.js` migrates schema versions 1 through 5 before import, accepts trip notes up to 10,000 characters, counts affected truncated notes, and requires explicit confirmation in Settings before completing a truncating import.'],
       ['Bounded UI lists', 'Risk hotspots initially show 6 and route history stretches initially show 3 through named constants, with a show-all control and hidden-item count.'],
     ],
   ));
@@ -828,7 +833,7 @@ function buildDoc() {
 
   doc.push('## Hard-Coded Values And Constants Registry');
   doc.push('');
-  doc.push('Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_DEFAULTS`, `SVI_DEFAULTS`, `src/lib/appConstants.js`, daily-fatigue, route-risk, pre-trip-risk, habit-profile, and danger-zone constants. The app also contains intentional literals for route labels, feature flags, UI labels, named Android notification IDs, and tests; these are grouped by file so reviewers can see why each value exists.');
+  doc.push('Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_DEFAULTS`, `SVI_DEFAULTS`, `src/lib/appConstants.js`, `PERSONAL_BASELINE_MIN_TRIPS`, `FATIGUE_HEATMAP_SEGMENT_SECONDS`, `COMMUTE_MATCH_RADIUS_M`, `MIN_UBI_REPORT_DISTANCE_KM`, daily-fatigue, route-risk, pre-trip-risk, habit-profile, and danger-zone constants. The app also contains intentional literals for route labels, feature flags, UI labels, named Android notification IDs, and tests; these are grouped by file so reviewers can see why each value exists.');
   doc.push('');
   doc.push(literalRegistry());
   doc.push('');
@@ -883,7 +888,7 @@ function buildDoc() {
   doc.push('- User-controlled data surfaces: backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, CSV/PDF export content, and Android native intent extras.');
   doc.push('- Leaflet popups: route labels, event metadata, speed-limit road/source data, route-risk segments, danger zones, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.');
   doc.push('- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled raw GPS coordinate pairs only when route snapping is explicitly enabled and requested. Settings shows a warning beside the custom OSRM endpoint input because user-provided endpoints can be untrusted external servers.');
-  doc.push('- Backup restore: schema versions 1 through 5 are migrated before merge; untrusted records are whitelisted and field-limited, and any text truncation is reported to the user.');
+  doc.push('- Backup restore: schema versions 1 through 5 are migrated before merge; untrusted records are whitelisted and field-limited, and any note truncation reports the affected trip count and requires explicit user confirmation before completion.');
   doc.push('- Secrets: no secrets are checked into this repo by the scanner; `VITE_API_URL` is configuration, not a secret.');
   doc.push('- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can redirect sampled raw coordinate pairs by design, with an explicit in-app warning at the custom endpoint control.');
   doc.push('');
@@ -891,7 +896,7 @@ function buildDoc() {
 
   doc.push('## Performance Characteristics');
   doc.push('');
-  doc.push('- Critical loops: trip stats, erratic-speed sliding windows, braking-sequence scoring, night detection, fatigue progression, and route playback are linear over route points; road-type scores partition cached full-trip events rather than rerunning detection for each type. Route-risk index creation remains an O(trips x route segments x event-proximity checks) candidate; import/export and full-history reports are O(number of local records).');
+  doc.push('- Critical loops: trip stats, erratic-speed deque windows, braking-sequence scoring, night detection, fatigue progression, and route playback are linear over route points. Road-type scores pre-classify route points in fixed windows and assign cached full-trip events through indexed or binary timestamp lookup, avoiding the prior quadratic route scan pattern. Route-risk index creation remains an O(trips x route segments x event-proximity checks) candidate; import/export and full-history reports are O(number of local records).');
   doc.push('- Platform detection is memoized once at module load, so native/local-store branching does not repeatedly call Capacitor during render or tracking loops.');
   doc.push('- Long-trip scoring has a regression budget: a synthetic 2,000-point trip must complete stats plus score calculation in under 500 ms in the trip engine test suite.');
   doc.push('- Frontend bundle splitting: `vite.config.js` manually chunks React, charts, html2canvas, jsPDF, and Capacitor vendors.');
@@ -944,8 +949,8 @@ function buildReadme() {
     '- Trip scoring for safety, smoothness, eco driving, phone-use distraction, speed compliance, road-type segments, reaction proxy, cornering, braking efficiency, overtake quality, tailgating, fatigue, drowsy risk, slippery-condition proxy, and route risk.',
     '- Map playback with route simplification, stop handling, privacy-masked coordinate handling, HTML-escaped Leaflet popups, speed-limit coloring, fatigue overlays, event markers, and repeated-route comparison support.',
     '- Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, localized per-car cost, CO2 estimate metadata, and engine-health summaries, default vehicle handling, and vehicle comparison.',
-    '- Reports with CSV export, monthly PDF export, UBI score-card PDF export, rolling baseline comparison, carbon impact, configurable-currency fuel cost, and vehicle-backed CO2 savings estimates.',
-    '- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, and reviewed event feedback.',
+    '- Reports with CSV export, monthly PDF export, UBI score-card PDF export gated until 50 km of evidence, confidence-aware rolling baseline comparison, carbon impact, configurable-currency fuel cost, and vehicle-backed CO2 savings estimates.',
+    '- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, and reviewed event feedback, with confirmation required before importing truncated notes.',
     '- Diagnostics capture unhandled app errors, handled critical operation failures, and isolated React section crashes with sanitized messages and stack previews.',
     '',
     '## Recent Update Coverage',
@@ -967,21 +972,23 @@ function buildReadme() {
     '- Cornering lateral-G detection now ignores speeds below 25 km/h, smooths heading from route geometry over three points, and requires sustained lateral-G over consecutive GPS samples before creating sharp-turn events.',
     '- Lane-change detection is labeled as `possible lane change` with medium confidence, requires a straight approach above 50 km/h, and suppresses detections near tagged intersections, ramps, roundabouts, or stop-context windows.',
     '- GPS-only near-miss wording has been replaced with estimated close-proximity alerts. New detections use `close_proximity` events, legacy `near_miss` fields remain as compatibility aliases, and close-proximity alerts no longer deduct from the primary Safety or Smoothness scores.',
-    '- Multi-trip score summaries now use distance-weighted averages for weekly summaries, goals, personal baselines, route/day/vehicle/report comparisons, predictive route risk, PDF summaries, and dashboard rollups so trivial short trips no longer count the same as long drives.',
+    '- Multi-trip score summaries use distance-weighted averages for weekly summaries, goals, route/day/vehicle/report comparisons, predictive route risk, PDF summaries, and dashboard rollups. The personal baseline is intentionally different: it appears only after 10 completed recent trips and uses exponential recency weighting with a displayed confidence interval.',
+    '- Braking-efficiency grades are contextual: urban and highway driving use separate thresholds, and the displayed grade identifies its context. Flat or altitude-insufficient routes store hill driving as not applicable rather than turning missing terrain evidence into a penalty.',
+    '- Score and component confidence metadata now governs coaching visibility. Score tips require at least 2 km and confidence of at least 0.5; insufficient evidence displays a not-enough-data message rather than behavior advice.',
     '- Driver signatures now treat missing braking-efficiency evidence as unavailable rather than perfect. Braking style stays blank until at least three scored braking trips exist, `braking_confidence` increases with observed evidence, and Driving Coach labels low-confidence or unavailable braking data instead of charting false certainty.',
     '- Trip-stat hot paths now avoid repeated route rescans: sunset night windows are cached once per trip date, erratic-speed windows maintain sliding summaries, event-to-point lookup is binary-search based, and road-type scores partition full-trip detected events rather than rerunning detection per type.',
     '- Eco driving scoring now resolves missing or malformed tuning through named `ECO_DEFAULTS`, clamps impossible parked-idle ratios, penalizes sustained parked idle instead of unavoidable traffic-stop idle, reports invalid zero-multiplier configurations as unavailable rather than a fixed score, and blends remaining eco evidence into the trip score.',
     '- Speed variability scoring now ignores stopped traffic samples, requires sufficient moving evidence, scores city and highway variability separately through `SVI_DEFAULTS`, distance-weights mixed routes, and omits unavailable SVI from coaching/report trend comparisons.',
-    '- Phone-use Safety impact messaging now uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, so Trip Detail explanations stay aligned with the actual Safety score blend.',
-    '- Predictive route risk now sorts completed trips newest-first inside the estimator before applying the recent-trip window, and nearby danger zones use a diminishing-return contribution capped at 30 raw points with the zone count shown in the primary factor.',
-    '- UBI reports now score time-of-day exposure by night driving minutes instead of night trip count, and the mileage category uses a bell curve centered around 10,000 km/year so very low and very high annual mileage both reduce the category score.',
+    '- Phone-use Safety impact messaging uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, and Android OS usage evidence is merged with overlapping micro-steering detections within 30 seconds so the same phone-use episode is not double-penalized.',
+    '- Predictive route risk sorts completed trips newest-first, excludes tiny-trip event-density distortion, normalizes all weighted components to 0-100, and clamps weather/baseline input before scoring. Route-risk index cells are coarser and merge nearby segment midpoints within 15 m to reduce GPS fragmentation.',
+    '- UBI reports require at least 50 km before generating a score, use actual distance in per-100-km rates, score time-of-day exposure by night driving minutes, reduce noisy GPS-derived cornering to a 5% weight, and use a bell curve centered around 10,000 km/year for mileage.',
     '- Vehicle engine-health summaries now average only finite stored engine stress scores. Trips without a usable score are excluded, and vehicles with no scored samples show `N/A` instead of a misleading maximum-stress fallback.',
     '- Predictive maintenance no longer treats trips without braking evidence as perfectly gentle braking. Brake stress is averaged only from observed braking-efficiency scores and remains unavailable until at least five completed trips include three scored braking samples; unavailable braking evidence is neutral when adjusting service intervals.',
     '- Currency and economics baselines are configurable in Settings, including cost symbol, average vehicle CO2 per 100 km, EV kWh per 100 km, grid CO2 intensity, and tree-year equivalents. Vehicle fuel type is used for trip CO2 estimates; ICE economy below 3 L/100km is rejected and unusually high values receive a confirmation warning.',
     '- Fuel and CO2 estimates now cap eco-driving consumption adjustment to +/-8%. Missing eco-driving evidence applies no adjustment, Trip Detail marks values as estimates with confidence bands, fuel/CO2 savings show unavailable until a vehicle is assigned, and EV CO2 savings remain unavailable unless grid CO2 intensity is configured.',
-    '- Backup import is hardened and versioned: v1-v5 backups migrate before merge, files over 50 MB are rejected before reading, records are sanitized, trip notes allow 10,000 characters, truncation is disclosed in the import summary, route/event arrays are capped, unsafe settings are clamped, and background auto tracking still requires in-app consent.',
+    '- Backup import is hardened and versioned: v1-v5 backups migrate before merge, files over 50 MB are rejected before reading, records are sanitized, trip notes allow 10,000 characters, and any truncation reports the affected trip count and requires explicit user acknowledgement before import completes.',
     '- Native-safe UI preferences now use the mobile storage layer for saved trip filters, dismissed tag suggestions, and first-launch permission prompting. Backup export/import reads and writes saved filters through that same layer on Android.',
-    '- Local trip storage uses IndexedDB when available, with a migration runner and localStorage fallback. Trip schema versioning triggers rescoring for completed trips when scoring, phone-use, map, or privacy behavior changes.',
+    '- Local trip storage uses IndexedDB when available, with a migration runner and localStorage fallback. Trip schema versioning triggers rescoring for completed trips when scoring, confidence, phone-use merge, corrected duration, map, or privacy behavior changes.',
     '- API behavior is local-first by default. Trips and vehicles use local repositories when `VITE_API_URL` is absent or the app is running natively; configured backends fail clearly instead of silently falling back to localhost.',
     '- Auth tokens are session-scoped. Legacy `localStorage` tokens are migrated into `sessionStorage` and removed, and logout clears both token names from browser storage.',
     '- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. OSRM route snapping is opt-in, disabled without a configured endpoint, the public demo requires confirmation, and the custom endpoint field warns that raw sampled GPS coordinate pairs are sent to the configured OSRM server.',
@@ -990,7 +997,10 @@ function buildReadme() {
     '- Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, named notification identifiers, device-local fixed-hour night classification aligned to the shared 22:00-04:59 window, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, and native diagnostics surfaced in the app. Android Gradle setup now removes obsolete AGP flags and reapplies clean AGP 9-compatible plugin DSL patches after install or sync.',
     '- Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
     '- Calculation fixes keep map-matching confidence and snapped coverage numeric even when OSRM sends invalid confidence, omit invalid speed limits from popups, preserve Android `ON_BICYCLE` as `on_bicycle` while retaining legacy `cycling`, and make native platform checks module-level constants.',
-    '- Route risk and fatigue are more graduated: route-risk speed contribution scales above 100 km/h instead of using a binary bonus, and fatigue now combines drive duration, time-of-day risk, route speed variance, and heading drift.',
+    '- Route risk and fatigue are more graduated: route-risk speed contribution scales above 100 km/h instead of using a binary bonus, fatigue is normalized on a 0-100 scale, and heatmaps use documented 30-second segments with a 20-segment minimum for display.',
+    '- Recorded trip duration now excludes long background tracking gaps in both JavaScript and Android native statistics. Map playback progress is timestamp-based, with index-based progress retained only as a fallback when timestamps are unavailable.',
+    '- Commute matching uses the named `COMMUTE_MATCH_RADIUS_M` 150 m threshold exposed in Advanced settings, while weekly coaching avoids duplicate metric advice and only comments on score changes larger than 3 points.',
+    '- Achievement notifications display up to six labels and keep every earned achievement ID in notification extras when a larger batch is condensed.',
     '- CO2 savings are treated as vehicle-backed estimates rather than exact facts. Carbon reports recalculate savings with assigned vehicle context when available, label fleet-average comparisons with a wide confidence band, and avoid positive EV savings claims without known grid carbon intensity.',
     '- Score rings now use the canonical `getScoreColor()` metadata, including SVG stroke colors, so score labels, fills, and circular rings share one color policy.',
     '- Vehicle fuel/energy price validation now uses a currency-neutral 100-per-unit cap instead of a narrow 20-per-litre cap.',
@@ -1032,7 +1042,7 @@ function buildReadme() {
     '- OSRM route snapping is disabled until the user enables it and provides or confirms an endpoint; the custom endpoint input warns that raw sampled GPS coordinate pairs go to that server.',
     '- Automatic road/weather context fetch is off by default; manual Get Road Data prompts before sending route context to external services.',
     '- Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones.',
-    '- Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and disclose any field truncation.',
+    '- Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and require confirmation before any note-truncating import completes.',
     '- Leaflet popup values from trips, routes, events, danger zones, privacy zones, and parked locations are escaped before rendering as HTML.',
     '',
     '## Local Setup',

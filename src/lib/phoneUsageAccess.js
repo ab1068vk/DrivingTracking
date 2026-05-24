@@ -58,6 +58,26 @@ function eventKey(event = {}) {
   ].join('|');
 }
 
+const eventInterval = (event = {}) => {
+  const start = timestampMs(event.startTime || event.timestamp);
+  const durationMs = Math.max(0, Number(event.durationS ?? event.duration_seconds) || 0) * 1000;
+  const end = timestampMs(event.endTime) ?? (start == null ? null : start + durationMs);
+  return { start, end };
+};
+
+const isAndroidSignal = (event = {}) => event.source === 'android_usage_access';
+
+const competingSignalsOverlap = (left = {}, right = {}) => {
+  if (isAndroidSignal(left) === isAndroidSignal(right)) return false;
+  const a = eventInterval(left);
+  const b = eventInterval(right);
+  if (a.start == null || a.end == null || b.start == null || b.end == null) return false;
+  const overlapToleranceMs = 30_000;
+  return a.start <= b.end + overlapToleranceMs && b.start <= a.end + overlapToleranceMs;
+};
+
+const eventConfidence = (event = {}) => Number(event.confidence ?? event.value) || 0;
+
 export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tripDurationSeconds = 0) {
   const sessions = Array.isArray(summary?.events) ? summary.events : [];
   const events = sessions
@@ -208,6 +228,13 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
     const key = eventKey(event);
     if (seen.has(key)) continue;
     seen.add(key);
+    const overlapIndex = deduped.findIndex((existing) => competingSignalsOverlap(existing, event));
+    if (overlapIndex >= 0) {
+      if (eventConfidence(event) > eventConfidence(deduped[overlapIndex])) {
+        deduped[overlapIndex] = event;
+      }
+      continue;
+    }
     deduped.push(event);
   }
   deduped.sort((a, b) => timestampMs(a.startTime || a.timestamp) - timestampMs(b.startTime || b.timestamp));
@@ -272,13 +299,8 @@ export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripD
 }
 
 export function mergePhoneUseEventsIntoDrivingEvents(drivingEvents = [], phoneUse = {}) {
-  const existing = new Set((drivingEvents || []).map(eventKey));
-  const additions = (phoneUse.phone_use_events || []).filter((event) => {
-    if (event.type !== 'phone_use') return false;
-    const key = eventKey(event);
-    if (existing.has(key)) return false;
-    existing.add(key);
-    return true;
-  });
-  return [...(drivingEvents || []), ...additions];
+  const retained = (drivingEvents || []).filter((event) => event?.type !== 'phone_use');
+  const stored = buildPhoneUseFromEvents((drivingEvents || []).filter((event) => event?.type === 'phone_use'));
+  const merged = mergePhoneUseSignals(stored, phoneUse);
+  return [...retained, ...merged.phone_use_events];
 }

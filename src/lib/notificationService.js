@@ -889,7 +889,9 @@ export async function syncAchievementNotifications(achievements = [], { requestP
     : [{
       id: ACHIEVEMENT_GROUP_ID,
       title: `${newAchievements.length} achievements unlocked`,
-      body: newAchievements.slice(0, 3).map((achievement) => achievement.label).join(', '),
+      body: newAchievements.length > 6
+        ? `${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more`
+        : newAchievements.map((achievement) => achievement.label).join(', '),
       channelId: ACHIEVEMENT_CHANNEL_ID,
       extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },
     }];

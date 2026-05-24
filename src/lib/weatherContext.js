@@ -93,6 +93,25 @@ function classifyWeather(samples = []) {
   };
 }
 
+function parseOpenMeteoHourlyTime(time, utcOffsetSeconds) {
+  if (typeof time !== 'string') return NaN;
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(time)) return new Date(time).getTime();
+
+  const match = time.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match || !Number.isFinite(utcOffsetSeconds)) return new Date(time).getTime();
+
+  const [, year, month, day, hour, minute, second = '0'] = match;
+  const localAsUtcMs = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+  return localAsUtcMs - utcOffsetSeconds * 1000;
+}
+
 async function fetchOpenMeteoWeather({ lat, lng, date }) {
   const startDate = dayKey(date);
   const tripDate = new Date(startDate);
@@ -120,10 +139,11 @@ async function fetchOpenMeteoWeather({ lat, lng, date }) {
 function samplesForTrip(data, startTime, endTime) {
   const hourly = data?.hourly || {};
   const times = hourly.time || [];
+  const utcOffsetSeconds = Number(data?.utc_offset_seconds);
   const startMs = new Date(startTime || Date.now()).getTime();
   const endMs = new Date(endTime || startTime || Date.now()).getTime();
   const samples = times.map((time, index) => {
-    const ms = new Date(time).getTime();
+    const ms = parseOpenMeteoHourlyTime(time, utcOffsetSeconds);
     if (!Number.isFinite(ms) || ms < startMs || ms > endMs) return null;
     return {
       sample_time: time,
@@ -143,7 +163,7 @@ function samplesForTrip(data, startTime, endTime) {
   /** @type {{ time: string, index: number, delta: number } | null} */
   let nearest = null;
   times.forEach((time, index) => {
-    const ms = new Date(time).getTime();
+    const ms = parseOpenMeteoHourlyTime(time, utcOffsetSeconds);
     if (!Number.isFinite(ms)) return;
     const delta = Math.abs(ms - midpointMs);
     if (delta > 60 * 60 * 1000) return;

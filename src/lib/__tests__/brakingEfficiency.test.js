@@ -21,6 +21,15 @@ describe('braking efficiency', () => {
     const points = [p(0, 50), p(1, 40), p(2, 30), p(3, 20), p(4, 10), p(5, 4)];
     expect(extractBrakingSequences(points).length).toBe(1);
     expect(calculateBrakingEfficiency(points, []).braking_efficiency_score).toBeGreaterThan(50);
+    expect(calculateBrakingEfficiency(points, []).braking_context).toBe('urban');
+  });
+
+  it('reports highway grading context for highway-dominant braking routes', () => {
+    const points = [
+      ...Array.from({ length: 7 }, (_, index) => p(index, 95)),
+      p(7, 75), p(8, 50), p(9, 25), p(10, 4),
+    ];
+    expect(calculateBrakingEfficiency(points, []).braking_context).toBe('highway');
   });
 
   it('grades progressive braking above emergency-heavy braking', () => {

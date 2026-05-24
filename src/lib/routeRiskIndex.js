@@ -1,7 +1,8 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
 
-export const GRID_PRECISION = 4;
+export const GRID_PRECISION = 3;
+export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
 export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
 const MAX_SERIALIZED_LENGTH = 2_000_000;
 const MAX_STORED_SEGMENTS = 5000;
@@ -9,8 +10,21 @@ const HARSH_EVENT_TYPES = new Set(['harsh_brake', 'near_miss', 'close_proximity'
 const SPEED_RISK_START_KMH = 100;
 const SPEED_RISK_FULL_KMH = 160;
 const SPEED_RISK_MAX_POINTS = 15;
+const SNAP_BUCKET_DEGREES = ROUTE_RISK_SNAP_DISTANCE_M / 80000;
 
 const roundCoord = (value) => Number(value).toFixed(GRID_PRECISION);
+const snapBucketKey = (lat, lng) => `${Math.floor(Number(lat) / SNAP_BUCKET_DEGREES)},${Math.floor(Number(lng) / SNAP_BUCKET_DEGREES)}`;
+
+const neighboringBucketKeys = (lat, lng) => {
+  const [row, col] = snapBucketKey(lat, lng).split(',').map(Number);
+  const keys = [];
+  for (let rowOffset = -1; rowOffset <= 1; rowOffset++) {
+    for (let colOffset = -1; colOffset <= 1; colOffset++) {
+      keys.push(`${row + rowOffset},${col + colOffset}`);
+    }
+  }
+  return keys;
+};
 
 export function segmentKey(lat1, lng1, lat2, lng2) {
   const a = `${roundCoord(lat1)},${roundCoord(lng1)}`;
@@ -101,9 +115,25 @@ export function buildRouteRiskIndex(trips = []) {
 export function getSegmentsForTrip(trip, riskIndex = new Map()) {
   const points = cleanRoutePoints(trip?.route_points || []);
   const segments = [];
+  const bucketIndex = new Map();
+  for (const risk of riskIndex.values()) {
+    if (!Number.isFinite(Number(risk?.lat)) || !Number.isFinite(Number(risk?.lng))) continue;
+    const key = snapBucketKey(risk.lat, risk.lng);
+    const bucket = bucketIndex.get(key) || [];
+    bucket.push(risk);
+    bucketIndex.set(key, bucket);
+  }
   for (let i = 1; i < points.length; i++) {
     const key = segmentKey(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
-    const risk = riskIndex.get(key);
+    const midpoint = {
+      lat: (Number(points[i - 1].lat) + Number(points[i].lat)) / 2,
+      lng: (Number(points[i - 1].lng) + Number(points[i].lng)) / 2,
+    };
+    const nearbyCandidates = neighboringBucketKeys(midpoint.lat, midpoint.lng)
+      .flatMap((bucketKey) => bucketIndex.get(bucketKey) || []);
+    const risk = riskIndex.get(key) || nearbyCandidates.find((candidate) => (
+      haversineDistance(midpoint.lat, midpoint.lng, candidate.lat, candidate.lng) * 1000 <= ROUTE_RISK_SNAP_DISTANCE_M
+    ));
     if (!risk || risk.tripCount < 2) continue;
     segments.push({
       from: { lat: points[i - 1].lat, lng: points[i - 1].lng },
@@ -130,7 +160,50 @@ export async function saveRouteRiskIndex(index = new Map()) {
 
 export async function loadRouteRiskIndex() {
   const entries = await getJson(ROUTE_RISK_INDEX_KEY, []);
-  return new Map(Array.isArray(entries) ? entries : []);
+  const merged = new Map();
+  const bucketIndex = new Map();
+  for (const [key, item] of Array.isArray(entries) ? entries : []) {
+    const hasMidpoint = Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lng));
+    const nearby = hasMidpoint
+      ? neighboringBucketKeys(item.lat, item.lng)
+        .flatMap((bucketKey) => bucketIndex.get(bucketKey) || [])
+        .find(([, candidate]) => (
+          haversineDistance(item.lat, item.lng, candidate.lat, candidate.lng) * 1000 <= ROUTE_RISK_SNAP_DISTANCE_M
+        ))
+      : null;
+    if (!nearby) {
+      merged.set(key, item);
+      if (hasMidpoint) {
+        const bucketKey = snapBucketKey(item.lat, item.lng);
+        const bucket = bucketIndex.get(bucketKey) || [];
+        bucket.push([key, item]);
+        bucketIndex.set(bucketKey, bucket);
+      }
+      continue;
+    }
+    const [targetKey, target] = nearby;
+    const totalTrips = (target.tripCount || 0) + (item.tripCount || 0);
+    const combined = {
+      ...target,
+      tripCount: totalTrips,
+      totalEvents: (target.totalEvents || 0) + (item.totalEvents || 0),
+      harshCount: (target.harshCount || 0) + (item.harshCount || 0),
+      speedSum: (target.speedSum || 0) + (item.speedSum || 0),
+      avgSpeed: totalTrips ? ((target.speedSum || 0) + (item.speedSum || 0)) / totalTrips : 0,
+      riskScore: Math.max(target.riskScore || 0, item.riskScore || 0),
+      riskLevel: (target.riskScore || 0) >= (item.riskScore || 0) ? target.riskLevel : item.riskLevel,
+      eventTypes: Object.entries(item.eventTypes || {}).reduce((all, [type, count]) => ({
+        ...all,
+        [type]: (all[type] || 0) + count,
+      }), { ...(target.eventTypes || {}) }),
+    };
+    merged.set(targetKey, combined);
+    const bucketKey = snapBucketKey(target.lat, target.lng);
+    const bucket = bucketIndex.get(bucketKey) || [];
+    const bucketPosition = bucket.findIndex(([candidateKey]) => candidateKey === targetKey);
+    if (bucketPosition >= 0) bucket[bucketPosition] = [targetKey, combined];
+  }
+  return merged;
 }
 
 export async function invalidateRouteRiskIndex() {

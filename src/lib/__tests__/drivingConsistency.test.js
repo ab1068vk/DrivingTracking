@@ -8,6 +8,23 @@ const trip = (score, roadType) => ({
 });
 
 describe('driving consistency', () => {
+  it.each([
+    [0, 100],
+    [5, 95],
+    [10, 90],
+    [20, 80],
+    [30, 70],
+  ])('documents urban IQR %s as a %s consistency score', (spread, expected) => {
+    const result = calculateDrivingConsistency([
+      trip(50, 'urban'),
+      trip(50, 'urban'),
+      trip(50 + spread, 'urban'),
+      trip(50 + spread, 'urban'),
+    ]);
+    expect(result.consistency_score).toBe(expected);
+    expect(result.iqr_multiplier).toBe(1);
+  });
+
   it('does not over-penalize stop-and-go urban score spread', () => {
     const result = calculateDrivingConsistency([
       trip(5, 'urban'),

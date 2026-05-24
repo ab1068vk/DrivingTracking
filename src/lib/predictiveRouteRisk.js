@@ -5,16 +5,19 @@ import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
 
 const ROUTE_RISK_CONSTANTS = {
   RECENT_TRIP_WINDOW: 20,
+  MIN_EVENT_DENSITY_TRIP_KM: 0.5,
   DEFAULT_AVG_SCORE: 75,
-  EVENT_DENSITY_WEIGHT: 18,
+  EVENT_DENSITY_WEIGHT: 0.25,
   MAX_DANGER_ZONE_RISK: 30,
   DANGER_ZONE_DECAY_COUNT: 3,
-  WEATHER_WEIGHT: 0.25,
-  BASELINE_SCORE_WEIGHT: 0.45,
-  LATE_NIGHT_TIME_RISK: 18,
-  EVENING_RUSH_TIME_RISK: 10,
-  PERSONAL_TIME_RISK_SCALE: 0.18,
-  FALLBACK_TIME_RISK_SCALE: 0.3,
+  WEATHER_WEIGHT: 0.15,
+  BASELINE_SCORE_WEIGHT: 0.35,
+  DANGER_ZONE_WEIGHT: 0.15,
+  TIME_WEIGHT: 0.10,
+  LATE_NIGHT_TIME_RISK: 100,
+  EVENING_RUSH_TIME_RISK: 55,
+  PERSONAL_TIME_RISK_SCALE: 1,
+  FALLBACK_TIME_RISK_SCALE: 1,
   MIN_PERSONAL_CONFIDENCE: 0.3,
   MIN_TEXT_CONFIDENCE: 0.5,
   MIN_HOURLY_RISK_HOURS: 6,
@@ -121,13 +124,16 @@ export function estimatePredictiveRouteRisk({
   const avgScore = recentKm > 0
     ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0) * (Number(trip.distance_km) || 0), 0) / recentKm
     : ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE;
-  const eventDensity = recent.reduce((sum, trip) => {
+  const densityTrips = recent.filter((trip) => (Number(trip.distance_km) || 0) >= ROUTE_RISK_CONSTANTS.MIN_EVENT_DENSITY_TRIP_KM);
+  const densityKm = densityTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const riskEvents = densityTrips.reduce((sum, trip) => {
     const events = (Number(trip.harsh_brakes_count) || 0) +
       (Number(trip.speeding_events_count) || 0) +
       (Number(trip.near_miss_count) || 0) * 2 +
       (Number(trip.sharp_turns_count) || 0);
-    return sum + events / Math.max(1, Number(trip.distance_km) || 1);
-  }, 0) / Math.max(1, recent.length);
+    return sum + events;
+  }, 0);
+  const eventDensity = densityKm > 0 ? riskEvents / densityKm : 0;
   const nearbyZones = currentLocation
     ? checkDangerZoneProximity(currentLocation.lat, currentLocation.lng, dangerZones, ROUTE_RISK_CONSTANTS.PROXIMITY_METERS)
     : [];
@@ -139,12 +145,16 @@ export function estimatePredictiveRouteRisk({
   const hour = now.getHours();
   const timeRisk = personalTimeRisk(hour, habitProfile);
   const zoneRisk = dangerZoneRisk(nearbyZones.length);
+  const normalizedBaselineRisk = clamp(100 - avgScore, 0, 100);
+  const normalizedEventDensity = clamp(eventDensity * 20, 0, 100);
+  const normalizedZoneRisk = clamp((nearbyZones.length / 5) * 100, 0, 100);
+  const normalizedWeatherRisk = clamp(Number(weatherRiskScore) || 0, 0, 100);
   const riskScore = clamp(Math.round(
-    (100 - avgScore) * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
-    eventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT +
-    zoneRisk +
-    Number(weatherRiskScore || 0) * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
-    timeRisk
+    normalizedBaselineRisk * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
+    normalizedEventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT +
+    normalizedZoneRisk * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT +
+    normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
+    timeRisk * ROUTE_RISK_CONSTANTS.TIME_WEIGHT
   ), 0, 100);
 
   return {
@@ -155,7 +165,7 @@ export function estimatePredictiveRouteRisk({
     dangerZoneRisk: zoneRisk,
     primaryFactor: nearbyZones.length
       ? dangerZonePrimaryFactor(nearbyZones.length)
-      : weatherRiskScore >= 40
+      : normalizedWeatherRisk >= 40
         ? 'Weather risk'
         : eventDensity >= 0.6
           ? 'Recent route event density'

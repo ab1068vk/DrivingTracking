@@ -245,8 +245,12 @@ export default function DrivingCoach() {
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-card border border-border rounded-2xl p-4">
               <AlertTriangle className="w-5 h-5 text-orange-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.events_per_100km}</div>
-              <div className="text-xs text-muted-foreground">events per 100 km</div>
+              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.events_per_100km ?? '-'}</div>
+              <div className="text-xs text-muted-foreground">
+                {coach.risk_rate.insufficient_data
+                  ? `needs ${coach.risk_rate.minimum_distance_km} km`
+                  : 'events per 100 km'}
+              </div>
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <ShieldCheck className="w-5 h-5 text-emerald-500 mb-2" />
@@ -285,7 +289,7 @@ export default function DrivingCoach() {
                   <div className="text-xs text-muted-foreground">this week</div>
                 </div>
                 <div className="bg-secondary/50 rounded-xl p-3">
-                  <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg ?? '-'}</div>
+                  <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg == null ? '-' : `${coach.baseline.baseline_avg} +/- ${coach.baseline.baseline_confidence_interval}`}</div>
                   <div className="text-xs text-muted-foreground">baseline</div>
                 </div>
                 <div className="bg-secondary/50 rounded-xl p-3">
@@ -346,7 +350,7 @@ export default function DrivingCoach() {
                 <div className="text-[11px] text-muted-foreground capitalize">{latestSviLabel}</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{coach.peak_hour_stress.stress_ratio}x</div>
+                <div className="font-grotesk font-bold text-xl">{coach.peak_hour_stress.stress_ratio == null ? '-' : `${coach.peak_hour_stress.stress_ratio}x`}</div>
                 <div className="text-xs text-muted-foreground">peak stress</div>
                 <div className="text-[11px] text-muted-foreground capitalize">{coach.peak_hour_stress.peak_stress_label}</div>
               </div>

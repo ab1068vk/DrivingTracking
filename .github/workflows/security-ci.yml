@@ -81,6 +81,8 @@ jobs:
   android-instrumentation:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      GRADLE_USER_HOME: ${{ github.workspace }}/.gradle-ci
 
     steps:
       - name: Checkout
@@ -110,4 +112,4 @@ jobs:
           api-level: 35
           arch: x86_64
           profile: pixel_6
-          script: cd android && ./gradlew connectedDebugAndroidTest --no-daemon
+          script: cd android && ./gradlew connectedDebugAndroidTest --no-daemon -Dorg.gradle.java.home="$JAVA_HOME"

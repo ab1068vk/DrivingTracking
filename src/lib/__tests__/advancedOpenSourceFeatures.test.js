@@ -106,7 +106,40 @@ describe('advanced open-source features', () => {
       now: new Date(2026, 0, 10, 12),
     });
 
-    expect(risk.riskScore).toBe(36);
+    expect(risk.riskScore).toBe(28);
+  });
+
+  it('gates tiny trips out of predictive event-density risk and uses eligible distance', () => {
+    const baseTrip = trip(90, 1, { distance_km: 1, harsh_brakes_count: 1 });
+    const withBase = estimatePredictiveRouteRisk({
+      trips: [baseTrip],
+      now: new Date(2026, 0, 10, 12),
+    });
+    const withTinyTrip = estimatePredictiveRouteRisk({
+      trips: [baseTrip, trip(90, 2, { distance_km: 0.2, harsh_brakes_count: 10 })],
+      now: new Date(2026, 0, 10, 12),
+    });
+    const withMoreEligibleDistance = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1, { distance_km: 2, harsh_brakes_count: 1 })],
+      now: new Date(2026, 0, 10, 12),
+    });
+
+    expect(withTinyTrip.riskScore).toBe(withBase.riskScore);
+    expect(withMoreEligibleDistance.riskScore).toBeLessThan(withBase.riskScore);
+  });
+
+  it('clamps weather risk before applying predictive weighting', () => {
+    const normalWeather = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1)],
+      weatherRiskScore: 100,
+      now: new Date(2026, 0, 10, 12),
+    });
+    const invalidWeather = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1)],
+      weatherRiskScore: 1000,
+      now: new Date(2026, 0, 10, 12),
+    });
+    expect(invalidWeather.riskScore).toBe(normalWeather.riskScore);
   });
 
   it('does not describe late-night route timing as acceptable', () => {

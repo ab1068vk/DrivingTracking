@@ -1,13 +1,15 @@
 import { saveExportToDownloads } from './nativeDownloads';
 import { clamp } from './mathUtils';
-import { detectTripStops, estimateTripEconomics } from './tripInsights';
+import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
 import { maskTripForPrivacy } from './privacyZones';
 import { NIGHT_END_HOUR, NIGHT_END_TIME, NIGHT_START_HOUR, NIGHT_START_TIME } from './appConstants';
 
 const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
-const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.4;
+// A perfect fuel-band score should require sustained efficient cruising, not a bare majority of samples.
+export const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.1;
 const FOLLOWING_DISTANCE_MIN_TRIP_KM = 0.5;
 const FOLLOWING_DISTANCE_PENALTY_SCALE = 8;
+export const FATIGUE_SEGMENT_SECONDS = FATIGUE_HEATMAP_SEGMENT_SECONDS;
 export const PHONE_USE_SAFETY_WEIGHT = 0.05;
 export const ECO_DEFAULTS = Object.freeze({
   CRUISE_SCORE_MULTIPLIER: 130,
@@ -1358,6 +1360,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
       descent_distance_km: null,
       hill_infraction_count: 0,
       hill_driving_score: null,
+      hill_route: false,
     };
   }
 
@@ -1429,6 +1432,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
       descent_distance_km: null,
       hill_infraction_count: 0,
       hill_driving_score: null,
+      hill_route: false,
     };
   }
 
@@ -1437,6 +1441,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
     descent_distance_km: Math.round(descentDistanceKm * 100) / 100,
     hill_infraction_count: infractionCount,
     hill_driving_score: Math.max(0, 100 - infractionCount * 10),
+    hill_route: true,
   };
 }
 
@@ -1598,7 +1603,7 @@ export function calculateFuelBandScore(cleanPoints = [], thresholds = DEFAULT_TH
   }
 
   const optimalBandRatio = totalMovingSeconds > 0 ? Math.round((optimalBandSeconds / totalMovingSeconds) * 100) : 0;
-  // Full credit starts around 72% optimal-band time to reward strong cruise habits without demanding perfection.
+  // Full credit starts at about 91% optimal-band time.
   const fuelBandScore = Math.min(100, Math.round(optimalBandRatio * FUEL_BAND_FULL_SCORE_MULTIPLIER));
   const bandLabel = fuelBandScore >= 80
     ? 'excellent cruise'
@@ -2211,7 +2216,7 @@ export function detectErraticSpeedWindows(cleanPoints = [], thresholds = DEFAULT
   return Object.assign(events, { distraction_duration_seconds: distractionDurationSeconds });
 }
 
-export function detectSpeedCreep(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function detectSpeedCreepWithThresholds(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const creepThreshold = thresholds.threshold_speed_creep_kmh ?? DEFAULT_THRESHOLDS.threshold_speed_creep_kmh;
   const samples = cleanPoints
     .map((point, index) => ({
@@ -2238,50 +2243,6 @@ export function detectSpeedCreep(cleanPoints = [], thresholds = DEFAULT_THRESHOL
 
     const headingStdDev = calculateAngularStdDev(window.map((sample) => sample.heading));
     if (headingStdDev >= 5) continue;
-
-    const creep = window[window.length - 1].speed_kmh - window[0].speed_kmh;
-    if (creep >= creepThreshold && window[window.length - 1].speed_kmh > 80) {
-      const severity = creep >= 25 ? 'high' : creep >= 15 ? 'medium' : 'low';
-      severityCounts[severity]++;
-      count++;
-      maxCreep = Math.max(maxCreep, creep);
-      lastEventTime = start.timestamp;
-    }
-  }
-
-  return {
-    speed_creep_event_count: count,
-    max_speed_creep_kmh: Math.round(maxCreep),
-    speed_creep_score: Math.max(0, 100 - count * 12),
-    speed_creep_severity_counts: severityCounts,
-  };
-}
-
-export function detectSpeedCreepWithThresholds(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
-  const creepThreshold = thresholds.threshold_speed_creep_kmh ?? DEFAULT_THRESHOLDS.threshold_speed_creep_kmh;
-  const result = detectSpeedCreep(cleanPoints, thresholds);
-  if (creepThreshold === 10) return result;
-
-  const samples = cleanPoints
-    .map((point, index) => ({
-      point,
-      index,
-      timestamp: timestampMs(point),
-      speed_kmh: reliablePointSpeed(cleanPoints, index, thresholds),
-      heading: headingForIndex(cleanPoints, index),
-    }))
-    .filter((sample) => Number.isFinite(sample.timestamp) && Number.isFinite(sample.speed_kmh) && sample.speed_kmh > 0);
-  let count = 0;
-  let maxCreep = 0;
-  const severityCounts = { low: 0, medium: 0, high: 0 };
-  let lastEventTime = 0;
-
-  for (let i = 0; i < samples.length; i++) {
-    const start = samples[i];
-    if (start.timestamp - lastEventTime < 30000) continue;
-    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 30000);
-    if (window.length < 3 || window[window.length - 1].timestamp - start.timestamp < 25000) continue;
-    if (calculateAngularStdDev(window.map((sample) => sample.heading)) >= 5) continue;
 
     const creep = window[window.length - 1].speed_kmh - window[0].speed_kmh;
     if (creep >= creepThreshold && window[window.length - 1].speed_kmh > 80) {
@@ -3041,12 +3002,19 @@ export function calculateCorneringConsistency(routePoints, thresholds = DEFAULT_
   };
 }
 
-function brakingEfficiencyGrade(score) {
+const BRAKING_GRADE_THRESHOLDS = {
+  urban: { progressive: 80, adequate: 60, abrupt: 40 },
+  highway: { progressive: 88, adequate: 70, abrupt: 55 },
+};
+
+function brakingEfficiencyGrade(score, roadType = 'urban') {
   if (score == null) return 'insufficient_data';
-  if (score >= 85) return 'progressive';
-  if (score >= 65) return 'adequate';
-  if (score >= 45) return 'abrupt';
-  return 'emergency_heavy';
+  const context = roadType === 'highway' ? 'highway' : 'urban';
+  const thresholds = BRAKING_GRADE_THRESHOLDS[context];
+  if (score >= thresholds.progressive) return 'progressive';
+  if (score >= thresholds.adequate) return 'adequate';
+  if (score >= thresholds.abrupt) return 'abrupt';
+  return 'poor';
 }
 
 /**
@@ -3054,11 +3022,12 @@ function brakingEfficiencyGrade(score) {
  * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number}>} routePoints - Ordered GPS route points.
  * @param {Array<{type:string}>} drivingEvents - Events from detectDrivingEvents.
  * @param {Object} thresholds - Driving thresholds, including HARSH_BRAKE_MS2.
- * @returns {{braking_efficiency_score:number|null,braking_efficiency_grade:string,braking_sequence_count:number,avg_braking_smoothness:number}} Braking efficiency fields.
+ * @returns {{braking_efficiency_score:number|null,braking_efficiency_grade:string,braking_context:string,braking_sequence_count:number,avg_braking_smoothness:number}} Braking efficiency fields.
  * @example
  * const braking = calculateBrakingEfficiency(points, events, DEFAULT_THRESHOLDS);
  */
 export function calculateBrakingEfficiency(routePoints, drivingEvents = [], thresholds = DEFAULT_THRESHOLDS) {
+  const roadType = classifyRoadType(routePoints).road_type === 'highway' ? 'highway' : 'urban';
   const sequences = extractBrakingSequences(routePoints, thresholds, {
     startSpeedKmh: 25,
     endSpeedKmh: 5,
@@ -3068,6 +3037,7 @@ export function calculateBrakingEfficiency(routePoints, drivingEvents = [], thre
     return {
       braking_efficiency_score: null,
       braking_efficiency_grade: 'insufficient_data',
+      braking_context: roadType,
       braking_sequence_count: 0,
       avg_braking_smoothness: 0,
     };
@@ -3104,7 +3074,8 @@ export function calculateBrakingEfficiency(routePoints, drivingEvents = [], thre
   const score = sequenceScores.length ? Math.round(average(sequenceScores)) : null;
   return {
     braking_efficiency_score: score,
-    braking_efficiency_grade: brakingEfficiencyGrade(score),
+    braking_efficiency_grade: brakingEfficiencyGrade(score, roadType),
+    braking_context: roadType,
     braking_sequence_count: sequences.length,
     avg_braking_smoothness: round2(average(smoothnessValues)),
   };
@@ -3196,6 +3167,7 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
         : 'inferred';
     return {
       score: clamp(Math.round(rate * 100 - maxExcessKmh * 0.5), 0, 100),
+      confidence: round2(clamp(bucket.totalPoints / 30, 0, 1)),
       rate: round2(rate),
       max_excess_kmh: round1(maxExcessKmh),
       inferred_limit_kmh: inferredLimit,
@@ -3442,6 +3414,7 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
       safety: segmentScores.score_safety,
       smoothness: segmentScores.score_smoothness,
       eco: segmentScores.score_eco,
+      confidence: segmentScores.score_confidence,
       distance_km: round2(metric.distance),
       event_count: eventBuckets[type].length || segmentEvents.length,
     };
@@ -3578,20 +3551,34 @@ export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTime
     return { fatigue_progression: 'unknown', segment_scores: [] };
   }
 
-  const third = totalDuration / 3;
-  const segments = [[], [], []];
+  const segmentDurationMs = FATIGUE_SEGMENT_SECONDS * 1000;
+  const segmentCount = Math.ceil(totalDuration / segmentDurationMs);
+  const segments = Array.from({ length: segmentCount }, () => []);
   for (const point of cleanPoints) {
     const offset = timestampMs(point) - start;
-    const index = Math.min(2, Math.max(0, Math.floor(offset / third)));
+    const index = Math.min(segmentCount - 1, Math.max(0, Math.floor(offset / segmentDurationMs)));
     segments[index].push(point);
   }
 
-  if (segments.some((segment) => segment.length < 3)) {
+  const pointIndexes = new Map(cleanPoints.map((point, index) => [point, index]));
+  const observed = segments
+    .map((segment, index) => segment.length >= 3
+      ? {
+        start_index: pointIndexes.get(segment[0]),
+        end_index: pointIndexes.get(segment[segment.length - 1]),
+        minute_offset: Math.round((index * FATIGUE_SEGMENT_SECONDS / 60) * 10) / 10,
+        score: scoreFatigueSegment(segment, thresholds),
+      }
+      : null)
+    .filter(Boolean);
+  if (observed.length < 3) {
     return { fatigue_progression: 'unknown', segment_scores: [] };
   }
 
-  const scores = segments.map((segment) => scoreFatigueSegment(segment, thresholds));
-  const degradation = scores[0] - scores[2];
+  const third = Math.max(1, Math.floor(observed.length / 3));
+  const earlyScore = average(observed.slice(0, third).map((segment) => segment.score));
+  const lateScore = average(observed.slice(-third).map((segment) => segment.score));
+  const degradation = earlyScore - lateScore;
   const fatigueProgression = degradation >= 20
     ? 'significant'
     : degradation >= 10
@@ -3602,12 +3589,13 @@ export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTime
 
   return {
     fatigue_progression: fatigueProgression,
-    segment_scores: scores,
+    fatigue_heatmap: { segments: observed, segment_seconds: FATIGUE_SEGMENT_SECONDS },
+    segment_scores: observed.map((segment) => segment.score),
     degradation: Math.round(degradation),
   };
 }
 
-export function detectDrowsyDrivingSignature(cleanPoints = [], durationSeconds = 0, thresholds = DEFAULT_THRESHOLDS) {
+export function detectDrowsyDriving(cleanPoints = [], durationSeconds = 0, thresholds = DEFAULT_THRESHOLDS) {
   if (!cleanPoints || cleanPoints.length < 4 || durationSeconds <= 0) {
     return { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' };
   }
@@ -3692,10 +3680,6 @@ export function detectDrowsyDrivingSignature(cleanPoints = [], durationSeconds =
     drowsy_risk_score: riskScore,
     drowsy_risk_level: riskScore >= 60 ? 'high' : riskScore >= 30 ? 'medium' : riskScore > 0 ? 'low' : 'none',
   };
-}
-
-export function detectDrowsyDriving(cleanPoints = [], durationSeconds = 0, thresholds = DEFAULT_THRESHOLDS) {
-  return detectDrowsyDrivingSignature(cleanPoints, durationSeconds, thresholds);
 }
 
 export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
@@ -4166,7 +4150,8 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
     : 0;
   const headingDriftScore = avgHeadingDrift >= 14 ? 1.5 : avgHeadingDrift >= 8 ? 0.75 : 0;
 
-  return Math.min(10, Math.round((durationScore + timeScore + speedVarianceScore + headingDriftScore) * 10) / 10);
+  const riskOnTenPointScale = Math.min(10, durationScore + timeScore + speedVarianceScore + headingDriftScore);
+  return Math.round(riskOnTenPointScale * 10);
 }
 
 function parseClockMinutes(value, fallbackHour) {
@@ -4348,7 +4333,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   const routePoints = (points || []).filter(hasValidCoordinates);
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
-  const durationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
+  const wallClockDurationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
 
   if (!routePoints || routePoints.length < 2) {
     const roadStats = classifyRoadType(routePoints || []);
@@ -4364,9 +4349,11 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       // FIX: Return explicit sustained idle for eco scoring fallback compatibility.
       gap_seconds: 0,
       // FIX: Expose noise-filtered gap time without mixing it into moving or idle totals.
-      duration_seconds: Math.round(durationSeconds),
+      wall_clock_duration_seconds: Math.round(wallClockDurationSeconds),
+      duration_seconds: Math.round(wallClockDurationSeconds),
       night_driving: false,
-      fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints || []),
+      fatigue_risk_score: calculateFatigueScore(wallClockDurationSeconds, routePoints || []),
+      fatigue_risk_score_confidence: 0,
       ...roadStats,
       intersection_score: null,
       intersection_score_confidence: 'insufficient_data',
@@ -4382,6 +4369,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       descent_distance_km: null,
       hill_infraction_count: 0,
       hill_driving_score: null,
+      hill_route: false,
       drowsy_window_count: 0,
       drowsy_risk_score: 0,
       drowsy_risk_level: 'none',
@@ -4427,13 +4415,16 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     if (rawSpeed > maxSpeed) maxSpeed = rawSpeed;
 
     const segment = calculateSegmentMetrics(p, c, thresholds);
-    if (segment.dt <= 0 || segment.dt > 120) {
+    if (segment.dt <= 0) {
+      flushIdleRun();
+      continue;
+    }
+    if (segment.dt > 120) {
+      gapSeconds += segment.dt;
       flushIdleRun();
       continue;
     }
     if (segment.isNoise) {
-      gapSeconds += segment.dt;
-      // FIX: Count short noise-filtered gaps separately instead of losing them entirely.
       flushIdleRun();
       continue;
     }
@@ -4463,7 +4454,8 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   const idleTime = trafficIdleSeconds + sustainedIdleSeconds;
   // FIX: Keep legacy idle_time_seconds as the sum of traffic and sustained idle buckets.
   const effectiveMovingSeconds = movingSeconds;
-  // FIX: gap_seconds is noise-filtered time excluded from moving and idle buckets; it is debug-only and does not affect scores.
+  const durationSeconds = Math.max(0, wallClockDurationSeconds - gapSeconds);
+  // Exclude background/noise-filtered tracking gaps from driving time and duration-based scoring.
   const isNightForTrip = createTripNightChecker(routePoints, thresholds);
   const nightDriving = routePoints.some(p => isNightForTrip(p));
   const avgSpeed = durationSeconds > 0 && totalDistance > 0
@@ -4481,7 +4473,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   const hillStats = calculateHillDrivingScore(routePoints, thresholds);
   const drowsyStats = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED === false
     ? { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' }
-    : detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds);
+    : detectDrowsyDriving(routePoints, durationSeconds, thresholds);
   const parkingStats = analyzeParkingApproach(routePoints, thresholds, endTime);
 
   return {
@@ -4493,12 +4485,13 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     traffic_idle_seconds: Math.round(trafficIdleSeconds),
     // FIX: Return sub-90-second traffic idle separately for reporting/debugging.
     sustained_idle_seconds: Math.round(sustainedIdleSeconds),
-    // FIX: Return 90-second-plus parked idle separately for eco scoring.
+    // Tracking gaps longer than two minutes are excluded from effective drive time.
     gap_seconds: Math.round(gapSeconds),
-    // FIX: Return short noise-filtered gap time without affecting moving speed or scores.
+    wall_clock_duration_seconds: Math.round(wallClockDurationSeconds),
     duration_seconds: Math.round(durationSeconds),
     night_driving: nightDriving,
     fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints),
+    fatigue_risk_score_confidence: round2(clamp(totalDistance / 5, 0, 1)),
     ...roadStats,
     speed_zones: speedZones,
     ...intersectionStats,
@@ -4692,7 +4685,7 @@ export function calculateTripScores(
   }
 
   const speedCreep = advancedSafetyEnabled
-    ? detectSpeedCreep(routePoints, thresholds)
+    ? detectSpeedCreepWithThresholds(routePoints, thresholds)
     : {
       speed_creep_event_count: 0,
       max_speed_creep_kmh: 0,
@@ -4712,7 +4705,8 @@ export function calculateTripScores(
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.high || 0) * 10;
   safetyPenalty += calculateNightPenalty(routePoints, thresholds);
 
-  safetyPenalty += (stats.fatigue_risk_score || 0) * 1.2;
+  // Fatigue is stored on a 0-100 scale; preserve the former 0-10 penalty calibration.
+  safetyPenalty += (stats.fatigue_risk_score || 0) * 0.12;
 
   const distKm = Math.max(1, stats.distance_km || 1);
   const phoneUseScoreDeduction = Math.max(0, Math.min(100, 100 - (phoneUseResult.phone_use_score ?? 100)));
@@ -4748,7 +4742,7 @@ export function calculateTripScores(
   const engineStress = calculateEngineStressScore(scoringEvents, stats);
   const tireWear = calculateTireWearUnits(scoringEvents);
   const drowsy = advancedSafetyEnabled
-    ? detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds)
+    ? detectDrowsyDriving(routePoints, durationSeconds, thresholds)
     : { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' };
   const hill = calculateHillDrivingScore(routePoints, thresholds);
   const parking = analyzeParkingApproach(routePoints, thresholds, options.endTime ?? null);
@@ -4775,6 +4769,9 @@ export function calculateTripScores(
   const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds);
   const overtakeQuality = calculateOvertakeQualityScore(routePoints, scoringEvents, thresholds);
   const slippery = detectSlipperyConditionProxy(routePoints, scoringEvents, thresholds);
+  const scoreConfidence = round2(clamp(tripDistanceKm / 5, 0, 1));
+  const routeEvidenceConfidence = routePoints.length >= 2 ? scoreConfidence : 0;
+  const measuredRouteConfidence = (score) => (score == null ? 0 : routeEvidenceConfidence);
 
   const brakingScoreForSafety = brakingEfficiency.braking_efficiency_score ?? 100;
   const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
@@ -4813,9 +4810,14 @@ export function calculateTripScores(
 
   const componentScores = {
     score_overall: overall,
+    score_confidence: scoreConfidence,
+    score_confidence_label: scoreConfidence < 0.5 ? 'low' : scoreConfidence < 0.8 ? 'developing' : 'high',
     score_safety: safety,
+    score_safety_confidence: scoreConfidence,
     score_smoothness: smoothness,
+    score_smoothness_confidence: scoreConfidence,
     score_eco: eco,
+    score_eco_confidence: scoreConfidence,
     harsh_brakes_count: counts[EVENT_TYPES.HARSH_BRAKE],
     rapid_accel_count: counts[EVENT_TYPES.RAPID_ACCELERATION],
     sharp_turns_count: counts[EVENT_TYPES.SHARP_TURN],
@@ -4827,41 +4829,64 @@ export function calculateTripScores(
     following_distance_score_confidence: followingDistanceScore == null ? 'insufficient_data' : 'observed_distance',
     distraction_events_count: counts[EVENT_TYPES.ERRATIC_SPEED],
     distraction_score: Math.round(distractionScore),
+    distraction_score_confidence: scoreConfidence,
     close_proximity_count: closeProximityCount,
     close_proximity_score: closeProximityScore,
+    close_proximity_score_confidence: scoreConfidence,
     near_miss_count: closeProximityCount,
     near_miss_score: closeProximityScore,
+    near_miss_score_confidence: scoreConfidence,
     overtake_event_count: counts[EVENT_TYPES.AGGRESSIVE_OVERTAKE],
     overtake_score: Math.max(0, 100 - counts[EVENT_TYPES.AGGRESSIVE_OVERTAKE] * 20),
+    overtake_score_confidence: scoreConfidence,
     intersection_score: intersectionScore,
+    intersection_score_confidence: stats.intersection_score_confidence ?? (intersectionScore == null ? 'insufficient_data' : 'observed_stops'),
     ...jerk,
     ...ecoDriving,
+    eco_driving_score_confidence: ecoDriving.eco_score_confidence === 'observed' ? routeEvidenceConfidence : 0,
     ...svi,
     ...fuelBand,
+    fuel_band_score_confidence: routeEvidenceConfidence,
     ...merge,
+    merge_score_confidence: measuredRouteConfidence(merge.merge_score),
     ...smoothBraking,
+    smooth_braking_score_confidence: smoothBraking.total_stops_detected > 0 ? routeEvidenceConfidence : 0,
     ...engineStress,
+    engine_stress_score_confidence: scoreConfidence,
     ...tireWear,
     ...speedCreep,
+    speed_creep_score_confidence: routeEvidenceConfidence,
     ...phoneProxy,
     phone_use_events: phoneUseResult.phone_use_events || [],
     phone_use_window_count: phoneUseResult.phone_use_window_count || 0,
     phone_use_total_seconds: phoneUseResult.phone_use_total_seconds || 0,
     phone_use_risk: phoneUseResult.phone_use_risk || 'none',
     phone_use_score: phoneUseResult.phone_use_score ?? 100,
+    phone_use_score_confidence: scoreConfidence,
     phone_use_pct_of_trip: phoneUseResult.phone_use_pct_of_trip || 0,
     phone_use_high_confidence_count: phoneUseResult.phone_use_high_confidence_count || 0,
     ...drowsy,
+    drowsy_risk_score_confidence: routeEvidenceConfidence,
     ...hill,
+    hill_driving_score_confidence: measuredRouteConfidence(hill.hill_driving_score),
     ...parking,
+    parking_approach_score_confidence: routeEvidenceConfidence,
     ...reaction,
+    reaction_score_confidence: measuredRouteConfidence(reaction.reaction_score),
     ...cornering,
+    cornering_consistency_score_confidence: measuredRouteConfidence(cornering.cornering_consistency_score),
     ...brakingEfficiency,
+    braking_efficiency_score_confidence: measuredRouteConfidence(brakingEfficiency.braking_efficiency_score),
     ...compliance,
+    overall_compliance_score_confidence: [compliance.highway_compliance, compliance.urban_compliance, compliance.residential_compliance].some(Boolean)
+      ? routeEvidenceConfidence
+      : 0,
     ...overtakeQuality,
+    overtake_quality_score_confidence: measuredRouteConfidence(overtakeQuality.overtake_quality_score),
     ...slippery,
     ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, scoringEvents, stats, thresholds)),
     ...aggressive,
+    aggressive_driving_score_confidence: scoreConfidence,
     driving_events: serializableEvents,
   };
   delete componentScores.speed_creep_severity_counts;
@@ -4869,6 +4894,7 @@ export function calculateTripScores(
   return {
     ...componentScores,
     ...calculateDefensiveDrivingScore(componentScores),
+    defensive_driving_score_confidence: scoreConfidence,
   };
 }
 

@@ -71,6 +71,7 @@ describe('external service contracts', () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => ({
       ok: true,
       json: async () => ({
+        utc_offset_seconds: -14400,
         hourly: {
           time: ['2026-05-23T10:00'],
           temperature_2m: [2],
