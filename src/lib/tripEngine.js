@@ -55,7 +55,6 @@ export const DEFAULT_THRESHOLDS = {
   ECO_IDLE_MAX_PENALTY: ECO_DEFAULTS.IDLE_MAX_PENALTY,
   // Moving sample floor: ignore GPS crawl/jitter below 15 km/h unless a city profile lowers this threshold.
   ECO_MIN_MOVING_KMH: 15,
-  REACTION_SPEED_TRIGGER_KMH: 5,
   // Idle threshold: speed < 5 km/h
   IDLE_SPEED_KMH: 5,
   // Idle event: idling for > 90 consecutive seconds
@@ -94,25 +93,25 @@ export const DEFAULT_THRESHOLDS = {
   HILL_GRADE_THRESHOLD_PCT: 5,
   MIN_SPEED_RAPID_ACCEL_KMH: 5,
   MIN_SPEED_HARSH_BRAKE_KMH: 25,
-  TAILGATE_DECEL_MS2: 2.5,
-  FOLLOWING_GAP_MIN_SPEED_KMH: 40,
-  FOLLOWING_GAP_CRUISE_SECONDS: 4,
-  FOLLOWING_GAP_SPEED_DROP_KMH: 10,
-  LANE_CHANGE_MIN_SPEED_KMH: 50,
-  LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH: 80,
-  LANE_CHANGE_MIN_TURN_RATE_DEG_S: 3,
-  LANE_CHANGE_MAX_TURN_RATE_DEG_S: 20,
-  LANE_CHANGE_MIN_WINDOW_SECONDS: 6,
-  LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG: 4,
-  LANE_CHANGE_SUPPRESS_CONTEXT_METERS: 200,
+  STOP_START_DECEL_MS2: 2.5,
+  STOP_START_MIN_SPEED_KMH: 40,
+  STOP_START_CRUISE_SECONDS: 4,
+  STOP_START_SPEED_DROP_KMH: 10,
+  HEADING_DEVIATION_MIN_SPEED_KMH: 50,
+  HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH: 80,
+  HEADING_DEVIATION_MIN_TURN_RATE_DEG_S: 3,
+  HEADING_DEVIATION_MAX_TURN_RATE_DEG_S: 20,
+  HEADING_DEVIATION_MIN_WINDOW_SECONDS: 6,
+  HEADING_DEVIATION_STRAIGHT_HEADING_STD_MAX_DEG: 4,
+  HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS: 200,
   CORNERING_MIN_SPEED_KMH: 25,
   MERGE_ENTRY_SPEED_KMH: 65,
   MERGE_EXIT_SPEED_KMH: 85,
   PARKING_LOOKBACK_SECONDS: 90,
   MAX_TERMINAL_IDLE_SECONDS: 1800,
-  threshold_near_miss_brake_ms2: 4.0,
-  threshold_near_miss_turn_degs: 25,
-  threshold_drowsy_heading_std: 8,
+  MANOEUVRE_ALERT_BRAKE_MS2: 4.0,
+  MANOEUVRE_ALERT_TURN_DEG_S: 25,
+  HEADING_DRIFT_STD_DEG: 8,
   threshold_phone_proxy_oscillations: 3,
   PHONE_MICRO_STEER_COUNT: 4,
   PHONE_CREEP_RATE_KMH_S: 1.5,
@@ -182,7 +181,7 @@ export function buildDrivingThresholds(settings = {}) {
     ...DEFAULT_THRESHOLDS,
     HARSH_BRAKE_MS2: settingNumber(settings.threshold_harsh_brake_ms2, DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2),
     RAPID_ACCEL_MS2: settingNumber(settings.threshold_rapid_accel_ms2, DEFAULT_THRESHOLDS.RAPID_ACCEL_MS2),
-    TAILGATE_DECEL_MS2: settingNumber(settings.threshold_tailgate_decel_ms2, DEFAULT_THRESHOLDS.TAILGATE_DECEL_MS2),
+    STOP_START_DECEL_MS2: settingNumber(settings.threshold_stop_start_decel_ms2 ?? settings.threshold_tailgate_decel_ms2, DEFAULT_THRESHOLDS.STOP_START_DECEL_MS2),
     SHARP_TURN_G_LOW: settingNumber(settings.threshold_sharp_turn_g_low, DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW),
     SHARP_TURN_G_MEDIUM: settingNumber(settings.threshold_sharp_turn_g_medium, DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM),
     SHARP_TURN_G_HIGH: settingNumber(settings.threshold_sharp_turn_g_high, DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH),
@@ -194,15 +193,14 @@ export function buildDrivingThresholds(settings = {}) {
     ECO_IDLE_PENALTY_MULTIPLIER: settingNumber(settings.eco_idle_penalty_multiplier, DEFAULT_THRESHOLDS.ECO_IDLE_PENALTY_MULTIPLIER),
     ECO_IDLE_MAX_PENALTY: settingNumber(settings.eco_idle_max_penalty, DEFAULT_THRESHOLDS.ECO_IDLE_MAX_PENALTY),
     ECO_MIN_MOVING_KMH: settingNumber(settings.eco_min_moving_kmh, DEFAULT_THRESHOLDS.ECO_MIN_MOVING_KMH),
-    REACTION_SPEED_TRIGGER_KMH: settingNumber(settings.reaction_speed_trigger_kmh, DEFAULT_THRESHOLDS.REACTION_SPEED_TRIGGER_KMH),
     IDLE_EVENT_SECONDS: settingNumber(settings.threshold_idle_seconds, DEFAULT_THRESHOLDS.IDLE_EVENT_SECONDS),
     LONG_DRIVE_MINUTES: settingNumber(settings.threshold_long_drive_minutes, DEFAULT_THRESHOLDS.LONG_DRIVE_MINUTES),
     MIN_SPEED_RAPID_ACCEL_KMH: settingNumber(settings.min_speed_rapid_accel_kmh, DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH),
     MIN_SPEED_HARSH_BRAKE_KMH: settingNumber(settings.min_speed_harsh_brake_kmh, DEFAULT_THRESHOLDS.MIN_SPEED_HARSH_BRAKE_KMH),
     threshold_harsh_brake_ms2: settingNumber(settings.threshold_harsh_brake_ms2, DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2),
-    threshold_near_miss_brake_ms2: settingNumber(settings.threshold_near_miss_brake_ms2, DEFAULT_THRESHOLDS.threshold_near_miss_brake_ms2),
-    threshold_near_miss_turn_degs: settingNumber(settings.threshold_near_miss_turn_degs, DEFAULT_THRESHOLDS.threshold_near_miss_turn_degs),
-    threshold_drowsy_heading_std: settingNumber(settings.threshold_drowsy_heading_std, DEFAULT_THRESHOLDS.threshold_drowsy_heading_std),
+    MANOEUVRE_ALERT_BRAKE_MS2: settingNumber(settings.threshold_manoeuvre_alert_brake_ms2 ?? settings.threshold_near_miss_brake_ms2, DEFAULT_THRESHOLDS.MANOEUVRE_ALERT_BRAKE_MS2),
+    MANOEUVRE_ALERT_TURN_DEG_S: settingNumber(settings.threshold_manoeuvre_alert_turn_degs ?? settings.threshold_near_miss_turn_degs, DEFAULT_THRESHOLDS.MANOEUVRE_ALERT_TURN_DEG_S),
+    HEADING_DRIFT_STD_DEG: settingNumber(settings.threshold_heading_drift_std_degs ?? settings.threshold_drowsy_heading_std, DEFAULT_THRESHOLDS.HEADING_DRIFT_STD_DEG),
     threshold_phone_proxy_oscillations: settingNumber(settings.threshold_phone_proxy_oscillations, DEFAULT_THRESHOLDS.threshold_phone_proxy_oscillations),
     PHONE_MICRO_STEER_COUNT: settingNumber(settings.phone_micro_steer_count, DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_COUNT),
     PHONE_CREEP_RATE_KMH_S: settingNumber(settings.phone_creep_rate_kmh_s, DEFAULT_THRESHOLDS.PHONE_CREEP_RATE_KMH_S),
@@ -1639,7 +1637,7 @@ function headingBetweenPair(prev, curr, fallbackPrev = null) {
   return { h1, h2 };
 }
 
-export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) {
+export function detectHeadingDeviationEvents(points = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!points || points.length < 2) return [];
 
   const candidates = [];
@@ -1650,7 +1648,7 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
       reliablePointSpeed(points, i - 1, thresholds) ?? finiteSpeed(prev),
       reliablePointSpeed(points, i, thresholds) ?? finiteSpeed(curr)
     );
-    const minSpeed = thresholds.LANE_CHANGE_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_SPEED_KMH;
+    const minSpeed = thresholds.HEADING_DEVIATION_MIN_SPEED_KMH ?? thresholds.LANE_CHANGE_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_MIN_SPEED_KMH;
     if (speed <= minSpeed) continue;
 
     const dt = (timestampMs(curr) - timestampMs(prev)) / 1000;
@@ -1659,21 +1657,21 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
     const { h1, h2 } = headingBetweenPair(prev, curr, points[i - 2] || null);
     const signedDelta = signedHeadingDelta(h1, h2);
     const turnRate = Math.abs(signedDelta) / dt;
-    const minRate = thresholds.LANE_CHANGE_MIN_TURN_RATE_DEG_S ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_TURN_RATE_DEG_S;
-    const maxRate = thresholds.LANE_CHANGE_MAX_TURN_RATE_DEG_S ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MAX_TURN_RATE_DEG_S;
+    const minRate = thresholds.HEADING_DEVIATION_MIN_TURN_RATE_DEG_S ?? thresholds.LANE_CHANGE_MIN_TURN_RATE_DEG_S ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_MIN_TURN_RATE_DEG_S;
+    const maxRate = thresholds.HEADING_DEVIATION_MAX_TURN_RATE_DEG_S ?? thresholds.LANE_CHANGE_MAX_TURN_RATE_DEG_S ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_MAX_TURN_RATE_DEG_S;
 
-    const highwaySpeed = thresholds.LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH;
+    const highwaySpeed = thresholds.HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH ?? thresholds.LANE_CHANGE_HIGHWAY_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH;
     const windowStart = Math.max(0, i - 3);
     const windowEnd = Math.min(points.length - 1, i + 3);
     const windowPoints = points.slice(windowStart, windowEnd + 1);
     const windowDurationS = (timestampMs(points[windowEnd]) - timestampMs(points[windowStart])) / 1000;
     if (windowDurationS <= 0 || windowDurationS > 40) continue;
-    const minWindowSeconds = thresholds.LANE_CHANGE_MIN_WINDOW_SECONDS ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_WINDOW_SECONDS;
+    const minWindowSeconds = thresholds.HEADING_DEVIATION_MIN_WINDOW_SECONDS ?? thresholds.LANE_CHANGE_MIN_WINDOW_SECONDS ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_MIN_WINDOW_SECONDS;
     if (windowDurationS < minWindowSeconds) continue;
-    const straightHeadingStdMax = thresholds.LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG ?? DEFAULT_THRESHOLDS.LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG;
+    const straightHeadingStdMax = thresholds.HEADING_DEVIATION_STRAIGHT_HEADING_STD_MAX_DEG ?? thresholds.LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_STRAIGHT_HEADING_STD_MAX_DEG;
     const approachHeadingStd = headingVarianceForRange(points, windowStart, Math.max(windowStart, i - 1));
     if (approachHeadingStd > straightHeadingStdMax) continue;
-    const suppressionRadius = thresholds.LANE_CHANGE_SUPPRESS_CONTEXT_METERS ?? DEFAULT_THRESHOLDS.LANE_CHANGE_SUPPRESS_CONTEXT_METERS;
+    const suppressionRadius = thresholds.HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS ?? thresholds.LANE_CHANGE_SUPPRESS_CONTEXT_METERS ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS;
     if (isNearIntersectionOrRampContext(points, i, suppressionRadius)) continue;
 
     let leftChange = 0;
@@ -1774,6 +1772,9 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
   }));
 }
 
+// Compatibility export for callers compiled against older versions.
+export const detectLaneChanges = detectHeadingDeviationEvents;
+
 export function detectHighwayMergeBehavior(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   let mergeEventCount = 0;
   let poorMergeCount = 0;
@@ -1836,14 +1837,14 @@ export function detectHighwayMergeBehavior(cleanPoints = [], thresholds = DEFAUL
   };
 }
 
-export function detectTailgateCycles(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function detectStopStartPatterns(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!cleanPoints || cleanPoints.length < 3) return [];
 
   const events = [];
-  const decelThreshold = thresholds.TAILGATE_DECEL_MS2 ?? DEFAULT_THRESHOLDS.TAILGATE_DECEL_MS2;
-  const followingMinSpeed = thresholds.FOLLOWING_GAP_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.FOLLOWING_GAP_MIN_SPEED_KMH;
-  const cruiseSeconds = thresholds.FOLLOWING_GAP_CRUISE_SECONDS ?? DEFAULT_THRESHOLDS.FOLLOWING_GAP_CRUISE_SECONDS;
-  const speedDropThreshold = thresholds.FOLLOWING_GAP_SPEED_DROP_KMH ?? DEFAULT_THRESHOLDS.FOLLOWING_GAP_SPEED_DROP_KMH;
+  const decelThreshold = thresholds.STOP_START_DECEL_MS2 ?? thresholds.TAILGATE_DECEL_MS2 ?? DEFAULT_THRESHOLDS.STOP_START_DECEL_MS2;
+  const stopStartMinSpeed = thresholds.STOP_START_MIN_SPEED_KMH ?? thresholds.FOLLOWING_GAP_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.STOP_START_MIN_SPEED_KMH;
+  const cruiseSeconds = thresholds.STOP_START_CRUISE_SECONDS ?? thresholds.FOLLOWING_GAP_CRUISE_SECONDS ?? DEFAULT_THRESHOLDS.STOP_START_CRUISE_SECONDS;
+  const speedDropThreshold = thresholds.STOP_START_SPEED_DROP_KMH ?? thresholds.FOLLOWING_GAP_SPEED_DROP_KMH ?? DEFAULT_THRESHOLDS.STOP_START_SPEED_DROP_KMH;
   let state = 'IDLE';
   let cruiseStartTime = null;
   let cruiseSpeed = 0;
@@ -1880,7 +1881,7 @@ export function detectTailgateCycles(cleanPoints = [], thresholds = DEFAULT_THRE
     const accel = calculateAcceleration(prevSpeed, currSpeed, dt);
 
     if (state === 'IDLE') {
-      if (currSpeed >= followingMinSpeed) {
+      if (currSpeed >= stopStartMinSpeed) {
         state = 'CRUISING';
         cruiseStartTime = timestampMs(curr);
         cruiseSpeed = currSpeed;
@@ -1889,7 +1890,7 @@ export function detectTailgateCycles(cleanPoints = [], thresholds = DEFAULT_THRE
     }
 
     if (state === 'CRUISING') {
-      if (currSpeed >= followingMinSpeed) {
+      if (currSpeed >= stopStartMinSpeed) {
         cruiseSpeed = Math.max(cruiseSpeed, currSpeed);
       } else if ((timestampMs(curr) - cruiseStartTime) / 1000 < cruiseSeconds) {
         state = 'IDLE';
@@ -1923,11 +1924,11 @@ export function detectTailgateCycles(cleanPoints = [], thresholds = DEFAULT_THRE
           value: Math.round(speedDrop),
           speed_kmh: Math.round(cruiseSpeed),
         });
-        state = currSpeed >= followingMinSpeed ? 'CRUISING' : 'IDLE';
+        state = currSpeed >= stopStartMinSpeed ? 'CRUISING' : 'IDLE';
         cruiseStartTime = timestampMs(curr);
         cruiseSpeed = currSpeed;
-      } else if (elapsed > 12 || currSpeed < Math.max(25, followingMinSpeed - 20)) {
-        state = currSpeed >= followingMinSpeed ? 'CRUISING' : 'IDLE';
+      } else if (elapsed > 12 || currSpeed < Math.max(25, stopStartMinSpeed - 20)) {
+        state = currSpeed >= stopStartMinSpeed ? 'CRUISING' : 'IDLE';
         cruiseStartTime = timestampMs(curr);
         cruiseSpeed = currSpeed;
       }
@@ -3601,7 +3602,7 @@ export function detectHeadingDriftBeta(cleanPoints = [], durationSeconds = 0, th
     return { heading_drift_beta_window_count: 0, heading_drift_beta_score: 0, heading_drift_beta_level: 'none', heading_drift_beta_confidence: 'low' };
   }
 
-  const headingThreshold = thresholds.threshold_drowsy_heading_std ?? DEFAULT_THRESHOLDS.threshold_drowsy_heading_std;
+  const headingThreshold = thresholds.HEADING_DRIFT_STD_DEG ?? thresholds.threshold_drowsy_heading_std ?? DEFAULT_THRESHOLDS.HEADING_DRIFT_STD_DEG;
   const startTime = timestampMs(cleanPoints[0]);
   const timestamps = cleanPoints.map((point) => timestampMs(point));
   const speeds = cleanPoints.map((point) => finiteSpeed(point));
@@ -4048,12 +4049,12 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   }
 
   const alwaysOnEvents = [
-    detectTailgateCycles(points, thresholds),
+    detectStopStartPatterns(points, thresholds),
     detectErraticSpeedWindows(points, thresholds),
   ];
   if (advancedSafetyEnabled) {
     alwaysOnEvents.push(
-      detectLaneChanges(points, thresholds),
+      detectHeadingDeviationEvents(points, thresholds),
       detectAggressiveOvertakes(points, thresholds),
       detectCloseProximityManeuverAlerts(points, thresholds)
     );
@@ -4067,8 +4068,8 @@ export function detectCloseProximityManeuverAlerts(cleanPoints = [], thresholds 
   const events = [];
   if (!cleanPoints || cleanPoints.length < 2) return events;
 
-  const brakeThreshold = thresholds.threshold_near_miss_brake_ms2 ?? DEFAULT_THRESHOLDS.threshold_near_miss_brake_ms2;
-  const turnThreshold = thresholds.threshold_near_miss_turn_degs ?? DEFAULT_THRESHOLDS.threshold_near_miss_turn_degs;
+  const brakeThreshold = thresholds.MANOEUVRE_ALERT_BRAKE_MS2 ?? thresholds.threshold_near_miss_brake_ms2 ?? DEFAULT_THRESHOLDS.MANOEUVRE_ALERT_BRAKE_MS2;
+  const turnThreshold = thresholds.MANOEUVRE_ALERT_TURN_DEG_S ?? thresholds.threshold_near_miss_turn_degs ?? DEFAULT_THRESHOLDS.MANOEUVRE_ALERT_TURN_DEG_S;
   let candidateDurationSeconds = 0;
   let peakCandidate = null;
 
@@ -4123,6 +4124,9 @@ export function detectCloseProximityManeuverAlerts(cleanPoints = [], thresholds 
 
   return events;
 }
+
+// Compatibility export for callers compiled against older versions.
+export const detectTailgateCycles = detectStopStartPatterns;
 
 // Compatibility export; new detections are manoeuvre alerts rather than near-miss claims.
 export const detectNearMisses = detectCloseProximityManeuverAlerts;
@@ -4848,6 +4852,7 @@ export function calculateTripScores(
     speeding_events_count: counts[EVENT_TYPES.SPEEDING],
     heading_deviation_count: counts[EVENT_TYPES.HEADING_DEVIATION] + counts[EVENT_TYPES.LANE_CHANGE],
     heading_deviations_per_10km: round1(((counts[EVENT_TYPES.HEADING_DEVIATION] + counts[EVENT_TYPES.LANE_CHANGE]) / distKm) * 10),
+    heading_deviation_available: advancedSafetyEnabled,
     stop_start_pattern_count: stopStartPatternCount,
     stop_start_pattern_score: stopStartPatternScore,
     stop_start_pattern_score_confidence: stopStartPatternScore == null ? 'insufficient_highway_distance' : 'low',
@@ -4887,6 +4892,7 @@ export function calculateTripScores(
     phone_use_pct_of_trip: phoneUseResult.phone_use_pct_of_trip || 0,
     phone_use_high_confidence_count: phoneUseResult.phone_use_high_confidence_count || 0,
     ...headingDrift,
+    heading_drift_beta_available: advancedSafetyEnabled,
     ...hill,
     hill_driving_score_confidence: measuredRouteConfidence(hill.hill_driving_score),
     ...parking,

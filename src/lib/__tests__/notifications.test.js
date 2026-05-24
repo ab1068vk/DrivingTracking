@@ -96,7 +96,7 @@ describe('advanced notifications', () => {
       driving_events: [{ type: 'close_proximity' }, { type: 'close_proximity' }],
     }), [], settings);
 
-    expect(notification.id).toBe(NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY);
+    expect(notification.id).toBe(NOTIFICATION_IDS.TRIP_MANOEUVRE_ALERT_SUMMARY);
   });
 
   it('fires nothing when master notifications are disabled', async () => {
@@ -207,7 +207,7 @@ describe('advanced notifications', () => {
       rapid_accel_count: 3,
     }), [{ score_overall: 82 }], settings);
 
-    expect(stopStart.id).toBe(NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY);
+    expect(stopStart.id).toBe(NOTIFICATION_IDS.TRIP_STOP_START_SUMMARY);
     expect(merge.id).toBe(NOTIFICATION_IDS.TRIP_MERGE_SUMMARY);
     expect(accel.id).toBe(NOTIFICATION_IDS.TRIP_ACCEL_SUMMARY);
   });

@@ -18,8 +18,8 @@ export const NOTIFICATION_IDS = {
   WEEKLY_REPORT: 2101,
   SAFE_DRIVING_TIP: 2102,
   PHONE_USE_WARNING: 4001,
-  NEAR_MISS_ALERT: 4002,
-  DROWSY_WARNING: 4003,
+  MANOEUVRE_ALERT: 4002,
+  HEADING_DRIFT_BETA_WARNING: 4003,
   SPEEDING_WARNING: 4004,
   SPEEDING_ESCALATION: 4005,
   FATIGUE_BREAK_REMINDER: 4006,
@@ -31,8 +31,8 @@ export const NOTIFICATION_IDS = {
   TRIP_PHONE_USE_HIGH: 4013,
   TRIP_FUEL_SAVING: 4014,
   TRIP_CONDITION_ADJUSTED: 4015,
-  TRIP_NEAR_MISS_SUMMARY: 4016,
-  TRIP_FOLLOWING_GAP_SUMMARY: 4017,
+  TRIP_MANOEUVRE_ALERT_SUMMARY: 4016,
+  TRIP_STOP_START_SUMMARY: 4017,
   TRIP_MERGE_SUMMARY: 4018,
   TRIP_ACCEL_SUMMARY: 4019,
   HARSH_BRAKE_STREAK: 4020,
@@ -51,6 +51,11 @@ export const NOTIFICATION_IDS = {
   BACKGROUND_TRACKING_ACTIVE: 4040,
   EXPORT_SAVED: 4050,
 };
+// Backward-compatible notification identifiers for persisted scheduled items.
+NOTIFICATION_IDS.NEAR_MISS_ALERT = NOTIFICATION_IDS.MANOEUVRE_ALERT;
+NOTIFICATION_IDS.DROWSY_WARNING = NOTIFICATION_IDS.HEADING_DRIFT_BETA_WARNING;
+NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY = NOTIFICATION_IDS.TRIP_MANOEUVRE_ALERT_SUMMARY;
+NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY = NOTIFICATION_IDS.TRIP_STOP_START_SUMMARY;
 const LONG_TRIP_REMINDER_ID = NOTIFICATION_IDS.LONG_TRIP_REMINDER;
 const TRIP_STARTED_ID = NOTIFICATION_IDS.TRIP_STARTED;
 const TRIP_COMPLETED_ID = 2002;
@@ -64,7 +69,7 @@ const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
 const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'drivesense_achievement_notification_ids_v1';
 const NOTIFICATION_DEDUPE_KEY = 'drivesense_notification_dedupe_v1';
 const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
-const DROWSY_NOTIF_LAST_KEY = 'drivesense_drowsy_notif_last_ms';
+const HEADING_DRIFT_NOTIF_LAST_KEY = 'drivesense_heading_drift_notif_last_ms';
 const SPEEDING_NOTIF_LAST_KEY = 'drivesense_speeding_notif_last_ms';
 const FATIGUE_NOTIF_TRIP_KEY = 'drivesense_fatigue_notif_trip_id';
 const DEDUPE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
@@ -446,7 +451,7 @@ export async function notifyStayAlert(opts = {}) {
 
 export async function notifyDailyFatigueWarning(fatigueState) {
   if (!isNativePlatform()) return null;
-  if (!notificationsEnabled('notif_drowsy_alert_enabled')) return null;
+  if (!notificationsEnabled('notif_heading_drift_alert_enabled')) return null;
   const notification = {
     id: NOTIFICATION_IDS.DAILY_FATIGUE_WARNING,
     title: 'Take a break - high fatigue',
@@ -480,15 +485,15 @@ export async function notifyPhoneUseDetected(opts = {}, settings = localSettings
   return scheduled;
 }
 
-export async function notifyDrowsyWarning(opts = {}, settings = localSettings.get()) {
-  if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_drowsy_alert_enabled === false) return null;
+export async function notifyHeadingDriftBetaWarning(opts = {}, settings = localSettings.get()) {
+  if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_heading_drift_alert_enabled === false) return null;
   if (isQuietHours(settings, true)) return null;
   const now = Date.now();
-  if (now - readNumber(DROWSY_NOTIF_LAST_KEY) < 10 * 60 * 1000) return null;
+  if (now - readNumber(HEADING_DRIFT_NOTIF_LAST_KEY) < 10 * 60 * 1000) return null;
 
   const minutes = Number(opts.tripDurationMinutes) || 0;
   const notification = {
-    id: NOTIFICATION_IDS.DROWSY_WARNING,
+    id: NOTIFICATION_IDS.HEADING_DRIFT_BETA_WARNING,
     title: 'Heading Drift Alert (Beta)',
     body: minutes >= 90
       ? `You've been driving for ${Math.round(minutes)} minutes. Consider taking a break.`
@@ -498,9 +503,12 @@ export async function notifyDrowsyWarning(opts = {}, settings = localSettings.ge
     extra: { type: 'heading_drift_beta_warning', headingDriftBetaLevel: opts.headingDriftBetaLevel },
   };
   const scheduled = await scheduleNotification(notification);
-  if (scheduled) writeNumber(DROWSY_NOTIF_LAST_KEY, now);
+  if (scheduled) writeNumber(HEADING_DRIFT_NOTIF_LAST_KEY, now);
   return scheduled;
 }
+
+// Backward-compatible export for existing integrations.
+export const notifyDrowsyWarning = notifyHeadingDriftBetaWarning;
 
 export async function notifySpeedingAlert(opts = {}, settings = localSettings.get()) {
   if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_speeding_alert_enabled === false) return null;
@@ -526,7 +534,7 @@ export async function notifySpeedingAlert(opts = {}, settings = localSettings.ge
 }
 
 export async function notifyFatigueBreakReminder(opts = {}, settings = localSettings.get()) {
-  if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_drowsy_alert_enabled === false) return null;
+  if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_heading_drift_alert_enabled === false) return null;
   if (isQuietHours(settings, true)) return null;
   const tripId = opts.tripId || 'active';
   try {
@@ -568,7 +576,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   let notification = null;
   if (manoeuvreAlertHigh) {
     notification = {
-      id: NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY,
+      id: NOTIFICATION_IDS.TRIP_MANOEUVRE_ALERT_SUMMARY,
       title: 'Estimated Brake-Turn Alerts',
       body: `${manoeuvreAlertCount} estimated brake-turn manoeuvre alerts on your last trip. GPS alone cannot establish object proximity.`,
       channelId: SUMMARY_CHANNEL_ID,
@@ -587,7 +595,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
     };
   } else if (stopStartPatternRisk) {
     notification = {
-      id: NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY,
+      id: NOTIFICATION_IDS.TRIP_STOP_START_SUMMARY,
       title: 'Stop-Start Pattern Review',
       body: `${stopStartPatternCount || 'Multiple'} stop-start pattern${stopStartPatternCount === 1 ? '' : 's'} detected from speed data. This does not measure following distance.`,
       channelId: SUMMARY_CHANNEL_ID,

@@ -122,6 +122,13 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.text(`Exported ${now.toLocaleString()}`, 14, 46);
+  doc.setFontSize(8);
+  doc.text(
+    'GPS proxy limitation: score components may include low-confidence brake onset smoothness and stop-start patterns. They do not measure human reaction time or following distance.',
+    14,
+    52,
+    { maxWidth: 182 }
+  );
 
   const coverRows = [
     ['Total trips', summary.total_trips],
@@ -129,7 +136,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
     ['Total drive time', formatDuration(summary.total_duration_seconds)],
     ['Average score', summary.avg_score],
   ];
-  let y = 62;
+  let y = 70;
   coverRows.forEach(([label, value]) => {
     doc.setFont('helvetica', 'bold');
     doc.text(label, 14, y);
@@ -139,18 +146,22 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   });
   const trendRows = recentTripTrendRows(tripList);
   if (trendRows.length) {
-    drawHorizontalBars(doc, 'Recent Score Trend', trendRows, 112, { barWidth: 72, barX: 72 });
+    drawHorizontalBars(doc, 'Recent Score Trend', trendRows, 120, { barWidth: 72, barX: 72 });
   }
 
   doc.addPage();
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.text('Score Breakdown', 14, 20);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('Safety and Smoothness include only GPS-derived behavioral proxies where applicable; see the cover limitation note.', 14, 27, { maxWidth: 180 });
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   const widths = [24, 22, 22, 18, 18, 20, 16, 20, 20];
-  writeRow(doc, ['Date', 'Distance', 'Duration', 'Overall', 'Safety', 'Smooth', 'Eco', 'Brakes', 'Speeding'], 32, widths);
+  writeRow(doc, ['Date', 'Distance', 'Duration', 'Overall', 'Safety', 'Smooth', 'Eco', 'Brakes', 'Speeding'], 38, widths);
   doc.setFont('helvetica', 'normal');
-  y = 40;
+  y = 46;
   tripList.slice(0, 24).forEach((trip) => {
     if (y > 280) {
       doc.addPage();

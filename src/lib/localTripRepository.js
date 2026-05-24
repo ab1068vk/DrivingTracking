@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 17;
+export const TRIP_SCHEMA_VERSION = 18;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -73,6 +73,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  * Version 17 replaces unsupported public GPS-only safety claims with
  * brake-onset, stop-start, heading-deviation, heading-drift beta, and
  * estimated close-proximity manoeuvre fields.
+ *
+ * Version 18 adds availability flags so withheld GPS-only proxy surfaces are
+ * hidden when the required evidence or advanced detection mode is absent.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -266,7 +269,9 @@ const needsRescore = (trip) => (
     trip.needs_rescore ||
     hasRecoverableOriginalRouteGeometry(trip.route_points || []) ||
     trip.defensive_driving_score == null ||
-    trip.brake_onset_smoothness_score == null ||
+    trip.brake_onset_sequence_count == null ||
+    trip.heading_deviation_available == null ||
+    trip.heading_drift_beta_available == null ||
     trip.braking_efficiency_grade == null ||
     trip.overall_compliance_score == null ||
     trip.dominant_road_type == null ||

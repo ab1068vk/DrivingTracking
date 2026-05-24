@@ -9,7 +9,7 @@ import {
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import {
-  notifyDrowsyWarning,
+  notifyHeadingDriftBetaWarning,
   notifyFatigueBreakReminder,
   notifyPhoneUseDetected,
   notifySpeedingAlert,
@@ -219,8 +219,8 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           };
         }
       }
-      if (stats.heading_drift_beta_level === 'high' && settings.notif_drowsy_alert_enabled !== false) {
-        notifyDrowsyWarning({
+      if (stats.heading_drift_beta_level === 'high' && settings.notif_heading_drift_alert_enabled !== false) {
+        notifyHeadingDriftBetaWarning({
           headingDriftBetaLevel: 'high',
           tripDurationMinutes: (stats.duration_seconds || 0) / 60,
         }, settings).catch(() => {});

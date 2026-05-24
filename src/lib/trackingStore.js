@@ -18,7 +18,7 @@ const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
 let lastNativeSettingsSync = '';
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 3;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 4;
 
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;
@@ -57,7 +57,7 @@ export const DEFAULT_SETTINGS = {
   data_retention_days: 365,
   threshold_harsh_brake_ms2: 3.5,
   threshold_rapid_accel_ms2: 3.0,
-  threshold_tailgate_decel_ms2: 2.5,
+  threshold_stop_start_decel_ms2: 2.5,
   threshold_sharp_turn_g_low: 0.35,
   threshold_sharp_turn_g_medium: 0.45,
   threshold_sharp_turn_g_high: 0.60,
@@ -76,9 +76,9 @@ export const DEFAULT_SETTINGS = {
   night_end_time: NIGHT_END_TIME,
   night_sunset_offset_minutes: 0,
   night_sunrise_offset_minutes: 0,
-  threshold_near_miss_brake_ms2: 4.0,
-  threshold_near_miss_turn_degs: 25,
-  threshold_drowsy_heading_std: 8,
+  threshold_manoeuvre_alert_brake_ms2: 4.0,
+  threshold_manoeuvre_alert_turn_degs: 25,
+  threshold_heading_drift_std_degs: 8,
   threshold_phone_proxy_oscillations: 3,
   phone_use_detection_enabled: true,
   phone_use_live_alert_enabled: true,
@@ -120,7 +120,7 @@ export const DEFAULT_SETTINGS = {
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
   notif_phone_use_alert_enabled: true,
-  notif_drowsy_alert_enabled: true,
+  notif_heading_drift_alert_enabled: true,
   notif_speeding_alert_enabled: true,
   notif_post_trip_summary_enabled: true,
   notif_post_trip_score_change: true,
@@ -153,6 +153,13 @@ export const DEFAULT_SETTINGS = {
 export function migrateDefaultSettings(parsed = {}) {
   const merged = { ...DEFAULT_SETTINGS, ...parsed };
   const version = Number(parsed.settings_defaults_version) || 1;
+  const legacyProxyKeys = [
+    'threshold_tailgate_decel_ms2',
+    'threshold_near_miss_brake_ms2',
+    'threshold_near_miss_turn_degs',
+    'threshold_drowsy_heading_std',
+    'notif_drowsy_alert_enabled',
+  ];
 
   if (version < 2) {
     if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
@@ -168,15 +175,35 @@ export function migrateDefaultSettings(parsed = {}) {
     if (parsed.night_end_time == null || parsed.night_end_time === '06:00') merged.night_end_time = NIGHT_END_TIME;
   }
 
+  if (parsed.threshold_stop_start_decel_ms2 == null && parsed.threshold_tailgate_decel_ms2 != null) {
+    merged.threshold_stop_start_decel_ms2 = parsed.threshold_tailgate_decel_ms2;
+  }
+  if (parsed.threshold_manoeuvre_alert_brake_ms2 == null && parsed.threshold_near_miss_brake_ms2 != null) {
+    merged.threshold_manoeuvre_alert_brake_ms2 = parsed.threshold_near_miss_brake_ms2;
+  }
+  if (parsed.threshold_manoeuvre_alert_turn_degs == null && parsed.threshold_near_miss_turn_degs != null) {
+    merged.threshold_manoeuvre_alert_turn_degs = parsed.threshold_near_miss_turn_degs;
+  }
+  if (parsed.threshold_heading_drift_std_degs == null && parsed.threshold_drowsy_heading_std != null) {
+    merged.threshold_heading_drift_std_degs = parsed.threshold_drowsy_heading_std;
+  }
+  if (parsed.notif_heading_drift_alert_enabled == null && parsed.notif_drowsy_alert_enabled != null) {
+    merged.notif_heading_drift_alert_enabled = parsed.notif_drowsy_alert_enabled;
+  }
+  legacyProxyKeys.forEach((key) => delete merged[key]);
+
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
-  return { settings: merged, changed: version < CURRENT_SETTINGS_DEFAULTS_VERSION };
+  return {
+    settings: merged,
+    changed: version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+  };
 }
 
 const IMPORT_NUMBER_RANGES = {
   data_retention_days: [1, 3650],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
-  threshold_tailgate_decel_ms2: [0.5, 15],
+  threshold_stop_start_decel_ms2: [0.5, 15],
   threshold_sharp_turn_g_low: [0.05, 2],
   threshold_sharp_turn_g_medium: [0.05, 2],
   threshold_sharp_turn_g_high: [0.05, 2],
@@ -192,9 +219,9 @@ const IMPORT_NUMBER_RANGES = {
   threshold_long_drive_minutes: [5, 1440],
   night_sunset_offset_minutes: [-180, 180],
   night_sunrise_offset_minutes: [-180, 180],
-  threshold_near_miss_brake_ms2: [0.5, 15],
-  threshold_near_miss_turn_degs: [1, 180],
-  threshold_drowsy_heading_std: [1, 90],
+  threshold_manoeuvre_alert_brake_ms2: [0.5, 15],
+  threshold_manoeuvre_alert_turn_degs: [1, 180],
+  threshold_heading_drift_std_degs: [1, 90],
   threshold_phone_proxy_oscillations: [1, 20],
   phone_micro_steer_count: [1, 20],
   phone_creep_rate_kmh_s: [0.1, 10],
@@ -267,11 +294,28 @@ const sanitizeImportedPrivacyZones = (zones) => (
 export function sanitizeImportedSettings(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
 
+  const normalizedRaw = { ...raw };
+  if (normalizedRaw.threshold_stop_start_decel_ms2 == null) {
+    normalizedRaw.threshold_stop_start_decel_ms2 = raw.threshold_tailgate_decel_ms2;
+  }
+  if (normalizedRaw.threshold_manoeuvre_alert_brake_ms2 == null) {
+    normalizedRaw.threshold_manoeuvre_alert_brake_ms2 = raw.threshold_near_miss_brake_ms2;
+  }
+  if (normalizedRaw.threshold_manoeuvre_alert_turn_degs == null) {
+    normalizedRaw.threshold_manoeuvre_alert_turn_degs = raw.threshold_near_miss_turn_degs;
+  }
+  if (normalizedRaw.threshold_heading_drift_std_degs == null) {
+    normalizedRaw.threshold_heading_drift_std_degs = raw.threshold_drowsy_heading_std;
+  }
+  if (normalizedRaw.notif_heading_drift_alert_enabled == null) {
+    normalizedRaw.notif_heading_drift_alert_enabled = raw.notif_drowsy_alert_enabled;
+  }
+
   const sanitized = {};
   Object.entries(DEFAULT_SETTINGS).forEach(([key, defaultValue]) => {
-    if (!Object.prototype.hasOwnProperty.call(raw, key)) return;
+    if (!Object.prototype.hasOwnProperty.call(normalizedRaw, key) || normalizedRaw[key] == null) return;
     if (IMPORT_STRIPPED_KEYS.has(key)) return;
-    const value = raw[key];
+    const value = normalizedRaw[key];
 
     if (key === 'privacy_zones') {
       sanitized.privacy_zones = sanitizeImportedPrivacyZones(value);

@@ -22,9 +22,9 @@ import {
   detectSpeedCreepWithThresholds,
   detectHighwayMergeBehavior,
   inferSpeedZones,
-  detectLaneChanges,
+  detectHeadingDeviationEvents,
   detectErraticSpeedWindows,
-  detectTailgateCycles,
+  detectStopStartPatterns,
   detectCloseProximityManeuverAlerts,
   DEFAULT_THRESHOLDS,
   ECO_DEFAULTS,
@@ -503,10 +503,27 @@ describe('tripEngine', () => {
       phone_use_score_confidence: 1,
       hill_driving_score_confidence: 0,
       brake_onset_smoothness_confidence: 'low',
+      heading_deviation_available: true,
+      heading_drift_beta_available: true,
       cornering_consistency_score_confidence: 0,
       braking_efficiency_score_confidence: 0,
       defensive_driving_score_confidence: 1,
     });
+  });
+
+  it('marks advanced GPS beta surfaces unavailable when advanced detection is disabled', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },
+      [],
+      { ...DEFAULT_THRESHOLDS, ADVANCED_SAFETY_DETECTION_ENABLED: false },
+      600,
+      {},
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.heading_deviation_available).toBe(false);
+    expect(scores.heading_drift_beta_available).toBe(false);
   });
 
   it('caps persistent phone-use distraction at a 30 point floor', () => {
@@ -567,7 +584,7 @@ describe('tripEngine', () => {
       point(43.6534, -79.3832, 1, 50),
       point(43.6536, -79.3832, 2, 40),
     ], 1).jerk_score).toBeLessThan(100);
-    expect(detectLaneChanges(highwayPoints).length).toBeGreaterThan(0);
+    expect(detectHeadingDeviationEvents(highwayPoints).length).toBeGreaterThan(0);
   });
 
   it('does not report a jerk score without enough usable distance or movement', () => {
@@ -1042,14 +1059,14 @@ describe('tripEngine', () => {
       point(43.6532 + index * 0.00045, -79.3832, index * 5, speed)
     ));
 
-    expect(detectLaneChanges(lanePoints)[0]).toMatchObject({ type: EVENT_TYPES.HEADING_DEVIATION, confidence: 'low' });
-    expect(detectTailgateCycles(followingPoints)[0]).toMatchObject({ type: EVENT_TYPES.STOP_START_PATTERN, confidence: 'low' });
-    expect(detectTailgateCycles(cityFollowingPoints).length).toBeGreaterThan(0);
-    expect(detectTailgateCycles(maskedFollowingPoints)).toHaveLength(0);
+    expect(detectHeadingDeviationEvents(lanePoints)[0]).toMatchObject({ type: EVENT_TYPES.HEADING_DEVIATION, confidence: 'low' });
+    expect(detectStopStartPatterns(followingPoints)[0]).toMatchObject({ type: EVENT_TYPES.STOP_START_PATTERN, confidence: 'low' });
+    expect(detectStopStartPatterns(cityFollowingPoints).length).toBeGreaterThan(0);
+    expect(detectStopStartPatterns(maskedFollowingPoints)).toHaveLength(0);
     expect(detectHighwayMergeBehavior(mergePoints).merge_event_count).toBe(1);
   });
 
-  it('detects gentler lane switches without counting sustained road curves', () => {
+  it('detects heading deviations without counting sustained road curves', () => {
     const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({
       ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 60),
       heading,
@@ -1059,8 +1076,8 @@ describe('tripEngine', () => {
       heading,
     }));
 
-    expect(detectLaneChanges(gentleLaneSwitch).length).toBeGreaterThan(0);
-    expect(detectLaneChanges(roadCurve).length).toBe(0);
+    expect(detectHeadingDeviationEvents(gentleLaneSwitch).length).toBeGreaterThan(0);
+    expect(detectHeadingDeviationEvents(roadCurve).length).toBe(0);
   });
 
   it('keeps heading-deviation events out of the safety score', () => {
