@@ -108,6 +108,27 @@ describe('Android phone usage access merge', () => {
     expect(merged.phone_use_total_seconds).toBe(20);
   });
 
+  it('retains GPS proxy evidence as diagnostics without creating a phone-use score', () => {
+    const gps = {
+      phone_use_events: [{
+        type: 'phone_use',
+        source: 'gps_proxy',
+        diagnostic_only: true,
+        startTime: new Date(baseTime + 10_000).toISOString(),
+        durationS: 10,
+        confidence: 0.7,
+      }],
+      data_sources: ['gps_proxy'],
+    };
+
+    const merged = mergePhoneUseSignals(gps, {}, 120);
+
+    expect(merged.phone_use_events).toEqual([]);
+    expect(merged.phone_use_score).toBeNull();
+    expect(merged.phone_use_score_status).toBe('usage_access_required');
+    expect(merged.phone_proxy_count).toBe(1);
+  });
+
   it('adds usage-access phone events to the driving event list once', () => {
     const usage = buildPhoneUseFromAndroidUsage({
       events: [{ package_name: 'com.chat.app', start_ms: baseTime + 5_000, end_ms: baseTime + 15_000, duration_seconds: 10 }],

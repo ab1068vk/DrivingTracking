@@ -6,7 +6,7 @@ export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
 export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
 const MAX_SERIALIZED_LENGTH = 2_000_000;
 const MAX_STORED_SEGMENTS = 5000;
-const HARSH_EVENT_TYPES = new Set(['harsh_brake', 'near_miss', 'close_proximity', 'aggressive_overtake']);
+const HARSH_EVENT_TYPES = new Set(['harsh_brake', 'near_miss', 'close_proximity']);
 const SPEED_RISK_START_KMH = 100;
 const SPEED_RISK_FULL_KMH = 160;
 const SPEED_RISK_MAX_POINTS = 15;
@@ -85,6 +85,7 @@ export function buildRouteRiskIndex(trips = []) {
     }
 
     for (const event of trip.driving_events || []) {
+      if (event?.diagnostic_only === true) continue;
       const lat = Number(event.lat);
       const lng = Number(event.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;

@@ -47,7 +47,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(4);
+    expect(legacySunset.settings_defaults_version).toBe(5);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 
@@ -87,5 +87,21 @@ describe('tracking store default settings', () => {
       threshold_heading_drift_std_degs: 10,
       notif_heading_drift_alert_enabled: false,
     });
+  });
+
+  it('raises GPS phone proxy defaults for diagnostic-only collection', () => {
+    const migrated = migrateDefaultSettings({
+      settings_defaults_version: 4,
+      threshold_phone_proxy_oscillations: 3,
+      phone_micro_steer_count: 4,
+      threshold_overtake_accel_ms2: 2,
+    }).settings;
+
+    expect(DEFAULT_SETTINGS.phone_micro_steer_count).toBe(6);
+    expect(DEFAULT_SETTINGS.phone_micro_steer_window_s).toBe(15);
+    expect(migrated.phone_micro_steer_count).toBe(6);
+    expect(migrated.phone_proxy_max_accuracy_m).toBe(20);
+    expect(migrated.threshold_overtake_accel_ms2).toBe(3);
+    expect(sanitizeImportedSettings({ threshold_overtake_accel_ms2: 2 }).threshold_overtake_accel_ms2).toBe(3);
   });
 });

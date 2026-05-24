@@ -118,7 +118,7 @@ export function isHighRiskTrip(trip = {}) {
   return (trip.score_overall ?? 100) < 60 ||
     riskyEvents >= 4 ||
     trip.aggressive_grade === 'aggressive' ||
-    ['possible', 'likely', 'high'].includes(trip.phone_proxy_risk || trip.phone_use_risk);
+    (trip.phone_use_score_available === true && ['medium', 'high'].includes(trip.phone_use_risk));
 }
 
 const plural = (count, label) => `${count} ${label}${count === 1 ? '' : 's'}`;

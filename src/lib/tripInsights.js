@@ -785,7 +785,6 @@ export function calculateRiskEventRate(trips = []) {
     stop_start_patterns: completed.reduce((sum, trip) => sum + (trip.stop_start_pattern_count ?? trip.tailgate_cycle_count ?? 0), 0),
     erratic_speed: completed.reduce((sum, trip) => sum + (trip.distraction_events_count || 0), 0),
     close_proximity: completed.reduce((sum, trip) => sum + (trip.close_proximity_count ?? trip.near_miss_count ?? 0), 0),
-    aggressive_overtake: completed.reduce((sum, trip) => sum + (trip.overtake_event_count || 0), 0),
   };
   const totalEvents = Object.values(totals).reduce((sum, count) => sum + count, 0);
   const sufficientData = distanceKm >= RISK_EVENT_RATE_MIN_DISTANCE_KM;
@@ -1202,14 +1201,14 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     stop_start_patterns: 'stop-start patterns',
     erratic_speed: 'distraction risk',
     close_proximity: 'brake-turn alert review',
-    aggressive_overtake: 'highway patience',
   };
   const recentTen = [...completed]
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 10);
   const recentManoeuvreAlerts = recentTen.reduce((sum, trip) => sum + (trip.close_proximity_count ?? trip.near_miss_count ?? 0), 0);
   const recentPhoneRiskyTrips = recentTen.filter((trip) => (
-    trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high'
+    trip.phone_use_score_available === true &&
+    (trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high')
   )).length;
   const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
   const recentThirty = completed.filter((trip) => new Date(trip.start_time || trip.created_at || 0).getTime() >= thirtyDaysAgo);
@@ -1234,15 +1233,13 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
       ? 'heading drift review'
       : common('aggressive_grade') === 'aggressive'
         ? 'aggressive driving'
-        : common('phone_proxy_risk') === 'likely'
-          ? 'distraction reduction'
-          : riskRate.worst_event_count > 0
-            ? eventLabels[riskRate.worst_event]
-            : speed.level === 'needs_attention'
-              ? 'speed control'
-              : fatigue.level === 'high'
-                ? 'fatigue breaks'
-                : 'consistency';
+        : riskRate.worst_event_count > 0
+          ? eventLabels[riskRate.worst_event]
+          : speed.level === 'needs_attention'
+            ? 'speed control'
+            : fatigue.level === 'high'
+              ? 'fatigue breaks'
+              : 'consistency';
 
   const actions = [];
   if (recentPhoneRiskyTrips >= 3) {
@@ -1347,19 +1344,14 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
   const recentFiveAvg = distanceWeightedScore(recentFive) ?? 0;
   const avgScore = distanceWeightedScore(completed) ?? 0;
   const smoothBrakeTrips = completed.filter((trip) => trip.smooth_braking_ratio === 100).length;
-  const distractionFreeTrips = completed.filter((trip) => trip.phone_proxy_risk === 'none').length;
+  const distractionFreeTrips = completed.filter((trip) => (
+    trip.phone_use_score_available === true && trip.phone_use_risk === 'none'
+  )).length;
   const sortedRecent = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const lastTenDefensive = sortedRecent.slice(0, 10);
   const defensiveStreak = lastTenDefensive.length >= 10 && lastTenDefensive.every((trip) => (
     ['defensive', 'exemplary'].includes(trip.defensive_grade)
   ));
-  const highwayDiplomatTrips = completed.filter((trip) => {
-    const points = Array.isArray(trip.route_points) ? trip.route_points : [];
-    const highwayShare = points.length
-      ? points.filter((point) => Number(point.speed_kmh) > 80).length / points.length
-      : 0;
-    return highwayShare >= 0.2 && (trip.overtake_event_count || 0) === 0;
-  }).length;
   const cruiseMasterTrips = completed.filter((trip) => trip.band_label === 'excellent cruise').length;
   const manoeuvreAlertFreeTrips = completed.filter((trip) => (trip.close_proximity_count ?? trip.near_miss_count ?? 0) === 0).length;
   const carbon = calculateCarbonImpact(completed, settings);
@@ -1556,21 +1548,11 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
     {
       id: 'distraction_free',
       label: 'Distraction-Free',
-      description: 'Complete 20 trips with no phone-distraction proxy risk.',
+      description: 'Complete 20 trips with Usage Access enabled and no confirmed phone use.',
       category: 'Focus',
       earned: distractionFreeTrips >= 20,
       current: Math.min(20, distractionFreeTrips),
       target: 20,
-      unit: 'trips',
-    },
-    {
-      id: 'highway_diplomat',
-      label: 'Highway Diplomat',
-      description: 'Complete 50 highway trips without aggressive overtakes.',
-      category: 'Highway',
-      earned: highwayDiplomatTrips >= 50,
-      current: Math.min(50, highwayDiplomatTrips),
-      target: 50,
       unit: 'trips',
     },
     {

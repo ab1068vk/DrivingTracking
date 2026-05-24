@@ -18,7 +18,7 @@ const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
 let lastNativeSettingsSync = '';
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 4;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 5;
 
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;
@@ -79,13 +79,15 @@ export const DEFAULT_SETTINGS = {
   threshold_manoeuvre_alert_brake_ms2: 4.0,
   threshold_manoeuvre_alert_turn_degs: 25,
   threshold_heading_drift_std_degs: 8,
-  threshold_phone_proxy_oscillations: 3,
+  threshold_phone_proxy_oscillations: 6,
   phone_use_detection_enabled: true,
   phone_use_live_alert_enabled: true,
   phone_use_show_on_map: true,
   phone_use_affects_score: true,
   phone_use_sensitivity: 'medium',
-  phone_micro_steer_count: 4,
+  phone_micro_steer_count: 6,
+  phone_micro_steer_window_s: 15,
+  phone_proxy_max_accuracy_m: 20,
   phone_creep_rate_kmh_s: 1.5,
   phone_lane_drift_deg: 8,
   phone_coupling_threshold: 0.15,
@@ -175,6 +177,14 @@ export function migrateDefaultSettings(parsed = {}) {
     if (parsed.night_end_time == null || parsed.night_end_time === '06:00') merged.night_end_time = NIGHT_END_TIME;
   }
 
+  if (version < 5) {
+    if (parsed.threshold_phone_proxy_oscillations == null || parsed.threshold_phone_proxy_oscillations === 3) merged.threshold_phone_proxy_oscillations = 6;
+    if (parsed.phone_micro_steer_count == null || parsed.phone_micro_steer_count === 4) merged.phone_micro_steer_count = 6;
+    if (Number(parsed.threshold_overtake_accel_ms2) < 3) merged.threshold_overtake_accel_ms2 = 3;
+    merged.phone_micro_steer_window_s = 15;
+    merged.phone_proxy_max_accuracy_m = 20;
+  }
+
   if (parsed.threshold_stop_start_decel_ms2 == null && parsed.threshold_tailgate_decel_ms2 != null) {
     merged.threshold_stop_start_decel_ms2 = parsed.threshold_tailgate_decel_ms2;
   }
@@ -224,13 +234,15 @@ const IMPORT_NUMBER_RANGES = {
   threshold_heading_drift_std_degs: [1, 90],
   threshold_phone_proxy_oscillations: [1, 20],
   phone_micro_steer_count: [1, 20],
+  phone_micro_steer_window_s: [1, 120],
+  phone_proxy_max_accuracy_m: [1, 100],
   phone_creep_rate_kmh_s: [0.1, 10],
   phone_lane_drift_deg: [1, 90],
   phone_coupling_threshold: [0, 1],
   phone_confidence_threshold: [0, 1],
   phone_min_window_s: [1, 120],
   threshold_speed_creep_kmh: [1, 80],
-  threshold_overtake_accel_ms2: [0.5, 15],
+  threshold_overtake_accel_ms2: [3, 5],
   min_speed_rapid_accel_kmh: [0, 100],
   min_speed_harsh_brake_kmh: [0, 150],
   weekly_goal_harsh_brakes: [0, 1000],
@@ -291,6 +303,9 @@ const sanitizeImportedPrivacyZones = (zones) => (
     : []
 );
 
+/**
+ * @param {Record<string, any>} raw Settings imported from backup or user storage.
+ */
 export function sanitizeImportedSettings(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
 

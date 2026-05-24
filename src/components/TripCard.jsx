@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Smartphone, Star, StickyNote, Moon } from 'lucide-react';
+import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
 import {
   buildScoreExplanation,
@@ -132,7 +132,7 @@ export default function TripCard({
             </div>
           )}
 
-          {((trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0 || trip.aggressive_grade === 'aggressive' || ['possible', 'likely'].includes(trip.phone_proxy_risk)) && (
+          {((trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0 || trip.aggressive_grade === 'aggressive') && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {(trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0 && (
                 <span title={`${trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn manoeuvre alert(s)`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
@@ -142,11 +142,6 @@ export default function TripCard({
               {trip.aggressive_grade === 'aggressive' && (
                 <span title="Aggressive driving pattern" className="inline-flex items-center text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
                   <Flame className="w-3 h-3" />
-                </span>
-              )}
-              {['possible', 'likely'].includes(trip.phone_proxy_risk) && (
-                <span title={`Phone distraction risk: ${trip.phone_proxy_risk}`} className="inline-flex items-center text-xs bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800/40 px-1.5 py-0.5 rounded-md">
-                  <Smartphone className="w-3 h-3" />
                 </span>
               )}
             </div>

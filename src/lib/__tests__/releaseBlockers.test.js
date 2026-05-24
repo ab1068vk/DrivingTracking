@@ -243,10 +243,11 @@ describe('release blocker regressions', () => {
     expect(Number.isFinite(result.phone_movement_score)).toBe(true);
   });
 
-  it('adds phone-use data source provenance when only GPS proxy data is available', () => {
+  it('does not score GPS-only phone proxy evidence', () => {
     const result = mergePhoneUseSignals({ phone_use_score: 60 }, {}, 120);
 
-    expect(result.phone_use_score).toBe(60);
+    expect(result.phone_use_score).toBeNull();
+    expect(result.phone_use_score_status).toBe('usage_access_required');
     expect(result.data_sources).toEqual(['gps_proxy']);
   });
 
@@ -258,6 +259,7 @@ describe('release blocker regressions', () => {
       DEFAULT_THRESHOLDS,
       600,
       {
+        phone_use_score_available: true,
         phone_use_risk: 'high',
         phone_use_score: 40,
         phone_use_total_seconds: 180,

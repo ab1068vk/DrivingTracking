@@ -3,7 +3,7 @@ import { haversineDistance } from '@/lib/tripEngine';
 
 export const DANGER_ZONES_KEY = 'drivesense_danger_zones';
 const EARTH_M_PER_DEG = 111320;
-const DEFAULT_EVENT_TYPES = ['harsh_brake', 'near_miss', 'close_proximity', 'sharp_turn', 'aggressive_overtake', 'speeding'];
+const DEFAULT_EVENT_TYPES = ['harsh_brake', 'near_miss', 'close_proximity', 'sharp_turn', 'speeding'];
 const SEVERITY_POINTS = { high: 3, medium: 2, low: 1 };
 
 const hashKey = (key) => {
@@ -41,9 +41,10 @@ export function buildDangerZones(trips = [], options = {}) {
   const groups = new Map();
 
   for (const trip of trips || []) {
-    if (trip?.status !== 'completed') continue;
-    for (const event of trip.driving_events || []) {
-      const lat = Number(event?.lat);
+      if (trip?.status !== 'completed') continue;
+      for (const event of trip.driving_events || []) {
+        if (event?.diagnostic_only === true) continue;
+        const lat = Number(event?.lat);
       const lng = Number(event?.lng);
       if (!eventTypes.has(event?.type) || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
 

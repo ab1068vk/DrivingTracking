@@ -78,6 +78,8 @@ describe('phone use detection', () => {
     expect(result.phone_use_events[0].confidence).toBeGreaterThanOrEqual(0.55);
     expect(result.phone_use_events[0].signals_triggered).toContain('micro_steer');
     expect(result.phone_use_events[0].point_index).toBeGreaterThanOrEqual(0);
+    expect(result.phone_use_events[0]).toMatchObject({ source: 'gps_proxy', diagnostic_only: true });
+    expect(result.phone_use_score).toBeNull();
   });
 
   it('merges two windows separated by a brief gap', () => {
@@ -131,7 +133,7 @@ describe('phone use detection', () => {
     expect(high.phone_use_risk).toBe('high');
   });
 
-  it('reduces score monotonically as phone use windows increase', () => {
+  it('keeps a diagnostic proxy severity measure without publishing a phone-use score', () => {
     const one = detectPhoneUseWindows(oscillationBlock(0, 14), {
       ...DEFAULT_THRESHOLDS,
       PHONE_CONFIDENCE_THRESHOLD: 0.30,
@@ -147,6 +149,19 @@ describe('phone use detection', () => {
       PHONE_CONFIDENCE_THRESHOLD: 0.30,
     });
 
-    expect(three.phone_use_score).toBeLessThan(one.phone_use_score);
+    expect(three.phone_use_score).toBeNull();
+    expect(one.phone_use_score).toBeNull();
+    expect(three.phone_proxy_diagnostic_score).toBeLessThan(one.phone_proxy_diagnostic_score);
+  });
+
+  it('suppresses micro-steering proxy windows when GPS accuracy degrades', () => {
+    const points = oscillationBlock(0).map((point) => ({ ...point, accuracy: 35 }));
+    const result = detectPhoneUseWindows(points, {
+      ...DEFAULT_THRESHOLDS,
+      PHONE_CONFIDENCE_THRESHOLD: 0.35,
+    });
+
+    expect(result.phone_proxy_count).toBe(0);
+    expect(result.phone_use_score).toBeNull();
   });
 });

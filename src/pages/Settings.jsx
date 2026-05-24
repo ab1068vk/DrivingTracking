@@ -127,7 +127,7 @@ function FeaturePermissionBadge({ value }) {
 const DRIVING_PATTERN_DEFINITIONS = [
   {
     term: 'Aggression score',
-    definition: 'Rates hard acceleration, harsh braking, aggressive overtakes, speed creep, and jerk. Higher means calmer, more controlled driving.',
+    definition: 'Rates hard acceleration, harsh braking, speed creep, and jerk. GPS overtake patterns are Beta diagnostics and do not affect this score.',
   },
   {
     term: 'Defensive score',
@@ -151,7 +151,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Focus score',
-    definition: 'Uses Android Usage Access when enabled, plus GPS behaviour signals as a fallback, to estimate distraction during trips.',
+    definition: 'Uses Android Usage Access evidence for phone-use scoring. GPS micro-steering patterns are diagnostic only and never reduce this score.',
   },
   {
     term: 'Intersection score',
@@ -1602,9 +1602,9 @@ export default function Settings() {
                 { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
                 { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
                 { key: 'threshold_heading_drift_std_degs', label: 'Heading Drift Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Curving roads and GPS noise can produce alerts; this is not a fatigue diagnosis.' },
-                { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are needed before distraction risk is flagged.' },
+                { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 6, max: 8, step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
                 { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
-                { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity', unit: 'm/s²', min: 2.0, max: 5.0, step: 0.5, help: 'How hard acceleration must be to start the aggressive-overtake signature.' },
+                { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },
               ].map(({ key, label, unit, min, max, step, help }) => (
                 <div key={key} className={`px-1 ${cfg.advanced_safety_detection_enabled === false ? 'opacity-60' : ''}`}>
                   <div className="flex justify-between text-xs mb-1.5">
@@ -1810,7 +1810,7 @@ export default function Settings() {
           <SettingRow
             icon={Focus}
             label="Detect phone use while driving"
-            sublabel="Use Android Usage Access when allowed, with GPS behaviour signals as a fallback"
+            sublabel="Use Android Usage Access for scoring; retain GPS proxy counts for diagnostics only"
           >
             <Toggle
               value={cfg.phone_use_detection_enabled !== false}
@@ -1820,7 +1820,7 @@ export default function Settings() {
           <div className={`${cfg.phone_use_detection_enabled === false ? 'pointer-events-none opacity-50' : ''}`}>
             <SettingRow
               label="Phone use live alert"
-              sublabel="Send an immediate warning when phone-use patterns are detected"
+              sublabel="Send an immediate warning only for Android Usage Access detections"
             >
               <Toggle
                 value={cfg.phone_use_live_alert_enabled !== false}
@@ -1863,7 +1863,7 @@ export default function Settings() {
                 disabled={cfg.phone_use_detection_enabled === false}
               />
             </SettingRow>
-            <SettingRow label="Include in trip score" sublabel="Apply phone-use penalties to the Safety score">
+            <SettingRow label="Include in trip score" sublabel="Apply confirmed Android Usage Access phone-use penalties to Safety">
               <Toggle
                 value={cfg.phone_use_affects_score !== false}
                 onChange={v => updateCfg({ phone_use_affects_score: v })}
@@ -1872,7 +1872,7 @@ export default function Settings() {
             </SettingRow>
             <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              For real phone activity detection on Android, enable Phone Usage Access above. Without it, Road Sage falls back to GPS behaviour patterns only.
+              Usage Access is needed for accurate phone detection. Without it, no phone-use score is shown; GPS proxy counts appear in diagnostics only.
             </div>
             <div className="mt-3 rounded-2xl border border-border bg-card p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -1886,7 +1886,7 @@ export default function Settings() {
               </div>
               <div className="space-y-3">
                 {[
-                  { key: 'phone_micro_steer_count', label: 'Micro-steer count', min: 2, max: 8, step: 1, unit: 'turns' },
+                  { key: 'phone_micro_steer_count', label: 'Micro-steer count', min: 6, max: 8, step: 1, unit: 'turns' },
                   { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },
                   { key: 'phone_lane_drift_deg', label: 'Lane drift angle', min: 3, max: 18, step: 1, unit: 'deg' },
                   { key: 'phone_coupling_threshold', label: 'Coupling threshold', min: 0.05, max: 0.4, step: 0.05, unit: '' },

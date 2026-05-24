@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateOvertakeQualityScore, EVENT_TYPES } from '@/lib/tripEngine';
+import { calculateOvertakeQualityScore, calculateTripScores, DEFAULT_THRESHOLDS, EVENT_TYPES } from '@/lib/tripEngine';
 
 const p = (index, speed, heading = 0) => ({
   lat: 43.65 + index * 0.0002,
@@ -51,5 +51,24 @@ describe('overtake quality', () => {
     ]);
     expect(result.overtake_count).toBe(0);
     expect(result.overtake_quality_score).toBeNull();
+  });
+
+  it('reports beta overtake diagnostics without reducing safety or aggression scores', () => {
+    const points = Array.from({ length: 12 }, (_, index) => p(index, 95 + Math.min(index, 3) * 5, index));
+    const stats = { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 };
+    const base = calculateTripScores([], stats, points, DEFAULT_THRESHOLDS, 60, {}, { includeRoadTypeSegments: false });
+    const diagnostic = calculateTripScores([{
+      type: EVENT_TYPES.AGGRESSIVE_OVERTAKE,
+      severity: 'high',
+      timestamp: points[3].timestamp,
+      speed_kmh: 105,
+      diagnostic_only: true,
+    }], stats, points, DEFAULT_THRESHOLDS, 60, {}, { includeRoadTypeSegments: false });
+
+    expect(diagnostic.overtake_event_count).toBe(1);
+    expect(diagnostic.overtake_score).toBeNull();
+    expect(diagnostic.overtake_quality_beta).toBe(true);
+    expect(diagnostic.score_safety).toBe(base.score_safety);
+    expect(diagnostic.aggressive_driving_score).toBe(base.aggressive_driving_score);
   });
 });

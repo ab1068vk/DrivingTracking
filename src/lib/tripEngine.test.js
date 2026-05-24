@@ -455,6 +455,7 @@ describe('tripEngine', () => {
       DEFAULT_THRESHOLDS,
       600,
       {
+        phone_use_score_available: true,
         phone_use_risk: 'high',
         phone_use_score: 45,
         phone_use_total_seconds: 300,
@@ -500,7 +501,7 @@ describe('tripEngine', () => {
       smooth_braking_score_confidence: 0,
       engine_stress_score_confidence: 1,
       speed_creep_score_confidence: 0,
-      phone_use_score_confidence: 1,
+      phone_use_score_confidence: 'usage_access_required',
       hill_driving_score_confidence: 0,
       brake_onset_smoothness_confidence: 'low',
       heading_deviation_available: true,
@@ -534,6 +535,7 @@ describe('tripEngine', () => {
       DEFAULT_THRESHOLDS,
       600,
       {
+        phone_use_score_available: true,
         phone_use_risk: 'high',
         phone_use_score: 0,
         phone_use_total_seconds: 600,
@@ -1448,7 +1450,7 @@ describe('trip insights', () => {
     expect(buildScoreTips(trips)[0]).toContain('excellent');
     expect(buildScoreTips([{ ...trips[0], score_confidence: undefined }])[0]).toContain('Not enough data yet');
     const badges = calculateAchievementBadges(trips);
-    expect(badges).toHaveLength(26);
+    expect(badges).toHaveLength(25);
     expect(badges.find((badge) => badge.id === 'first_drive').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'hundred_km').earned).toBe(true);

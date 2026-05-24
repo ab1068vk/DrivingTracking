@@ -109,7 +109,9 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       };
       const stats = calculateTripStats(currentRoutePoints, tripStartTime, currentTime, thresholds);
       const { events, phoneUse: gpsPhoneUse } = detectDrivingEvents(currentRoutePoints, thresholds, currentTime);
-      let phoneUse = settings.phone_use_detection_enabled === false ? {} : gpsPhoneUse;
+      let phoneUse = settings.phone_use_detection_enabled === false
+        ? {}
+        : mergePhoneUseSignals(gpsPhoneUse, {}, stats.duration_seconds);
       const tripStartMs = new Date(tripStartTime).getTime();
       if (settings.phone_use_detection_enabled !== false && isAndroid() && Number.isFinite(tripStartMs)) {
         const usageSummary = await getAndroidPhoneUsageSummary(tripStartMs, now).catch(() => null);

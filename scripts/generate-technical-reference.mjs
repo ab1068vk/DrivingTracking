@@ -642,14 +642,14 @@ function apiReference() {
 
 function topCalculationSnippets() {
   const snippets = [
-    ['Trip scoring weights, confidence, and final score', 'src/lib/tripEngine.js', 4597, 4900, 'js'],
+    ['Trip scoring weights, confidence, diagnostic gates, and final score', 'src/lib/tripEngine.js', 4660, 5010, 'js'],
     ['Eco score, cruise band, idle penalty', 'src/lib/tripEngine.js', 1448, 1620, 'js'],
     ['Map playback position interpolation', 'src/lib/mapPlaybackInsights.js', 254, 450, 'js'],
     ['Predictive route risk', 'src/lib/predictiveRouteRisk.js', 110, 174, 'js'],
     ['Pre-trip readiness risk', 'src/lib/preTripRisk.js', 118, 202, 'js'],
     ['Daily fatigue readiness accumulation', 'src/lib/dailyFatigueEngine.js', 1, 126, 'js'],
     ['Route risk segment index and GPS snapping', 'src/lib/routeRiskIndex.js', 1, 185, 'js'],
-    ['Phone-use risk construction and signal merge', 'src/lib/phoneUsageAccess.js', 81, 325, 'js'],
+    ['Phone-use Usage Access scoring and GPS proxy diagnostics', 'src/lib/phoneUsageAccess.js', 1, 355, 'js'],
     ['UBI report category scoring and minimum-distance gate', 'src/lib/ubiReport.js', 1, 142, 'js'],
     ['Threshold calibration suggestions', 'src/lib/thresholdCalibration.js', 1, 135, 'js'],
     ['Android native distance, gap-corrected duration, and speed service math', 'android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', 921, 1115, 'java'],
@@ -765,6 +765,7 @@ function buildDoc() {
       ['Estimated brake-turn manoeuvre alert', 'New detections are low-confidence `close_proximity` events after at least 1.5 seconds of simultaneous braking and heading change at 30 km/h or above, with defaults of 4.0 m/s2 and 25 deg/s. They do not establish proximity or a near miss and have zero direct Safety/Smoothness event penalty.'],
       ['Heading drift Beta', '`detectHeadingDriftBeta` evaluates sustained five-minute highway-speed GPS-heading drift windows, marks confidence low, and applies a 2.5x circadian multiplier between 02:00 and 05:00. Public UI describes a GPS-only Beta pattern rather than drowsiness.'],
       ['Heading event Beta', '`detectHeadingDeviationEvents` emits low-confidence `heading_deviation` events labelled Heading Event (Beta) only within advanced-safety detection. These events are shown for review and no longer deduct from Safety scoring.'],
+      ['Overtake pattern Beta', '`detectAggressiveOvertakes` is diagnostic only. It requires a baseline of at least 1 km of straight driving above 80 km/h, a minimum 3.0 m/s2 acceleration threshold, and a bilateral out-and-back heading pattern within 15 seconds. `calculateTripScores` excludes `aggressive_overtake` from Safety, Aggression, coaching, route risk, achievements, and ordinary phone/safety event scoring.'],
       ['Eco score reliability', '`ECO_DEFAULTS` supplies cruise and parked-idle scoring fallbacks when migrated settings omit or corrupt the relevant thresholds. `calculateEcoDrivingScore` clamps idle ratios to 0-1, reports `eco_score_confidence: invalid_thresholds` with a null component when both effective multipliers are zero, and `calculateTripScores` then blends only remaining eco evidence.'],
       ['Speed variability reliability', '`SVI_DEFAULTS` excludes stopped samples at or below 5 km/h, requires at least ten moving samples, applies separate city and highway variability penalties, and blends mixed routes by observed segment distance. Insufficient SVI evidence is null and neutral in smoothness, reports, coaching summaries, and week-to-week comparisons.'],
       ['Driver signature braking confidence', '`buildDriverSignature` excludes trips without measured braking efficiency from its braking dimension, keeps `dimensions.brakingStyle` null until at least three scored trips exist, and exposes `braking_confidence` from 0 to 1 based on up to ten observed braking trips. Driving Coach shows unavailable braking evidence as an em dash rather than a perfect score.'],
@@ -773,7 +774,7 @@ function buildDoc() {
       ['Personal baseline confidence', '`computePersonalBaseline` withholds a dashboard baseline until 10 completed trips are available in the recent window, then uses exponential recency weighting and displays a confidence interval rather than an unstable simple mean.'],
       ['Context-aware score evidence', 'Braking-efficiency grades use urban or highway thresholds and display their driving context. Hill-driving returns `hill_route: false` with a null score when not applicable; null component evidence stays out of composite decisions and score confidence metadata supports low-data UI suppression.'],
       ['Fatigue and playback time integrity', '`calculateFatigueScore` stores a normalized 0-100 fatigue risk. Fatigue heatmaps use named 30-second segments and require 20 segments before display. Trip duration subtracts tracking gaps, including native Android stats, and map playback uses timestamp progress with index progress only as a missing-time fallback.'],
-      ['Phone-use deduplication', 'Android usage evidence and micro-steering phone-use detections are merged within a 30-second overlap window, retaining the stronger confidence signal so a single episode is not penalized twice.'],
+      ['Phone-use scoring policy', 'Phone-use scoring requires Android Usage Access evidence. GPS micro-steering windows are collected only as diagnostics with a six-oscillation, 15-second threshold and GPS-accuracy gate; unavailable Usage Access produces `phone_use_score: null` / `usage_access_required`, and proxy events are excluded from Safety, coaching, live warnings, route risk, and normal trip events.'],
       ['Predictive route normalization', '`estimatePredictiveRouteRisk` normalizes and clamps baseline, event-density, danger-zone, weather, and time inputs before applying fractional weights. Estimated brake-turn manoeuvre alerts now contribute at 1.5x in predictive route and weather-risk adjustment rather than the former 2x alias path. Route-risk indexing snaps nearby GPS cells within 15 m to limit same-road fragmentation.'],
       ['UBI minimum evidence and weighting', '`computeUBIReport` returns insufficient data below 50 km, uses actual distance for event rates, and reduces GPS-heading-derived cornering weight to 5% while shifting weight toward braking.'],
       ['Commute and coaching policy', '`COMMUTE_MATCH_RADIUS_M` documents the 150 m commute route-match radius shown in Settings. Weekly coaching uses one focus metric and requires a score delta greater than 3 points; score tips require at least 2 km and confidence of at least 0.5.'],
@@ -785,7 +786,7 @@ function buildDoc() {
     ],
   ));
   doc.push('');
-  doc.push('> GPS-ONLY SAFETY LIMITATION: Road Sage has no hazard-stimulus timestamp, lead-vehicle ranging sensor, lane camera/HD-lane geometry, or driver-monitoring sensor. Brake onset smoothness, stop-start patterns, estimated brake-turn manoeuvre alerts, heading events, and heading drift Beta outputs are low-confidence behavior proxies. Legacy stored identifiers remain readable for older trip records only.');
+  doc.push('> GPS-ONLY SAFETY LIMITATION: Road Sage has no hazard-stimulus timestamp, lead-vehicle ranging sensor, lane camera/HD-lane geometry, phone gyroscope confirmation, foreground-app evidence unless Android Usage Access is granted, or driver-monitoring sensor. Brake onset smoothness, stop-start patterns, estimated brake-turn manoeuvre alerts, heading events, heading drift Beta, GPS phone-use proxy, and overtake-pattern outputs are low-confidence behavior proxies. Overtake and GPS phone-use proxy outputs are diagnostic only and excluded from overall Safety/coaching. Legacy stored identifiers remain readable for older trip records only.');
   doc.push('');
   doc.push('```mermaid\nflowchart TD\n  UI[React pages/components] --> Services[src/api services]\n  UI --> Domain[src/lib scoring, tracking, reports]\n  Domain --> Local[(localStorage / IndexedDB / Preferences)]\n  Services -->|VITE_API_URL set| Backend[Optional REST API]\n  Services -->|VITE_API_URL empty| LocalRepo[local repositories]\n  Android[Capacitor Android services] --> NativePrefs[(SharedPreferences)]\n  Android --> Domain\n  Domain --> External[OSM / Open-Meteo / optional OSRM]\n  Domain --> Reports[CSV/PDF/backup exports]\n```');
   doc.push('');
@@ -952,7 +953,7 @@ function buildReadme() {
     '',
     '- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, diagnostics, settings, and vehicles pages.',
     '- Manual trip capture, foreground auto-detect, and Android native background auto tracking with activity recognition, GPS fallback, quick settings tile support, pause/resume controls, and native trip import.',
-    '- Trip scoring for safety, smoothness, eco driving, phone-use distraction, speed compliance, road-type segments, brake onset smoothness, cornering, braking efficiency, overtake quality, stop-start patterns, fatigue, heading drift Beta, slippery-condition, estimated brake-turn manoeuvre alerts, and route-risk proxies.',
+    '- Trip scoring for safety, smoothness, eco driving, Android Usage Access phone-use distraction, speed compliance, road-type segments, brake onset smoothness, cornering, braking efficiency, stop-start patterns, fatigue, heading drift Beta, slippery-condition, estimated brake-turn manoeuvre alerts, route-risk proxies, and diagnostic-only GPS phone/overtake pattern counts.',
     '- Map playback with route simplification, stop handling, privacy-masked coordinate handling, HTML-escaped Leaflet popups, speed-limit coloring, fatigue overlays, event markers, and repeated-route comparison support.',
     '- Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, localized per-car cost, CO2 estimate metadata, and engine-health summaries, default vehicle handling, and vehicle comparison.',
     '- Reports with CSV export, monthly PDF export, UBI score-card PDF export gated until 50 km of evidence, confidence-aware rolling baseline comparison, carbon impact, configurable-currency fuel cost, and vehicle-backed CO2 savings estimates.',
@@ -961,7 +962,7 @@ function buildReadme() {
     '',
     '## GPS-Derived Safety Proxy Limits',
     '',
-    'Road Sage observes the ego vehicle GPS speed and heading stream unless separate device evidence is explicitly identified. It has no hazard-stimulus timestamp, forward-ranging sensor, lane camera/HD-lane geometry, or driver-monitoring sensor. The following values are behavioral proxies, not confirmations of human reaction time, following gap, near misses, lane position, or drowsiness.',
+    'Road Sage observes the ego vehicle GPS speed and heading stream unless separate device evidence is explicitly identified. It has no hazard-stimulus timestamp, forward-ranging sensor, lane camera/HD-lane geometry, phone gyroscope confirmation, foreground-app evidence without Android Usage Access, or driver-monitoring sensor. The following values are behavioral proxies, not confirmations of human reaction time, following gap, near misses, lane position, phone distraction, overtaking safety, or drowsiness.',
     '',
     '| Current field or display | What is observed | Current behavior and limitation |',
     '| --- | --- | --- |',
@@ -970,6 +971,8 @@ function buildReadme() {
     '| `close_proximity` manoeuvre alert | At least 1.5 s of coincident braking and heading change at 30+ km/h; defaults are 4.0 m/s2 and 25 deg/s. | Always low confidence, no direct Safety/Smoothness penalty, and 1.5x route/weather-risk influence. It does not establish object proximity or a near miss. |',
     '| `heading_drift_beta_*` | Sustained five-minute GPS heading-drift windows at highway speed. | Always low confidence, labelled Beta, and not a drowsiness diagnosis; the 02:00-05:00 window increases proxy risk by 2.5x. |',
     '| `heading_deviation` / Heading Event (Beta) | Counter-steering GPS-heading shape above 50 km/h with context suppression. | Available only with advanced safety detection and removed from Safety scoring because it cannot verify a lane change. |',
+    '| `aggressive_overtake` / Overtake Pattern (Beta) | Straight-highway baseline, acceleration, and bilateral heading-return pattern in GPS speed/heading. | Diagnostic only, always Beta/low confidence, excluded from Safety, Aggression, route risk, coaching, achievements, and headline trip risk. It cannot prove a lane crossing or actual overtake from GPS alone. |',
+    '| `phone_proxy_*` / GPS phone-use proxy | Repetitive GPS heading oscillations at driving speed. | Diagnostic only. Requires at least six oscillations in 15 seconds and acceptable GPS accuracy; no phone-use score is shown unless Android Usage Access evidence is available. |',
     '',
     '## Recent Update Coverage',
     '',
@@ -999,7 +1002,8 @@ function buildReadme() {
     '- Trip-stat hot paths now avoid repeated route rescans: sunset night windows are cached once per trip date, erratic-speed windows maintain sliding summaries, event-to-point lookup is binary-search based, and road-type scores partition full-trip detected events rather than rerunning detection per type.',
     '- Eco driving scoring now resolves missing or malformed tuning through named `ECO_DEFAULTS`, clamps impossible parked-idle ratios, penalizes sustained parked idle instead of unavoidable traffic-stop idle, reports invalid zero-multiplier configurations as unavailable rather than a fixed score, and blends remaining eco evidence into the trip score.',
     '- Speed variability scoring now ignores stopped traffic samples, requires sufficient moving evidence, scores city and highway variability separately through `SVI_DEFAULTS`, distance-weights mixed routes, and omits unavailable SVI from coaching/report trend comparisons.',
-    '- Phone-use Safety impact messaging uses the exported `PHONE_USE_SAFETY_WEIGHT` scorer constant, and Android OS usage evidence is merged with overlapping micro-steering detections within 30 seconds so the same phone-use episode is not double-penalized.',
+    '- Phone-use scoring now requires Android Usage Access evidence. Without Usage Access, `phone_use_score` is unavailable and the UI asks for permission instead of showing a proxy score. GPS micro-steering detections are stored as `phone_proxy_*` diagnostics only, require at least six oscillations in a 15-second window with acceptable GPS accuracy, and do not affect Safety, coaching, live warnings, route risk, or ordinary trip-event lists.',
+    '- Overtake detection is marked Beta and diagnostic-only. It now requires at least 1 km of prior straight highway driving above 80 km/h, a minimum 3.0 m/s2 acceleration threshold, and a bilateral out-and-back heading signature within 15 seconds. Overtake quality/counts are exported and displayed as diagnostics but excluded from Safety, Aggression, route risk, coaching, achievements, and UBI-style scoring.',
     '- Predictive route risk sorts completed trips newest-first, excludes tiny-trip event-density distortion, normalizes all weighted components to 0-100, and clamps weather/baseline input before scoring. Estimated brake-turn alerts now carry a reduced 1.5x event-density weight. Route-risk index cells are coarser and merge nearby segment midpoints within 15 m to reduce GPS fragmentation.',
     '- UBI reports require at least 50 km before generating a score, use actual distance in per-100-km rates, score time-of-day exposure by night driving minutes, reduce noisy GPS-derived cornering to a 5% weight, and use a bell curve centered around 10,000 km/year for mileage.',
     '- Vehicle engine-health summaries now average only finite stored engine stress scores. Trips without a usable score are excluded, and vehicles with no scored samples show `N/A` instead of a misleading maximum-stress fallback.',

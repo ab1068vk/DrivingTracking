@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 18;
+export const TRIP_SCHEMA_VERSION = 19;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -76,6 +76,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 18 adds availability flags so withheld GPS-only proxy surfaces are
  * hidden when the required evidence or advanced detection mode is absent.
+ *
+ * Version 19 makes GPS phone and overtake signatures diagnostic only; Android
+ * Usage Access remains the scoreable source for phone-use evidence.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

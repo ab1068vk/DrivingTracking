@@ -389,7 +389,8 @@ export default function TripDetail() {
   const displayPhoneUse = buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
-  const showPhoneUse = (displayPhoneUse.phone_use_window_count || trip.phone_use_window_count || phoneUseWindows.length || 0) > 0 || phoneUseRisk !== 'none';
+  const hasPhoneUsageAccess = displayPhoneUse.phone_use_score_available === true;
+  const showPhoneUse = hasPhoneUsageAccess || phoneUseWindows.length > 0 || phoneUseRisk !== 'none';
   const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? 100;
   const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : 100;
   // Keep this estimate aligned with calculateTripScores' phoneUseScoreForSafety blend.
@@ -403,7 +404,8 @@ export default function TripDetail() {
     low: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
-  const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse);
+  const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse)
+    .filter((event) => !(event.type === 'phone_use' && event.source === 'gps_proxy'));
   const eventFeedback = trip.event_feedback || {};
   const eventFeedbackKey = (event, index) => [
     event.type || 'event',
@@ -583,13 +585,19 @@ export default function TripDetail() {
 
       {['possible', 'likely'].includes(trip.phone_proxy_risk) && (
         <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3 text-sm font-medium text-yellow-700 dark:border-yellow-800/50 dark:bg-yellow-950/30 dark:text-yellow-300">
-          Possible phone distraction detected ({trip.phone_proxy_count || 0} instance{(trip.phone_proxy_count || 0) === 1 ? '' : 's'}). Consider enabling Do Not Disturb while driving.
+          GPS phone-use proxy diagnostic: {trip.phone_proxy_count || 0} micro-steering pattern{(trip.phone_proxy_count || 0) === 1 ? '' : 's'} recorded. This is not phone-use evidence and does not affect scores.
         </div>
       )}
 
       {(trip.overtake_event_count || 0) > 0 && (
         <div className="rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm font-medium text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
-          Aggressive overtaking detected. This pattern significantly increases collision risk.
+          Overtake pattern (Beta): {trip.overtake_event_count} GPS pattern{trip.overtake_event_count === 1 ? '' : 's'} recorded for diagnostics only. It does not affect scores or coaching.
+        </div>
+      )}
+
+      {!hasPhoneUsageAccess && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
+          Usage Access needed for accurate phone detection. No phone-use score is available for this trip.
         </div>
       )}
 
@@ -714,7 +722,7 @@ export default function TripDetail() {
             <div>
               <h2 className="font-semibold">Phone Use Analysis</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Android Usage Access when enabled, with GPS behaviour fallback.
+                Confirmed Android Usage Access evidence only. GPS proxy diagnostics are excluded.
               </p>
             </div>
             <span className={`rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${phoneUseRiskClass}`}>
@@ -783,7 +791,7 @@ export default function TripDetail() {
                 </div>
               </details>
 
-              {settings.phone_use_affects_score !== false && phoneUseScoreForImpact < 95 && (
+              {hasPhoneUsageAccess && settings.phone_use_affects_score !== false && phoneUseScoreForImpact < 95 && (
                 <div className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints} point{phoneUseSafetyImpactPoints === 1 ? '' : 's'}.
                 </div>
@@ -1383,8 +1391,8 @@ export default function TripDetail() {
               { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
               { label: 'Brake-Turn Alerts', value: trip.close_proximity_count ?? trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-              { label: 'Overtakes', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
+              { label: 'Overtake Patterns (Beta)', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality (Beta)', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />
@@ -1409,7 +1417,7 @@ export default function TripDetail() {
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
                 near_miss: { label: 'Brake-Turn Alert (Legacy)', icon: '!', color: 'text-red-700' },
                 close_proximity: { label: 'Brake-Turn Alert (Estimated)', icon: '!', color: 'text-red-700' },
-                aggressive_overtake: { label: 'Aggressive Overtake', icon: '>>', color: 'text-orange-600' },
+                aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
                 lane_change: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
                 heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
                 tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },

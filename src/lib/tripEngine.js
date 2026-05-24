@@ -112,8 +112,10 @@ export const DEFAULT_THRESHOLDS = {
   MANOEUVRE_ALERT_BRAKE_MS2: 4.0,
   MANOEUVRE_ALERT_TURN_DEG_S: 25,
   HEADING_DRIFT_STD_DEG: 8,
-  threshold_phone_proxy_oscillations: 3,
-  PHONE_MICRO_STEER_COUNT: 4,
+  threshold_phone_proxy_oscillations: 6,
+  PHONE_MICRO_STEER_COUNT: 6,
+  PHONE_MICRO_STEER_WINDOW_S: 15,
+  PHONE_PROXY_MAX_ACCURACY_M: 20,
   PHONE_CREEP_RATE_KMH_S: 1.5,
   PHONE_LANE_DRIFT_DEG: 8,
   PHONE_COUPLING_THRESHOLD: 0.15,
@@ -123,6 +125,9 @@ export const DEFAULT_THRESHOLDS = {
   PHONE_USE_AFFECTS_SCORE: true,
   threshold_speed_creep_kmh: 5,
   threshold_overtake_accel_ms2: 3.0,
+  OVERTAKE_MIN_BASELINE_SPEED_KMH: 80,
+  OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: 1,
+  OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG: 4,
   ADVANCED_SAFETY_DETECTION_ENABLED: true,
 };
 
@@ -202,7 +207,9 @@ export function buildDrivingThresholds(settings = {}) {
     MANOEUVRE_ALERT_TURN_DEG_S: settingNumber(settings.threshold_manoeuvre_alert_turn_degs ?? settings.threshold_near_miss_turn_degs, DEFAULT_THRESHOLDS.MANOEUVRE_ALERT_TURN_DEG_S),
     HEADING_DRIFT_STD_DEG: settingNumber(settings.threshold_heading_drift_std_degs ?? settings.threshold_drowsy_heading_std, DEFAULT_THRESHOLDS.HEADING_DRIFT_STD_DEG),
     threshold_phone_proxy_oscillations: settingNumber(settings.threshold_phone_proxy_oscillations, DEFAULT_THRESHOLDS.threshold_phone_proxy_oscillations),
-    PHONE_MICRO_STEER_COUNT: settingNumber(settings.phone_micro_steer_count, DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_COUNT),
+    PHONE_MICRO_STEER_COUNT: settingNumber(settings.phone_micro_steer_count ?? settings.threshold_phone_proxy_oscillations, DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_COUNT),
+    PHONE_MICRO_STEER_WINDOW_S: settingNumber(settings.phone_micro_steer_window_s, DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_WINDOW_S),
+    PHONE_PROXY_MAX_ACCURACY_M: settingNumber(settings.phone_proxy_max_accuracy_m, DEFAULT_THRESHOLDS.PHONE_PROXY_MAX_ACCURACY_M),
     PHONE_CREEP_RATE_KMH_S: settingNumber(settings.phone_creep_rate_kmh_s, DEFAULT_THRESHOLDS.PHONE_CREEP_RATE_KMH_S),
     PHONE_LANE_DRIFT_DEG: settingNumber(settings.phone_lane_drift_deg, DEFAULT_THRESHOLDS.PHONE_LANE_DRIFT_DEG),
     PHONE_COUPLING_THRESHOLD: settingNumber(settings.phone_coupling_threshold, DEFAULT_THRESHOLDS.PHONE_COUPLING_THRESHOLD),
@@ -215,7 +222,10 @@ export function buildDrivingThresholds(settings = {}) {
     PHONE_USE_DETECTION_ENABLED: settings.phone_use_detection_enabled !== false,
     PHONE_USE_AFFECTS_SCORE: settings.phone_use_affects_score !== false,
     threshold_speed_creep_kmh: settingNumber(settings.threshold_speed_creep_kmh, DEFAULT_THRESHOLDS.threshold_speed_creep_kmh),
-    threshold_overtake_accel_ms2: settingNumber(settings.threshold_overtake_accel_ms2, DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2),
+    threshold_overtake_accel_ms2: Math.max(3, settingNumber(settings.threshold_overtake_accel_ms2, DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2)),
+    OVERTAKE_MIN_BASELINE_SPEED_KMH: settingNumber(settings.overtake_min_baseline_speed_kmh, DEFAULT_THRESHOLDS.OVERTAKE_MIN_BASELINE_SPEED_KMH),
+    OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: settingNumber(settings.overtake_min_straight_distance_km, DEFAULT_THRESHOLDS.OVERTAKE_MIN_STRAIGHT_DISTANCE_KM),
+    OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG: settingNumber(settings.overtake_straight_heading_std_max_deg, DEFAULT_THRESHOLDS.OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG),
     NIGHT_DETECTION_MODE: settings.night_detection_mode || DEFAULT_THRESHOLDS.NIGHT_DETECTION_MODE,
     NIGHT_START_TIME: settings.night_start_time || DEFAULT_THRESHOLDS.NIGHT_START_TIME,
     NIGHT_END_TIME: settings.night_end_time || DEFAULT_THRESHOLDS.NIGHT_END_TIME,
@@ -2274,41 +2284,64 @@ function emptyPhoneUseResult() {
     phone_use_total_seconds: 0,
     phone_use_high_confidence_count: 0,
     phone_use_risk: 'none',
-    phone_use_score: 100,
+    phone_use_score: null,
+    phone_use_score_available: false,
+    phone_use_score_status: 'usage_access_required',
     phone_use_pct_of_trip: 0,
+    phone_proxy_events: [],
+    phone_proxy_count: 0,
+    phone_proxy_risk: 'none',
+    data_sources: [],
   };
 }
 
 function summarizePhoneUseEvents(events = [], durationSeconds = 0) {
   const phoneEvents = events.filter((event) => event.type === EVENT_TYPES.PHONE_USE);
-  if (!phoneEvents.length) return emptyPhoneUseResult();
-  const totalSeconds = phoneEvents.reduce((sum, event) => sum + Number(event.durationS || event.duration_seconds || 0), 0);
-  const highConfidenceCount = phoneEvents.filter((event) => Number(event.confidence) >= 0.75).length;
-  const anyVeryFast = phoneEvents.some((event) => Number(event.speed_kmh) >= 100);
+  const confirmedEvents = phoneEvents.filter((event) => event.source === 'android_usage_access');
+  if (!confirmedEvents.length) {
+    const proxyEvents = phoneEvents.filter((event) => event.source === 'gps_proxy' || event.diagnostic_only === true);
+    const proxyRisk = proxyEvents.length > 0 ? 'possible' : 'none';
+    return {
+      ...emptyPhoneUseResult(),
+      phone_proxy_events: proxyEvents,
+      phone_proxy_count: proxyEvents.length,
+      phone_proxy_risk: proxyRisk,
+      data_sources: proxyEvents.length > 0 ? ['gps_proxy'] : [],
+    };
+  }
+  const totalSeconds = confirmedEvents.reduce((sum, event) => sum + Number(event.durationS || event.duration_seconds || 0), 0);
+  const highConfidenceCount = confirmedEvents.filter((event) => Number(event.confidence) >= 0.75).length;
+  const anyVeryFast = confirmedEvents.some((event) => Number(event.speed_kmh) >= 100);
   const phoneUseRisk = highConfidenceCount >= 3 || totalSeconds > 90 || anyVeryFast
     ? 'high'
     : highConfidenceCount >= 1 || totalSeconds >= 30
       ? 'medium'
       : 'low';
-  const scorePenalty = phoneEvents.reduce((sum, event) => (
+  const scorePenalty = confirmedEvents.reduce((sum, event) => (
     sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 8 : 3)
   ), 0) + (anyVeryFast ? 15 : 0);
   return {
-    phone_use_events: phoneEvents,
-    phone_use_window_count: phoneEvents.length,
+    phone_use_events: confirmedEvents,
+    phone_use_window_count: confirmedEvents.length,
     phone_use_total_seconds: Math.round(totalSeconds),
     phone_use_high_confidence_count: highConfidenceCount,
     phone_use_risk: phoneUseRisk,
     phone_use_score: Math.max(0, Math.round(100 - scorePenalty)),
+    phone_use_score_available: true,
+    phone_use_score_status: 'android_usage_access',
     phone_use_pct_of_trip: round2((totalSeconds / Math.max(1, durationSeconds)) * 100),
+    phone_proxy_events: [],
+    phone_proxy_count: 0,
+    phone_proxy_risk: 'none',
+    data_sources: ['android_usage_access'],
   };
 }
 
 /**
  * Detect likely phone-use windows from multi-signal GPS behavior evidence.
- * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number,heading?:number}>} routePoints - Cleaned route points.
+ * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number,heading?:number,accuracy?:number}>} routePoints - Cleaned route points.
  * @param {Object} thresholds - Driving thresholds from buildDrivingThresholds.
- * @returns {{phone_use_events:Array,phone_use_window_count:number,phone_use_total_seconds:number,phone_use_high_confidence_count:number,phone_use_risk:string,phone_use_score:number,phone_use_pct_of_trip:number}} Phone-use result.
+ * @returns {{phone_use_events:Array,phone_use_window_count:number,phone_use_total_seconds:number,phone_use_high_confidence_count:number,phone_use_risk:string,phone_use_score:number|null,phone_use_score_available:boolean,phone_use_score_status:string,phone_use_pct_of_trip:number,phone_proxy_events:Array,phone_proxy_count:number,phone_proxy_risk:string,phone_proxy_diagnostic_score?:number,data_sources:Array<string>}} Phone-use result.
  * @example
  * const phoneUse = detectPhoneUseWindows(routePoints, buildDrivingThresholds(settings));
  */
@@ -2357,8 +2390,11 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
   for (let i = 0; i < samples.length; i++) {
     const start = samples[i];
     if (start.speed_kmh < 30) continue;
-    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + 10000);
+    const windowSeconds = thresholds.PHONE_MICRO_STEER_WINDOW_S ?? 15;
+    const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + windowSeconds * 1000);
     if (window.length < 4) continue;
+    const maxAccuracy = thresholds.PHONE_PROXY_MAX_ACCURACY_M ?? 20;
+    if (window.some((sample) => Number.isFinite(Number(sample.point?.accuracy)) && Number(sample.point.accuracy) > maxAccuracy)) continue;
     let oscillations = 0;
     for (let j = 2; j < window.length; j++) {
       const globalIndex = window[j].index;
@@ -2367,7 +2403,7 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
       const bothMicro = Math.abs(d1) >= 3 && Math.abs(d1) <= 18 && Math.abs(d2) >= 3 && Math.abs(d2) <= 18;
       if (bothMicro && Math.sign(d1) !== Math.sign(d2)) oscillations++;
     }
-    if (oscillations >= (thresholds.PHONE_MICRO_STEER_COUNT ?? 4)) {
+    if (oscillations >= (thresholds.PHONE_MICRO_STEER_COUNT ?? 6)) {
       addVote('micro_steer', window[0].index, window[window.length - 1].index, Math.min(1, oscillations / 8));
       i += Math.max(1, Math.floor(window.length / 2));
     }
@@ -2514,6 +2550,8 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
           : 'high';
       return {
         type: EVENT_TYPES.PHONE_USE,
+        source: 'gps_proxy',
+        diagnostic_only: true,
         startIndex: run.startIndex,
         endIndex: run.endIndex,
         point_index: midpointIndex,
@@ -2556,8 +2594,15 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
     phone_use_total_seconds: Math.round(totalSeconds),
     phone_use_high_confidence_count: highConfidenceCount,
     phone_use_risk: phoneUseRisk,
-    phone_use_score: Math.max(0, Math.round(100 - scorePenalty)),
+    phone_use_score: null,
+    phone_use_score_available: false,
+    phone_use_score_status: 'usage_access_required',
     phone_use_pct_of_trip: round2((totalSeconds / tripDurationS) * 100),
+    phone_proxy_events: events,
+    phone_proxy_count: events.length,
+    phone_proxy_risk: phoneUseRisk === 'none' ? 'none' : phoneUseRisk === 'low' ? 'possible' : 'likely',
+    phone_proxy_diagnostic_score: Math.max(0, Math.round(100 - scorePenalty)),
+    data_sources: events.length > 0 ? ['gps_proxy'] : [],
   };
 }
 
@@ -3693,19 +3738,34 @@ export const detectDrowsyDriving = detectHeadingDriftBeta;
 export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const events = [];
   if (!cleanPoints || cleanPoints.length < 5) {
-    return Object.assign(events, { overtake_event_count: 0, overtake_score: 100 });
+    return Object.assign(events, { overtake_event_count: 0, overtake_score: null, overtake_beta: true });
   }
 
   const accelThreshold = thresholds.threshold_overtake_accel_ms2 ?? DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2;
+  const baselineSpeedKmh = thresholds.OVERTAKE_MIN_BASELINE_SPEED_KMH ?? 80;
+  const minimumStraightDistanceKm = thresholds.OVERTAKE_MIN_STRAIGHT_DISTANCE_KM ?? 1;
+  const straightHeadingStdMaxDeg = thresholds.OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG ?? 4;
   let lastEventTime = 0;
   for (let i = 0; i < cleanPoints.length; i++) {
     const start = cleanPoints[i];
     const startMs = timestampMs(start);
     if (startMs - lastEventTime < 15000) continue;
+    let baselineDistanceKm = 0;
+    const baselinePoints = [start];
+    for (let k = i; k > 0 && baselineDistanceKm < minimumStraightDistanceKm; k--) {
+      const previous = cleanPoints[k - 1];
+      const current = cleanPoints[k];
+      const segment = calculateSegmentMetrics(previous, current, thresholds);
+      if (segment.dt <= 0 || segment.dt > 10 || segment.isNoise || finiteSpeed(previous) < baselineSpeedKmh) break;
+      baselineDistanceKm += segment.distanceKm;
+      baselinePoints.unshift(previous);
+    }
+    const baselineHeadings = baselinePoints.map((point, index) => headingForIndex(baselinePoints, index));
+    if (baselineDistanceKm < minimumStraightDistanceKm || calculateAngularStdDev(baselineHeadings) > straightHeadingStdMaxDeg) continue;
     const window = cleanPoints
       .slice(i)
       .filter((point) => timestampMs(point) >= startMs && timestampMs(point) <= startMs + 15000);
-    if (window.length < 5 || !window.every((point) => finiteSpeed(point) > 80)) continue;
+    if (window.length < 5 || !window.every((point) => finiteSpeed(point) > baselineSpeedKmh)) continue;
 
     let phase = 'NONE';
     let accelSeconds = 0;
@@ -3716,6 +3776,9 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
     let minDecel = 0;
     let headingRatePeak = 0;
     let peakSpeedDelta = 0;
+    let outboundDirection = 0;
+    let returnDetected = false;
+    const baselineHeading = baselineHeadings[baselineHeadings.length - 1];
 
     for (let j = 1; j < window.length; j++) {
       const prev = window[j - 1];
@@ -3726,7 +3789,8 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
       const currSpeed = reliablePointSpeed(cleanPoints, i + j, thresholds) ?? finiteSpeed(curr);
       const accel = calculateAcceleration(prevSpeed, currSpeed, dt);
       const { h1, h2 } = headingBetweenPair(prev, curr, window[j - 2] || null);
-      const headingRate = headingDiff(h1, h2) / dt;
+      const signedTurnRate = signedHeadingDelta(h1, h2) / dt;
+      const headingRate = Math.abs(signedTurnRate);
       peakSpeedDelta = Math.max(peakSpeedDelta, currSpeed - finiteSpeed(start));
 
       if (phase === 'NONE') {
@@ -3748,11 +3812,16 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
           changeMs = timestampMs(curr);
           changePoint = curr;
           headingRatePeak = headingRate;
+          outboundDirection = Math.sign(signedTurnRate);
         }
       } else if (phase === 'CHANGE') {
         headingRatePeak = Math.max(headingRatePeak, headingRate);
-        if ((timestampMs(curr) - changeMs) / 1000 > 5) break;
-        if (accel < -2.5 && peakSpeedDelta >= 12 && headingRatePeak >= 18) {
+        const returnedHeading = headingDiff(baselineHeading, headingForIndex(window, j)) <= straightHeadingStdMaxDeg * 2;
+        if (outboundDirection !== 0 && Math.sign(signedTurnRate) === -outboundDirection && headingRate > 15 && returnedHeading) {
+          returnDetected = true;
+        }
+        if ((timestampMs(curr) - changeMs) / 1000 > 10) break;
+        if (returnDetected && accel < -2.5 && peakSpeedDelta >= 12 && headingRatePeak >= 18) {
           minDecel = Math.min(minDecel, accel);
           const severity = maxAccel > 5.0 && minDecel < -4.0 && headingRatePeak > 30
             ? 'high'
@@ -3767,6 +3836,10 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
             timestamp: changePoint?.timestamp ?? curr.timestamp,
             value: round1(maxAccel),
             speed_kmh: Math.round(currSpeed),
+            confidence_level: 'low',
+            beta: true,
+            diagnostic_only: true,
+            signals_triggered: ['straight_highway_baseline', 'acceleration', 'bilateral_heading_return', 'deceleration'],
           });
           lastEventTime = startMs;
           break;
@@ -3777,7 +3850,8 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
 
   return Object.assign(events, {
     overtake_event_count: events.length,
-    overtake_score: Math.max(0, 100 - events.length * 20),
+    overtake_score: null,
+    overtake_beta: true,
   });
 }
 
@@ -4587,7 +4661,6 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
     [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
     [EVENT_TYPES.SHARP_TURN]: { low: 2, medium: 5, high: 10 },
     [EVENT_TYPES.SPEEDING]: { low: 5, medium: 10, high: 20 },
-    [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
   };
   const rawPenalty = events.reduce((sum, event) => sum + (weights[event.type]?.[event.severity] || 0), 0);
   const avgJerkMs3 = stats.avg_jerk_ms3 ?? 0;
@@ -4639,8 +4712,14 @@ export function calculateTripScores(
   maybeOptions = {}
 ) {
   const eventsList = Array.isArray(events) ? events : events?.events || [];
-  const scoringEvents = eventsList.filter((event) => event?.masked_for_privacy !== true);
-  const serializableEvents = scoringEvents.map((event) => ({ ...event }));
+  const serializableEventList = eventsList.filter((event) => event?.masked_for_privacy !== true);
+  const scoringEvents = serializableEventList.filter((event) => (
+    event?.type !== EVENT_TYPES.AGGRESSIVE_OVERTAKE &&
+    !(event?.type === EVENT_TYPES.PHONE_USE && (event.source === 'gps_proxy' || event.diagnostic_only === true))
+  ));
+  const serializableEvents = serializableEventList
+    .filter((event) => !(event?.type === EVENT_TYPES.PHONE_USE && (event.source === 'gps_proxy' || event.diagnostic_only === true)))
+    .map((event) => ({ ...event }));
   const phoneUseFromEvents = events?.phoneUse || {};
   const options = phoneUseOrOptions?.includeRoadTypeSegments != null
     ? phoneUseOrOptions
@@ -4727,9 +4806,16 @@ export function calculateTripScores(
     ...emptyPhoneUseResult(),
     ...(advancedSafetyEnabled ? phoneUse : {}),
   };
+  const confirmedPhoneScoreAvailable = phoneUseResult.phone_use_score_available !== false;
+  const diagnosticOvertakeCount = serializableEventList.filter((event) => event.type === EVENT_TYPES.AGGRESSIVE_OVERTAKE).length;
+  const proxyEvents = phoneUseResult.phone_proxy_events || (
+    confirmedPhoneScoreAvailable
+      ? []
+      : phoneUseResult.phone_use_events || []
+  );
   const phoneProxy = {
-    phone_proxy_count: phoneUseResult.phone_use_window_count || 0,
-    phone_proxy_risk: phoneUseResult.phone_use_risk === 'none' ? 'none' : phoneUseResult.phone_use_risk === 'low' ? 'possible' : 'likely',
+    phone_proxy_count: phoneUseResult.phone_proxy_count ?? proxyEvents.length,
+    phone_proxy_risk: phoneUseResult.phone_proxy_risk || 'none',
   };
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.low || 0) * 2;
   ecoPenalty += (speedCreep.speed_creep_severity_counts?.medium || 0) * 5;
@@ -4748,7 +4834,9 @@ export function calculateTripScores(
     high: 55,
   }[phoneUseResult.phone_use_risk] ?? 0;
   const phoneUsePctDeduction = Math.max(0, Math.min(70, (phoneUseResult.phone_use_pct_of_trip || 0) * 0.5));
-  const phoneUseDeduction = Math.max(phoneUseScoreDeduction, phoneUseRiskDeduction, phoneUsePctDeduction);
+  const phoneUseDeduction = confirmedPhoneScoreAvailable
+    ? Math.max(phoneUseScoreDeduction, phoneUseRiskDeduction, phoneUsePctDeduction)
+    : 0;
   if (phoneUseDeduction > 0) {
     distractionPenalty = Math.max(distractionPenalty, phoneUseDeduction * (distKm / 3));
   }
@@ -4795,7 +4883,7 @@ export function calculateTripScores(
   const cornering = calculateCorneringConsistency(routePoints, thresholds);
   const brakingEfficiency = calculateBrakingEfficiency(routePoints, scoringEvents, thresholds);
   const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds);
-  const overtakeQuality = calculateOvertakeQualityScore(routePoints, scoringEvents, thresholds);
+  const overtakeQuality = calculateOvertakeQualityScore(routePoints, serializableEventList, thresholds);
   const slippery = detectSlipperyConditionProxy(routePoints, scoringEvents, thresholds);
   const scoreConfidence = round2(clamp(tripDistanceKm / 5, 0, 1));
   const routeEvidenceConfidence = routePoints.length >= 2 ? scoreConfidence : 0;
@@ -4803,7 +4891,9 @@ export function calculateTripScores(
 
   const brakingScoreForSafety = brakingEfficiency.braking_efficiency_score ?? 100;
   const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
-  const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false ? 100 : (phoneUseResult.phone_use_score ?? 100);
+  const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false || !confirmedPhoneScoreAvailable
+    ? 100
+    : (phoneUseResult.phone_use_score ?? 100);
   const jerkScoreForSmoothness = jerk.jerk_score ?? 100;
   const sviScoreForSmoothness = svi.svi_score ?? 100;
   const stopStartPatternScoreForSafety = stopStartPatternScore ?? 100;
@@ -4814,9 +4904,7 @@ export function calculateTripScores(
     complianceScoreForSafety * 0.10 +
     phoneUseScoreForSafety * PHONE_USE_SAFETY_WEIGHT
   );
-  let safety = overtakeQuality.overtake_count > 0
-    ? Math.round(safetyWithoutOvertake * 0.95 + (overtakeQuality.overtake_quality_score ?? 100) * 0.05)
-    : safetyWithoutOvertake;
+  let safety = safetyWithoutOvertake;
   safety = Math.min(100, safety + (slippery.safety_condition_bonus || 0));
   const smoothness = Math.round(
     baseSmoothness * 0.45 +
@@ -4862,9 +4950,10 @@ export function calculateTripScores(
     close_proximity_count: closeProximityCount,
     close_proximity_score: closeProximityScore,
     close_proximity_score_confidence: 'low',
-    overtake_event_count: counts[EVENT_TYPES.AGGRESSIVE_OVERTAKE],
-    overtake_score: Math.max(0, 100 - counts[EVENT_TYPES.AGGRESSIVE_OVERTAKE] * 20),
-    overtake_score_confidence: scoreConfidence,
+    overtake_event_count: diagnosticOvertakeCount,
+    overtake_score: null,
+    overtake_score_confidence: 'beta_diagnostic_only',
+    overtake_affects_score: false,
     intersection_score: intersectionScore,
     intersection_score_confidence: stats.intersection_score_confidence ?? (intersectionScore == null ? 'insufficient_data' : 'observed_stops'),
     ...jerk,
@@ -4883,14 +4972,17 @@ export function calculateTripScores(
     ...speedCreep,
     speed_creep_score_confidence: routeEvidenceConfidence,
     ...phoneProxy,
-    phone_use_events: phoneUseResult.phone_use_events || [],
-    phone_use_window_count: phoneUseResult.phone_use_window_count || 0,
-    phone_use_total_seconds: phoneUseResult.phone_use_total_seconds || 0,
-    phone_use_risk: phoneUseResult.phone_use_risk || 'none',
-    phone_use_score: phoneUseResult.phone_use_score ?? 100,
-    phone_use_score_confidence: scoreConfidence,
-    phone_use_pct_of_trip: phoneUseResult.phone_use_pct_of_trip || 0,
-    phone_use_high_confidence_count: phoneUseResult.phone_use_high_confidence_count || 0,
+    phone_use_events: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_events || []) : [],
+    phone_use_window_count: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_window_count || 0) : 0,
+    phone_use_total_seconds: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_total_seconds || 0) : 0,
+    phone_use_risk: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_risk || 'none') : 'none',
+    phone_use_score: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_score ?? 100) : null,
+    phone_use_score_available: confirmedPhoneScoreAvailable,
+    phone_use_score_status: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_score_status || 'confirmed_signal') : 'usage_access_required',
+    phone_use_score_confidence: confirmedPhoneScoreAvailable ? scoreConfidence : 'usage_access_required',
+    phone_use_pct_of_trip: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_pct_of_trip || 0) : 0,
+    phone_use_high_confidence_count: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_high_confidence_count || 0) : 0,
+    phone_proxy_events: proxyEvents,
     ...headingDrift,
     heading_drift_beta_available: advancedSafetyEnabled,
     ...hill,
@@ -4907,7 +4999,8 @@ export function calculateTripScores(
       ? routeEvidenceConfidence
       : 0,
     ...overtakeQuality,
-    overtake_quality_score_confidence: measuredRouteConfidence(overtakeQuality.overtake_quality_score),
+    overtake_quality_score_confidence: 'beta_diagnostic_only',
+    overtake_quality_beta: true,
     ...slippery,
     ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, scoringEvents, stats, thresholds)),
     ...aggressive,
@@ -5130,17 +5223,17 @@ export function tripsToCSV(trips) {
     // FIX: Add exported moving-speed column immediately after the legacy overall average speed.
     'Eco', 'Jerk Score', 'Eco Driving Score', 'Stop-Start Pattern Score', 'Focus Score', 'Intersection Score',
     'Aggressive Score', 'Aggressive Grade', 'Defensive Score', 'Defensive Grade', 'SVI', 'Fuel Band',
-    'Smooth Braking', 'Engine Stress', 'Tire Wear Units', 'Heading Drift Beta', 'Phone Proxy', 'Parking Score',
+    'Smooth Braking', 'Engine Stress', 'Tire Wear Units', 'Heading Drift Beta', 'Phone Proxy (Diagnostic)', 'Parking Score',
     'Highway Score', 'Urban Score', 'Residential Score', 'Dominant Road Type',
     'Brake Onset Smoothness Score', 'Avg Brake Onset Ramp (s)', 'Brake Onset Smoothness Grade',
-    'Phone Use Windows', 'Phone Use Total Seconds', 'Phone Use Risk', 'Phone Use Score', 'Phone Use Pct Trip',
+    'Phone Use Windows', 'Phone Use Total Seconds', 'Phone Use Risk', 'Phone Use Score (Usage Access)', 'Phone Use Pct Trip',
     'Cornering Consistency Score', 'Mean Lateral G', 'Peak Lateral G',
     'Braking Efficiency Score', 'Braking Efficiency Grade', 'Braking Sequence Count',
     'Highway Compliance Score', 'Urban Compliance Score', 'Residential Compliance Score', 'Overall Compliance Score',
-    'Overtake Quality Score', 'Overtake Count', 'Unsafe Re-entry Count',
+    'Overtake Quality Score (Beta Diagnostic)', 'Overtake Pattern Count (Beta Diagnostic)', 'Unsafe Re-entry Count (Beta Diagnostic)',
     'Road Condition Proxy', 'Safety Condition Bonus',
     'Road Type', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events',
-    'Heading Deviation Events (Beta)', 'Stop-Start Patterns', 'Distraction Events', 'Close-Proximity Manoeuvre Alerts', 'Overtakes', 'Night Driving',
+    'Heading Deviation Events (Beta)', 'Stop-Start Patterns', 'Distraction Events', 'Close-Proximity Manoeuvre Alerts', 'Overtake Patterns (Beta Diagnostic)', 'Night Driving',
     'Event Feedback Accurate', 'Event Feedback Wrong', 'Event Feedback JSON',
     'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];
@@ -5191,7 +5284,7 @@ export function tripsToCSV(trips) {
     t.phone_use_window_count ?? 0,
     t.phone_use_total_seconds ?? 0,
     t.phone_use_risk ?? 'none',
-    t.phone_use_score ?? 100,
+    t.phone_use_score ?? '',
     t.phone_use_pct_of_trip ?? 0,
     t.cornering_consistency_score ?? '',
     t.mean_lateral_g ?? '',

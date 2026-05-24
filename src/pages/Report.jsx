@@ -188,7 +188,6 @@ export default function Reports() {
     erratic_speed: 'Erratic Speed',
     near_miss: 'Brake-Turn Alerts (Legacy)',
     close_proximity: 'Brake-Turn Alerts',
-    aggressive_overtake: 'Aggressive Overtakes',
   };
 
   const handleExport = async () => {

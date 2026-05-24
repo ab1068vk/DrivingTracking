@@ -102,8 +102,9 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
     private static final int TRIP_COMPLETED_NOTIFICATION_ID = 2002;
-    private static final int PHONE_MICRO_STEER_WINDOW_MS = 10_000;
-    private static final int PHONE_MICRO_STEER_MIN_COUNT = 4;
+    private static final int PHONE_MICRO_STEER_WINDOW_MS = 15_000;
+    private static final int PHONE_MICRO_STEER_MIN_COUNT = 6;
+    private static final float PHONE_PROXY_MAX_ACCURACY_M = 20f;
     private static final double PHONE_MICRO_STEER_MIN_DEG = 3.0d;
     private static final double PHONE_MICRO_STEER_MAX_DEG = 18.0d;
     private static final double PHONE_DETECT_MIN_SPEED_KMH = 30.0d;
@@ -136,6 +137,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private final Deque<double[]> recentHeadings = new ArrayDeque<>();
     private int nativeMicroSteerCount = 0;
     private long lastPhoneUseNotifyMs = 0L;
+    private long lastNativeProxyWindowMs = 0L;
     private long lastNativePhoneWindowMs = 0L;
     private long lastLiveNotificationMs = 0L;
     private TextToSpeech textToSpeech;
@@ -463,6 +465,7 @@ public class DriveSenseAutoTrackingService extends Service {
         stoppedAnchorLng = Double.NaN;
         maxDriftSinceStopM = 0.0d;
         nativeMicroSteerCount = 0;
+        lastNativeProxyWindowMs = 0L;
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
         nativeAutoStartReason = reason;
@@ -557,7 +560,7 @@ public class DriveSenseAutoTrackingService extends Service {
         double bearing = Double.NaN;
         if (location.hasBearing()) bearing = location.getBearing();
         else if (previousLocation != null) bearing = previousLocation.bearingTo(location);
-        if (!candidateTrip && !Double.isNaN(bearing)) updatePhoneUseProxy(bearing, speedKmh, location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
+        if (!candidateTrip && !Double.isNaN(bearing)) updatePhoneUseProxy(bearing, speedKmh, location.getAccuracy(), location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
 
         activePoints.put(locationToJson(location, speedKmh));
         previousLocation = location;
@@ -1021,8 +1024,8 @@ public class DriveSenseAutoTrackingService extends Service {
         return earthKm * c;
     }
 
-    private void updatePhoneUseProxy(double bearing, double speedKmh, long timestampMs) {
-        if (!isSettingEnabled("phone_use_detection_enabled", true) || !isSettingEnabled("phone_use_live_alert_enabled", true)) return;
+    private void updatePhoneUseProxy(double bearing, double speedKmh, float accuracyM, long timestampMs) {
+        if (!isSettingEnabled("phone_use_detection_enabled", true) || accuracyM > PHONE_PROXY_MAX_ACCURACY_M) return;
         while (!recentHeadings.isEmpty() && timestampMs - recentHeadings.peekFirst()[1] > PHONE_MICRO_STEER_WINDOW_MS) {
             recentHeadings.pollFirst();
         }
@@ -1057,17 +1060,9 @@ public class DriveSenseAutoTrackingService extends Service {
         if (sustainedTurnLike) return;
 
         if (oscillations >= PHONE_MICRO_STEER_MIN_COUNT) {
-            if (timestampMs - lastNativePhoneWindowMs < PHONE_WINDOW_COUNT_COOLDOWN_MS) return;
-            lastNativePhoneWindowMs = timestampMs;
+            if (timestampMs - lastNativeProxyWindowMs < PHONE_WINDOW_COUNT_COOLDOWN_MS) return;
+            lastNativeProxyWindowMs = timestampMs;
             nativeMicroSteerCount++;
-            long now = System.currentTimeMillis();
-            if (now - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
-                sendPhoneUseWarningNotification();
-                if (isSettingEnabled("voice_alerts_enabled", true)) {
-                    speakNativeAlert("Put your phone down. Keep your eyes on the road.");
-                }
-                lastPhoneUseNotifyMs = now;
-            }
         }
     }
 
@@ -1307,7 +1302,6 @@ public class DriveSenseAutoTrackingService extends Service {
         if (startMs <= lastNativePhoneWindowMs || durationSeconds < 5L || lastKnownSpeedKmh < 15d) return;
 
         lastNativePhoneWindowMs = startMs;
-        nativeMicroSteerCount++;
         if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
             sendPhoneUseWarningNotification();
             if (isSettingEnabled("voice_alerts_enabled", true)) {
