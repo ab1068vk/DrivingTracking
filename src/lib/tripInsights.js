@@ -266,7 +266,7 @@ function iqr(values = []) {
 /**
  * Build a persistent driving style signature from recent trips.
  * @param {Array<Object>} trips - Completed trips, newest or oldest order accepted.
- * @returns {{archetype:string,dimensions:Object,style_shifts:Array,trip_count_used:number}|null} Driver signature.
+ * @returns {{archetype:string,dimensions:Object,braking_confidence:number,style_shifts:Array,trip_count_used:number}|null} Driver signature.
  * @example
  * const signature = buildDriverSignature(lastTwentyTrips);
  */
@@ -279,20 +279,32 @@ export function buildDriverSignature(trips) {
 
   const scoreIqr = iqr(completed.map((trip) => Number(trip.score_overall)).filter(Number.isFinite));
   const consistencyIdx = clamp(1 - scoreIqr / 100, 0, 1);
+  const brakingScores = completed
+    .map((trip) => trip.braking_efficiency_score)
+    .filter((score) => score != null && Number.isFinite(Number(score)))
+    .map((score) => Number(score));
+  const brakingStyle = brakingScores.length >= 3
+    ? clamp(brakingScores.reduce((sum, score) => sum + score, 0) / brakingScores.length / 100, 0, 1)
+    : null;
+  const brakingConfidence = clamp(brakingScores.length / 10, 0, 1);
   const featureRows = completed.map((trip) => ({
     aggression: clamp(1 - (Number(trip.aggressive_driving_score ?? 100) / 100), 0, 1),
     smoothness: clamp(Number(trip.score_smoothness ?? trip.smoothness_score ?? 0) / 100, 0, 1),
     ecoMindedness: clamp(Number(trip.score_eco ?? trip.eco_score ?? 0) / 100, 0, 1),
     speedTolerance: clamp(((Number(trip.avg_speed_kmh) || 0) - 40) / 80, 0, 1),
-    brakingStyle: clamp(Number(trip.braking_efficiency_score ?? 100) / 100, 0, 1),
+    brakingStyle: trip.braking_efficiency_score != null && Number.isFinite(Number(trip.braking_efficiency_score))
+      ? clamp(Number(trip.braking_efficiency_score) / 100, 0, 1)
+      : null,
     consistencyIdx,
   }));
 
-  const keys = ['aggression', 'smoothness', 'ecoMindedness', 'speedTolerance', 'brakingStyle', 'consistencyIdx'];
-  const dimensions = Object.fromEntries(keys.map((key) => [
+  const numericKeys = ['aggression', 'smoothness', 'ecoMindedness', 'speedTolerance', 'consistencyIdx'];
+  const keys = [...numericKeys, 'brakingStyle'];
+  const dimensions = Object.fromEntries(numericKeys.map((key) => [
     key,
     Math.round((featureRows.reduce((sum, row) => sum + row[key], 0) / featureRows.length) * 100) / 100,
   ]));
+  dimensions.brakingStyle = brakingStyle == null ? null : Math.round(brakingStyle * 100) / 100;
 
   const archetype = dimensions.aggression > 0.55 && dimensions.speedTolerance > 0.6
     ? 'aggressive_commuter'
@@ -306,7 +318,11 @@ export function buildDriverSignature(trips) {
 
   const recent = featureRows.slice(0, 5);
   const prior = featureRows.slice(5, 20);
-  const avgDim = (rows, key) => rows.length ? rows.reduce((sum, row) => sum + row[key], 0) / rows.length : null;
+  const avgDim = (rows, key) => {
+    const validValues = rows.map((row) => row[key]).filter(Number.isFinite);
+    if (!validValues.length || (key === 'brakingStyle' && validValues.length < 3)) return null;
+    return validValues.reduce((sum, value) => sum + value, 0) / validValues.length;
+  };
   const styleShifts = prior.length ? keys
     .map((key) => {
       const recentAvg = avgDim(recent, key);
@@ -323,6 +339,7 @@ export function buildDriverSignature(trips) {
   return {
     archetype,
     dimensions,
+    braking_confidence: Math.round(brakingConfidence * 100) / 100,
     style_shifts: styleShifts,
     trip_count_used: completed.length,
   };

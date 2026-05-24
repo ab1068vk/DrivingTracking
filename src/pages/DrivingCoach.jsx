@@ -48,15 +48,17 @@ export default function DrivingCoach() {
   const driverSignature = useMemo(() => buildDriverSignature(completed), [completed]);
   const driverModel = useMemo(() => buildOnDeviceDriverModel(completed), [completed]);
   const latestAnomaly = completed[0] && driverModel ? scoreTripAnomaly(completed[0], driverModel) : null;
+  const brakingStyle = driverSignature?.dimensions.brakingStyle ?? null;
+  const brakingConfidence = driverSignature?.braking_confidence ?? 0;
   const signatureChartData = driverSignature
     ? [
       { dimension: 'Aggression', value: Math.round(driverSignature.dimensions.aggression * 100) },
       { dimension: 'Smooth', value: Math.round(driverSignature.dimensions.smoothness * 100) },
       { dimension: 'Eco', value: Math.round(driverSignature.dimensions.ecoMindedness * 100) },
       { dimension: 'Speed', value: Math.round(driverSignature.dimensions.speedTolerance * 100) },
-      { dimension: 'Braking', value: Math.round(driverSignature.dimensions.brakingStyle * 100) },
+      { dimension: 'Braking', value: brakingStyle == null ? null : Math.round(brakingStyle * 100) },
       { dimension: 'Consistent', value: Math.round(driverSignature.dimensions.consistencyIdx * 100) },
-    ]
+    ].filter((item) => Number.isFinite(item.value))
     : [];
   const increasingAggressionShift = driverSignature?.style_shifts?.find((shift) => (
     shift.dimension === 'aggression' && shift.direction === 'increasing'
@@ -137,6 +139,13 @@ export default function DrivingCoach() {
                   <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
                 </RadarChart>
               </ResponsiveContainer>
+              <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">Braking signature: </span>
+                <span>{brakingStyle == null ? '—' : `${Math.round(brakingStyle * 100)}%`}</span>
+                <span className="ml-2">
+                  {brakingConfidence < 1 ? 'Low confidence' : 'High confidence'} ({Math.round(brakingConfidence * 100)}% braking evidence)
+                </span>
+              </div>
               {driverSignature.style_shifts.length > 0 && (
                 <div className="rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
                   {driverSignature.style_shifts.map((shift) => (
