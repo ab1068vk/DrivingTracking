@@ -103,6 +103,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Sync Capacitor Android project
+        run: npm run android:sync
+
       - name: Enable Gradle wrapper
         run: chmod +x android/gradlew
 
