@@ -421,6 +421,64 @@ describe('tripEngine', () => {
     expect(detectLaneChanges(highwayPoints).length).toBeGreaterThan(0);
   });
 
+  it('does not report a jerk score without enough usable distance or movement', () => {
+    const shortRoughTrip = Array.from({ length: 8 }, (_, index) => (
+      point(43.6532 + index * 0.0003, -79.3832, index, index % 2 === 0 ? 35 : 100)
+    ));
+    const parkedTrip = Array.from({ length: 5 }, (_, index) => (
+      point(43.6532, -79.3832, index * 5, 0)
+    ));
+
+    expect(calculateJerkScore([], 0)).toMatchObject({
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+      jerk_event_count: 0,
+    });
+    expect(calculateJerkScore(shortRoughTrip, 0.3)).toMatchObject({
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+    });
+    expect(calculateJerkScore(parkedTrip)).toMatchObject({
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+      jerk_event_count: 0,
+    });
+  });
+
+  it('removes the jerk-score floor for well-observed long trips', () => {
+    const steadyTrip = Array.from({ length: 8 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 2, 60)
+    ));
+    const roughLongTrip = Array.from({ length: 402 }, (_, index) => (
+      point(43.6532 + index * 0.0003, -79.3832, index, index % 2 === 0 ? 35 : 100)
+    ));
+
+    expect(calculateJerkScore(steadyTrip, 10)).toMatchObject({
+      jerk_score: 100,
+      jerk_score_confidence: 'high',
+    });
+    expect(calculateJerkScore(roughLongTrip, 2)).toMatchObject({
+      jerk_score: 20,
+      jerk_score_confidence: 'low',
+    });
+    expect(calculateJerkScore(roughLongTrip, 50)).toMatchObject({
+      jerk_score: 0,
+      jerk_score_confidence: 'high',
+    });
+  });
+
+  it('keeps insufficient jerk data neutral in the smoothness composite', () => {
+    const scores = calculateTripScores([], {
+      distance_km: 0.3,
+      fatigue_risk_score: 0,
+      intersection_score: 100,
+    }, []);
+
+    expect(scores.jerk_score).toBeNull();
+    expect(scores.jerk_score_confidence).toBe('insufficient_data');
+    expect(scores.score_smoothness).toBeGreaterThan(0);
+  });
+
   it('computes second-wave advanced score components from route points', () => {
     const points = [
       point(43.6532, -79.3832, 0, 70),

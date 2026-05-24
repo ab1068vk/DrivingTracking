@@ -1231,17 +1231,23 @@ export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLD
   return zones;
 }
 
-export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = 1) {
-  if (!cleanPoints || cleanPoints.length < 3) {
-    return { jerk_score: 100, jerk_event_count: 0, avg_jerk_ms3: 0 };
-  }
-
-  const distanceKm = typeof distanceKmOrThresholds === 'number'
-    ? distanceKmOrThresholds
-    : calculateRouteDistanceKm(cleanPoints, distanceKmOrThresholds || DEFAULT_THRESHOLDS);
+export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DEFAULT_THRESHOLDS) {
   const thresholds = typeof distanceKmOrThresholds === 'number'
     ? DEFAULT_THRESHOLDS
     : distanceKmOrThresholds || DEFAULT_THRESHOLDS;
+  const distanceKm = typeof distanceKmOrThresholds === 'number'
+    ? (Number.isFinite(distanceKmOrThresholds) ? Math.max(0, distanceKmOrThresholds) : 0)
+    : calculateRouteDistanceKm(cleanPoints, thresholds);
+
+  if (!cleanPoints || cleanPoints.length < 3) {
+    return {
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+      jerk_event_count: 0,
+      avg_jerk_ms3: 0,
+    };
+  }
+
   let totalJerkPenalty = 0;
   let jerkEventCount = 0;
   let jerkAbsTotal = 0;
@@ -1280,10 +1286,22 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = 1)
     if (absJerk > 1.5) jerkEventCount++;
   }
 
-  const distFactor = Math.max(1, distanceKm || 0);
-  const jerkScore = Math.max(0, 100 - Math.min(totalJerkPenalty * (4 / distFactor), 80));
+  if (distanceKm < 0.5 || jerkSampleCount === 0) {
+    return {
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+      jerk_event_count: jerkEventCount,
+      avg_jerk_ms3: round1(jerkSampleCount ? jerkAbsTotal / jerkSampleCount : 0),
+    };
+  }
+
+  const distFactor = Math.max(1, distanceKm);
+  const penaltyCap = distanceKm < 3 ? 80 : 100;
+  const penaltyContribution = Math.min(totalJerkPenalty * (4 / distFactor), penaltyCap);
+  const jerkScore = Math.max(0, 100 - penaltyContribution);
   return {
     jerk_score: Math.round(jerkScore),
+    jerk_score_confidence: distanceKm < 3 ? 'low' : 'high',
     jerk_event_count: jerkEventCount,
     avg_jerk_ms3: round1(jerkSampleCount ? jerkAbsTotal / jerkSampleCount : 0),
   };
@@ -4466,6 +4484,7 @@ export function calculateTripScores(
   const brakingScoreForSafety = brakingEfficiency.braking_efficiency_score ?? 100;
   const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
   const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false ? 100 : (phoneUseResult.phone_use_score ?? 100);
+  const jerkScoreForSmoothness = jerk.jerk_score ?? 100;
   const safetyWithoutOvertake = Math.round(
     baseSafety * 0.60 +
     followingDistanceScore * 0.10 +
@@ -4479,7 +4498,7 @@ export function calculateTripScores(
   safety = Math.min(100, safety + (slippery.safety_condition_bonus || 0));
   const smoothness = Math.round(
     baseSmoothness * 0.45 +
-    jerk.jerk_score * 0.25 +
+    jerkScoreForSmoothness * 0.25 +
     svi.svi_score * 0.10 +
     reaction.reaction_score * 0.10 +
     (cornering.cornering_consistency_score ?? 100) * 0.10

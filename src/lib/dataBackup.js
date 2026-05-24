@@ -100,6 +100,7 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'overtake_score',
   'intersection_score',
   'jerk_score',
+  'jerk_score_confidence',
   'eco_driving_score',
   'speed_variability_index',
   'fuel_band_score',

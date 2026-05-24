@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 10;
+export const TRIP_SCHEMA_VERSION = 11;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -50,6 +50,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 10 backfills CO2 savings so legacy completed trips count toward
  * carbon reports and achievement badges.
+ *
+ * Version 11 recalculates jerk scores after removing the long-trip 20-point
+ * floor and adding insufficient-data confidence handling.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

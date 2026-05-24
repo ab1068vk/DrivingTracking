@@ -115,6 +115,18 @@ describe('backup trip import sanitization', () => {
     expect(trip.driving_events[0].malicious_payload).toBeUndefined();
   });
 
+  it('preserves jerk-score confidence through sanitized backup imports', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-jerk-confidence',
+      status: 'completed',
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+    }]);
+
+    expect(trip.jerk_score).toBeNull();
+    expect(trip.jerk_score_confidence).toBe('insufficient_data');
+  });
+
   it('rejects imported trips without a non-empty string id', () => {
     expect(() => parseTrips([{ id: '', status: 'completed' }])).toThrow('valid id');
     expect(() => parseTrips([{ id: 123, status: 'completed' }])).toThrow('valid id');

@@ -139,7 +139,10 @@ describe('trip engine calculation coverage', () => {
     expect(summary.stats.distance_km).toBeGreaterThan(0);
     expect(summary.scores.score_overall).toBeGreaterThan(0);
     expect(calculateNightPenalty(route, DEFAULT_THRESHOLDS)).toBeGreaterThan(0);
-    expect(calculateJerkScore(route, DEFAULT_THRESHOLDS).jerk_score).toBeGreaterThan(0);
+    expect(calculateJerkScore(route, DEFAULT_THRESHOLDS)).toMatchObject({
+      jerk_score: null,
+      jerk_score_confidence: 'insufficient_data',
+    });
   });
 
   it('splits trips around long parked stops', () => {
