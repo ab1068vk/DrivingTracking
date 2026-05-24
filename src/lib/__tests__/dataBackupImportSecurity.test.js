@@ -127,6 +127,26 @@ describe('backup trip import sanitization', () => {
     expect(trip.jerk_score_confidence).toBe('insufficient_data');
   });
 
+  it('preserves traffic-stop intersection results through sanitized backup imports', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-intersection-stops',
+      status: 'completed',
+      intersection_score: 73,
+      intersection_score_confidence: 'observed_stops',
+      stop_count: 3,
+      traffic_stop_count: 3,
+      rolling_stop_count: 3,
+      smooth_approach_count: 3,
+    }]);
+
+    expect(trip).toMatchObject({
+      intersection_score: 73,
+      intersection_score_confidence: 'observed_stops',
+      traffic_stop_count: 3,
+      rolling_stop_count: 3,
+    });
+  });
+
   it('rejects imported trips without a non-empty string id', () => {
     expect(() => parseTrips([{ id: '', status: 'completed' }])).toThrow('valid id');
     expect(() => parseTrips([{ id: 123, status: 'completed' }])).toThrow('valid id');

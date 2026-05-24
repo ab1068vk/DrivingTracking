@@ -67,6 +67,11 @@ export const DEFAULT_THRESHOLDS = {
   MIN_TRUSTED_SPEED_KMH: 18,
   // Stationary / crawling speed used to suppress jitter in stats and events.
   STATIONARY_SPEED_KMH: 5,
+  // Count traffic-control stops from sustained low-speed windows without requiring a full idle event.
+  TRAFFIC_STOP_SPEED_KMH: 10,
+  TRAFFIC_STOP_MIN_SECONDS: 4,
+  TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS: 10,
+  INTERSECTION_MIN_DISTANCE_KM: 0.5,
   MAX_SPEED_SPIKE_DELTA_KMH: 45,
   MAX_SPEED_SPIKE_RATIO: 1.8,
   MAX_ALTITUDE_ACCURACY_M: 40,
@@ -2390,75 +2395,130 @@ export function detectPhoneProxy(cleanPoints = [], thresholds = DEFAULT_THRESHOL
 }
 
 export function analyzeIntersectionBehavior(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+  const trafficStopSpeedKmh = thresholds.TRAFFIC_STOP_SPEED_KMH ?? DEFAULT_THRESHOLDS.TRAFFIC_STOP_SPEED_KMH;
+  const trafficStopMinSeconds = thresholds.TRAFFIC_STOP_MIN_SECONDS ?? DEFAULT_THRESHOLDS.TRAFFIC_STOP_MIN_SECONDS;
+  const trafficStopMaxSampleGapSeconds = thresholds.TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS ?? DEFAULT_THRESHOLDS.TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS;
+  const intersectionMinDistanceKm = thresholds.INTERSECTION_MIN_DISTANCE_KM ?? DEFAULT_THRESHOLDS.INTERSECTION_MIN_DISTANCE_KM;
+  const distanceKm = calculateRouteDistanceKm(cleanPoints, thresholds);
   const intersectionEvents = [];
-  let state = 'MOVING';
   let approachStart = null;
-  let stopPoint = null;
-  let minSpeed = Infinity;
+  let lastAboveStopPoint = null;
+  let lowSpeedWindow = null;
 
-  for (let i = 1; i < cleanPoints.length; i++) {
-    const prev = cleanPoints[i - 1];
+  const closeLowSpeedWindow = (exitPoint) => {
+    if (!lowSpeedWindow || !exitPoint) return;
+    const stopDurationSeconds = (timestampMs(lowSpeedWindow.lastPoint) - timestampMs(lowSpeedWindow.firstPoint)) / 1000;
+    const approachPoint = lowSpeedWindow.approachStart;
+    const approachGapSeconds = approachPoint
+      ? (timestampMs(lowSpeedWindow.firstPoint) - timestampMs(approachPoint)) / 1000
+      : Infinity;
+    if (
+      lowSpeedWindow.sampleCount < 2 ||
+      stopDurationSeconds < trafficStopMinSeconds ||
+      !approachPoint ||
+      approachGapSeconds <= 0 ||
+      approachGapSeconds > 60
+    ) return;
+
+    const decel = Math.max(0, ((finiteSpeed(approachPoint) - lowSpeedWindow.minSpeed) / 3.6) / approachGapSeconds);
+    const harshThreshold = thresholds.threshold_harsh_brake_ms2 ?? thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
+    const approachGrade = decel < 2.0
+      ? 'smooth'
+      : decel <= harshThreshold
+        ? 'acceptable'
+        : 'late';
+    const rollingStop = lowSpeedWindow.minSpeed > 2.5;
+
+    intersectionEvents.push({
+      type: 'intersection',
+      stop_type: rollingStop ? 'rolling_traffic_stop' : 'traffic_stop',
+      approach_grade: approachGrade,
+      rolling_stop: rollingStop,
+      duration_seconds: Math.round(stopDurationSeconds),
+      lat: lowSpeedWindow.firstPoint.lat,
+      lng: lowSpeedWindow.firstPoint.lng,
+      timestamp: lowSpeedWindow.firstPoint.timestamp,
+    });
+  };
+
+  for (let i = 0; i < cleanPoints.length; i++) {
     const curr = cleanPoints[i];
-    const prevSpeed = finiteSpeed(prev);
+    const prev = cleanPoints[i - 1];
+    if (!hasValidCoordinates(curr) || curr.masked_for_privacy === true || !Number.isFinite(timestampMs(curr))) {
+      approachStart = null;
+      lastAboveStopPoint = null;
+      lowSpeedWindow = null;
+      continue;
+    }
+
     const currSpeed = finiteSpeed(curr);
+    if (currSpeed >= trafficStopSpeedKmh) {
+      closeLowSpeedWindow(curr);
+      lowSpeedWindow = null;
 
-    if (state === 'MOVING' && prevSpeed > 20 && currSpeed < 20) {
-      state = 'APPROACHING';
-      approachStart = prev;
-      minSpeed = currSpeed;
-    }
-
-    if (state === 'APPROACHING') {
-      minSpeed = Math.min(minSpeed, currSpeed);
-      if (currSpeed < 5) {
-        state = 'STOPPED';
-        stopPoint = curr;
-      } else if (currSpeed > 25) {
-        state = 'MOVING';
-        approachStart = null;
+      if (
+        hasValidCoordinates(prev) &&
+        prev?.masked_for_privacy !== true &&
+        finiteSpeed(prev) > 20 &&
+        currSpeed < 20
+      ) {
+        approachStart = prev;
+      } else if (currSpeed >= 20) {
+        approachStart = curr;
       }
+      lastAboveStopPoint = curr;
+      continue;
     }
 
-    if (state === 'STOPPED') {
-      minSpeed = Math.min(minSpeed, currSpeed);
-      if (currSpeed > 8 && approachStart && stopPoint) {
-        const duration = Math.max(1, (timestampMs(stopPoint) - timestampMs(approachStart)) / 1000);
-        const decel = (finiteSpeed(approachStart) / 3.6) / duration;
-        const harshThreshold = thresholds.threshold_harsh_brake_ms2 ?? thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
-        const approachGrade = decel < 2.0
-          ? 'smooth'
-          : decel <= 3.5 || decel >= harshThreshold
-            ? 'acceptable'
-            : 'late';
-
-        intersectionEvents.push({
-          type: 'intersection',
-          approach_grade: approachGrade,
-          rolling_stop: minSpeed > 2.5,
-          lat: stopPoint.lat,
-          lng: stopPoint.lng,
-          timestamp: stopPoint.timestamp,
-        });
-
-        state = 'MOVING';
-        approachStart = null;
-        stopPoint = null;
-        minSpeed = Infinity;
-      }
+    const candidateApproach = approachStart || lastAboveStopPoint;
+    if (!lowSpeedWindow) {
+      lowSpeedWindow = {
+        firstPoint: curr,
+        lastPoint: curr,
+        sampleCount: 1,
+        minSpeed: currSpeed,
+        approachStart: candidateApproach,
+      };
+      continue;
     }
+
+    const gapSeconds = (timestampMs(curr) - timestampMs(lowSpeedWindow.lastPoint)) / 1000;
+    if (gapSeconds <= 0 || gapSeconds > trafficStopMaxSampleGapSeconds) {
+      lowSpeedWindow = {
+        firstPoint: curr,
+        lastPoint: curr,
+        sampleCount: 1,
+        minSpeed: currSpeed,
+        approachStart: candidateApproach,
+      };
+      continue;
+    }
+
+    lowSpeedWindow.lastPoint = curr;
+    lowSpeedWindow.sampleCount += 1;
+    lowSpeedWindow.minSpeed = Math.min(lowSpeedWindow.minSpeed, currSpeed);
   }
 
   const stopCount = intersectionEvents.length;
   const rollingStopCount = intersectionEvents.filter((event) => event.rolling_stop).length;
   const smoothApproachCount = intersectionEvents.filter((event) => event.approach_grade === 'smooth').length;
   const lateCount = intersectionEvents.filter((event) => event.approach_grade === 'late').length;
-  const penalty = lateCount * 2 + rollingStopCount * 3;
+  const penalty = lateCount * 10 + rollingStopCount * 3;
   const distFactor = Math.max(1, stopCount / 5);
-  const intersectionScore = Math.max(0, 100 - Math.min(penalty * (3 / distFactor), 60));
+  const hasScorableEvidence = distanceKm >= intersectionMinDistanceKm && stopCount > 0;
+  const intersectionScore = hasScorableEvidence
+    ? Math.max(0, 100 - penalty * (3 / distFactor))
+    : null;
 
   return {
-    intersection_score: Math.round(intersectionScore),
+    intersection_score: intersectionScore == null ? null : Math.round(intersectionScore),
+    intersection_score_confidence: distanceKm < intersectionMinDistanceKm
+      ? 'insufficient_data'
+      : stopCount === 0
+        ? 'no_traffic_stops'
+        : 'observed_stops',
     stop_count: stopCount,
+    traffic_stop_count: stopCount,
     rolling_stop_count: rollingStopCount,
     smooth_approach_count: smoothApproachCount,
     intersection_events: intersectionEvents,
@@ -4087,8 +4147,10 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       night_driving: false,
       fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints || []),
       ...roadStats,
-      intersection_score: 100,
+      intersection_score: null,
+      intersection_score_confidence: 'insufficient_data',
       stop_count: 0,
+      traffic_stop_count: 0,
       rolling_stop_count: 0,
       smooth_approach_count: 0,
       intersection_events: [],
@@ -4191,7 +4253,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     : 0;
   const roadStats = classifyRoadType(routePoints);
   const speedZones = inferSpeedZones(routePoints, thresholds);
-  const intersectionStats = analyzeIntersectionBehavior(routePoints, thresholds);
+  const intersectionStats = analyzeIntersectionBehavior(points || [], thresholds);
   const fatigueProgression = durationSeconds > 1800
     ? analyzeFatigueProgression(routePoints, start.getTime(), end.getTime(), thresholds)
     : { fatigue_progression: 'unknown', segment_scores: [] };
@@ -4504,11 +4566,12 @@ export function calculateTripScores(
     (cornering.cornering_consistency_score ?? 100) * 0.10
   );
   const eco = Math.round(baseEco * 0.40 + ecoDriving.eco_driving_score * 0.40 + fuelBand.fuel_band_score * 0.20);
-  const intersectionScore = Number.isFinite(stats.intersection_score) ? stats.intersection_score : 100;
+  const intersectionScore = Number.isFinite(stats.intersection_score) ? stats.intersection_score : null;
+  const intersectionScoreForOverall = intersectionScore ?? 100;
 
   // Overall = weighted combination
   const overall = Math.min(100, Math.round(
-    safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScore * 0.15
+    safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScoreForOverall * 0.15
   ));
 
   const componentScores = {

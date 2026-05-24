@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 11;
+export const TRIP_SCHEMA_VERSION = 12;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -53,6 +53,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 11 recalculates jerk scores after removing the long-trip 20-point
  * floor and adding insufficient-data confidence handling.
+ *
+ * Version 12 recalculates intersection scores with four-second traffic-stop
+ * detection, nullable unobserved scores, and no permanent penalty floor.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

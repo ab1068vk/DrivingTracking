@@ -1161,7 +1161,7 @@ export default function TripDetail() {
         <h2 className="font-semibold mb-4">Driving Pattern</h2>
         <div className="grid grid-cols-2 gap-3 mb-4">
           {[
-            { icon: MapPin, label: 'detected stops', value: trip.stop_count ?? stops.length, color: 'text-primary' },
+            { icon: MapPin, label: 'traffic stops', value: trip.traffic_stop_count ?? trip.stop_count ?? 0, color: 'text-primary' },
             { icon: AlertTriangle, label: 'fatigue risk', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'jerk score', value: trip.jerk_score ?? '-', color: 'text-sky-500' },
             { icon: GitBranch, label: 'reaction', value: trip.avg_reaction_seconds ? `${trip.avg_reaction_seconds}s` : '-', color: ['reactive', 'delayed'].includes(trip.reaction_grade) ? 'text-red-500' : 'text-emerald-500' },
@@ -1301,16 +1301,20 @@ export default function TripDetail() {
             {stops.slice(0, 8).map((stop, index) => (
               <div key={`${stop.start_time}-${index}`} className="flex items-center justify-between border border-border rounded-xl p-2 text-sm">
                 <div>
-                  <div className="font-medium">Stop {index + 1}</div>
+                  <div className="font-medium">Extended stop {index + 1}</div>
                   <div className="text-xs text-muted-foreground">{new Date(stop.start_time).toLocaleTimeString()}</div>
                 </div>
                 <div className="text-xs font-semibold text-primary">{formatDuration(stop.duration_seconds)}</div>
               </div>
             ))}
           </div>
+        ) : (trip.traffic_stop_count ?? trip.stop_count ?? 0) > 0 ? (
+          <div className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
+            {trip.traffic_stop_count ?? trip.stop_count} traffic stops detected. No extended stopped periods were recorded.
+          </div>
         ) : (
           <div className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
-            No meaningful stops detected on this trip.
+            No traffic stops or extended stopped periods detected on this trip.
           </div>
         )}
       </motion.div>

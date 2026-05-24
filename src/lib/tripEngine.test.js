@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
 import {
+  analyzeIntersectionBehavior,
   calculateNightPenalty,
   calculateJerkScore,
   calculateFuelBandScore,
@@ -477,6 +478,107 @@ describe('tripEngine', () => {
     expect(scores.jerk_score).toBeNull();
     expect(scores.jerk_score_confidence).toBe('insufficient_data');
     expect(scores.score_smoothness).toBeGreaterThan(0);
+  });
+
+  it('detects sampled traffic stops and scores repeated rolling approaches without a floor', () => {
+    const trafficStopRoute = (minimumSpeeds = [], includeLateStops = 0) => {
+      const route = [];
+      let index = 0;
+      let seconds = 0;
+      const add = (speed, elapsed = 5) => {
+        if (route.length) seconds += elapsed;
+        route.push(point(43.6532 + index * 0.001, -79.3832, seconds, speed));
+        index += 1;
+      };
+
+      add(35, 0);
+      minimumSpeeds.forEach((minimumSpeed) => {
+        add(18);
+        add(minimumSpeed);
+        add(minimumSpeed);
+        add(minimumSpeed);
+        add(35);
+      });
+      for (let i = 0; i < includeLateStops; i++) {
+        add(45);
+        add(0, 1);
+        add(0);
+        add(35);
+      }
+      return route;
+    };
+
+    const fiveTrafficStops = analyzeIntersectionBehavior(trafficStopRoute([8, 8, 8, 8, 8]));
+    expect(fiveTrafficStops.traffic_stop_count).toBe(5);
+    expect(fiveTrafficStops.rolling_stop_count).toBe(5);
+    expect(fiveTrafficStops.intersection_score).toBeGreaterThanOrEqual(50);
+    expect(fiveTrafficStops.intersection_score).toBeLessThanOrEqual(85);
+
+    const threeRollingStops = analyzeIntersectionBehavior(trafficStopRoute([8, 8, 8]));
+    expect(threeRollingStops).toMatchObject({
+      traffic_stop_count: 3,
+      rolling_stop_count: 3,
+      intersection_score: 73,
+    });
+
+    const unsafeStops = analyzeIntersectionBehavior(trafficStopRoute(Array(10).fill(8), 3));
+    expect(unsafeStops.traffic_stop_count).toBe(13);
+    expect(unsafeStops.intersection_score).toBeLessThan(40);
+  });
+
+  it('leaves intersection scoring unobserved for highways, low-speed-only trips, and masked stop windows', () => {
+    const highwayRoute = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.002, -79.3832, index * 5, 95)
+    ));
+    const parkingLotRoute = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 5, 6)
+    ));
+    const singleLowSample = [
+      point(43.6532, -79.3832, 0, 35),
+      point(43.6552, -79.3832, 5, 0),
+      point(43.6572, -79.3832, 10, 35),
+    ];
+    const maskedStopWindow = [
+      point(43.6532, -79.3832, 0, 35),
+      point(43.6562, -79.3832, 5, 18),
+      point(43.6592, -79.3832, 10, 8),
+      { ...point(43.6622, -79.3832, 15, 8), lat: null, lng: null, masked_for_privacy: true },
+      point(43.6652, -79.3832, 20, 8),
+      point(43.6682, -79.3832, 25, 35),
+    ];
+    const shortObservedStop = [
+      point(43.6532, -79.3832, 0, 35),
+      point(43.6533, -79.3832, 5, 8),
+      point(43.6534, -79.3832, 10, 8),
+      point(43.6535, -79.3832, 15, 35),
+    ];
+    const interruptedLowSpeedWindow = [
+      point(43.6532, -79.3832, 0, 35),
+      point(43.6552, -79.3832, 5, 8),
+      point(43.6572, -79.3832, 25, 8),
+      point(43.6592, -79.3832, 30, 35),
+    ];
+
+    expect(analyzeIntersectionBehavior(highwayRoute)).toMatchObject({
+      intersection_score: null,
+      intersection_score_confidence: 'no_traffic_stops',
+      traffic_stop_count: 0,
+    });
+    expect(analyzeIntersectionBehavior(parkingLotRoute).traffic_stop_count).toBe(0);
+    expect(analyzeIntersectionBehavior(singleLowSample).traffic_stop_count).toBe(0);
+    expect(analyzeIntersectionBehavior(maskedStopWindow).traffic_stop_count).toBe(0);
+    expect(analyzeIntersectionBehavior(interruptedLowSpeedWindow).traffic_stop_count).toBe(0);
+    expect(analyzeIntersectionBehavior(shortObservedStop)).toMatchObject({
+      intersection_score: null,
+      intersection_score_confidence: 'insufficient_data',
+      traffic_stop_count: 1,
+    });
+
+    const highwayStats = calculateTripStats(highwayRoute, highwayRoute[0].timestamp, highwayRoute.at(-1).timestamp);
+    const highwayScores = calculateTripScores([], highwayStats, highwayRoute);
+    expect(highwayStats.intersection_score).toBeNull();
+    expect(highwayScores.intersection_score).toBeNull();
+    expect(Number.isFinite(highwayScores.score_overall)).toBe(true);
   });
 
   it('computes second-wave advanced score components from route points', () => {

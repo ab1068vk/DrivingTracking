@@ -154,7 +154,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Intersection score',
-    definition: 'Looks at stop-and-go smoothness around lower-speed points where intersections, turns, parking lots, and traffic controls often happen.',
+    definition: 'Scores observed traffic stops lasting at least four seconds below 10 km/h, including rolling stops. Trips without enough evidence show no intersection score.',
   },
   {
     term: 'Drowsy risk',
