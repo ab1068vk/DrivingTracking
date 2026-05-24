@@ -36,7 +36,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.Instant;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -953,8 +953,7 @@ public class DriveSenseAutoTrackingService extends Service {
             if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
             else stats.idleSeconds += dt;
 
-            int hour = Instant.ofEpochMilli(currMs).atZone(ZoneOffset.UTC).getHour();
-            if (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR) stats.nightDriving = true;
+            if (isNightDrivingEpochMs(currMs)) stats.nightDriving = true;
         }
 
         JSONObject last = points.optJSONObject(points.length() - 1);
@@ -1398,6 +1397,11 @@ public class DriveSenseAutoTrackingService extends Service {
 
     static String iso(long timeMs) {
         return Instant.ofEpochMilli(timeMs).toString();
+    }
+
+    static boolean isNightDrivingEpochMs(long timeMs) {
+        int hour = Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault()).getHour();
+        return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;
     }
 
     private static long parseIso(String value) {
