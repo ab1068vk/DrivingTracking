@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   analyzeIntersectionBehavior,
   calculateNightPenalty,
@@ -26,6 +26,7 @@ import {
   detectErraticSpeedWindows,
   detectTailgateCycles,
   DEFAULT_THRESHOLDS,
+  ECO_DEFAULTS,
   EVENT_TYPES,
   getScoreColor,
   TRIP_STATES,
@@ -213,6 +214,68 @@ describe('tripEngine', () => {
 
     expect(result.idle_penalty_points).toBe(1.5);
     expect(result.idle_penalty_points).toBeLessThan(2);
+  });
+
+  it('uses named eco fallbacks for missing or malformed threshold objects', () => {
+    const points = Array.from({ length: 100 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, index < 50 ? 80 : 40, 6)
+    ));
+
+    expect(ECO_DEFAULTS).toMatchObject({
+      CRUISE_SCORE_MULTIPLIER: 130,
+      IDLE_PENALTY_MULTIPLIER: 150,
+      IDLE_MAX_PENALTY: 25,
+    });
+    expect(calculateEcoDrivingScore(points, {}, {}).cruise_score).toBe(65);
+    expect(calculateEcoDrivingScore(points, {}, null).cruise_score).toBe(65);
+    expect(calculateEcoDrivingScore(points, {}, {
+      ECO_CRUISE_SCORE_MULTIPLIER: null,
+      ECO_IDLE_PENALTY_MULTIPLIER: '',
+      ECO_IDLE_MAX_PENALTY: null,
+    }).cruise_score).toBe(65);
+  });
+
+  it('marks eco evidence unavailable when both effective multipliers are zero', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const points = Array.from({ length: 8 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, 80, 6)
+    ));
+    const invalidThresholds = {
+      ...DEFAULT_THRESHOLDS,
+      ECO_CRUISE_SCORE_MULTIPLIER: 0,
+      ECO_IDLE_PENALTY_MULTIPLIER: 0,
+    };
+
+    const result = calculateEcoDrivingScore(points, {}, invalidThresholds);
+    const scores = calculateTripScores([], { distance_km: 2, duration_seconds: 40 }, points, invalidThresholds, 40, {}, { includeRoadTypeSegments: false });
+
+    expect(result).toMatchObject({
+      eco_driving_score: null,
+      eco_score_confidence: 'invalid_thresholds',
+      cruise_score: null,
+      idle_penalty_points: null,
+    });
+    expect(scores.eco_driving_score).toBeNull();
+    expect(Number.isFinite(scores.score_eco)).toBe(true);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('multipliers cannot both be zero'));
+    errorSpy.mockRestore();
+  });
+
+  it('clamps avoidable idle ratio before applying its penalty multiplier', () => {
+    const points = Array.from({ length: 8 }, (_, index) => (
+      point(43.6532 + index * 0.0001, -79.3832, index * 5, 80, 6)
+    ));
+
+    const result = calculateEcoDrivingScore(points, {
+      duration_seconds: 100,
+      sustained_idle_seconds: 200,
+    }, {
+      ...DEFAULT_THRESHOLDS,
+      ECO_IDLE_PENALTY_MULTIPLIER: 10,
+      ECO_IDLE_MAX_PENALTY: 100,
+    });
+
+    expect(result.idle_penalty_points).toBe(10);
   });
 
   it('can lower the eco moving-speed floor for stop-and-go city scoring', () => {

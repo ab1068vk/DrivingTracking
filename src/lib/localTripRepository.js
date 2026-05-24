@@ -16,7 +16,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 13;
+export const TRIP_SCHEMA_VERSION = 14;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -59,6 +59,9 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 13 recalculates following-distance scores across city and highway
  * driving with speed-weighted penalties and short-trip insufficient-data handling.
+ *
+ * Version 14 recalculates eco scores with named fallback multipliers, bounded
+ * idle ratios, and unavailable handling for invalid zero-multiplier settings.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';

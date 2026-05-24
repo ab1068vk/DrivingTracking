@@ -11,6 +11,12 @@ const REACTION_SCORE_FLOOR = 20;
 const FOLLOWING_DISTANCE_MIN_TRIP_KM = 0.5;
 const FOLLOWING_DISTANCE_PENALTY_SCALE = 8;
 export const PHONE_USE_SAFETY_WEIGHT = 0.05;
+export const ECO_DEFAULTS = Object.freeze({
+  CRUISE_SCORE_MULTIPLIER: 130,
+  IDLE_PENALTY_MULTIPLIER: 150,
+  IDLE_MAX_PENALTY: 25,
+});
+let reportedInvalidEcoThresholds = false;
 
 /**
  * Road Sage Trip Engine
@@ -34,11 +40,11 @@ export const DEFAULT_THRESHOLDS = {
   ECO_CRUISE_MIN_KMH: 55,
   ECO_CRUISE_MAX_KMH: 110,
   // Cruise score multiplier: 130 gives full credit when about 77% of moving samples are in the cruise band.
-  ECO_CRUISE_SCORE_MULTIPLIER: 130,
+  ECO_CRUISE_SCORE_MULTIPLIER: ECO_DEFAULTS.CRUISE_SCORE_MULTIPLIER,
   // Idle penalty curve: each 1% of avoidable parked idle costs 1.5 points before the cap below.
-  ECO_IDLE_PENALTY_MULTIPLIER: 150,
+  ECO_IDLE_PENALTY_MULTIPLIER: ECO_DEFAULTS.IDLE_PENALTY_MULTIPLIER,
   // Idle penalty cap: avoidable idling can reduce the eco-driving component by at most 25 points.
-  ECO_IDLE_MAX_PENALTY: 25,
+  ECO_IDLE_MAX_PENALTY: ECO_DEFAULTS.IDLE_MAX_PENALTY,
   // Moving sample floor: ignore GPS crawl/jitter below 15 km/h unless a city profile lowers this threshold.
   ECO_MIN_MOVING_KMH: 15,
   REACTION_SPEED_TRIGGER_KMH: 5,
@@ -127,6 +133,34 @@ export const EVENT_TYPES = {
 function settingNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function ecoSettingNumber(value, fallback) {
+  return value == null || value === '' ? fallback : settingNumber(value, fallback);
+}
+
+function resolveEcoScoringConfig(thresholds) {
+  const configured = thresholds && typeof thresholds === 'object' ? thresholds : {};
+  const cruiseScoreMultiplier = Math.max(
+    0,
+    ecoSettingNumber(configured.ECO_CRUISE_SCORE_MULTIPLIER, ECO_DEFAULTS.CRUISE_SCORE_MULTIPLIER)
+  );
+  const idlePenaltyMultiplier = Math.max(
+    0,
+    ecoSettingNumber(configured.ECO_IDLE_PENALTY_MULTIPLIER, ECO_DEFAULTS.IDLE_PENALTY_MULTIPLIER)
+  );
+  const idleMaxPenalty = Math.max(
+    0,
+    ecoSettingNumber(configured.ECO_IDLE_MAX_PENALTY, ECO_DEFAULTS.IDLE_MAX_PENALTY)
+  );
+  const invalid = cruiseScoreMultiplier === 0 && idlePenaltyMultiplier === 0;
+
+  if (invalid && !reportedInvalidEcoThresholds) {
+    reportedInvalidEcoThresholds = true;
+    console.error('Eco driving score unavailable: cruise and idle multipliers cannot both be zero.');
+  }
+
+  return { configured, cruiseScoreMultiplier, idlePenaltyMultiplier, idleMaxPenalty, invalid };
 }
 
 export function buildDrivingThresholds(settings = {}) {
@@ -1397,13 +1431,25 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
 }
 
 export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, thresholds = DEFAULT_THRESHOLDS) {
-  const minMovingKmh = Math.max(0, settingNumber(thresholds.ECO_MIN_MOVING_KMH, DEFAULT_THRESHOLDS.ECO_MIN_MOVING_KMH));
+  const ecoConfig = resolveEcoScoringConfig(thresholds);
+  if (ecoConfig.invalid) {
+    return {
+      eco_driving_score: null,
+      eco_score_confidence: 'invalid_thresholds',
+      speed_stability: null,
+      cruise_score: null,
+      idle_penalty_points: null,
+    };
+  }
+
+  const { configured, cruiseScoreMultiplier, idlePenaltyMultiplier, idleMaxPenalty } = ecoConfig;
+  const minMovingKmh = Math.max(0, settingNumber(configured.ECO_MIN_MOVING_KMH, DEFAULT_THRESHOLDS.ECO_MIN_MOVING_KMH));
   const movingSpeeds = cleanPoints
     .map((_, index) => reliablePointSpeed(cleanPoints, index))
     .filter((speed) => Number.isFinite(speed) && speed >= minMovingKmh);
 
   if (movingSpeeds.length < 3) {
-    return { eco_driving_score: 50, speed_stability: 50, cruise_score: 50, idle_penalty_points: 0 };
+    return { eco_driving_score: 50, eco_score_confidence: 'insufficient_data', speed_stability: 50, cruise_score: 50, idle_penalty_points: 0 };
   }
 
   const mean = average(movingSpeeds);
@@ -1411,18 +1457,15 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, threshold
   const cv = Math.sqrt(variance) / Math.max(1, mean);
   // CV is scale-normalized variability; 0.5 is already highly uneven, so this scores it near 25.
   const speedStability = Math.max(0, 100 - cv * ECO_SPEED_STABILITY_CV_MULTIPLIER);
-  const configuredCruiseMin = settingNumber(thresholds.ECO_CRUISE_MIN_KMH, DEFAULT_THRESHOLDS.ECO_CRUISE_MIN_KMH);
-  const configuredCruiseMax = settingNumber(thresholds.ECO_CRUISE_MAX_KMH, DEFAULT_THRESHOLDS.ECO_CRUISE_MAX_KMH);
+  const configuredCruiseMin = settingNumber(configured.ECO_CRUISE_MIN_KMH, DEFAULT_THRESHOLDS.ECO_CRUISE_MIN_KMH);
+  const configuredCruiseMax = settingNumber(configured.ECO_CRUISE_MAX_KMH, DEFAULT_THRESHOLDS.ECO_CRUISE_MAX_KMH);
   const cruiseMin = Math.min(configuredCruiseMin, configuredCruiseMax);
   const cruiseMax = Math.max(configuredCruiseMin, configuredCruiseMax);
-  const cruiseScoreMultiplier = Math.max(0, settingNumber(thresholds.ECO_CRUISE_SCORE_MULTIPLIER, DEFAULT_THRESHOLDS.ECO_CRUISE_SCORE_MULTIPLIER));
   const cruiseRatio = movingSpeeds.filter((speed) => speed >= cruiseMin && speed <= cruiseMax).length / movingSpeeds.length;
   const cruiseScore = Math.min(100, cruiseRatio * cruiseScoreMultiplier);
   const avoidableIdleSeconds = stats.sustained_idle_seconds ?? stats.idle_time_seconds ?? 0;
   // FIX: Penalize sustained parked idle instead of unavoidable traffic-stop idle.
-  const idleRatio = avoidableIdleSeconds / Math.max(1, stats.duration_seconds || 0);
-  const idlePenaltyMultiplier = Math.max(0, settingNumber(thresholds.ECO_IDLE_PENALTY_MULTIPLIER, DEFAULT_THRESHOLDS.ECO_IDLE_PENALTY_MULTIPLIER));
-  const idleMaxPenalty = Math.max(0, settingNumber(thresholds.ECO_IDLE_MAX_PENALTY, DEFAULT_THRESHOLDS.ECO_IDLE_MAX_PENALTY));
+  const idleRatio = clamp(avoidableIdleSeconds / Math.max(1, stats.duration_seconds || 0), 0, 1);
   const idlePenalty = Math.min(idleMaxPenalty, idleRatio * idlePenaltyMultiplier);
   // FIX: Use a gentler eco idle curve capped at 25 points for avoidable idling.
   const ecoDrivingScore = Math.round(
@@ -1433,6 +1476,7 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, threshold
 
   return {
     eco_driving_score: ecoDrivingScore,
+    eco_score_confidence: 'observed',
     speed_stability: Math.round(speedStability),
     cruise_score: Math.round(cruiseScore),
     idle_penalty_points: round1(idlePenalty),
@@ -4582,7 +4626,9 @@ export function calculateTripScores(
     reaction.reaction_score * 0.10 +
     (cornering.cornering_consistency_score ?? 100) * 0.10
   );
-  const eco = Math.round(baseEco * 0.40 + ecoDriving.eco_driving_score * 0.40 + fuelBand.fuel_band_score * 0.20);
+  const eco = ecoDriving.eco_driving_score == null
+    ? Math.round((baseEco * 0.40 + fuelBand.fuel_band_score * 0.20) / 0.60)
+    : Math.round(baseEco * 0.40 + ecoDriving.eco_driving_score * 0.40 + fuelBand.fuel_band_score * 0.20);
   const intersectionScore = Number.isFinite(stats.intersection_score) ? stats.intersection_score : null;
   const intersectionScoreForOverall = intersectionScore ?? 100;
 
