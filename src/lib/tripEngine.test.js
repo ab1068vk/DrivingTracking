@@ -327,6 +327,45 @@ describe('tripEngine', () => {
     expect(longScore.score_overall).toBe(shortScore.score_overall);
   });
 
+  it('scores close-following patterns across city and highway distance with speed context', () => {
+    const tailgateEvents = (count, speedKmh, severity) => Array.from({ length: count }, () => ({
+      type: EVENT_TYPES.TAILGATE_CYCLE,
+      severity,
+      speed_kmh: speedKmh,
+    }));
+    const stats = (distanceKm) => ({ distance_km: distanceKm, fatigue_risk_score: 0, intersection_score: 100 });
+
+    const noEvents = calculateTripScores([], stats(5), []);
+    const highway = calculateTripScores(tailgateEvents(3, 120, 'high'), stats(20), []);
+    const city = calculateTripScores(tailgateEvents(3, 50, 'medium'), stats(5), []);
+    const dense = calculateTripScores(tailgateEvents(10, 50, 'low'), stats(2), []);
+
+    expect(noEvents.following_distance_score).toBe(100);
+    expect(highway.following_distance_score).toBeLessThan(70);
+    expect(city.following_distance_score).toBeLessThan(80);
+    expect(dense.following_distance_score).toBeLessThan(30);
+  });
+
+  it('does not score short trips or explicitly privacy-masked following evidence', () => {
+    const event = {
+      type: EVENT_TYPES.TAILGATE_CYCLE,
+      severity: 'high',
+      speed_kmh: 120,
+    };
+    const shortTrip = calculateTripScores([event], { distance_km: 0.3, fatigue_risk_score: 0 }, []);
+    const masked = calculateTripScores(
+      [{ ...event, masked_for_privacy: true }],
+      { distance_km: 5, fatigue_risk_score: 0 },
+      []
+    );
+
+    expect(shortTrip.following_distance_score).toBeNull();
+    expect(shortTrip.following_distance_score_confidence).toBe('insufficient_data');
+    expect(Number.isFinite(shortTrip.score_safety)).toBe(true);
+    expect(masked.following_distance_score).toBe(100);
+    expect(masked.tailgate_cycle_count).toBe(0);
+  });
+
   it('penalizes high-risk phone use in the distraction score', () => {
     const scores = calculateTripScores(
       [],
@@ -827,12 +866,22 @@ describe('tripEngine', () => {
     const followingPoints = [65, 66, 65, 45, 42].map((speed, index) => (
       point(43.6532 + index * 0.00035, -79.3832, index * 2, speed)
     ));
+    const cityFollowingPoints = [50, 51, 50, 30, 28].map((speed, index) => (
+      point(43.6532 + index * 0.00035, -79.3832, index * 2, speed)
+    ));
+    const maskedFollowingPoints = [65, 66, 65, 45, 42].map((speed, index) => (
+      index === 2
+        ? { ...point(43.6532 + index * 0.00035, -79.3832, index * 2, speed), lat: null, lng: null, masked_for_privacy: true }
+        : point(43.6532 + index * 0.00035, -79.3832, index * 2, speed)
+    ));
     const mergePoints = [45, 58, 72, 88].map((speed, index) => (
       point(43.6532 + index * 0.00045, -79.3832, index * 5, speed)
     ));
 
     expect(detectLaneChanges(lanePoints).length).toBeGreaterThan(0);
     expect(detectTailgateCycles(followingPoints).length).toBeGreaterThan(0);
+    expect(detectTailgateCycles(cityFollowingPoints).length).toBeGreaterThan(0);
+    expect(detectTailgateCycles(maskedFollowingPoints)).toHaveLength(0);
     expect(detectHighwayMergeBehavior(mergePoints).merge_event_count).toBe(1);
   });
 

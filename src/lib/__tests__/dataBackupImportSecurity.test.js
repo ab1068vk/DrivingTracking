@@ -147,6 +147,18 @@ describe('backup trip import sanitization', () => {
     });
   });
 
+  it('preserves following-distance confidence through sanitized backup imports', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-following-confidence',
+      status: 'completed',
+      following_distance_score: null,
+      following_distance_score_confidence: 'insufficient_data',
+    }]);
+
+    expect(trip.following_distance_score).toBeNull();
+    expect(trip.following_distance_score_confidence).toBe('insufficient_data');
+  });
+
   it('rejects imported trips without a non-empty string id', () => {
     expect(() => parseTrips([{ id: '', status: 'completed' }])).toThrow('valid id');
     expect(() => parseTrips([{ id: 123, status: 'completed' }])).toThrow('valid id');

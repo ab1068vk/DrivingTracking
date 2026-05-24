@@ -8,7 +8,8 @@ const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
 const SPEED_VARIABILITY_INDEX_MULTIPLIER = 1.5;
 const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.4;
 const REACTION_SCORE_FLOOR = 20;
-const FOLLOWING_DISTANCE_MAX_DEDUCTION = 80;
+const FOLLOWING_DISTANCE_MIN_TRIP_KM = 0.5;
+const FOLLOWING_DISTANCE_PENALTY_SCALE = 8;
 export const PHONE_USE_SAFETY_WEIGHT = 0.05;
 
 /**
@@ -80,7 +81,7 @@ export const DEFAULT_THRESHOLDS = {
   MIN_SPEED_RAPID_ACCEL_KMH: 5,
   MIN_SPEED_HARSH_BRAKE_KMH: 25,
   TAILGATE_DECEL_MS2: 2.5,
-  FOLLOWING_GAP_MIN_SPEED_KMH: 55,
+  FOLLOWING_GAP_MIN_SPEED_KMH: 40,
   FOLLOWING_GAP_CRUISE_SECONDS: 4,
   FOLLOWING_GAP_SPEED_DROP_KMH: 10,
   LANE_CHANGE_MIN_SPEED_KMH: 50,
@@ -969,18 +970,6 @@ function calculateTerminalStoppedSeconds(points = [], endTime = null, thresholds
   return Math.min(maxTerminalIdle, (endMs - lastMs) / 1000);
 }
 
-function calculateHighwayDistanceKm(points = [], thresholds = DEFAULT_THRESHOLDS) {
-  let distance = 0;
-  for (let i = 1; i < points.length; i++) {
-    const segment = calculateSegmentMetrics(points[i - 1], points[i], thresholds);
-    if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;
-    if (Math.max(finiteSpeed(points[i - 1]), finiteSpeed(points[i]), segment.reliableSpeedKmh) >= 80) {
-      distance += segment.distanceKm;
-    }
-  }
-  return distance;
-}
-
 export function classifyRoadType(cleanPoints = []) {
   const speeds = cleanPoints
     .map((point) => Number(point?.speed_kmh))
@@ -1742,14 +1731,29 @@ export function detectTailgateCycles(cleanPoints = [], thresholds = DEFAULT_THRE
   let cruiseSpeed = 0;
   let decelStartTime = null;
   let maxDecel = 0;
+  const resetState = () => {
+    state = 'IDLE';
+    cruiseStartTime = null;
+    cruiseSpeed = 0;
+    decelStartTime = null;
+    maxDecel = 0;
+  };
 
   for (let i = 1; i < cleanPoints.length; i++) {
     const prev = cleanPoints[i - 1];
     const curr = cleanPoints[i];
+    if (
+      !hasValidCoordinates(prev) ||
+      !hasValidCoordinates(curr) ||
+      prev.masked_for_privacy === true ||
+      curr.masked_for_privacy === true
+    ) {
+      resetState();
+      continue;
+    }
     const dt = (timestampMs(curr) - timestampMs(prev)) / 1000;
     if (dt <= 0 || dt > 30) {
-      state = 'IDLE';
-      cruiseStartTime = null;
+      resetState();
       continue;
     }
 
@@ -4392,7 +4396,8 @@ export function calculateTripScores(
   maybeOptions = {}
 ) {
   const eventsList = Array.isArray(events) ? events : events?.events || [];
-  const serializableEvents = eventsList.map((event) => ({ ...event }));
+  const scoringEvents = eventsList.filter((event) => event?.masked_for_privacy !== true);
+  const serializableEvents = scoringEvents.map((event) => ({ ...event }));
   const phoneUseFromEvents = events?.phoneUse || {};
   const options = phoneUseOrOptions?.includeRoadTypeSegments != null
     ? phoneUseOrOptions
@@ -4435,7 +4440,7 @@ export function calculateTripScores(
   let tailgatePenalty = 0;
   let distractionPenalty = 0;
 
-  for (const evt of eventsList) {
+  for (const evt of scoringEvents) {
     let p = penalties[evt.type]?.[evt.severity] ?? 0;
     if (
       [EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.SHARP_TURN].includes(evt.type) &&
@@ -4462,7 +4467,11 @@ export function calculateTripScores(
     if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN, EVENT_TYPES.NEAR_MISS].includes(evt.type)) smoothnessPenalty += p;
     // Eco: deducts from speeding, rapid_acceleration, idle
     if ([EVENT_TYPES.SPEEDING, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.IDLE].includes(evt.type)) ecoPenalty += p;
-    if (evt.type === EVENT_TYPES.TAILGATE_CYCLE) tailgatePenalty += p;
+    if (evt.type === EVENT_TYPES.TAILGATE_CYCLE) {
+      const speedKmh = Number(evt.speed_kmh) || 0;
+      const speedWeight = speedKmh > 80 ? 2 : speedKmh > 50 ? 1.3 : 1;
+      tailgatePenalty += p * speedWeight;
+    }
     if ([EVENT_TYPES.ERRATIC_SPEED, EVENT_TYPES.PHONE_USE].includes(evt.type)) distractionPenalty += p;
   }
 
@@ -4520,8 +4529,8 @@ export function calculateTripScores(
   const fuelBand = calculateFuelBandScore(routePoints, thresholds);
   const merge = detectHighwayMergeBehavior(routePoints, thresholds);
   const smoothBraking = calculateSmoothBrakingRatio(routePoints, thresholds);
-  const engineStress = calculateEngineStressScore(eventsList, stats);
-  const tireWear = calculateTireWearUnits(eventsList);
+  const engineStress = calculateEngineStressScore(scoringEvents, stats);
+  const tireWear = calculateTireWearUnits(scoringEvents);
   const drowsy = advancedSafetyEnabled
     ? detectDrowsyDrivingSignature(routePoints, durationSeconds, thresholds)
     : { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' };
@@ -4530,26 +4539,34 @@ export function calculateTripScores(
   const nearMissScore = counts[EVENT_TYPES.NEAR_MISS] === 0
     ? 100
     : Math.max(0, Math.round(100 * Math.pow(0.60, counts[EVENT_TYPES.NEAR_MISS])));
-  const aggressive = calculateAggressiveDrivingScore(eventsList, { ...stats, ...jerk });
-  const highwayKm = Math.max(1, calculateHighwayDistanceKm(routePoints));
-  // Cap the deduction at 80 so GPS-inferred following distance bottoms out at 20 instead of implying certainty.
-  const followingDistanceScore = Math.max(0, 100 - Math.min(tailgatePenalty * (4 / highwayKm), FOLLOWING_DISTANCE_MAX_DEDUCTION));
+  const aggressive = calculateAggressiveDrivingScore(scoringEvents, { ...stats, ...jerk });
+  const tripDistanceKm = Number(stats.distance_km) || 0;
+  const followingDistanceScore = tripDistanceKm < FOLLOWING_DISTANCE_MIN_TRIP_KM
+    ? null
+    : Math.max(
+      0,
+      100 - Math.min(
+        tailgatePenalty * (FOLLOWING_DISTANCE_PENALTY_SCALE / Math.max(FOLLOWING_DISTANCE_MIN_TRIP_KM, tripDistanceKm)),
+        100
+      )
+    );
   const distractionDeductionCap = thresholds.DISTRACTION_DEDUCTION_CAP ?? 70;
   const distractionScore = Math.max(0, 100 - Math.min(distractionPenalty * (3 / distKm), distractionDeductionCap));
-  const reaction = calculateReactionTimeProxy(routePoints, eventsList, thresholds);
+  const reaction = calculateReactionTimeProxy(routePoints, scoringEvents, thresholds);
   const cornering = calculateCorneringConsistency(routePoints, thresholds);
-  const brakingEfficiency = calculateBrakingEfficiency(routePoints, eventsList, thresholds);
+  const brakingEfficiency = calculateBrakingEfficiency(routePoints, scoringEvents, thresholds);
   const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds);
-  const overtakeQuality = calculateOvertakeQualityScore(routePoints, eventsList, thresholds);
-  const slippery = detectSlipperyConditionProxy(routePoints, eventsList, thresholds);
+  const overtakeQuality = calculateOvertakeQualityScore(routePoints, scoringEvents, thresholds);
+  const slippery = detectSlipperyConditionProxy(routePoints, scoringEvents, thresholds);
 
   const brakingScoreForSafety = brakingEfficiency.braking_efficiency_score ?? 100;
   const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
   const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false ? 100 : (phoneUseResult.phone_use_score ?? 100);
   const jerkScoreForSmoothness = jerk.jerk_score ?? 100;
+  const followingDistanceScoreForSafety = followingDistanceScore ?? 100;
   const safetyWithoutOvertake = Math.round(
     baseSafety * 0.60 +
-    followingDistanceScore * 0.10 +
+    followingDistanceScoreForSafety * 0.10 +
     brakingScoreForSafety * 0.15 +
     complianceScoreForSafety * 0.10 +
     phoneUseScoreForSafety * PHONE_USE_SAFETY_WEIGHT
@@ -4586,7 +4603,8 @@ export function calculateTripScores(
     lane_changes_count: counts[EVENT_TYPES.LANE_CHANGE],
     lane_changes_per_10km: round1((counts[EVENT_TYPES.LANE_CHANGE] / distKm) * 10),
     tailgate_cycle_count: counts[EVENT_TYPES.TAILGATE_CYCLE],
-    following_distance_score: Math.round(followingDistanceScore),
+    following_distance_score: followingDistanceScore == null ? null : Math.round(followingDistanceScore),
+    following_distance_score_confidence: followingDistanceScore == null ? 'insufficient_data' : 'observed_distance',
     distraction_events_count: counts[EVENT_TYPES.ERRATIC_SPEED],
     distraction_score: Math.round(distractionScore),
     near_miss_count: counts[EVENT_TYPES.NEAR_MISS],
@@ -4620,7 +4638,7 @@ export function calculateTripScores(
     ...compliance,
     ...overtakeQuality,
     ...slippery,
-    ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, eventsList, stats, thresholds)),
+    ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, scoringEvents, stats, thresholds)),
     ...aggressive,
     driving_events: serializableEvents,
   };

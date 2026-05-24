@@ -146,7 +146,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Following score',
-    definition: 'Looks for repeated deceleration patterns that suggest following traffic too closely or reacting late to vehicles ahead.',
+    definition: 'Looks for close-following deceleration patterns on city and highway routes, weighting higher-speed events more strongly. Very short trips show no score.',
   },
   {
     term: 'Focus score',

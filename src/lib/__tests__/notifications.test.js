@@ -211,4 +211,17 @@ describe('advanced notifications', () => {
     expect(merge.id).toBe(NOTIFICATION_IDS.TRIP_MERGE_SUMMARY);
     expect(accel.id).toBe(NOTIFICATION_IDS.TRIP_ACCEL_SUMMARY);
   });
+
+  it('does not treat an unavailable following score as a close-following alert', async () => {
+    const notification = await dispatchPostTripNotification(trip({
+      following_distance_score: null,
+      tailgate_cycle_count: 0,
+    }), [{ score_overall: 82 }], {
+      ...settings,
+      notif_post_trip_score_change: false,
+      notif_post_trip_fuel_saving: false,
+    });
+
+    expect(notification).toBeNull();
+  });
 });

@@ -92,6 +92,7 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'lane_changes_per_10km',
   'tailgate_cycle_count',
   'following_distance_score',
+  'following_distance_score_confidence',
   'distraction_events_count',
   'distraction_score',
   'near_miss_count',

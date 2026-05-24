@@ -554,7 +554,8 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   const phoneUseHigh = trip.phone_use_risk === 'high';
   const nearMissHigh = nearMissCount >= 2;
   const followingGapCount = Number(trip.tailgate_cycle_count) || trip.driving_events?.filter((event) => event.type === 'tailgate_cycle').length || 0;
-  const followingGapRisk = followingGapCount >= 2 || Number(trip.following_distance_score) < 70;
+  const followingGapScore = trip.following_distance_score == null ? null : Number(trip.following_distance_score);
+  const followingGapRisk = followingGapCount >= 2 || (Number.isFinite(followingGapScore) && followingGapScore < 70);
   const mergeIssueCount = (Number(trip.poor_merge_count) || 0) + (Number(trip.harsh_merge_count) || 0);
   const mergeRisk = mergeIssueCount > 0 && Number(trip.merge_event_count || mergeIssueCount) > 0;
   const rapidAccelCount = Number(trip.rapid_accel_count) || trip.driving_events?.filter((event) => event.type === 'rapid_acceleration').length || 0;
