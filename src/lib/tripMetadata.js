@@ -114,7 +114,7 @@ export function isHighRiskTrip(trip = {}) {
     (trip.rapid_accel_count || 0) +
     (trip.sharp_turns_count || 0) +
     (trip.speeding_events_count || 0) +
-    (trip.near_miss_count || 0);
+    (trip.close_proximity_count ?? trip.near_miss_count ?? 0);
   return (trip.score_overall ?? 100) < 60 ||
     riskyEvents >= 4 ||
     trip.aggressive_grade === 'aggressive' ||
@@ -136,7 +136,7 @@ export function buildScoreExplanation(trip = {}, scoreKey = 'overall') {
   if ((trip.sharp_turns_count || 0) > 0) reasons.push(plural(trip.sharp_turns_count, 'sharp turn'));
   if ((trip.rapid_accel_count || 0) > 0) reasons.push(plural(trip.rapid_accel_count, 'rapid acceleration'));
   if ((trip.speeding_events_count || 0) > 0) reasons.push(plural(trip.speeding_events_count, 'speeding event'));
-  if ((trip.near_miss_count || 0) > 0) reasons.push(plural(trip.near_miss_count, 'estimated close-proximity alert'));
+  if ((trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0) reasons.push(plural(trip.close_proximity_count ?? trip.near_miss_count, 'estimated brake-turn manoeuvre alert'));
   if ((trip.phone_use_window_count || 0) > 0) reasons.push(plural(trip.phone_use_window_count, 'phone-use window'));
 
   if (score >= 85 && reasons.length === 0) {

@@ -14,7 +14,7 @@ import {
   calculateTripStats,
   calculateHillDrivingScore,
   calculateEcoDrivingScore,
-  calculateReactionTimeProxy,
+  calculateBrakeOnsetSmoothness,
   calculateSpeedLimitCompliance,
   cleanRoutePoints,
   computeSmoothedAccelerations,
@@ -25,6 +25,7 @@ import {
   detectLaneChanges,
   detectErraticSpeedWindows,
   detectTailgateCycles,
+  detectCloseProximityManeuverAlerts,
   DEFAULT_THRESHOLDS,
   ECO_DEFAULTS,
   SVI_DEFAULTS,
@@ -39,6 +40,7 @@ import {
   splitTripAtStops,
   trimParkedTail,
   validateCandidateTrip,
+  tripsToCSV,
 } from '@/lib/tripEngine';
 import { getLastParkedLocation, saveLastParkedLocation } from '@/lib/trackingStore';
 import {
@@ -405,43 +407,44 @@ describe('tripEngine', () => {
     expect(longScore.score_overall).toBe(shortScore.score_overall);
   });
 
-  it('scores close-following patterns across city and highway distance with speed context', () => {
-    const tailgateEvents = (count, speedKmh, severity) => Array.from({ length: count }, () => ({
-      type: EVENT_TYPES.TAILGATE_CYCLE,
+  it('scores stop-start patterns only after enough highway GPS evidence', () => {
+    const patternEvents = (count, speedKmh, severity) => Array.from({ length: count }, () => ({
+      type: EVENT_TYPES.STOP_START_PATTERN,
       severity,
       speed_kmh: speedKmh,
     }));
     const stats = (distanceKm) => ({ distance_km: distanceKm, fatigue_risk_score: 0, intersection_score: 100 });
+    const highwayRoute = Array.from({ length: 70 }, (_, index) => point(43.6532 + index * 0.001, -79.3832, index * 5, 100));
 
-    const noEvents = calculateTripScores([], stats(5), []);
-    const highway = calculateTripScores(tailgateEvents(3, 120, 'high'), stats(20), []);
-    const city = calculateTripScores(tailgateEvents(3, 50, 'medium'), stats(5), []);
-    const dense = calculateTripScores(tailgateEvents(10, 50, 'low'), stats(2), []);
+    const noEvents = calculateTripScores([], stats(8), highwayRoute);
+    const highway = calculateTripScores(patternEvents(3, 120, 'high'), stats(8), highwayRoute);
+    const noHighwayEvidence = calculateTripScores(patternEvents(3, 50, 'medium'), stats(8), []);
 
-    expect(noEvents.following_distance_score).toBe(100);
-    expect(highway.following_distance_score).toBeLessThan(70);
-    expect(city.following_distance_score).toBeLessThan(80);
-    expect(dense.following_distance_score).toBeLessThan(30);
+    expect(noEvents.stop_start_pattern_score).toBe(100);
+    expect(highway.stop_start_pattern_score).toBeLessThan(100);
+    expect(highway.stop_start_pattern_score_confidence).toBe('low');
+    expect(noHighwayEvidence.stop_start_pattern_score).toBeNull();
   });
 
-  it('does not score short trips or explicitly privacy-masked following evidence', () => {
+  it('does not score stop-start patterns without highway evidence or from masked events', () => {
     const event = {
-      type: EVENT_TYPES.TAILGATE_CYCLE,
+      type: EVENT_TYPES.STOP_START_PATTERN,
       severity: 'high',
       speed_kmh: 120,
     };
+    const highwayRoute = Array.from({ length: 70 }, (_, index) => point(43.6532 + index * 0.001, -79.3832, index * 5, 100));
     const shortTrip = calculateTripScores([event], { distance_km: 0.3, fatigue_risk_score: 0 }, []);
     const masked = calculateTripScores(
       [{ ...event, masked_for_privacy: true }],
-      { distance_km: 5, fatigue_risk_score: 0 },
-      []
+      { distance_km: 8, fatigue_risk_score: 0 },
+      highwayRoute
     );
 
-    expect(shortTrip.following_distance_score).toBeNull();
-    expect(shortTrip.following_distance_score_confidence).toBe('insufficient_data');
+    expect(shortTrip.stop_start_pattern_score).toBeNull();
+    expect(shortTrip.stop_start_pattern_score_confidence).toBe('insufficient_highway_distance');
     expect(Number.isFinite(shortTrip.score_safety)).toBe(true);
-    expect(masked.following_distance_score).toBe(100);
-    expect(masked.tailgate_cycle_count).toBe(0);
+    expect(masked.stop_start_pattern_score).toBe(100);
+    expect(masked.stop_start_pattern_count).toBe(0);
   });
 
   it('penalizes high-risk phone use in the distraction score', () => {
@@ -492,14 +495,14 @@ describe('tripEngine', () => {
     expect(scores).toMatchObject({
       score_confidence: 1,
       distraction_score_confidence: 1,
-      near_miss_score_confidence: 1,
+      close_proximity_score_confidence: 'low',
       fuel_band_score_confidence: 0,
       smooth_braking_score_confidence: 0,
       engine_stress_score_confidence: 1,
       speed_creep_score_confidence: 0,
       phone_use_score_confidence: 1,
       hill_driving_score_confidence: 0,
-      reaction_score_confidence: 0,
+      brake_onset_smoothness_confidence: 'low',
       cornering_consistency_score_confidence: 0,
       braking_efficiency_score_confidence: 0,
       defensive_driving_score_confidence: 1,
@@ -539,17 +542,17 @@ describe('tripEngine', () => {
     expect(scores.score_overall).toBeLessThanOrEqual(100);
   });
 
-  it('uses exponential near-miss scoring without a flat floor', () => {
-    const oneNearMiss = calculateTripScores([
-      { type: EVENT_TYPES.NEAR_MISS, severity: 'low' },
+  it('uses exponential close-proximity scoring without a flat floor', () => {
+    const oneAlert = calculateTripScores([
+      { type: EVENT_TYPES.CLOSE_PROXIMITY, severity: 'low' },
     ], { distance_km: 20, fatigue_risk_score: 0 }, []);
-    const fourNearMisses = calculateTripScores(Array.from({ length: 4 }, () => ({
-      type: EVENT_TYPES.NEAR_MISS,
+    const fourAlerts = calculateTripScores(Array.from({ length: 4 }, () => ({
+      type: EVENT_TYPES.CLOSE_PROXIMITY,
       severity: 'low',
     })), { distance_km: 20, fatigue_risk_score: 0 }, []);
 
-    expect(oneNearMiss.near_miss_score).toBe(60);
-    expect(fourNearMisses.near_miss_score).toBe(13);
+    expect(oneAlert.close_proximity_score).toBe(60);
+    expect(fourAlerts.close_proximity_score).toBe(13);
   });
 
   it('classifies road type and calculates advanced smoothness fields', () => {
@@ -957,7 +960,7 @@ describe('tripEngine', () => {
     expect(speeding?.speed_limit_source).toBe('osm_highway_default');
   });
 
-  it('ignores low-speed parked jitter for jerk, reaction, and hill scoring', () => {
+  it('ignores low-speed parked jitter for jerk, brake onset, and hill scoring', () => {
     const parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({
       ...point(43.6532 + index * 0.00001, -79.3832, index * 5, speed, 6),
       altitude: 100 + (index % 2 === 0 ? 0 : 8),
@@ -965,11 +968,11 @@ describe('tripEngine', () => {
     }));
 
     expect(calculateJerkScore(parkedJitter).jerk_event_count).toBe(0);
-    expect(calculateReactionTimeProxy(parkedJitter, [{
+    expect(calculateBrakeOnsetSmoothness(parkedJitter, [{
       type: EVENT_TYPES.HARSH_BRAKE,
       timestamp: parkedJitter[2].timestamp,
       speed_kmh: 4,
-    }]).reaction_sample_count).toBe(0);
+    }]).brake_onset_sequence_count).toBe(0);
     expect(calculateHillDrivingScore(parkedJitter).hill_driving_score).toBeNull();
   });
 
@@ -1019,7 +1022,7 @@ describe('tripEngine', () => {
     expect(events.find((event) => event.type === EVENT_TYPES.IDLE)?.value).toBe(120);
   });
 
-  it('tracks urban lane changes, following-gap cycles, and merge quality proxies', () => {
+  it('tracks heading deviations and stop-start patterns as low-confidence proxies', () => {
     const lanePoints = [0, 5, 10, 5, 0].map((heading, index) => ({
       ...point(43.6532 + index * 0.0003, -79.3832, index * 2, 60),
       heading,
@@ -1039,8 +1042,8 @@ describe('tripEngine', () => {
       point(43.6532 + index * 0.00045, -79.3832, index * 5, speed)
     ));
 
-    expect(detectLaneChanges(lanePoints).length).toBeGreaterThan(0);
-    expect(detectTailgateCycles(followingPoints).length).toBeGreaterThan(0);
+    expect(detectLaneChanges(lanePoints)[0]).toMatchObject({ type: EVENT_TYPES.HEADING_DEVIATION, confidence: 'low' });
+    expect(detectTailgateCycles(followingPoints)[0]).toMatchObject({ type: EVENT_TYPES.STOP_START_PATTERN, confidence: 'low' });
     expect(detectTailgateCycles(cityFollowingPoints).length).toBeGreaterThan(0);
     expect(detectTailgateCycles(maskedFollowingPoints)).toHaveLength(0);
     expect(detectHighwayMergeBehavior(mergePoints).merge_event_count).toBe(1);
@@ -1058,6 +1061,38 @@ describe('tripEngine', () => {
 
     expect(detectLaneChanges(gentleLaneSwitch).length).toBeGreaterThan(0);
     expect(detectLaneChanges(roadCurve).length).toBe(0);
+  });
+
+  it('keeps heading-deviation events out of the safety score', () => {
+    const base = calculateTripScores([], { distance_km: 8, fatigue_risk_score: 0, intersection_score: 100 }, []);
+    const withHeadingEvent = calculateTripScores([
+      { type: EVENT_TYPES.HEADING_DEVIATION, severity: 'high' },
+    ], { distance_km: 8, fatigue_risk_score: 0, intersection_score: 100 }, []);
+    expect(withHeadingEvent.score_safety).toBe(base.score_safety);
+  });
+
+  it('requires sustained brake-turn evidence before emitting an estimated alert', () => {
+    const shortSpike = [
+      { ...point(43.6532, -79.3832, 0, 60), heading: 0 },
+      { ...point(43.6533, -79.3832, 1, 40), heading: 30 },
+    ];
+    const sustained = [
+      { ...point(43.6532, -79.3832, 0, 80), heading: 0 },
+      { ...point(43.6533, -79.3832, 1, 60), heading: 30 },
+      { ...point(43.6534, -79.3832, 2, 40), heading: 60 },
+    ];
+    expect(detectCloseProximityManeuverAlerts(shortSpike)).toHaveLength(0);
+    expect(detectCloseProximityManeuverAlerts(sustained)[0]).toMatchObject({ type: EVENT_TYPES.CLOSE_PROXIMITY, confidence: 'low' });
+  });
+
+  it('exports proxy-safe score labels in CSV reports', () => {
+    const csv = tripsToCSV([]);
+    expect(csv).toContain('Brake Onset Smoothness Score');
+    expect(csv).toContain('Stop-Start Pattern Score');
+    expect(csv).toContain('Heading Drift Beta');
+    expect(csv).not.toContain('Reaction Time');
+    expect(csv).not.toContain('Lane Changes');
+    expect(csv).not.toContain('Tailgate');
   });
 
   it('does not flag normal steady city speed as erratic speed', () => {

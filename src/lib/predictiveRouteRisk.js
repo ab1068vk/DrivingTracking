@@ -129,7 +129,7 @@ export function estimatePredictiveRouteRisk({
   const riskEvents = densityTrips.reduce((sum, trip) => {
     const events = (Number(trip.harsh_brakes_count) || 0) +
       (Number(trip.speeding_events_count) || 0) +
-      (Number(trip.near_miss_count) || 0) * 2 +
+      (Number(trip.close_proximity_count ?? trip.near_miss_count) || 0) * 1.5 +
       (Number(trip.sharp_turns_count) || 0);
     return sum + events;
   }, 0);

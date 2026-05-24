@@ -40,7 +40,7 @@ const sampleTrip = {
   harsh_brakes_count: 1,
   sharp_turns_count: 0,
   speeding_events_count: 1,
-  near_miss_count: 0,
+  close_proximity_count: 0,
   road_type: 'urban',
   dominant_road_type: 'urban',
   route_points: [

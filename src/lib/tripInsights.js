@@ -781,10 +781,10 @@ export function calculateRiskEventRate(trips = []) {
     rapid_accel: completed.reduce((sum, trip) => sum + (trip.rapid_accel_count || 0), 0),
     sharp_turns: completed.reduce((sum, trip) => sum + (trip.sharp_turns_count || 0), 0),
     speeding: completed.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0),
-    lane_changes: completed.reduce((sum, trip) => sum + (trip.lane_changes_count || 0), 0),
-    tailgate_cycles: completed.reduce((sum, trip) => sum + (trip.tailgate_cycle_count || 0), 0),
+    heading_deviations: completed.reduce((sum, trip) => sum + (trip.heading_deviation_count ?? trip.lane_changes_count ?? 0), 0),
+    stop_start_patterns: completed.reduce((sum, trip) => sum + (trip.stop_start_pattern_count ?? trip.tailgate_cycle_count ?? 0), 0),
     erratic_speed: completed.reduce((sum, trip) => sum + (trip.distraction_events_count || 0), 0),
-    near_miss: completed.reduce((sum, trip) => sum + (trip.near_miss_count || 0), 0),
+    close_proximity: completed.reduce((sum, trip) => sum + (trip.close_proximity_count ?? trip.near_miss_count ?? 0), 0),
     aggressive_overtake: completed.reduce((sum, trip) => sum + (trip.overtake_event_count || 0), 0),
   };
   const totalEvents = Object.values(totals).reduce((sum, count) => sum + count, 0);
@@ -1198,22 +1198,22 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     rapid_accel: 'acceleration',
     sharp_turns: 'cornering',
     speeding: 'speed control',
-    lane_changes: 'lane discipline',
-    tailgate_cycles: 'following distance',
+    heading_deviations: 'heading events',
+    stop_start_patterns: 'stop-start patterns',
     erratic_speed: 'distraction risk',
-    near_miss: 'close-proximity awareness',
+    close_proximity: 'brake-turn alert review',
     aggressive_overtake: 'highway patience',
   };
   const recentTen = [...completed]
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 10);
-  const recentNearMisses = recentTen.reduce((sum, trip) => sum + (trip.near_miss_count || 0), 0);
+  const recentManoeuvreAlerts = recentTen.reduce((sum, trip) => sum + (trip.close_proximity_count ?? trip.near_miss_count ?? 0), 0);
   const recentPhoneRiskyTrips = recentTen.filter((trip) => (
     trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high'
   )).length;
   const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
   const recentThirty = completed.filter((trip) => new Date(trip.start_time || trip.created_at || 0).getTime() >= thirtyDaysAgo);
-  const poorReactionTrips = recentThirty.filter((trip) => ['reactive', 'delayed'].includes(trip.reaction_grade)).length;
+  const abruptBrakeOnsetTrips = recentThirty.filter((trip) => ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade)).length;
   const emergencyHeavyTrips = recentThirty.filter((trip) =>
     ['poor', 'emergency_heavy'].includes(trip.braking_efficiency_grade)
   ).length;
@@ -1222,16 +1222,16 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     recentTen.forEach((trip) => counts.set(trip[field], (counts.get(trip[field]) || 0) + 1));
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   };
-  const focusArea = recentNearMisses > 0
-    ? 'close-proximity prevention'
+  const focusArea = recentManoeuvreAlerts > 0
+    ? 'brake-turn alert review'
     : recentPhoneRiskyTrips >= 3
       ? 'phone_distraction'
-      : poorReactionTrips >= 3
-      ? 'anticipation'
+      : abruptBrakeOnsetTrips >= 3
+      ? 'progressive braking'
       : emergencyHeavyTrips > 0
         ? 'progressive braking'
-        : common('drowsy_risk_level') === 'high'
-      ? 'fatigue management'
+        : common('heading_drift_beta_level') === 'high'
+      ? 'heading drift review'
       : common('aggressive_grade') === 'aggressive'
         ? 'aggressive driving'
         : common('phone_proxy_risk') === 'likely'
@@ -1264,17 +1264,17 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   if (fatigue.level !== 'low') {
     actions.push(`Take a break before ${fatigue.threshold_minutes} minutes on long drives.`);
   }
-  if ((riskRate.totals.tailgate_cycles || 0) > 0) {
-    actions.push('Open the gap on highway segments and start easing off before traffic compresses.');
+  if ((riskRate.totals.stop_start_patterns || 0) > 0) {
+    actions.push('Review repeated stop-start patterns on highway segments; this GPS signal does not measure vehicle gap.');
   }
-  if ((riskRate.totals.lane_changes || 0) > 0) {
-    actions.push('Hold lane position longer at highway speed and plan exits earlier.');
+  if ((riskRate.totals.heading_deviations || 0) > 0) {
+    actions.push('Review heading events marked Beta; road curvature or GPS noise can explain these patterns.');
   }
   if ((riskRate.totals.erratic_speed || 0) > 0) {
     actions.push('On city routes, keep a steadier throttle through low-speed stretches.');
   }
-  if (poorReactionTrips >= 3) {
-    actions.push('Scan two vehicles ahead and lift earlier when traffic compresses; your recent reaction pattern is trending late.');
+  if (abruptBrakeOnsetTrips >= 3) {
+    actions.push('Build braking force more progressively; recent detected stops have abrupt brake-onset patterns.');
   }
   if (emergencyHeavyTrips > 0) {
     actions.push('Start braking with light pressure, then build smoothly so full stops are less abrupt.');
@@ -1361,7 +1361,7 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
     return highwayShare >= 0.2 && (trip.overtake_event_count || 0) === 0;
   }).length;
   const cruiseMasterTrips = completed.filter((trip) => trip.band_label === 'excellent cruise').length;
-  const nearMissFreeTrips = completed.filter((trip) => (trip.near_miss_count || 0) === 0).length;
+  const manoeuvreAlertFreeTrips = completed.filter((trip) => (trip.close_proximity_count ?? trip.near_miss_count ?? 0) === 0).length;
   const carbon = calculateCarbonImpact(completed, settings);
 
   return [
@@ -1613,12 +1613,12 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
       unit: 'trips',
     },
     {
-      id: 'near_miss_free',
+      id: 'manoeuvre_alert_free',
       label: 'Clear Path',
-      description: 'Complete 25 trips with zero estimated close-proximity alerts.',
+      description: 'Complete 25 trips with zero estimated brake-turn manoeuvre alerts.',
       category: 'Safety',
-      earned: nearMissFreeTrips >= 25,
-      current: Math.min(25, nearMissFreeTrips),
+      earned: manoeuvreAlertFreeTrips >= 25,
+      current: Math.min(25, manoeuvreAlertFreeTrips),
       target: 25,
       unit: 'trips',
     },

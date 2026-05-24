@@ -205,8 +205,8 @@ export default function Dashboard() {
     const highwayShare = lastFiveMinutes.length
       ? lastFiveMinutes.filter((point) => (point.speed_kmh || 0) > 80).length / lastFiveMinutes.length
       : 0;
-    const drowsyHeadingThreshold = cfg.threshold_drowsy_heading_std ?? 8;
-    if (lastFiveMinutes.length >= 8 && headings.length >= 5 && highwayShare >= 0.8 && calculateAngularStdDev(headings) > drowsyHeadingThreshold) {
+    const headingDriftBetaThreshold = cfg.threshold_drowsy_heading_std ?? 8;
+    if (lastFiveMinutes.length >= 8 && headings.length >= 5 && highwayShare >= 0.8 && calculateAngularStdDev(headings) > headingDriftBetaThreshold) {
       stayAlertSentRef.current = true;
       lastStayAlertAtRef.current = Date.now();
       notifyStayAlert().catch(() => {});

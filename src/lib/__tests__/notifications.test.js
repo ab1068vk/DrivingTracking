@@ -90,10 +90,10 @@ describe('advanced notifications', () => {
     expect(achievementIds.length).toBeLessThanOrEqual(MAX_ACHIEVEMENT_NOTIF_IDS);
   });
 
-  it('fires near-miss summary before lower-priority post-trip alerts', async () => {
+  it('fires estimated brake-turn summary before lower-priority post-trip alerts', async () => {
     const notification = await dispatchPostTripNotification(trip({
       phone_use_risk: 'high',
-      driving_events: [{ type: 'near_miss' }, { type: 'near_miss' }],
+      driving_events: [{ type: 'close_proximity' }, { type: 'close_proximity' }],
     }), [], settings);
 
     expect(notification.id).toBe(NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY);
@@ -101,7 +101,7 @@ describe('advanced notifications', () => {
 
   it('fires nothing when master notifications are disabled', async () => {
     const notification = await dispatchPostTripNotification(trip({
-      driving_events: [{ type: 'near_miss' }, { type: 'near_miss' }],
+      driving_events: [{ type: 'close_proximity' }, { type: 'close_proximity' }],
     }), [], { ...settings, notifications_enabled: false });
 
     expect(notification).toBeNull();
@@ -194,10 +194,10 @@ describe('advanced notifications', () => {
     expect(euroPrice.body).toContain('~€3.25');
   });
 
-  it('summarizes following gap, merge, and rapid acceleration risks after higher-priority alerts', async () => {
-    const following = await dispatchPostTripNotification(trip({
-      tailgate_cycle_count: 2,
-      following_distance_score: 60,
+  it('summarizes stop-start, merge, and rapid acceleration patterns after higher-priority alerts', async () => {
+    const stopStart = await dispatchPostTripNotification(trip({
+      stop_start_pattern_count: 2,
+      stop_start_pattern_score: 60,
     }), [{ score_overall: 82 }], settings);
     const merge = await dispatchPostTripNotification(trip({
       merge_event_count: 1,
@@ -207,15 +207,15 @@ describe('advanced notifications', () => {
       rapid_accel_count: 3,
     }), [{ score_overall: 82 }], settings);
 
-    expect(following.id).toBe(NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY);
+    expect(stopStart.id).toBe(NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY);
     expect(merge.id).toBe(NOTIFICATION_IDS.TRIP_MERGE_SUMMARY);
     expect(accel.id).toBe(NOTIFICATION_IDS.TRIP_ACCEL_SUMMARY);
   });
 
-  it('does not treat an unavailable following score as a close-following alert', async () => {
+  it('does not treat an unavailable stop-start score as an alert', async () => {
     const notification = await dispatchPostTripNotification(trip({
-      following_distance_score: null,
-      tailgate_cycle_count: 0,
+      stop_start_pattern_score: null,
+      stop_start_pattern_count: 0,
     }), [{ score_overall: 82 }], {
       ...settings,
       notif_post_trip_score_change: false,

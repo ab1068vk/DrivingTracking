@@ -128,6 +128,19 @@ describe('advanced open-source features', () => {
     expect(withMoreEligibleDistance.riskScore).toBeLessThan(withBase.riskScore);
   });
 
+  it('uses reduced estimated brake-turn weighting in predictive route risk', () => {
+    const withHarshBrakes = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1, { distance_km: 1, harsh_brakes_count: 2 })],
+      now: new Date(2026, 0, 10, 12),
+    });
+    const withEstimatedAlerts = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1, { distance_km: 1, close_proximity_count: 2 })],
+      now: new Date(2026, 0, 10, 12),
+    });
+
+    expect(withEstimatedAlerts.riskScore - withHarshBrakes.riskScore).toBe(5);
+  });
+
   it('clamps weather risk before applying predictive weighting', () => {
     const normalWeather = estimatePredictiveRouteRisk({
       trips: [trip(90, 1)],

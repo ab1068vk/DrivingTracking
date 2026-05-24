@@ -563,9 +563,9 @@ export default function TripDetail() {
         </motion.div>
       )}
 
-      {(trip.near_miss_count || 0) > 0 && (
+      {(trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0 && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
-          {trip.near_miss_count} estimated close-proximity alert{trip.near_miss_count === 1 ? '' : 's'} on this trip. Review your route for possible hazardous zones.
+          {trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn manoeuvre alert{(trip.close_proximity_count ?? trip.near_miss_count) === 1 ? '' : 's'} on this trip. GPS alone cannot establish object proximity.
         </div>
       )}
 
@@ -1174,16 +1174,16 @@ export default function TripDetail() {
             { icon: MapPin, label: 'traffic stops', value: trip.traffic_stop_count ?? trip.stop_count ?? 0, color: 'text-primary' },
             { icon: AlertTriangle, label: 'fatigue risk', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'jerk score', value: trip.jerk_score ?? '-', color: 'text-sky-500' },
-            { icon: GitBranch, label: 'reaction', value: trip.avg_reaction_seconds ? `${trip.avg_reaction_seconds}s` : '-', color: ['reactive', 'delayed'].includes(trip.reaction_grade) ? 'text-red-500' : 'text-emerald-500' },
+            { icon: GitBranch, label: 'brake onset smoothness', value: trip.brake_onset_smoothness_score ?? '-', color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : 'text-emerald-500' },
             { icon: Leaf, label: 'eco driving', value: trip.eco_driving_score ?? '-', color: 'text-emerald-500' },
-            { icon: ShieldCheck, label: 'following score', value: trip.following_distance_score ?? '-', color: 'text-blue-500' },
+            { icon: ShieldCheck, label: 'stop-start pattern', value: trip.stop_start_pattern_score ?? '-', color: 'text-blue-500' },
             { icon: Focus, label: 'focus score', value: trip.distraction_score ?? '-', color: 'text-violet-500' },
             { icon: TimerReset, label: 'intersection score', value: trip.intersection_score ?? '-', color: 'text-amber-500' },
             { icon: Gauge, label: 'SVI', value: trip.speed_variability_index ?? '-', color: 'text-indigo-500' },
             { icon: Fuel, label: 'fuel band', value: trip.fuel_band_score ?? '-', color: 'text-lime-500' },
             { icon: Car, label: 'engine stress', value: trip.engine_stress_score ?? '-', color: 'text-orange-500' },
             { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
-            { icon: AlertTriangle, label: 'drowsy risk', value: trip.drowsy_risk_level ?? 'none', color: trip.drowsy_risk_level === 'high' ? 'text-red-500' : trip.drowsy_risk_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
+            { icon: AlertTriangle, label: 'heading drift (beta)', value: trip.heading_drift_beta_level ?? 'none', color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Milestone, label: 'hill control', value: trip.hill_driving_score ?? 'N/A', color: trip.hill_driving_score == null ? 'text-muted-foreground' : 'text-emerald-500' },
           ].map(({ icon: Icon, label, value, color, capitalize }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3">
@@ -1192,6 +1192,11 @@ export default function TripDetail() {
               <div className="text-xs text-muted-foreground">{label}</div>
             </div>
           ))}
+        </div>
+
+        <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+          <p>Brake onset smoothness measures how smoothly brakes were applied during detected braking events, not human neurological reaction time.</p>
+          <p className="mt-1">Stop-start pattern and heading drift Beta values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or driver drowsiness.</p>
         </div>
 
         {fatigueHeatmapData.length > 0 ? (
@@ -1374,10 +1379,10 @@ export default function TripDetail() {
               { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
               { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
               { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              { label: 'Lane Changes', value: trip.lane_changes_count, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
-              { label: 'Tailgate', value: trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
+              { label: 'Heading Events (Beta)', value: trip.heading_deviation_count ?? trip.lane_changes_count, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
+              { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
-              { label: 'Close Proximity', value: trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+              { label: 'Brake-Turn Alerts', value: trip.close_proximity_count ?? trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
               { label: 'Overtakes', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
               ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
@@ -1402,11 +1407,13 @@ export default function TripDetail() {
                 sharp_turn: { label: 'Sharp Turn', icon: '↰', color: 'text-blue-600' },
                 speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
-                near_miss: { label: 'Close Proximity', icon: '!', color: 'text-red-700' },
-                close_proximity: { label: 'Close Proximity', icon: '!', color: 'text-red-700' },
+                near_miss: { label: 'Brake-Turn Alert (Legacy)', icon: '!', color: 'text-red-700' },
+                close_proximity: { label: 'Brake-Turn Alert (Estimated)', icon: '!', color: 'text-red-700' },
                 aggressive_overtake: { label: 'Aggressive Overtake', icon: '>>', color: 'text-orange-600' },
-                lane_change: { label: 'Lane Change', icon: '<>', color: 'text-sky-600' },
-                tailgate_cycle: { label: 'Tailgate Cycle', icon: '!!', color: 'text-red-600' },
+                lane_change: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
+                heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
+                tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
+                stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
                 erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
                 possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
                 phone_use: { label: 'Phone Use', icon: 'P', color: 'text-red-600' },
@@ -1417,7 +1424,7 @@ export default function TripDetail() {
                 : evt.type === 'phone_use'
                   ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
                   : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-              const inferredTypes = ['lane_change', 'tailgate_cycle', 'erratic_speed', 'phone_use', 'near_miss', 'close_proximity', 'aggressive_overtake'];
+              const inferredTypes = ['lane_change', 'heading_deviation', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'near_miss', 'close_proximity', 'aggressive_overtake'];
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
                 : evt.type === 'speeding' && evt.speed_limit_source

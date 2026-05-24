@@ -385,8 +385,8 @@ export async function notifyTripCompleted(trip, { dedupeKey = null, replaceIds =
   if (!granted) return;
 
   const additions = [];
-  if ((trip.near_miss_count || 0) > 0) additions.push(`${trip.near_miss_count} estimated close-proximity alert(s).`);
-  if (trip.drowsy_risk_level === 'high') additions.push('High drowsiness risk detected.');
+  if ((trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0) additions.push(`${trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn alert(s).`);
+  if (trip.heading_drift_beta_level === 'high') additions.push('High GPS heading drift pattern detected (Beta).');
   if (trip.aggressive_grade === 'aggressive') additions.push('Aggressive driving pattern recorded.');
   const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`;
   const body = [baseBody, ...additions].join(' ').slice(0, 160);
@@ -489,13 +489,13 @@ export async function notifyDrowsyWarning(opts = {}, settings = localSettings.ge
   const minutes = Number(opts.tripDurationMinutes) || 0;
   const notification = {
     id: NOTIFICATION_IDS.DROWSY_WARNING,
-    title: 'Fatigue Warning',
+    title: 'Heading Drift Alert (Beta)',
     body: minutes >= 90
       ? `You've been driving for ${Math.round(minutes)} minutes. Consider taking a break.`
-      : 'Drowsy driving patterns detected. Pull over safely if you feel tired.',
+      : 'GPS heading drift pattern detected. This is not a drowsiness diagnosis; take a break if you feel tired.',
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
-    extra: { type: 'drowsy_warning', drowsyRiskLevel: opts.drowsyRiskLevel },
+    extra: { type: 'heading_drift_beta_warning', headingDriftBetaLevel: opts.headingDriftBetaLevel },
   };
   const scheduled = await scheduleNotification(notification);
   if (scheduled) writeNumber(DROWSY_NOTIF_LAST_KEY, now);
@@ -537,7 +537,7 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
   const notification = {
     id: NOTIFICATION_IDS.FATIGUE_BREAK_REMINDER,
     title: 'Break Reminder',
-    body: `You've been driving for ${minutes} minutes. A short break improves alertness and reaction time.`,
+    body: `You've been driving for ${minutes} minutes. A short break can help restore alertness.`,
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
     extra: { type: 'fatigue_break', tripId },
@@ -550,30 +550,30 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
 }
 
 export async function dispatchPostTripNotification(trip, recentTrips = [], settings = localSettings.get()) {
-  const nearMissCount = trip.driving_events?.filter((event) => event.type === 'near_miss' || event.type === 'close_proximity').length ?? (trip.near_miss_count || 0);
+  const manoeuvreAlertCount = trip.driving_events?.filter((event) => event.type === 'near_miss' || event.type === 'close_proximity').length ?? (trip.close_proximity_count ?? trip.near_miss_count ?? 0);
   const phoneUseHigh = trip.phone_use_risk === 'high';
-  const nearMissHigh = nearMissCount >= 2;
-  const followingGapCount = Number(trip.tailgate_cycle_count) || trip.driving_events?.filter((event) => event.type === 'tailgate_cycle').length || 0;
-  const followingGapScore = trip.following_distance_score == null ? null : Number(trip.following_distance_score);
-  const followingGapRisk = followingGapCount >= 2 || (Number.isFinite(followingGapScore) && followingGapScore < 70);
+  const manoeuvreAlertHigh = manoeuvreAlertCount >= 2;
+  const stopStartPatternCount = Number(trip.stop_start_pattern_count ?? trip.tailgate_cycle_count) || trip.driving_events?.filter((event) => event.type === 'stop_start_pattern' || event.type === 'tailgate_cycle').length || 0;
+  const stopStartPatternScore = trip.stop_start_pattern_score == null ? null : Number(trip.stop_start_pattern_score);
+  const stopStartPatternRisk = stopStartPatternCount >= 2 || (Number.isFinite(stopStartPatternScore) && stopStartPatternScore < 70);
   const mergeIssueCount = (Number(trip.poor_merge_count) || 0) + (Number(trip.harsh_merge_count) || 0);
   const mergeRisk = mergeIssueCount > 0 && Number(trip.merge_event_count || mergeIssueCount) > 0;
   const rapidAccelCount = Number(trip.rapid_accel_count) || trip.driving_events?.filter((event) => event.type === 'rapid_acceleration').length || 0;
   const rapidAccelRisk = rapidAccelCount >= 3;
   if (settings.notifications_enabled === false || settings.notif_post_trip_summary_enabled === false) return null;
   if (isQuietHours(settings)) return null;
-  if (scoreOf(trip) < (settings.notif_min_score_for_post_trip ?? 0) && !nearMissHigh && !phoneUseHigh && !followingGapRisk && !mergeRisk && !rapidAccelRisk) return null;
+  if (scoreOf(trip) < (settings.notif_min_score_for_post_trip ?? 0) && !manoeuvreAlertHigh && !phoneUseHigh && !stopStartPatternRisk && !mergeRisk && !rapidAccelRisk) return null;
 
   const later = () => ({ at: new Date(Date.now() + 3000) });
   let notification = null;
-  if (nearMissHigh) {
+  if (manoeuvreAlertHigh) {
     notification = {
       id: NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY,
-      title: 'Estimated Close-Proximity Alerts',
-      body: `${nearMissCount} estimated close-proximity alerts on your last trip. Review the route in Road Sage.`,
+      title: 'Estimated Brake-Turn Alerts',
+      body: `${manoeuvreAlertCount} estimated brake-turn manoeuvre alerts on your last trip. GPS alone cannot establish object proximity.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
-      extra: { tripId: trip.id, type: 'near_miss_summary' },
+      extra: { tripId: trip.id, type: 'brake_turn_alert_summary' },
     };
   } else if (phoneUseHigh && settings.notif_post_trip_phone_use !== false) {
     const minutes = Math.round(((trip.phone_use_total_seconds ?? 0) / 60) * 10) / 10;
@@ -585,14 +585,14 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       schedule: later(),
       extra: { tripId: trip.id, type: 'phone_use_high' },
     };
-  } else if (followingGapRisk) {
+  } else if (stopStartPatternRisk) {
     notification = {
       id: NOTIFICATION_IDS.TRIP_FOLLOWING_GAP_SUMMARY,
-      title: 'Following Gap Review',
-      body: `${followingGapCount || 'Multiple'} close-following pattern${followingGapCount === 1 ? '' : 's'} detected. Leave more room before traffic slows.`,
+      title: 'Stop-Start Pattern Review',
+      body: `${stopStartPatternCount || 'Multiple'} stop-start pattern${stopStartPatternCount === 1 ? '' : 's'} detected from speed data. This does not measure following distance.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
-      extra: { tripId: trip.id, type: 'following_gap_summary' },
+      extra: { tripId: trip.id, type: 'stop_start_pattern_summary' },
     };
   } else if (mergeRisk) {
     notification = {

@@ -27,9 +27,9 @@ const VOICE_COOLDOWNS_MS = {
   phone_use: 120000,
   close_proximity: 120000,
   harsh_brake: 30000,
-  tailgate: 60000,
+  stop_start_pattern: 60000,
   speeding: 60000,
-  drowsy: 10 * 60 * 1000,
+  heading_drift_beta: 10 * 60 * 1000,
   rapid_accel: 30000,
   long_drive: 30 * 60 * 1000,
   idle: 5 * 60 * 1000,
@@ -57,7 +57,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
   const previousCountsRef = useRef({
     [EVENT_TYPES.HARSH_BRAKE]: currentEvents.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length,
     [EVENT_TYPES.RAPID_ACCELERATION]: currentEvents.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length,
-    [EVENT_TYPES.TAILGATE_CYCLE]: currentEvents.filter((event) => event.type === EVENT_TYPES.TAILGATE_CYCLE).length,
+    [EVENT_TYPES.STOP_START_PATTERN]: currentEvents.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length,
   });
 
   const showNext = () => {
@@ -84,7 +84,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     previousCountsRef.current = {
       [EVENT_TYPES.HARSH_BRAKE]: 0,
       [EVENT_TYPES.RAPID_ACCELERATION]: 0,
-      [EVENT_TYPES.TAILGATE_CYCLE]: 0,
+      [EVENT_TYPES.STOP_START_PATTERN]: 0,
     };
     lastCoachCheckRef.current = new Date(tripStartTime).getTime() || Date.now();
     lastDisplayedAlertRef.current = {};
@@ -127,7 +127,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       ));
       const harshBrakeCount = events.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length;
       const rapidAccelCount = events.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length;
-      const tailgateCount = events.filter((event) => event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
+      const stopStartPatternCount = events.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
       const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
@@ -157,15 +157,15 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         }
       } else if (recentCloseProximity) {
         nextMessage = {
-          text: 'Estimated close-proximity alert - increase following distance',
+          text: 'Estimated brake-turn manoeuvre alert. Review conditions when safe.',
           voiceKey: 'close_proximity',
           voiceCooldownMs: VOICE_COOLDOWNS_MS.close_proximity,
         };
-      } else if (stats.drowsy_risk_level === 'high') {
+      } else if (stats.heading_drift_beta_level === 'high') {
         nextMessage = {
-          text: 'Fatigue warning. Take a break when it is safe.',
-          voiceKey: 'drowsy',
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.drowsy,
+          text: 'Heading drift pattern detected. Take a break if you feel tired.',
+          voiceKey: 'heading_drift_beta',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
       } else if (settings.speed_warning_enabled !== false && latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
         nextMessage = {
@@ -179,11 +179,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           voiceKey: 'harsh_brake',
           voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
         };
-      } else if (tailgateCount > previousCountsRef.current[EVENT_TYPES.TAILGATE_CYCLE]) {
+      } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
         nextMessage = {
-          text: 'Open your following gap',
-          voiceKey: 'tailgate',
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.tailgate,
+          text: 'Repeated stop-start pattern detected',
+          voiceKey: 'stop_start_pattern',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
         };
       } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
         nextMessage = {
@@ -219,9 +219,9 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           };
         }
       }
-      if (stats.drowsy_risk_level === 'high' && settings.notif_drowsy_alert_enabled !== false) {
+      if (stats.heading_drift_beta_level === 'high' && settings.notif_drowsy_alert_enabled !== false) {
         notifyDrowsyWarning({
-          drowsyRiskLevel: 'high',
+          headingDriftBetaLevel: 'high',
           tripDurationMinutes: (stats.duration_seconds || 0) / 60,
         }, settings).catch(() => {});
       }
@@ -236,7 +236,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       previousCountsRef.current = {
         [EVENT_TYPES.HARSH_BRAKE]: harshBrakeCount,
         [EVENT_TYPES.RAPID_ACCELERATION]: rapidAccelCount,
-        [EVENT_TYPES.TAILGATE_CYCLE]: tailgateCount,
+        [EVENT_TYPES.STOP_START_PATTERN]: stopStartPatternCount,
       };
       lastCoachCheckRef.current = now;
 

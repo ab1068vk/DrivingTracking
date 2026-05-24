@@ -224,7 +224,7 @@ export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
   const eventCount =
     (scores.harsh_brakes_count || 0) +
     (scores.sharp_turns_count || 0) +
-    (scores.near_miss_count || 0) * 2 +
+    (scores.close_proximity_count ?? scores.near_miss_count ?? 0) * 1.5 +
     (scores.speeding_events_count || 0);
   const weatherPenalty = Math.min(12, Math.round(eventCount * ((weatherContext.riskMultiplier || 1) - 1) * 6));
   if (weatherPenalty <= 0) {

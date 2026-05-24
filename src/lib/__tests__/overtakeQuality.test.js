@@ -20,7 +20,7 @@ describe('overtake quality', () => {
 
   it('scores a deterministic overtake window', () => {
     const points = Array.from({ length: 8 }, (_, index) => p(index, 90 + Math.min(index, 3) * 4, index));
-    const result = calculateOvertakeQualityScore(points, [{ type: EVENT_TYPES.LANE_CHANGE, timestamp: points[3].timestamp, speed_kmh: 95 }]);
+    const result = calculateOvertakeQualityScore(points, [{ type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, timestamp: points[3].timestamp, speed_kmh: 95 }]);
     expect(result.overtake_count).toBe(1);
     expect(result.overtake_quality_score).toBeGreaterThan(0);
   });
@@ -38,16 +38,16 @@ describe('overtake quality', () => {
   it('deduplicates overlapping overtake windows', () => {
     const points = Array.from({ length: 8 }, (_, index) => p(index, 95, index));
     const result = calculateOvertakeQualityScore(points, [
-      { type: EVENT_TYPES.LANE_CHANGE, timestamp: points[3].timestamp, speed_kmh: 95 },
+      { type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, timestamp: points[3].timestamp, speed_kmh: 95 },
       { type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, timestamp: points[4].timestamp },
     ]);
     expect(result.overtake_count).toBe(1);
   });
 
-  it('does not count a steady highway lane change as an overtake', () => {
+  it('does not treat a GPS heading event as an overtake', () => {
     const points = Array.from({ length: 10 }, (_, index) => p(index, 95, index < 5 ? index : 10 - index));
     const result = calculateOvertakeQualityScore(points, [
-      { type: EVENT_TYPES.LANE_CHANGE, timestamp: points[4].timestamp, speed_kmh: 95 },
+      { type: EVENT_TYPES.HEADING_DEVIATION, timestamp: points[4].timestamp, speed_kmh: 95 },
     ]);
     expect(result.overtake_count).toBe(0);
     expect(result.overtake_quality_score).toBeNull();

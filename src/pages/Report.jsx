@@ -181,11 +181,13 @@ export default function Reports() {
     rapid_acceleration: 'Rapid Acceleration',
     sharp_turn: 'Sharp Turns',
     speeding: 'Speeding',
-    lane_change: 'Lane Changes',
-    tailgate_cycle: 'Following Gap',
+    lane_change: 'Heading Events (Legacy)',
+    heading_deviation: 'Heading Events (Beta)',
+    tailgate_cycle: 'Stop-Start Patterns (Legacy)',
+    stop_start_pattern: 'Stop-Start Patterns',
     erratic_speed: 'Erratic Speed',
-    near_miss: 'Close Proximity',
-    close_proximity: 'Close Proximity',
+    near_miss: 'Brake-Turn Alerts (Legacy)',
+    close_proximity: 'Brake-Turn Alerts',
     aggressive_overtake: 'Aggressive Overtakes',
   };
 

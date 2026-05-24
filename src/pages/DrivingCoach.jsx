@@ -23,8 +23,8 @@ const focusLabels = {
   cornering: 'Cleaner Turns',
   'speed control': 'Speed Discipline',
   'fatigue breaks': 'Break Timing',
-  'lane discipline': 'Lane Discipline',
-  'following distance': 'Following Distance',
+  'heading events': 'Heading Events (Beta)',
+  'stop-start patterns': 'Stop-Start Patterns',
   'distraction risk': 'Distraction Risk',
   anticipation: 'Anticipation',
   'progressive braking': 'Progressive Braking',
@@ -269,13 +269,13 @@ export default function DrivingCoach() {
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <ShieldCheck className="w-5 h-5 text-blue-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.tailgate_cycles || 0}</div>
-              <div className="text-xs text-muted-foreground">following gaps</div>
+              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.stop_start_patterns || coach.risk_rate.totals.tailgate_cycles || 0}</div>
+              <div className="text-xs text-muted-foreground">stop-start patterns</div>
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <Gauge className="w-5 h-5 text-slate-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.lane_changes || 0}</div>
-              <div className="text-xs text-muted-foreground">lane changes</div>
+              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.heading_deviations || coach.risk_rate.totals.lane_changes || 0}</div>
+              <div className="text-xs text-muted-foreground">heading events (beta)</div>
             </div>
           </div>
 

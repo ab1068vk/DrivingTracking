@@ -16,12 +16,13 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 16;
+export const TRIP_SCHEMA_VERSION = 17;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
  * - road-type segmented scores: highway_score, urban_score, residential_score, dominant_road_type
- * - reaction proxy: reaction_score, avg_reaction_seconds, reaction_grade, reaction_sample_count
+ * - brake-onset smoothness: brake_onset_smoothness_score, avg_brake_onset_ramp_seconds,
+ *   brake_onset_smoothness_grade, brake_onset_sequence_count
  * - cornering consistency: cornering_consistency_score, cornering_grade, mean_lateral_g, peak_lateral_g, corner_sample_count
  * - braking efficiency: braking_efficiency_score, braking_efficiency_grade, braking_sequence_count, avg_braking_smoothness
  * - compliance: highway_compliance, urban_compliance, residential_compliance, overall_compliance_score
@@ -68,6 +69,10 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 16 recalculates confidence metadata, gap-corrected duration,
  * contextual braking grades, fatigue scaling, and de-duplicated phone events.
+ *
+ * Version 17 replaces unsupported public GPS-only safety claims with
+ * brake-onset, stop-start, heading-deviation, heading-drift beta, and
+ * estimated close-proximity manoeuvre fields.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -261,7 +266,7 @@ const needsRescore = (trip) => (
     trip.needs_rescore ||
     hasRecoverableOriginalRouteGeometry(trip.route_points || []) ||
     trip.defensive_driving_score == null ||
-    trip.reaction_score == null ||
+    trip.brake_onset_smoothness_score == null ||
     trip.braking_efficiency_grade == null ||
     trip.overall_compliance_score == null ||
     trip.dominant_road_type == null ||
