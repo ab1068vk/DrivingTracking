@@ -25,18 +25,19 @@ describe('dailyFatigueEngine', () => {
     expect(computeDailyFatigue([]).cumulativeFatigueScore).toBe(0);
   });
 
-  it('durationFatigue is capped at 5 for 5+ hours of driving', () => {
+  it('caps accumulated active fatigue at score 10', () => {
     vi.setSystemTime(new Date(2026, 0, 2, 12));
     const state = computeDailyFatigue([
       trip(new Date(2026, 0, 2, 6), new Date(2026, 0, 2, 12), 6 * 3600),
     ]);
 
     expect(state.totalDrivingMinutes).toBe(360);
-    expect(state.cumulativeFatigueScore).toBe(5);
+    expect(state.accumulatedFatigueMinutes).toBe(360);
+    expect(state.cumulativeFatigueScore).toBe(10);
     vi.useRealTimers();
   });
 
-  it('recoveryCredit reduces score after 60+ minutes of rest', () => {
+  it('rest after the last trip reduces accumulated fatigue after 30 minutes', () => {
     vi.setSystemTime(new Date(2026, 0, 2, 14));
     const recent = computeDailyFatigue([
       trip(new Date(2026, 0, 2, 8), new Date(2026, 0, 2, 13, 45), 5 * 3600),
@@ -46,6 +47,33 @@ describe('dailyFatigueEngine', () => {
     ]);
 
     expect(rested.cumulativeFatigueScore).toBeLessThan(recent.cumulativeFatigueScore);
+    vi.useRealTimers();
+  });
+
+  it('credits long breaks between short trips', () => {
+    vi.setSystemTime(new Date(2026, 0, 2, 13, 15));
+    const state = computeDailyFatigue([
+      trip(new Date(2026, 0, 2, 8), new Date(2026, 0, 2, 8, 25), 25 * 60),
+      trip(new Date(2026, 0, 2, 10, 25), new Date(2026, 0, 2, 10, 50), 25 * 60),
+      trip(new Date(2026, 0, 2, 12, 50), new Date(2026, 0, 2, 13, 15), 25 * 60),
+    ]);
+
+    expect(state.totalDrivingMinutes).toBe(75);
+    expect(state.accumulatedFatigueMinutes).toBe(36);
+    expect(state.longestBreakMinutes).toBe(120);
+    expect(state.fatigueLevel).toBe('low');
+    vi.useRealTimers();
+  });
+
+  it('treats an immediate second-drive readiness state as moderate after 55 active minutes', () => {
+    vi.setSystemTime(new Date(2026, 0, 2, 8, 55));
+    const state = computeDailyFatigue([
+      trip(new Date(2026, 0, 2, 8), new Date(2026, 0, 2, 8, 55), 55 * 60),
+    ]);
+
+    expect(state.accumulatedFatigueMinutes).toBe(55);
+    expect(state.cumulativeFatigueScore).toBe(3.1);
+    expect(state.fatigueLevel).toBe('moderate');
     vi.useRealTimers();
   });
 

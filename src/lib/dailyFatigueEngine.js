@@ -6,6 +6,25 @@ export const DAILY_FATIGUE_THRESHOLDS = Object.freeze({
   HIGH: 5,
   CRITICAL: 7,
 });
+const DEFAULT_FATIGUE_ONSET_MINUTES = 90;
+const RECOVERY_BREAK_MINUTES = 30;
+const FULL_RECOVERY_BREAK_MINUTES = 180;
+const FATIGUE_SCORE_AT_ONSET = 5;
+
+const getTimeMs = (value) => {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : null;
+};
+
+const getActiveDrivingMinutes = (trip) => {
+  const movingSeconds = Math.max(0, (Number(trip?.duration_seconds) || 0) - (Number(trip?.idle_time_seconds) || 0));
+  return movingSeconds / 60;
+};
+
+const applyBreakRecovery = (fatigueMinutes, breakMinutes) => {
+  if (!(breakMinutes > RECOVERY_BREAK_MINUTES)) return fatigueMinutes;
+  return fatigueMinutes * Math.max(0, 1 - breakMinutes / FULL_RECOVERY_BREAK_MINUTES);
+};
 
 /**
  * Return completed trips that started during the current local day.
@@ -31,10 +50,10 @@ export function getTodayTrips(trips = []) {
  * @returns {object} Fatigue totals, level, break recommendation, and warning state.
  * @example computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes)
  */
-export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnsetMinutes = 60) {
+export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnsetMinutes = DEFAULT_FATIGUE_ONSET_MINUTES) {
   const trips = [...(todayTrips || [])]
     .filter((trip) => trip?.status === 'completed')
-    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+    .sort((a, b) => (getTimeMs(a.start_time) ?? 0) - (getTimeMs(b.start_time) ?? 0));
   const now = settings?.now instanceof Date
     ? settings.now
     : settings?.now != null
@@ -42,33 +61,38 @@ export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnset
       : new Date();
   const onsetMinutes = Number.isFinite(Number(fatigueOnsetMinutes)) && Number(fatigueOnsetMinutes) > 0
     ? Number(fatigueOnsetMinutes)
-    : 60;
-  const totalDrivingMinutes = Math.max(0, trips.reduce((sum, trip) => {
-    const movingSeconds = Math.max(0, (Number(trip.duration_seconds) || 0) - (Number(trip.idle_time_seconds) || 0));
-    return sum + movingSeconds / 60;
-  }, 0));
+    : DEFAULT_FATIGUE_ONSET_MINUTES;
+  const totalDrivingMinutes = Math.max(0, trips.reduce((sum, trip) => sum + getActiveDrivingMinutes(trip), 0));
   const tripCount = trips.length;
 
   let longestBreakMinutes = 0;
-  for (let i = 1; i < trips.length; i++) {
-    const previousEnd = new Date(trips[i - 1].end_time || trips[i - 1].start_time).getTime();
-    const currentStart = new Date(trips[i].start_time).getTime();
-    if (Number.isFinite(previousEnd) && Number.isFinite(currentStart)) {
-      longestBreakMinutes = Math.max(longestBreakMinutes, Math.max(0, (currentStart - previousEnd) / 60000));
+  let accumulatedFatigueMinutes = 0;
+  let lastEndTimeMs = null;
+
+  for (const trip of trips) {
+    const currentStart = getTimeMs(trip.start_time);
+    if (lastEndTimeMs != null && currentStart != null) {
+      const breakMinutes = Math.max(0, (currentStart - lastEndTimeMs) / 60000);
+      longestBreakMinutes = Math.max(longestBreakMinutes, breakMinutes);
+      accumulatedFatigueMinutes = applyBreakRecovery(accumulatedFatigueMinutes, breakMinutes);
     }
+
+    accumulatedFatigueMinutes += getActiveDrivingMinutes(trip);
+    lastEndTimeMs = getTimeMs(trip.end_time) ?? currentStart ?? lastEndTimeMs;
   }
 
   const lastTrip = trips[trips.length - 1] || null;
-  const lastTripEndTime = lastTrip?.end_time || null;
-  const minutesSinceLastTrip = lastTripEndTime
-    ? Math.max(0, (now.getTime() - Date.parse(lastTripEndTime)) / 60000)
+  const lastTripEndTime = lastTrip ? (getTimeMs(lastTrip.end_time) ?? getTimeMs(lastTrip.start_time)) : null;
+  const minutesSinceLastTrip = lastTripEndTime != null && Number.isFinite(now.getTime())
+    ? Math.max(0, (now.getTime() - lastTripEndTime) / 60000)
     : null;
+  if (minutesSinceLastTrip != null) {
+    accumulatedFatigueMinutes = applyBreakRecovery(accumulatedFatigueMinutes, minutesSinceLastTrip);
+  }
 
-  const durationFatigue = Math.min(5, totalDrivingMinutes / onsetMinutes);
-  const tripCountFatigue = Math.min(2, Math.max(0, tripCount - 1) * 0.5);
-  const recoveryCredit = minutesSinceLastTrip != null ? Math.min(2, minutesSinceLastTrip / 30) : 2;
+  const fatigueRatio = clamp(accumulatedFatigueMinutes / onsetMinutes, 0, 2);
   const cumulativeFatigueScore = clamp(
-    Math.round((durationFatigue + tripCountFatigue - recoveryCredit) * 10) / 10,
+    Math.round((fatigueRatio * FATIGUE_SCORE_AT_ONSET) * 10) / 10,
     0,
     10
   );
@@ -89,6 +113,7 @@ export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnset
 
   return {
     totalDrivingMinutes: Math.round(totalDrivingMinutes),
+    accumulatedFatigueMinutes: Math.round(accumulatedFatigueMinutes),
     tripCount,
     longestBreakMinutes: Math.round(longestBreakMinutes),
     minutesSinceLastTrip: minutesSinceLastTrip == null ? null : Math.round(minutesSinceLastTrip),

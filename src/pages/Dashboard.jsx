@@ -972,7 +972,11 @@ export default function Dashboard() {
     await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch((err) => {
       logError('post_trip_achievement_notification_sync', err, { tripId: savedTrip?.id || completedTrip.id });
     });
-    const newDailyFatigue = computeDailyFatigue(getTodayTrips([completedTrip, ...completedTrips]), settings);
+    const newDailyFatigue = computeDailyFatigue(
+      getTodayTrips([completedTrip, ...completedTrips]),
+      settings,
+      habitProfile?.fatigueOnsetMinutes
+    );
     if (newDailyFatigue.fatigueLevel === 'high' || newDailyFatigue.fatigueLevel === 'critical') {
       notifyDailyFatigueWarning(newDailyFatigue).catch((err) => {
         logError('post_trip_daily_fatigue_warning', err, {

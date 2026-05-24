@@ -134,6 +134,7 @@ describe('buildHabitProfile', () => {
     const profile = buildHabitProfile([]);
 
     expect(profile.confidence).toBe(0);
+    expect(profile.fatigueOnsetMinutes).toBe(90);
     expect(Object.values(profile.timeBuckets).every((bucket) => bucket.insufficient)).toBe(true);
   });
 
