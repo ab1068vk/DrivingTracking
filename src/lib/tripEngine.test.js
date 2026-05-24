@@ -527,7 +527,7 @@ describe('tripEngine', () => {
     expect(scores.heading_drift_beta_available).toBe(false);
   });
 
-  it('caps persistent phone-use distraction at a 30 point floor', () => {
+  it('caps persistent confirmed phone-use distraction at a 30 point floor', () => {
     const scores = calculateTripScores(
       [],
       { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },

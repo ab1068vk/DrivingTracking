@@ -140,7 +140,7 @@ export function buildScoreExplanation(trip = {}, scoreKey = 'overall') {
   if ((trip.phone_use_window_count || 0) > 0) reasons.push(plural(trip.phone_use_window_count, 'phone-use window'));
 
   if (score >= 85 && reasons.length === 0) {
-    return `${label} stayed high because Road Sage found no major harsh braking, sharp turns, speeding, or phone-use patterns.`;
+    return `${label} stayed high because Road Sage found no major harsh braking, sharp turns, speeding, or confirmed phone-use events.`;
   }
 
   if (reasons.length === 0) {

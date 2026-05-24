@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-24T16:29:49.264Z
+Updated: 2026-05-24T16:33:48.864Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -30,9 +30,9 @@ This document is generated from the current repository. It keeps the reference r
 - Text/code files scanned: 235
 - App/source files scanned: 199
 - Machine-local files excluded from scanning: `android/local.properties`
-- Production calculation lines indexed: 1614
+- Production calculation lines indexed: 1613
 - Test calculation/assertion lines indexed separately: 189
-- Hard-coded production literals indexed: 14776
+- Hard-coded production literals indexed: 14777
 - Functions/methods catalogued: 1238
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
@@ -299,11 +299,11 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/mobileStorage.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/nativePlatform | getJson, setJson, removeJson | 4 | 0 | 5 |
 | src/lib/nativeDownloads.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | saveExportToDownloads, openExportLocation | 2 | 0 | 1 |
 | src/lib/nativePlatform.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | isNativePlatform, isAndroid, openNativeSettings | 3 | 0 | 4 |
-| src/lib/notificationService.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/local-notifications, @/lib/nativePlatform, @/lib/permissions, @/lib/trackingStore, @/lib/tripInsights, @/lib/currency | TRACKING_CHANNEL_ID, SUMMARY_CHANNEL_ID, ACHIEVEMENT_CHANNEL_ID, SAFETY_ALERTS_CHANNEL_ID, COACHING_CHANNEL_ID, VEHICLE_CHANNEL_ID, NOTIFICATION_IDS, MAX_ACHIEVEMENT_NOTIF_IDS, isQuietHours, achievementNotificationId | 45 | 22 | 434 |
+| src/lib/notificationService.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/local-notifications, @/lib/nativePlatform, @/lib/permissions, @/lib/trackingStore, @/lib/tripInsights, @/lib/currency | TRACKING_CHANNEL_ID, SUMMARY_CHANNEL_ID, ACHIEVEMENT_CHANNEL_ID, SAFETY_ALERTS_CHANNEL_ID, COACHING_CHANNEL_ID, VEHICLE_CHANNEL_ID, NOTIFICATION_IDS, MAX_ACHIEVEMENT_NOTIF_IDS, isQuietHours, achievementNotificationId | 45 | 22 | 435 |
 | src/lib/obdBluetooth.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | parseObdPidResponse, getObdBluetoothSupport, getObdBluetoothPermissionStatus, connectObdBleAdapter | 4 | 5 | 55 |
 | src/lib/openSourceTripContext.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripEngine, @/lib/trackingStore, @/lib/mapMatching, @/lib/speedLimitSource, @/lib/weatherContext, @/lib/phoneUsageAccess | PUBLIC_OSRM_DEMO_URL, isOsrmMapMatchingConfigured, isOsrmMapMatchingEnabled, isExternalContextAutoFetchEnabled, buildRoadContextPrivacyMessage, buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus, describeMapMatchingStatus | 9 | 7 | 90 |
 | src/lib/PageNotFound.jsx | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | react-router-dom, lucide-react | PageNotFound | 1 | 0 | 1 |
-| src/lib/pdfExport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | jspdf, @/lib/nativeDownloads, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripEngine, @/lib/currency | exportMonthlyReportPDF, exportUBIReportPDF | 8 | 19 | 346 |
+| src/lib/pdfExport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | jspdf, @/lib/nativeDownloads, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripEngine, @/lib/currency | exportMonthlyReportPDF, exportUBIReportPDF | 8 | 18 | 346 |
 | src/lib/permissions.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @capacitor/geolocation, @capacitor/local-notifications, @/lib/nativePlatform, @/lib/trackingStore, @/lib/obdBluetooth, @/lib/sensorFusionModel | getPermissionStatus, requestForegroundLocationPermission, requestNotificationPermission, requestActivityRecognitionPermission, requestBackgroundLocationPermission, getPermissionExplanation, openNativeSettings | 7 | 0 | 55 |
 | src/lib/phoneUsageAccess.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | buildPhoneUseFromAndroidUsage, buildPhoneUseFromEvents, mergePhoneUseSignals, mergeManyPhoneUseSignals, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents | 17 | 19 | 215 |
 | src/lib/predictiveRouteRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/habitProfile, @/lib/mathUtils, @/lib/appConstants | estimatePredictiveRouteRisk | 6 | 12 | 96 |
@@ -2040,12 +2040,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/notificationService.js:702 exports `scheduleWeeklyPatternNotification` (FunctionDeclaration)
 - src/lib/notificationService.js:728 exports `notifyHarshBrakeStreak` (FunctionDeclaration)
 - src/lib/notificationService.js:747 exports `checkAndNotifyPhoneUsePattern` (FunctionDeclaration)
-- src/lib/notificationService.js:767 exports `notifyStyleShift` (FunctionDeclaration)
-- src/lib/notificationService.js:780 exports `notifyMaintenanceDue` (FunctionDeclaration)
-- src/lib/notificationService.js:797 exports `scheduleInactiveDriverNudge` (FunctionDeclaration)
-- src/lib/notificationService.js:814 exports `syncReminderNotifications` (FunctionDeclaration)
-- src/lib/notificationService.js:873 exports `syncAchievementNotifications` (FunctionDeclaration)
-- src/lib/notificationService.js:914 exports `getNotifiedAchievementIds` (FunctionDeclaration)
+- src/lib/notificationService.js:770 exports `notifyStyleShift` (FunctionDeclaration)
+- src/lib/notificationService.js:783 exports `notifyMaintenanceDue` (FunctionDeclaration)
+- src/lib/notificationService.js:800 exports `scheduleInactiveDriverNudge` (FunctionDeclaration)
+- src/lib/notificationService.js:817 exports `syncReminderNotifications` (FunctionDeclaration)
+- src/lib/notificationService.js:876 exports `syncAchievementNotifications` (FunctionDeclaration)
+- src/lib/notificationService.js:917 exports `getNotifiedAchievementIds` (FunctionDeclaration)
 
 ### src/lib/obdBluetooth.js
 
@@ -4017,12 +4017,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 702 | function | `async scheduleWeeklyPatternNotification(lastWeekTrips = lastWeekTrips = [], settings = settings = localSettings.get())` | none detected | Time: O(n) candidate; Space: context dependent |
 | 728 | function | `async notifyHarshBrakeStreak(streakDays, settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 747 | function | `async checkAndNotifyPhoneUsePattern(recentTrips = recentTrips = [], settings = settings = localSettings.get())` | none detected | Time: O(n) candidate; Space: context dependent |
-| 767 | function | `async notifyStyleShift(styleShifts = styleShifts = [], settings = settings = localSettings.get())` | none detected | Time: O(n) candidate; Space: context dependent |
-| 780 | function | `async notifyMaintenanceDue(vehicleName, dueItems = dueItems = [], settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 797 | function | `async scheduleInactiveDriverNudge(daysSinceLastTrip = daysSinceLastTrip = 0, settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 814 | function | `async syncReminderNotifications(settings = settings = localSettings.get(), ObjectPattern = { requestPermission = true, lastTripTimestamp = 0, lastWeekTrips = null, maintenanceAlerts = null } = {})` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 873 | function | `async syncAchievementNotifications(achievements = achievements = [], ObjectPattern = { requestPermission = true } = {})` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
-| 914 | function | `getNotifiedAchievementIds()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 770 | function | `async notifyStyleShift(styleShifts = styleShifts = [], settings = settings = localSettings.get())` | none detected | Time: O(n) candidate; Space: context dependent |
+| 783 | function | `async notifyMaintenanceDue(vehicleName, dueItems = dueItems = [], settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 800 | function | `async scheduleInactiveDriverNudge(daysSinceLastTrip = daysSinceLastTrip = 0, settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 817 | function | `async syncReminderNotifications(settings = settings = localSettings.get(), ObjectPattern = { requestPermission = true, lastTripTimestamp = 0, lastWeekTrips = null, maintenanceAlerts = null } = {})` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
+| 876 | function | `async syncAchievementNotifications(achievements = achievements = [], ObjectPattern = { requestPermission = true } = {})` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
+| 917 | function | `getNotifiedAchievementIds()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/obdBluetooth.js
 
@@ -6906,7 +6906,7 @@ Source: `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingServ
 Every production calculation-like line found by the scanner is grouped by domain below. Each row includes the exact line of code. Test calculations are listed at the end so expected-value math is not mixed with production behavior.
 
 <details>
-<summary>scoring calculations (258)</summary>
+<summary>scoring calculations (257)</summary>
 
 #### android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java
 
@@ -7005,7 +7005,6 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 47 | mostImprovedWeek | .map(([key, scores]) => { | `.map(([key, scores]) => {` |
 | 48 | mostImprovedWeek | totalKm = scores.reduce((sum, item) => sum + item.distance, 0) | `const totalKm = scores.reduce((sum, item) => sum + item.distance, 0);` |
 | 51 | mostImprovedWeek | avg: totalKm > 0 ? scores.reduce((sum, item) => sum + item.score x item.distance, 0) / totalKm : 0, | `avg: totalKm > 0 ? scores.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm : 0,` |
-| 127 | exportMonthlyReportPDF | 'GPS proxy limitation: score components may include low-confidence brake onset smoothness and stop-start patterns. They do not measure human reaction time or following distance.', | `'GPS proxy limitation: score components may include low-confidence brake onset smoothness and stop-start patterns. They do not measure human reaction time or following distance.',` |
 | 243 | exportUBIReportPDF | filename = `road-sage-driver-score-card-${now.toISOString().slice(0, 10)}.pdf` | `const filename = `road-sage-driver-score-card-${now.toISOString().slice(0, 10)}.pdf`;` |
 | 250 | exportUBIReportPDF | doc.text('Road Sage - Driver Score Card', 14, 22) | `doc.text('Road Sage - Driver Score Card', 14, 22);` |
 | 282 | exportUBIReportPDF | color = score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68] | `const color = score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68];` |
@@ -7841,9 +7840,9 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 239 | resolveFuelPricePerLiter | price = candidates.map(Number).find((value) => Number.isFinite(value) AND value > 0) | `const price = candidates.map(Number).find((value) => Number.isFinite(value) && value > 0);` |
 | 442 | notifyStayAlert | body: opts.body OR 'Heading drift detected - take a break if you can.', | `body: opts.body \|\| 'Heading drift detected - take a break if you can.',` |
 | 600 | dispatchPostTripNotification | body: `${stopStartPatternCount OR 'Multiple'} stop-start pattern${stopStartPatternCount === 1 ? '' : 's'} detected from speed data. This does not measure following distance.`, | `body: `${stopStartPatternCount \|\| 'Multiple'} stop-start pattern${stopStartPatternCount === 1 ? '' : 's'} detected from speed data. This does not measure following distance.`,` |
-| 901 | syncAchievementNotifications | ? `${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more` | `? `${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more`` |
-| 902 | syncAchievementNotifications | : newAchievements.map((achievement) => achievement.label).join(', '), | `: newAchievements.map((achievement) => achievement.label).join(', '),` |
-| 904 | syncAchievementNotifications | extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) }, | `extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },` |
+| 904 | syncAchievementNotifications | ? `${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more` | `? `${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more`` |
+| 905 | syncAchievementNotifications | : newAchievements.map((achievement) => achievement.label).join(', '), | `: newAchievements.map((achievement) => achievement.label).join(', '),` |
+| 907 | syncAchievementNotifications | extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) }, | `extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },` |
 
 #### src/lib/obdBluetooth.js
 
@@ -14594,7 +14593,7 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 </details>
 
 <details>
-<summary>src/lib/notificationService.js (434)</summary>
+<summary>src/lib/notificationService.js (435)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -14952,86 +14951,87 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | 748 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
 | 749 | `0` | numeric literal | last7 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 749 | `7` | numeric literal | last7 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 750 | `'medium'` | string literal | affected | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 750 | `'high'` | string literal | affected | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 751 | `3` | numeric literal | affected | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 752 | `'drivesense_phone_pattern_last_ms'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 754 | `48` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 754 | `60` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 754 | `60` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 754 | `1000` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 757 | `'Phone Use This Week'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 758 | ``Phone use was detected in ${affected} trips this week. Try enabling Do Not Disturb while driving.`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 760 | `'phone_use_pattern'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 768 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 768 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 769 | `'aggression'` | string literal | aggShift | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 769 | `'increasing'` | string literal | aggShift | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 773 | `'Driving Style Change Detected'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 774 | `'Your driving has become more aggressive over your last 5 trips. See your Coach for details.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'phone_use_pattern'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 781 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 781 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 782 | `0` | numeric literal | due | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 782 | `0` | numeric literal | due | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 783 | `0` | numeric literal | item | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 786 | `'Maintenance Due'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 786 | `'Maintenance Coming Soon'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 787 | ``${vehicleName}: ${item.item \|\| item.label \|\| 'Service'} ${due ? `` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 787 | `0` | numeric literal | body | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 787 | `` : `` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 787 | `0` | numeric literal | body | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 787 | ``}.`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 789 | `'maintenance'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 792 | ``maintenance:${vehicleName}:${item.item \|\| item.label \|\| 'service'}:${due ? 'due' : 'soon'}`` | string literal | dedupeKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 793 | `7` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 793 | `24` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 793 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 793 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 793 | `1000` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 797 | `0` | numeric literal | daysSinceLastTrip | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 798 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 798 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 799 | `7` | numeric literal | threshold | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 803 | `'Ready when you are'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 804 | ``It's been ${Math.round(daysSinceLastTrip)} days since your last trip. Road Sage is ready when you are.`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 806 | `60000` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 806 | `true` | boolean flag | schedule | Inline state/default flag; changing can flip behavior. |
-| 807 | `'inactive_nudge'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 809 | `'inactive_nudge'` | string literal | dedupeKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 810 | `24` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 810 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 810 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 810 | `1000` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 814 | `true` | boolean flag | settings | Inline state/default flag; changing can flip behavior. |
-| 814 | `0` | numeric literal | settings | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 824 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
-| 833 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 840 | `'Weekly driving report'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 841 | `'Your weekly Road Sage report is ready. Review distance, score, and risky events.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 843 | `2` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 843 | `9` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 843 | `0` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 843 | `true` | boolean flag | schedule | Inline state/default flag; changing can flip behavior. |
-| 850 | `'Safe driving tip'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 853 | `8` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 853 | `0` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 853 | `true` | boolean flag | schedule | Inline state/default flag; changing can flip behavior. |
-| 860 | `86400000` | numeric literal | daysSince | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 873 | `true` | boolean flag | achievements | Inline state/default flag; changing can flip behavior. |
-| 881 | `'achievement_notifications'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 886 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 889 | `1` | numeric literal | notifications | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 891 | `0` | numeric literal | id | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 892 | `'Achievement unlocked'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 893 | ``${newAchievements[0].label}: ${newAchievements[0].description}`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 895 | `'achievement'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 895 | `0` | numeric literal | extra | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 899 | ``${newAchievements.length} achievements unlocked`` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 900 | `6` | numeric literal | body | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 901 | ``${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more`` | string literal | length | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 902 | `', '` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 904 | `'achievement_batch'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 751 | `true` | boolean flag | phone_use_score_available | Inline state/default flag; changing can flip behavior. |
+| 752 | `'medium'` | string literal | phone_use_risk | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 752 | `'high'` | string literal | phone_use_risk | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 754 | `3` | numeric literal | affected | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 755 | `'drivesense_phone_pattern_last_ms'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 757 | `48` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 757 | `60` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 757 | `60` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 757 | `1000` | numeric literal | now | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 760 | `'Phone Use This Week'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 761 | ``Confirmed phone use was detected in ${affected} trips this week. Try enabling Do Not Disturb while driving.`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 763 | `'phone_use_pattern'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 771 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 771 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 772 | `'aggression'` | string literal | aggShift | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 772 | `'increasing'` | string literal | aggShift | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 776 | `'Driving Style Change Detected'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 777 | `'Your driving has become more aggressive over your last 5 trips. See your Coach for details.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 779 | `'phone_use_pattern'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 784 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 784 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 785 | `0` | numeric literal | due | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 785 | `0` | numeric literal | due | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 786 | `0` | numeric literal | item | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 789 | `'Maintenance Due'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 789 | `'Maintenance Coming Soon'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | ``${vehicleName}: ${item.item \|\| item.label \|\| 'Service'} ${due ? `` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `0` | numeric literal | body | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 790 | `` : `` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 790 | `0` | numeric literal | body | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 790 | ``}.`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 792 | `'maintenance'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 795 | ``maintenance:${vehicleName}:${item.item \|\| item.label \|\| 'service'}:${due ? 'due' : 'soon'}`` | string literal | dedupeKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 796 | `7` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 796 | `24` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 796 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 796 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 796 | `1000` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 800 | `0` | numeric literal | daysSinceLastTrip | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 801 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 801 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 802 | `7` | numeric literal | threshold | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 806 | `'Ready when you are'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 807 | ``It's been ${Math.round(daysSinceLastTrip)} days since your last trip. Road Sage is ready when you are.`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 809 | `60000` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 809 | `true` | boolean flag | schedule | Inline state/default flag; changing can flip behavior. |
+| 810 | `'inactive_nudge'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 812 | `'inactive_nudge'` | string literal | dedupeKey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 813 | `24` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 813 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 813 | `60` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 813 | `1000` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 817 | `true` | boolean flag | settings | Inline state/default flag; changing can flip behavior. |
+| 817 | `0` | numeric literal | settings | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 827 | `false` | boolean flag | notifications_enabled | Inline state/default flag; changing can flip behavior. |
+| 836 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 843 | `'Weekly driving report'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 844 | `'Your weekly Road Sage report is ready. Review distance, score, and risky events.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 846 | `2` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 846 | `9` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 846 | `0` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 846 | `true` | boolean flag | schedule | Inline state/default flag; changing can flip behavior. |
+| 853 | `'Safe driving tip'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 856 | `8` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 856 | `0` | numeric literal | schedule | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 856 | `true` | boolean flag | schedule | Inline state/default flag; changing can flip behavior. |
+| 863 | `86400000` | numeric literal | daysSince | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 876 | `true` | boolean flag | achievements | Inline state/default flag; changing can flip behavior. |
+| 884 | `'achievement_notifications'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 889 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 892 | `1` | numeric literal | notifications | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 894 | `0` | numeric literal | id | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 895 | `'Achievement unlocked'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 896 | ``${newAchievements[0].label}: ${newAchievements[0].description}`` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 898 | `'achievement'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 898 | `0` | numeric literal | extra | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 902 | ``${newAchievements.length} achievements unlocked`` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 903 | `6` | numeric literal | body | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 904 | ``${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more`` | string literal | length | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 905 | `', '` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 907 | `'achievement_batch'` | string literal | extra | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -15317,7 +15317,7 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | 124 | `14` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 124 | `46` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 125 | `8` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 127 | `'GPS proxy limitation: score components may include low-confidence brake onset smoothness and stop-start patterns. They do not measure human reaction time or following distance.'` | string constant/key | limitation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 127 | `'GPS-only proxy limitation: brake onset and stop-start scores are low confidence. GPS phone and overtake patterns are diagnostics only and do not affect Safety or coaching.'` | string constant/key | limitation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 128 | `14` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 129 | `52` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 130 | `182` | numeric literal | maxWidth | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -15615,7 +15615,7 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | 155 | `'Background location is only used after you start tracking or enable background auto-tracking. Android requires a persistent notification while this is active.'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 156 | `'Physical activity helps Road Sage tell driving apart from walking, cycling, and still time before auto-tracking starts.'` | string literal | activityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 157 | `'Notifications are used for the persistent tracking notice, long-trip reminders, completed-trip summaries, weekly summaries, achievements, and maintenance reminders.'` | string literal | notifications | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 158 | `'Optional Android Usage Access lets Road Sage detect foreground app use during a trip, so phone-use scoring is based on real phone activity instead of GPS behaviour only.'` | string constant/key | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 158 | `'Optional Android Usage Access lets Road Sage detect foreground app use during a trip. Without it, phone-use scoring is unavailable and GPS proxy counts stay diagnostic only.'` | string constant/key | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 159 | `'Motion and gyroscope access lets Road Sage confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 160 | `'OBD-II Bluetooth is optional and only used when you connect a compatible adapter. Android may ask for Nearby Devices/Bluetooth access before pairing.'` | string constant/key | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 162 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -21211,7 +21211,7 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | 140 | `'phone-use window'` | string literal | phone | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 142 | `85` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 142 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 143 | ``${label} stayed high because Road Sage found no major harsh braking, sharp turns, speeding, or phone-use patterns.`` | string literal | phone | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 143 | ``${label} stayed high because Road Sage found no major harsh braking, sharp turns, speeding, or confirmed phone-use events.`` | string literal | phone | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 146 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 147 | ``${label} reflects smoothness, speed consistency, eco driving, and route context from this trip.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 150 | `70` | numeric literal | verb | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -24078,7 +24078,7 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | 1242 | `'Urgent warnings while driving'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1243 | `'notif_phone_use_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1243 | `'Phone use warning'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1243 | `'Immediate warning when phone-use patterns appear'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1243 | `'Immediate warning for confirmed Android Usage Access detections'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1244 | `'notif_heading_drift_alert_enabled'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1244 | `'Heading drift / fatigue warning'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1244 | `'Beta GPS heading patterns and long-drive break alerts'` | string constant/key | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -26299,11 +26299,11 @@ Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic
 | src/lib/notificationService.js | 364 | await LocalNotifications.cancel({ notifications: [{ id: LONG_TRIP_REMINDER_ID }] }); |
 | src/lib/notificationService.js | 541 | if (localStorage.getItem(FATIGUE_NOTIF_TRIP_KEY) === String(tripId)) return null; |
 | src/lib/notificationService.js | 555 | if (scheduled) localStorage.setItem(FATIGUE_NOTIF_TRIP_KEY, String(tripId)); |
-| src/lib/notificationService.js | 822 | await LocalNotifications.cancel({ notifications: cancelIds }); |
-| src/lib/notificationService.js | 832 | const permission = await LocalNotifications.checkPermissions(); |
-| src/lib/notificationService.js | 857 | if (notifications.length) await LocalNotifications.schedule({ notifications }); |
-| src/lib/notificationService.js | 885 | const permission = await LocalNotifications.checkPermissions(); |
-| src/lib/notificationService.js | 907 | await LocalNotifications.schedule({ notifications }); |
+| src/lib/notificationService.js | 825 | await LocalNotifications.cancel({ notifications: cancelIds }); |
+| src/lib/notificationService.js | 835 | const permission = await LocalNotifications.checkPermissions(); |
+| src/lib/notificationService.js | 860 | if (notifications.length) await LocalNotifications.schedule({ notifications }); |
+| src/lib/notificationService.js | 888 | const permission = await LocalNotifications.checkPermissions(); |
+| src/lib/notificationService.js | 910 | await LocalNotifications.schedule({ notifications }); |
 | src/lib/permissions.js | 2 | import { Geolocation } from '@capacitor/geolocation'; |
 | src/lib/permissions.js | 3 | import { LocalNotifications } from '@capacitor/local-notifications'; |
 | src/lib/permissions.js | 26 | const location = await Geolocation.checkPermissions(); |
@@ -27127,7 +27127,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/tripEngine.test.js | 471 | it | keeps distraction score perfect when there are no phone or erratic-speed events |
 | src/lib/tripEngine.test.js | 485 | it | returns confidence metadata for exported component scores |
 | src/lib/tripEngine.test.js | 515 | it | marks advanced GPS beta surfaces unavailable when advanced detection is disabled |
-| src/lib/tripEngine.test.js | 530 | it | caps persistent phone-use distraction at a 30 point floor |
+| src/lib/tripEngine.test.js | 530 | it | caps persistent confirmed phone-use distraction at a 30 point floor |
 | src/lib/tripEngine.test.js | 550 | it | caps safety and overall scores after road-condition bonuses |
 | src/lib/tripEngine.test.js | 564 | it | uses exponential close-proximity scoring without a flat floor |
 | src/lib/tripEngine.test.js | 577 | it | classifies road type and calculates advanced smoothness fields |

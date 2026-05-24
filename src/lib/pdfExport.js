@@ -124,7 +124,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   doc.text(`Exported ${now.toLocaleString()}`, 14, 46);
   doc.setFontSize(8);
   doc.text(
-    'GPS proxy limitation: score components may include low-confidence brake onset smoothness and stop-start patterns. They do not measure human reaction time or following distance.',
+    'GPS-only proxy limitation: brake onset and stop-start scores are low confidence. GPS phone and overtake patterns are diagnostics only and do not affect Safety or coaching.',
     14,
     52,
     { maxWidth: 182 }

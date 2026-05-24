@@ -732,7 +732,7 @@ export default function TripDetail() {
 
           {phoneUseRisk === 'none' ? (
             <div className="mt-4 rounded-2xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
-              No phone use patterns detected this trip.
+              No confirmed phone-use events detected this trip.
             </div>
           ) : (
             <div className="mt-4 space-y-3">

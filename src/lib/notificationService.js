@@ -747,7 +747,10 @@ export async function notifyHarshBrakeStreak(streakDays, settings = localSetting
 export async function checkAndNotifyPhoneUsePattern(recentTrips = [], settings = localSettings.get()) {
   if (settings.notifications_enabled === false || settings.notif_coaching_enabled === false || isQuietHours(settings)) return null;
   const last7 = recentTrips.slice(0, 7);
-  const affected = last7.filter((trip) => trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high').length;
+  const affected = last7.filter((trip) => (
+    trip.phone_use_score_available === true &&
+    (trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high')
+  )).length;
   if (affected < 3) return null;
   const key = 'drivesense_phone_pattern_last_ms';
   const now = Date.now();
@@ -755,7 +758,7 @@ export async function checkAndNotifyPhoneUsePattern(recentTrips = [], settings =
   const notification = {
     id: NOTIFICATION_IDS.PHONE_USE_PATTERN,
     title: 'Phone Use This Week',
-    body: `Phone use was detected in ${affected} trips this week. Try enabling Do Not Disturb while driving.`,
+    body: `Confirmed phone use was detected in ${affected} trips this week. Try enabling Do Not Disturb while driving.`,
     channelId: COACHING_CHANNEL_ID,
     extra: { type: 'phone_use_pattern' },
   };
