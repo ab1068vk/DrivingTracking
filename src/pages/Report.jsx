@@ -82,7 +82,7 @@ export default function Reports() {
     : 0;
   // FIX: Compute report average speed from avg_running_speed_kmh, falling back only for legacy trips.
   const baseline = computePersonalBaseline(completed);
-  const carbonImpact = calculateCarbonImpact(trips, settings);
+  const carbonImpact = calculateCarbonImpact(trips, settings, vehicleById);
   const commutePatterns = identifyCommutePatterns(trips);
   const peakHourStress = calculatePeakHourStress(trips);
   const roadTypeData = ['highway', 'urban', 'mixed', 'residential']
@@ -514,7 +514,10 @@ export default function Reports() {
                 <h2 className="font-semibold mb-1">Your Environmental Impact</h2>
                 <div className="font-grotesk font-bold text-2xl">{carbonImpact.trees_equivalent} tree-years of CO2 offset</div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  You saved {carbonImpact.total_co2_saved_kg} kg CO2 vs. the average driver.
+                  {carbonImpact.total_co2_saved_kg > 0
+                    ? `You saved ${carbonImpact.total_co2_saved_kg} kg CO2 vs. a vehicle/fleet baseline estimate.`
+                    : 'Assign vehicles to trips to unlock CO2 savings estimates.'}
+                  {carbonImpact.total_co2_saved_kg > 0 && ' Estimates carry a +/-30% confidence band unless a vehicle baseline is available.'}
                 </p>
                 <span className="mt-3 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
                   {carbonImpact.carbon_grade}

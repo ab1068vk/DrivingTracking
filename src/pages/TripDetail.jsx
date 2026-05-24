@@ -434,6 +434,13 @@ export default function TripDetail() {
   const trafficIdleSeconds = trip.traffic_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - (trip.sustained_idle_seconds || 0));
   const parkedIdleSeconds = trip.sustained_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - trafficIdleSeconds);
   const terminalParkedSeconds = trip.parking_stop_duration_seconds || 0;
+  const unavailableEstimate = '—';
+  const fuelSavedValue = economics.vehicle_profile_available
+    ? `${economics.fuel_saved_liters.toFixed(2)} L`
+    : unavailableEstimate;
+  const co2SavedValue = Number.isFinite(Number(economics.co2_saved_kg))
+    ? `${economics.co2_saved_kg} kg`
+    : unavailableEstimate;
   const tripEndState = trip.parking_stop_detected
     ? 'Parked'
     : terminalParkedSeconds > 0
@@ -1051,10 +1058,10 @@ export default function TripDetail() {
             },
             // FIX: Add overall average as a secondary line while keeping moving speed primary.
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
-            { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings) },
-            { icon: Leaf, label: 'Fuel Saved', value: `${economics.fuel_saved_liters.toFixed(2)} L` },
-            { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg` },
-            { icon: Leaf, label: 'CO2 Saved vs Average', value: `${trip.co2_saved_kg ?? economics.co2_saved_kg ?? 0} kg` },
+            { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), subValue: economics.estimate_label },
+            { icon: Leaf, label: 'Fuel Saved', value: fuelSavedValue, subValue: economics.vehicle_profile_available ? 'Eco-driving effect capped at 8%.' : 'Assign a vehicle to estimate savings.' },
+            { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg`, subValue: economics.estimate_label },
+            { icon: Leaf, label: 'CO2 Saved vs Average', value: co2SavedValue, subValue: economics.co2_saved_label },
             { icon: ParkingSquare, label: 'Parking', value: `${trip.parking_approach_score ?? 100}` },
             { icon: TimerReset, label: 'Traffic Stops', value: formatDuration(trafficIdleSeconds) },
             { icon: ParkingSquare, label: 'Parked Idle', value: formatDuration(parkedIdleSeconds) },

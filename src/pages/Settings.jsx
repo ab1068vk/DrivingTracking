@@ -1130,7 +1130,7 @@ export default function Settings() {
           <SettingRow
             icon={Leaf}
             label="Average vehicle CO2 baseline"
-            sublabel="kg CO2 per 100 km used for saved-vs-average comparisons"
+            sublabel="kg CO2 per 100 km used for fleet-average estimate comparisons"
           >
             <input
               type="number"

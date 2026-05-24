@@ -284,11 +284,23 @@ describe('release blocker regressions', () => {
     expect(gasoline.co2_kg).toBe(23.1);
     expect(diesel.co2_kg).toBe(26.8);
     expect(diesel.co2_kg / gasoline.co2_kg).toBeCloseTo(2.68 / 2.31, 2);
-    expect(extreme.actual_l_per_100km).toBe(8);
+    expect(extreme.actual_l_per_100km).toBe(9.2);
     expect(ev.co2_kg).toBeGreaterThan(0);
     expect(ev.fuel_co2_kg).toBe(0);
     expect(ev.grid_co2_kg).toBeGreaterThan(0);
-    expect(ev.co2_saved_kg).toBeGreaterThan(0);
+    expect(ev.co2_saved_kg).toBeNull();
+    expect(extreme.economy_adjustment_multiplier).toBe(0.92);
+  });
+
+  it('uses no eco adjustment when eco driving score is unavailable', () => {
+    const estimate = estimateTripEconomics(
+      { distance_km: 100, eco_driving_score: null },
+      { fuel_type: 'gasoline', fuel_efficiency_l_per_100km: 10 },
+      {},
+    );
+
+    expect(estimate.actual_l_per_100km).toBe(10);
+    expect(estimate.economy_adjustment_multiplier).toBe(1);
   });
 
   it('changes CO2 savings when the average vehicle baseline changes', () => {
@@ -321,9 +333,10 @@ describe('release blocker regressions', () => {
       { fuel_type: 'electric' },
       { co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 },
     );
+    const vehicle = { id: 'ev-1', fuel_type: 'electric', ev_efficiency_kwh_per_100km: 20 };
     const impact = calculateCarbonImpact([
-      { status: 'completed', distance_km: 100, eco_driving_score: 80 },
-    ], { fuel_type: 'electric', co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 });
+      { status: 'completed', distance_km: 100, eco_driving_score: 80, vehicle_id: 'ev-1' },
+    ], { co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 }, [vehicle]);
 
     expect(impact.total_co2_saved_kg).toBeCloseTo(carbon.co2_saved_kg, 1);
   });

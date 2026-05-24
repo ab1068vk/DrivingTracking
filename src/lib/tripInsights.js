@@ -14,6 +14,7 @@ export const DEFAULT_GRID_CO2_KG_PER_KWH = 0.04;
 export const DEFAULT_CO2_BASELINE_KG_PER_100KM = 12.0;
 // USDA/Arbor Day cite >48 lb CO2/year for a mature tree; 21 kg/year keeps this as a conservative planning value.
 export const DEFAULT_TREE_CO2_KG_PER_YEAR = 21.0;
+export const ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT = 0.08;
 export const GASOLINE_CO2_KG_PER_LITER = 2.31;
 export const CO2_KG_PER_LITER = {
   gasoline: 2.31,
@@ -415,17 +416,28 @@ export function calculateAverageEngineStressScore(trips = []) {
 
 export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const distanceKm = Number(trip?.distance_km) || 0;
+  const vehicleProfileAvailable = Boolean(vehicle && Object.keys(vehicle).length);
   const fuelType = String(vehicle?.fuel_type || settings.fuel_type || 'gasoline').trim().toLowerCase();
   const isElectric = fuelType === 'electric' || fuelType === 'ev';
   const lPer100Km = isElectric ? 0 : (Number(vehicle?.fuel_efficiency_l_per_100km) || Number(settings.default_l_per_100km) || DEFAULT_L_PER_100KM);
   const evKwhPer100Km = Number(vehicle?.ev_efficiency_kwh_per_100km ?? vehicle?.energy_efficiency_kwh_per_100km ?? settings.default_ev_kwh_per_100km) || DEFAULT_EV_KWH_PER_100KM;
   const gridCo2KgPerKwh = Number(vehicle?.grid_co2_kg_per_kwh ?? settings.grid_co2_kg_per_kwh);
+  const hasKnownGridCo2 = Number.isFinite(gridCo2KgPerKwh);
   const effectiveGridCo2KgPerKwh = Number.isFinite(gridCo2KgPerKwh) ? gridCo2KgPerKwh : DEFAULT_GRID_CO2_KG_PER_KWH;
   const fuelPrice = Number(vehicle?.fuel_price_per_liter) || Number(settings.default_fuel_price_per_liter) || DEFAULT_FUEL_PRICE_PER_LITER;
-  const ecoDrivingScore = clamp(Number.isFinite(Number(trip?.eco_driving_score)) ? Number(trip.eco_driving_score) : 50, 0, 100);
-  const efficiencyMultiplier = clamp(1 + (ecoDrivingScore - 50) / 200, 0.7, 1.5);
-  const actualLPer100Km = lPer100Km / efficiencyMultiplier;
-  const actualEvKwhPer100Km = evKwhPer100Km / efficiencyMultiplier;
+  const rawEcoDrivingScore = trip?.eco_driving_score == null || trip?.eco_driving_score === ''
+    ? NaN
+    : Number(trip.eco_driving_score);
+  const ecoDrivingScore = Number.isFinite(rawEcoDrivingScore) ? clamp(rawEcoDrivingScore, 0, 100) : null;
+  const economyAdjustmentMultiplier = ecoDrivingScore == null
+    ? 1
+    : clamp(
+      1 - ((ecoDrivingScore - 50) / 50) * ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT,
+      1 - ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT,
+      1 + ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT
+    );
+  const actualLPer100Km = lPer100Km * economyAdjustmentMultiplier;
+  const actualEvKwhPer100Km = evKwhPer100Km * economyAdjustmentMultiplier;
   const baselineLiters = distanceKm * lPer100Km / 100;
   const adjustedLiters = distanceKm * actualLPer100Km / 100;
   const baselineKwh = isElectric ? distanceKm * evKwhPer100Km / 100 : 0;
@@ -440,9 +452,22 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
   const roundedFuelCo2Kg = Math.round(fuelCo2Kg * 100) / 100;
   const roundedGridCo2Kg = Math.round(gridCo2Kg * 100) / 100;
-  const baselineCo2KgPer100Km = Number(vehicle?.co2_baseline_kg_per_100km ?? settings.co2_baseline_kg_per_100km);
-  const avgCo2Kg = distanceKm * (Number.isFinite(baselineCo2KgPer100Km) ? baselineCo2KgPer100Km : DEFAULT_CO2_BASELINE_KG_PER_100KM) / 100;
-  const co2SavedKg = Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100);
+  const vehicleBaselineCo2KgPer100Km = Number(vehicle?.co2_baseline_kg_per_100km);
+  const settingsBaselineCo2KgPer100Km = Number(settings.co2_baseline_kg_per_100km);
+  const baselineCo2KgPer100Km = Number.isFinite(vehicleBaselineCo2KgPer100Km)
+    ? vehicleBaselineCo2KgPer100Km
+    : Number.isFinite(settingsBaselineCo2KgPer100Km)
+      ? settingsBaselineCo2KgPer100Km
+      : DEFAULT_CO2_BASELINE_KG_PER_100KM;
+  const baselineSource = Number.isFinite(vehicleBaselineCo2KgPer100Km)
+    ? 'vehicle'
+    : 'fleet average estimate';
+  const estimateErrorPct = baselineSource === 'vehicle' ? 15 : 30;
+  const avgCo2Kg = distanceKm * baselineCo2KgPer100Km / 100;
+  const canClaimCo2Savings = vehicleProfileAvailable && (!isElectric || hasKnownGridCo2);
+  const co2SavedKg = canClaimCo2Savings
+    ? Math.max(0, Math.round((avgCo2Kg - roundedCo2Kg) * 100) / 100)
+    : null;
 
   return {
     liters: Math.round(adjustedLiters * 100) / 100,
@@ -453,6 +478,19 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
     fuel_co2_kg: roundedFuelCo2Kg,
     grid_co2_kg: roundedGridCo2Kg,
     co2_saved_kg: co2SavedKg,
+    co2_baseline_kg_per_100km: baselineCo2KgPer100Km,
+    co2_baseline_source: baselineSource,
+    co2_saved_available: canClaimCo2Savings,
+    estimate_error_pct: estimateErrorPct,
+    estimate_label: `This is an estimate (+/-${estimateErrorPct}%).`,
+    co2_saved_label: canClaimCo2Savings
+      ? `vs. ${baselineSource} (+/-${estimateErrorPct}%)`
+      : isElectric
+        ? 'Unavailable until grid CO2 intensity is set.'
+        : 'Unavailable until a vehicle is assigned.',
+    vehicle_profile_available: vehicleProfileAvailable,
+    grid_co2_intensity_known: hasKnownGridCo2,
+    economy_adjustment_multiplier: Math.round(economyAdjustmentMultiplier * 1000) / 1000,
     l_per_100km: lPer100Km,
     actual_l_per_100km: Math.round(actualLPer100Km * 10) / 10,
     kwh: Math.round(adjustedKwh * 100) / 100,
@@ -887,12 +925,22 @@ export function calculateTireWearUnits(events = []) {
   return { trip_tire_wear_units: Math.round(units * 10) / 10 };
 }
 
-export function calculateCarbonImpact(completedTrips = [], settings = {}) {
+export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicles = null) {
+  const vehicleForTrip = (trip) => {
+    if (!vehicles) return {};
+    if (vehicles instanceof Map) return vehicles.get(String(trip?.vehicle_id)) || null;
+    if (Array.isArray(vehicles)) {
+      return vehicles.find((vehicle) => String(vehicle.id) === String(trip?.vehicle_id)) || null;
+    }
+    return null;
+  };
   const totalCo2SavedKg = Math.round(completedTrips.reduce((sum, trip) => {
-    const saved = Number(trip?.co2_saved_kg);
-    if (Number.isFinite(saved)) return sum + saved;
     if (trip?.status !== 'completed' || !(Number(trip?.distance_km) > 0)) return sum;
-    return sum + estimateTripEconomics(trip, {}, settings).co2_saved_kg;
+    const vehicle = vehicleForTrip(trip);
+    const saved = vehicles ? null : Number(trip?.co2_saved_kg);
+    if (Number.isFinite(saved)) return sum + saved;
+    const estimatedSaved = estimateTripEconomics(trip, vehicle, settings).co2_saved_kg;
+    return sum + (Number.isFinite(estimatedSaved) ? estimatedSaved : 0);
   }, 0) * 10) / 10;
   const treeCo2KgPerYear = Number(settings.tree_co2_kg_per_year);
   const effectiveTreeCo2KgPerYear = Number.isFinite(treeCo2KgPerYear) && treeCo2KgPerYear > 0
@@ -1474,7 +1522,7 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
     {
       id: 'tree_planter',
       label: 'Tree Planter',
-      description: 'Save at least one tree-year of CO2 versus the average driver.',
+      description: 'Save at least one tree-year of estimated CO2 versus the baseline.',
       category: 'Eco',
       earned: carbon.total_co2_saved_kg >= 21,
       current: Math.min(21, Math.round(carbon.total_co2_saved_kg)),
@@ -1484,7 +1532,7 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
     {
       id: 'green_fleet',
       label: 'Green Fleet',
-      description: 'Save five tree-years of CO2 versus the average driver.',
+      description: 'Save five tree-years of estimated CO2 versus the baseline.',
       category: 'Eco',
       earned: carbon.total_co2_saved_kg >= 105,
       current: Math.min(105, Math.round(carbon.total_co2_saved_kg)),

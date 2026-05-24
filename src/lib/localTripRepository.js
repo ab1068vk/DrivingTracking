@@ -48,8 +48,8 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  * Version 9 recalculates trips after privacy-masked coordinates were excluded
  * from map, playback, segment, and speed-zone distance calculations.
  *
- * Version 10 backfills CO2 savings so legacy completed trips count toward
- * carbon reports and achievement badges.
+ * Version 10 backfills estimated CO2 savings so legacy completed trips can
+ * count toward carbon reports and achievement badges when vehicle context is available.
  *
  * Version 11 recalculates jerk scores after removing the long-trip 20-point
  * floor and adding insufficient-data confidence handling.
