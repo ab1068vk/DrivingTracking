@@ -30,6 +30,21 @@ describe('ubiReport', () => {
     expect(computeUBIReport([trip(10)]).categories.timeOfDay.score).toBe(100);
   });
 
+  it('scores time-of-day exposure by night driving minutes instead of trip count', () => {
+    const shortNightReport = computeUBIReport([
+      trip(2, { duration_seconds: 5 * 60, night_driving: true }),
+      trip(100, { duration_seconds: 120 * 60, night_driving: false }),
+    ]);
+    const longNightReport = computeUBIReport([
+      trip(2, { duration_seconds: 5 * 60, night_driving: false }),
+      trip(100, { duration_seconds: 120 * 60, night_driving: true }),
+    ]);
+
+    expect(shortNightReport.categories.timeOfDay.score).toBe(94);
+    expect(longNightReport.categories.timeOfDay.score).toBe(0);
+    expect(shortNightReport.categories.timeOfDay.score).toBeGreaterThan(longNightReport.categories.timeOfDay.score);
+  });
+
   it('category weights sum to exactly 1.0', () => {
     const total = Object.values(UBI_CATEGORY_WEIGHTS).reduce((sum, value) => sum + value, 0);
     expect(total).toBeCloseTo(1, 5);
@@ -59,29 +74,37 @@ describe('ubiReport', () => {
     ]);
 
     expect(report.totalKm).toBe(20000);
-    expect(report.categories.mileage.score).toBe(100);
+    expect(report.categories.mileage.score).toBe(49);
     expect(report.categories.mileage.value).toBe('500.0 km');
   });
 
-  it('scores lower recent annual mileage below very high recent annual mileage', () => {
+  it('peaks mileage scoring around moderate annual mileage and decays at both extremes', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
 
+    const lowMileageReport = computeUBIReport([
+      trip(500, {
+        start_time: '2026-01-01T12:00:00.000Z',
+        end_time: '2026-01-01T12:30:00.000Z',
+      }),
+    ]);
     const moderateMileageReport = computeUBIReport([
-      trip(2000, {
+      trip(10000, {
         start_time: '2026-01-01T12:00:00.000Z',
         end_time: '2026-01-01T12:30:00.000Z',
       }),
     ]);
     const highMileageReport = computeUBIReport([
-      trip(20000, {
+      trip(50000, {
         start_time: '2026-01-01T12:00:00.000Z',
         end_time: '2026-01-01T12:30:00.000Z',
       }),
     ]);
 
-    expect(moderateMileageReport.categories.mileage.score).toBe(95);
-    expect(highMileageReport.categories.mileage.score).toBe(20);
+    expect(lowMileageReport.categories.mileage.score).toBe(49);
+    expect(moderateMileageReport.categories.mileage.score).toBe(100);
+    expect(highMileageReport.categories.mileage.score).toBe(0);
+    expect(moderateMileageReport.categories.mileage.score).toBeGreaterThan(lowMileageReport.categories.mileage.score);
     expect(moderateMileageReport.categories.mileage.score).toBeGreaterThan(highMileageReport.categories.mileage.score);
   });
 });

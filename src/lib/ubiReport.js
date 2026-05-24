@@ -2,6 +2,8 @@ import { clamp } from '@/lib/mathUtils';
 
 const MILEAGE_SCORE_WINDOW_DAYS = 365;
 const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+const OPTIMAL_ANNUAL_KM = 10000;
+const MILEAGE_SCORE_SPREAD_KM = 8000;
 
 export const UBI_CATEGORY_WEIGHTS = {
   mileage: 0.15,
@@ -55,8 +57,10 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     };
   }
 
-  const nightTrips = completed.filter((trip) => trip.night_driving === true);
-  const nightRatio = nightTrips.length / Math.max(1, completed.length);
+  const nightDrivingMinutes = completed
+    .filter((trip) => trip.night_driving === true)
+    .reduce((sum, trip) => sum + (Number(trip.duration_seconds) || 0) / 60, 0);
+  const nightRatio = totalDrivingMinutes > 0 ? nightDrivingMinutes / totalDrivingMinutes : 0;
   const totalHarshBrakes = completed.reduce((sum, trip) => sum + (Number(trip.harsh_brakes_count) || 0), 0);
   const totalRapidAccel = completed.reduce((sum, trip) => sum + (Number(trip.rapid_accel_count) || 0), 0);
   const totalSharpTurns = completed.reduce((sum, trip) => sum + (Number(trip.sharp_turns_count) || 0), 0);
@@ -77,7 +81,9 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     })
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
 
-  const mileageScore = clamp(Math.round(100 - Math.max(0, (mileageWindowKm - 1000) / 1000) * 5), 20, 100);
+  const mileageScore = clamp(Math.round(
+    100 * Math.exp(-0.5 * ((mileageWindowKm - OPTIMAL_ANNUAL_KM) / MILEAGE_SCORE_SPREAD_KM) ** 2)
+  ), 0, 100);
   const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));
   const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));
   const accelScore = Math.max(0, Math.round(100 - accelPer100Km * 8));

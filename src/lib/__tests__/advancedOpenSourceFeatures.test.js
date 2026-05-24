@@ -67,7 +67,29 @@ describe('advanced open-source features', () => {
       dangerZones: [{ id: 'dz1', lat: 43.6501, lng: -79.3801, riskLevel: 'high' }],
     });
     expect(risk.nearbyDangerZoneCount).toBe(1);
-    expect(risk.primaryFactor).toBe('Known danger zones nearby');
+    expect(risk.dangerZoneRisk).toBe(9);
+    expect(risk.primaryFactor).toBe('Known danger zones nearby (1 zone within 2 km)');
+  });
+
+  it('caps dense danger-zone contribution without pinning route risk to 100', () => {
+    const dangerZones = Array.from({ length: 15 }, (_, index) => ({
+      id: `dz${index}`,
+      lat: 43.65 + index * 0.00001,
+      lng: -79.38,
+      riskLevel: 'high',
+    }));
+
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(80, 1)],
+      currentLocation: { lat: 43.65, lng: -79.38 },
+      dangerZones,
+      now: new Date(2026, 0, 10, 12),
+    });
+
+    expect(risk.nearbyDangerZoneCount).toBe(15);
+    expect(risk.dangerZoneRisk).toBeLessThanOrEqual(30);
+    expect(risk.riskScore).toBeLessThan(100);
+    expect(risk.primaryFactor).toBe('Known danger zones nearby (15 zones within 2 km)');
   });
 
   it('uses the newest completed trips for predictive route risk even when input is unsorted', () => {

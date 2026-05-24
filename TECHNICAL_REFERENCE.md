@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-24T03:04:23.802Z
+Updated: 2026-05-24T03:08:39.439Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -31,9 +31,9 @@ This document is generated from the current repository. It keeps the reference r
 - App/source files scanned: 198
 - Machine-local files excluded from scanning: `android/local.properties`
 - Production calculation lines indexed: 1558
-- Test calculation/assertion lines indexed separately: 170
-- Hard-coded production literals indexed: 14306
-- Functions/methods catalogued: 1213
+- Test calculation/assertion lines indexed separately: 173
+- Hard-coded production literals indexed: 14317
+- Functions/methods catalogued: 1215
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -59,6 +59,8 @@ This document is generated from the current repository. It keeps the reference r
 | Driver signature braking confidence | `buildDriverSignature` excludes trips without measured braking efficiency from its braking dimension, keeps `dimensions.brakingStyle` null until at least three scored trips exist, and exposes `braking_confidence` from 0 to 1 based on up to ten observed braking trips. Driving Coach shows unavailable braking evidence as an em dash rather than a perfect score. |
 | Predictive maintenance brake evidence | `calculatePredictiveMaintenance` excludes trips without finite braking efficiency from brake-stress averaging. `brake_stress_index` remains null until there are at least five completed trips and three observed braking scores; unavailable braking evidence is neutral in the combined service-interval adjustment. |
 | Predictive route risk window | `estimatePredictiveRouteRisk` sorts completed trips newest-first by `startTime`/`start_time` before applying the recent-trip window, so callers do not need to pre-sort trip history. |
+| Predictive route danger-zone cap | `estimatePredictiveRouteRisk` converts nearby danger-zone count into a diminishing-return score capped at 30 raw risk points and reports the nearby-zone count in `primaryFactor`, so dense areas no longer pin the total route risk to 100 by themselves. |
+| UBI time and mileage scoring | `computeUBIReport` scores night exposure from night-driving minutes divided by total driving minutes, and annual mileage uses a bell curve centered on 10,000 km/year instead of rewarding every sub-1,000 km driver with a perfect score. |
 | UI section recovery | `src/components/SectionErrorBoundary.jsx` isolates calculation-heavy route maps, trip playback, Trip Detail score summaries, the Trip Detail page shell, and the Dashboard readiness/risk panel. Caught render errors are logged through `logError` and show a reloadable fallback instead of blanking the app. |
 | Handled operation failures | `src/lib/errorReporting.js` exports `logError(context, error, extra)` for critical async failures. Post-trip notifications, achievement sync, odometer sync, and driver-signature persistence now write tracking diagnostics instead of disappearing behind bare catches. |
 | Shared time-risk windows | `src/lib/appConstants.js` owns night (22:00-04:59), morning-rush (07:00-09:59 by hourly bucket), and evening-rush (16:00-18:59) boundaries used by habit, pre-trip, predictive route risk, automatic trip tagging, and fixed-hour trip-engine fallback behavior. Android fixed-hour night classification now evaluates that same 22:00-04:59 boundary in the device local timezone, matching JavaScript `Date#getHours()` semantics for native and JS rescoring agreement. Legacy sunset-mode settings migrate to this fallback; custom night hours remain configurable. |
@@ -291,7 +293,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/pdfExport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | jspdf, @/lib/nativeDownloads, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripEngine, @/lib/currency | exportMonthlyReportPDF, exportUBIReportPDF | 8 | 16 | 327 |
 | src/lib/permissions.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @capacitor/geolocation, @capacitor/local-notifications, @/lib/nativePlatform, @/lib/trackingStore, @/lib/obdBluetooth, @/lib/sensorFusionModel | getPermissionStatus, requestForegroundLocationPermission, requestNotificationPermission, requestActivityRecognitionPermission, requestBackgroundLocationPermission, getPermissionExplanation, openNativeSettings | 7 | 0 | 55 |
 | src/lib/phoneUsageAccess.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | buildPhoneUseFromAndroidUsage, buildPhoneUseFromEvents, mergePhoneUseSignals, mergeManyPhoneUseSignals, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents | 13 | 15 | 160 |
-| src/lib/predictiveRouteRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/habitProfile, @/lib/mathUtils, @/lib/appConstants | estimatePredictiveRouteRisk | 4 | 10 | 69 |
+| src/lib/predictiveRouteRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/habitProfile, @/lib/mathUtils, @/lib/appConstants | estimatePredictiveRouteRisk | 6 | 11 | 76 |
 | src/lib/preTripRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripInsights, @/lib/habitProfile, @/lib/mathUtils, @/lib/appConstants | PRE_TRIP_RISK_WEIGHTS, PRE_TRIP_RISK_SIGNAL_GATES, deriveWeights, deriveSignalGates, computePreTripRisk | 11 | 10 | 144 |
 | src/lib/privacyZones.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/trackingStore | getPrivacyZones, isPointInPrivacyZone, privacyZonesForRoute, privacyBoundaryPoint, maskRoutePointsForPrivacy, maskEventsForPrivacy, maskTripForPrivacy, upsertPrivacyZone, removePrivacyZone | 17 | 8 | 35 |
 | src/lib/query-client.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @tanstack/react-query | queryClientInstance | 0 | 0 | 2 |
@@ -307,7 +309,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/tripEngine.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | node:perf_hooks, vitest, @/lib/tripEngine, @/lib/trackingStore, @/lib/activityRecognition, @/lib/tripInsights | none | 5 | 0 | 0 |
 | src/lib/tripInsights.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/appConstants | DEFAULT_FUEL_PRICE_PER_LITER, DEFAULT_L_PER_100KM, DEFAULT_EV_KWH_PER_100KM, DEFAULT_GRID_CO2_KG_PER_KWH, DEFAULT_CO2_BASELINE_KG_PER_100KM, DEFAULT_TREE_CO2_KG_PER_YEAR, ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT, GASOLINE_CO2_KG_PER_LITER, CO2_KG_PER_LITER, WEAR_KM_PER_STRESS_UNIT | 49 | 158 | 1156 |
 | src/lib/tripMetadata.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | TRIP_TAG_OPTIONS, normalizeTripTags, getTripTagOption, getTripTagLabel, getTripDisplayName, buildTripSearchText, isHighRiskTrip, buildScoreExplanation, calculateRecentBrakingImprovement, formatParkingReminder | 13 | 12 | 95 |
-| src/lib/ubiReport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils | UBI_CATEGORY_WEIGHTS, ubiGrade, computeUBIReport | 4 | 19 | 107 |
+| src/lib/ubiReport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils | UBI_CATEGORY_WEIGHTS, ubiGrade, computeUBIReport | 4 | 18 | 111 |
 | src/lib/utils.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | clsx, tailwind-merge | cn, isIframe | 1 | 0 | 0 |
 | src/lib/voiceAlerts.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @/lib/nativePlatform, @/lib/trackingStore | canSpeakSafetyAlert, speakSafetyAlert, speakSafetyAlertOnce, resetSafetyAlertCooldowns, testVoiceAlert | 5 | 0 | 17 |
 | src/lib/weatherContext.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/mobileStorage, @/lib/retry | fetchWeatherContextForTrip, applyWeatherRiskToScores | 11 | 20 | 168 |
@@ -2104,7 +2106,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/predictiveRouteRisk.js:3 imports `clamp as clamp` from `@/lib/mathUtils`
 - src/lib/predictiveRouteRisk.js:4 imports `isEveningRushHour as isEveningRushHour, isNightRiskHour as isNightRiskHour` from `@/lib/appConstants`
 
-- src/lib/predictiveRouteRisk.js:92 exports `estimatePredictiveRouteRisk` (FunctionDeclaration)
+- src/lib/predictiveRouteRisk.js:107 exports `estimatePredictiveRouteRisk` (FunctionDeclaration)
 
 ### src/lib/preTripRisk.js
 
@@ -2414,9 +2416,9 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - src/lib/ubiReport.js:1 imports `clamp as clamp` from `@/lib/mathUtils`
 
-- src/lib/ubiReport.js:6 exports `UBI_CATEGORY_WEIGHTS` (named const)
-- src/lib/ubiReport.js:15 exports `ubiGrade` (FunctionDeclaration)
-- src/lib/ubiReport.js:30 exports `computeUBIReport` (FunctionDeclaration)
+- src/lib/ubiReport.js:8 exports `UBI_CATEGORY_WEIGHTS` (named const)
+- src/lib/ubiReport.js:17 exports `ubiGrade` (FunctionDeclaration)
+- src/lib/ubiReport.js:32 exports `computeUBIReport` (FunctionDeclaration)
 
 ### src/lib/utils.js
 
@@ -3050,7 +3052,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 664 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
 | 676 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
 | 699 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 931 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
+| 933 | function | `buildReadme()` | storage/network/native I/O | Time: O(n^2) candidate; Space: context dependent |
 
 ### scripts/patch-android-gradle.mjs
 
@@ -4046,10 +4048,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 25 | function | `personalTimeRisk(hour, profile)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 40 | function | `formatHour(hour)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 47 | function | `saferWindowText(currentHour, profile)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 92 | function | `estimatePredictiveRouteRisk(ObjectPattern = )` | mutation | Time: O(n) candidate; Space: context dependent |
+| 26 | function | `personalTimeRisk(hour, profile)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 41 | function | `formatHour(hour)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 48 | function | `saferWindowText(currentHour, profile)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 81 | function | `dangerZoneRisk(zoneCount)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 88 | function | `dangerZonePrimaryFactor(zoneCount)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 107 | function | `estimatePredictiveRouteRisk(ObjectPattern = )` | mutation | Time: O(n) candidate; Space: context dependent |
 
 ### src/lib/preTripRisk.js
 
@@ -4482,10 +4486,10 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 15 | function | `ubiGrade(score)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 23 | arrow function | `category(score, label, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 30 | function | `computeUBIReport(trips = trips = [], settings = settings = {}, vehicles = vehicles = [])` | none detected | Time: O(n) candidate; Space: context dependent |
-| 64 | arrow function | `per100(count)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 17 | function | `ubiGrade(score)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 25 | arrow function | `category(score, label, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 32 | function | `computeUBIReport(trips = trips = [], settings = settings = {}, vehicles = vehicles = [])` | none detected | Time: O(n) candidate; Space: context dependent |
+| 68 | arrow function | `per100(count)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/utils.js
 
@@ -5157,6 +5161,21 @@ Source: `src/lib/mapPlaybackInsights.js:248-354`
 Source: `src/lib/predictiveRouteRisk.js:90-170`
 
 ```js
+  const zoneLabel = zoneCount === 1 ? 'zone' : 'zones';
+  const radiusKm = ROUTE_RISK_CONSTANTS.PROXIMITY_METERS / 1000;
+  return `Known danger zones nearby (${zoneCount} ${zoneLabel} within ${radiusKm} km)`;
+}
+
+/**
+ * Estimate upcoming route risk from recent driving, nearby danger zones, weather, and time.
+ * @param {object} params - Route risk inputs.
+ * @param {Array<object>} [params.trips] - Completed trip history.
+ * @param {Array<object>} [params.dangerZones] - Learned danger-zone coordinates.
+ * @param {number} [params.weatherRiskScore] - Weather risk score from 0 to 100.
+ * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
+ * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
+ * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
+ * @returns {object} Predictive route risk score, level, safer window text, and primary factor.
  * @example estimatePredictiveRouteRisk({ trips, dangerZones, habitProfile })
  */
 export function estimatePredictiveRouteRisk({
@@ -5192,10 +5211,11 @@ export function estimatePredictiveRouteRisk({
       : new Date();
   const hour = now.getHours();
   const timeRisk = personalTimeRisk(hour, habitProfile);
+  const zoneRisk = dangerZoneRisk(nearbyZones.length);
   const riskScore = clamp(Math.round(
     (100 - avgScore) * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
     eventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT +
-    nearbyZones.length * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT +
+    zoneRisk +
     Number(weatherRiskScore || 0) * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
     timeRisk
   ), 0, 100);
@@ -5205,8 +5225,9 @@ export function estimatePredictiveRouteRisk({
     riskLevel: riskScore >= 65 ? 'high' : riskScore >= 40 ? 'moderate' : 'low',
     safestWindow: saferWindowText(hour, habitProfile),
     nearbyDangerZoneCount: nearbyZones.length,
+    dangerZoneRisk: zoneRisk,
     primaryFactor: nearbyZones.length
-      ? 'Known danger zones nearby'
+      ? dangerZonePrimaryFactor(nearbyZones.length)
       : weatherRiskScore >= 40
         ? 'Weather risk'
         : eventDensity >= 0.6
@@ -5627,6 +5648,8 @@ import { clamp } from '@/lib/mathUtils';
 
 const MILEAGE_SCORE_WINDOW_DAYS = 365;
 const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+const OPTIMAL_ANNUAL_KM = 10000;
+const MILEAGE_SCORE_SPREAD_KM = 8000;
 
 export const UBI_CATEGORY_WEIGHTS = {
   mileage: 0.15,
@@ -5680,8 +5703,10 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     };
   }
 
-  const nightTrips = completed.filter((trip) => trip.night_driving === true);
-  const nightRatio = nightTrips.length / Math.max(1, completed.length);
+  const nightDrivingMinutes = completed
+    .filter((trip) => trip.night_driving === true)
+    .reduce((sum, trip) => sum + (Number(trip.duration_seconds) || 0) / 60, 0);
+  const nightRatio = totalDrivingMinutes > 0 ? nightDrivingMinutes / totalDrivingMinutes : 0;
   const totalHarshBrakes = completed.reduce((sum, trip) => sum + (Number(trip.harsh_brakes_count) || 0), 0);
   const totalRapidAccel = completed.reduce((sum, trip) => sum + (Number(trip.rapid_accel_count) || 0), 0);
   const totalSharpTurns = completed.reduce((sum, trip) => sum + (Number(trip.sharp_turns_count) || 0), 0);
@@ -5702,7 +5727,9 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     })
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
 
-  const mileageScore = clamp(Math.round(100 - Math.max(0, (mileageWindowKm - 1000) / 1000) * 5), 20, 100);
+  const mileageScore = clamp(Math.round(
+    100 * Math.exp(-0.5 * ((mileageWindowKm - OPTIMAL_ANNUAL_KM) / MILEAGE_SCORE_SPREAD_KM) ** 2)
+  ), 0, 100);
   const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));
   const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));
   const accelScore = Math.max(0, Math.round(100 - accelPer100Km * 8));
@@ -6231,8 +6258,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 37 | personalTimeRisk | return clamp(Math.round(hourData.riskScore x ROUTE_RISK_CONSTANTS.PERSONAL_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK) | `return clamp(Math.round(hourData.riskScore * ROUTE_RISK_CONSTANTS.PERSONAL_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK);` |
-| 106 | estimatePredictiveRouteRisk | ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall default trip.score) OR 0), 0) / recent.length | `? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) \|\| 0), 0) / recent.length` |
+| 38 | personalTimeRisk | return clamp(Math.round(hourData.riskScore x ROUTE_RISK_CONSTANTS.PERSONAL_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK) | `return clamp(Math.round(hourData.riskScore * ROUTE_RISK_CONSTANTS.PERSONAL_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK);` |
+| 121 | estimatePredictiveRouteRisk | ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall default trip.score) OR 0), 0) / recent.length | `? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) \|\| 0), 0) / recent.length` |
 
 #### src/lib/preTripRisk.js
 
@@ -6365,18 +6392,18 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 16 | ubiGrade | if (score >= 90) return 'A+' | `if (score >= 90) return 'A+';` |
-| 17 | ubiGrade | if (score >= 80) return 'A' | `if (score >= 80) return 'A';` |
-| 18 | ubiGrade | if (score >= 70) return 'B' | `if (score >= 70) return 'B';` |
-| 19 | ubiGrade | if (score >= 60) return 'C' | `if (score >= 60) return 'C';` |
-| 23 | category | category = (score, label, value) => ({ | `const category = (score, label, value) => ({` |
-| 80 | computeUBIReport | mileageScore = clamp(Math.round(100 - Math.max(0, (mileageWindowKm - 1000) / 1000) x 5), 20, 100) | `const mileageScore = clamp(Math.round(100 - Math.max(0, (mileageWindowKm - 1000) / 1000) * 5), 20, 100);` |
-| 81 | computeUBIReport | timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio x 150)) | `const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));` |
-| 82 | computeUBIReport | brakingScore = Math.max(0, Math.round(100 - brakesPer100Km x 8)) | `const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));` |
-| 83 | computeUBIReport | accelScore = Math.max(0, Math.round(100 - accelPer100Km x 8)) | `const accelScore = Math.max(0, Math.round(100 - accelPer100Km * 8));` |
-| 84 | computeUBIReport | corneringScore = Math.max(0, Math.round(100 - turnsPer100Km x 6)) | `const corneringScore = Math.max(0, Math.round(100 - turnsPer100Km * 6));` |
-| 85 | computeUBIReport | speedScore = Math.max(0, Math.round(100 - speedingPer100Km x 10)) | `const speedScore = Math.max(0, Math.round(100 - speedingPer100Km * 10));` |
-| 113 | computeUBIReport | speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)} / 100 km`), | `speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)}/100 km`),` |
+| 18 | ubiGrade | if (score >= 90) return 'A+' | `if (score >= 90) return 'A+';` |
+| 19 | ubiGrade | if (score >= 80) return 'A' | `if (score >= 80) return 'A';` |
+| 20 | ubiGrade | if (score >= 70) return 'B' | `if (score >= 70) return 'B';` |
+| 21 | ubiGrade | if (score >= 60) return 'C' | `if (score >= 60) return 'C';` |
+| 25 | category | category = (score, label, value) => ({ | `const category = (score, label, value) => ({` |
+| 85 | computeUBIReport | 100 x Math.exp(-0.5 x ((mileageWindowKm - OPTIMAL_ANNUAL_KM) / MILEAGE_SCORE_SPREAD_KM) ^ 2) | `100 * Math.exp(-0.5 * ((mileageWindowKm - OPTIMAL_ANNUAL_KM) / MILEAGE_SCORE_SPREAD_KM) ** 2)` |
+| 87 | computeUBIReport | timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio x 150)) | `const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));` |
+| 88 | computeUBIReport | brakingScore = Math.max(0, Math.round(100 - brakesPer100Km x 8)) | `const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));` |
+| 89 | computeUBIReport | accelScore = Math.max(0, Math.round(100 - accelPer100Km x 8)) | `const accelScore = Math.max(0, Math.round(100 - accelPer100Km * 8));` |
+| 90 | computeUBIReport | corneringScore = Math.max(0, Math.round(100 - turnsPer100Km x 6)) | `const corneringScore = Math.max(0, Math.round(100 - turnsPer100Km * 6));` |
+| 91 | computeUBIReport | speedScore = Math.max(0, Math.round(100 - speedingPer100Km x 10)) | `const speedScore = Math.max(0, Math.round(100 - speedingPer100Km * 10));` |
+| 119 | computeUBIReport | speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)} / 100 km`), | `speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)}/100 km`),` |
 
 #### src/lib/weatherContext.js
 
@@ -6505,7 +6532,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 </details>
 
 <details>
-<summary>risk/prediction calculations (33)</summary>
+<summary>risk/prediction calculations (34)</summary>
 
 #### src/lib/mapPopupHtml.js
 
@@ -6529,10 +6556,11 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 34 | personalTimeRisk | return clamp(Math.round(getFallbackTimeRisk(hour, profile) x ROUTE_RISK_CONSTANTS.FALLBACK_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK) | `return clamp(Math.round(getFallbackTimeRisk(hour, profile) * ROUTE_RISK_CONSTANTS.FALLBACK_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK);` |
-| 69 | saferWindowText | upcoming.sort((a, b) => a.risk - b.risk) | `upcoming.sort((a, b) => a.risk - b.risk);` |
-| 73 | saferWindowText | if (best.risk >= currentRisk - ROUTE_RISK_CONSTANTS.RISK_EQUIVALENT_MARGIN) { | `if (best.risk >= currentRisk - ROUTE_RISK_CONSTANTS.RISK_EQUIVALENT_MARGIN) {` |
-| 77 | saferWindowText | return `Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.` | `return `Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`;` |
+| 35 | personalTimeRisk | return clamp(Math.round(getFallbackTimeRisk(hour, profile) x ROUTE_RISK_CONSTANTS.FALLBACK_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK) | `return clamp(Math.round(getFallbackTimeRisk(hour, profile) * ROUTE_RISK_CONSTANTS.FALLBACK_TIME_RISK_SCALE), 0, ROUTE_RISK_CONSTANTS.LATE_NIGHT_TIME_RISK);` |
+| 70 | saferWindowText | upcoming.sort((a, b) => a.risk - b.risk) | `upcoming.sort((a, b) => a.risk - b.risk);` |
+| 74 | saferWindowText | if (best.risk >= currentRisk - ROUTE_RISK_CONSTANTS.RISK_EQUIVALENT_MARGIN) { | `if (best.risk >= currentRisk - ROUTE_RISK_CONSTANTS.RISK_EQUIVALENT_MARGIN) {` |
+| 78 | saferWindowText | return `Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.` | `return `Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`;` |
+| 84 | dangerZoneRisk | (1 - Math.exp(-Math.max(0, zoneCount) / ROUTE_RISK_CONSTANTS.DANGER_ZONE_DECAY_COUNT)) | `(1 - Math.exp(-Math.max(0, zoneCount) / ROUTE_RISK_CONSTANTS.DANGER_ZONE_DECAY_COUNT))` |
 
 #### src/lib/preTripRisk.js
 
@@ -7056,7 +7084,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 113 | estimatePredictiveRouteRisk | return sum + events / Math.max(1, Number(trip.distance_km) OR 1) | `return sum + events / Math.max(1, Number(trip.distance_km) \|\| 1);` |
+| 128 | estimatePredictiveRouteRisk | return sum + events / Math.max(1, Number(trip.distance_km) OR 1) | `return sum + events / Math.max(1, Number(trip.distance_km) \|\| 1);` |
 
 #### src/lib/preTripRisk.js
 
@@ -7330,8 +7358,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 94 | computeUBIReport | starts = completed.map((trip) => new Date(trip.start_time).getTime()).filter(Number.isFinite) | `const starts = completed.map((trip) => new Date(trip.start_time).getTime()).filter(Number.isFinite);` |
-| 95 | computeUBIReport | ends = completed.map((trip) => new Date(trip.end_time OR trip.start_time).getTime()).filter(Number.isFinite) | `const ends = completed.map((trip) => new Date(trip.end_time \|\| trip.start_time).getTime()).filter(Number.isFinite);` |
+| 100 | computeUBIReport | starts = completed.map((trip) => new Date(trip.start_time).getTime()).filter(Number.isFinite) | `const starts = completed.map((trip) => new Date(trip.start_time).getTime()).filter(Number.isFinite);` |
+| 101 | computeUBIReport | ends = completed.map((trip) => new Date(trip.end_time OR trip.start_time).getTime()).filter(Number.isFinite) | `const ends = completed.map((trip) => new Date(trip.end_time \|\| trip.start_time).getTime()).filter(Number.isFinite);` |
 
 #### src/lib/weatherContext.js
 
@@ -7817,8 +7845,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 41 | formatHour | normalized = ((Math.trunc(Number(hour) OR 0) % 24) + 24) % 24 | `const normalized = ((Math.trunc(Number(hour) \|\| 0) % 24) + 24) % 24;` |
-| 64 | saferWindowText | hour = (currentHour + offset) % 24 | `const hour = (currentHour + offset) % 24;` |
+| 42 | formatHour | normalized = ((Math.trunc(Number(hour) OR 0) % 24) + 24) % 24 | `const normalized = ((Math.trunc(Number(hour) \|\| 0) % 24) + 24) % 24;` |
+| 65 | saferWindowText | hour = (currentHour + offset) % 24 | `const hour = (currentHour + offset) % 24;` |
 
 #### src/lib/preTripRisk.js
 
@@ -8062,8 +8090,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 52 | computeUBIReport | speedCompliance: category(0, 'Speed compliance', '0.0 / 100 km'), | `speedCompliance: category(0, 'Speed compliance', '0.0/100 km'),` |
-| 76 | computeUBIReport | return Number.isFinite(tripTime) AND tripTime >= mileageWindowStart AND tripTime <= mileageWindowEnd | `return Number.isFinite(tripTime) && tripTime >= mileageWindowStart && tripTime <= mileageWindowEnd;` |
+| 54 | computeUBIReport | speedCompliance: category(0, 'Speed compliance', '0.0 / 100 km'), | `speedCompliance: category(0, 'Speed compliance', '0.0/100 km'),` |
+| 80 | computeUBIReport | return Number.isFinite(tripTime) AND tripTime >= mileageWindowStart AND tripTime <= mileageWindowEnd | `return Number.isFinite(tripTime) && tripTime >= mileageWindowStart && tripTime <= mileageWindowEnd;` |
 
 #### src/lib/weatherContext.js
 
@@ -8301,7 +8329,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 </details>
 
 <details>
-<summary>general calculation calculations (201)</summary>
+<summary>general calculation calculations (200)</summary>
 
 #### android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java
 
@@ -8418,7 +8446,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 114 | estimatePredictiveRouteRisk | }, 0) / Math.max(1, recent.length) | `}, 0) / Math.max(1, recent.length);` |
+| 129 | estimatePredictiveRouteRisk | }, 0) / Math.max(1, recent.length) | `}, 0) / Math.max(1, recent.length);` |
 
 #### src/lib/preTripRisk.js
 
@@ -8594,9 +8622,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 59 | computeUBIReport | nightRatio = nightTrips.length / Math.max(1, completed.length) | `const nightRatio = nightTrips.length / Math.max(1, completed.length);` |
-| 64 | computeUBIReport | per100 = (count) => (count / Math.max(1, totalKm)) x 100 | `const per100 = (count) => (count / Math.max(1, totalKm)) * 100;` |
-| 102 | computeUBIReport | totalKm: Math.round(totalKm x 10) / 10, | `totalKm: Math.round(totalKm * 10) / 10,` |
+| 68 | computeUBIReport | per100 = (count) => (count / Math.max(1, totalKm)) x 100 | `const per100 = (count) => (count / Math.max(1, totalKm)) * 100;` |
+| 108 | computeUBIReport | totalKm: Math.round(totalKm x 10) / 10, | `totalKm: Math.round(totalKm * 10) / 10,` |
 
 #### src/lib/weatherContext.js
 
@@ -8682,7 +8709,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 </details>
 
 <details>
-<summary>test calculation/assertion lines (170)</summary>
+<summary>test calculation/assertion lines (173)</summary>
 
 #### src/components/__tests__/SectionErrorBoundary.test.jsx
 
@@ -8708,8 +8735,11 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 33 | (module scope) | { lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now).toISOString() }, | `{ lat: 43.6501, lng: -79.38, speed_kmh: 0, timestamp: new Date(now).toISOString() },` |
 | 66 | (module scope) | currentLocation: { lat: 43.65, lng: -79.38 }, | `currentLocation: { lat: 43.65, lng: -79.38 },` |
 | 67 | (module scope) | dangerZones: [{ id: 'dz1', lat: 43.6501, lng: -79.3801, riskLevel: 'high' }], | `dangerZones: [{ id: 'dz1', lat: 43.6501, lng: -79.3801, riskLevel: 'high' }],` |
-| 156 | (module scope) | trips = scores.map((score, index) => trip(score, index, { | `const trips = scores.map((score, index) => trip(score, index, {` |
-| 160 | (module scope) | mean = scores.reduce((sum, score) => sum + score, 0) / scores.length | `const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;` |
+| 77 | (module scope) | lat: 43.65 + index x 0.00001, | `lat: 43.65 + index * 0.00001,` |
+| 78 | (module scope) | lng: -79.38, | `lng: -79.38,` |
+| 84 | (module scope) | currentLocation: { lat: 43.65, lng: -79.38 }, | `currentLocation: { lat: 43.65, lng: -79.38 },` |
+| 178 | (module scope) | trips = scores.map((score, index) => trip(score, index, { | `const trips = scores.map((score, index) => trip(score, index, {` |
+| 182 | (module scope) | mean = scores.reduce((sum, score) => sum + score, 0) / scores.length | `const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;` |
 
 #### src/lib/__tests__/brakingEfficiency.test.js
 
@@ -14794,79 +14824,86 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 </details>
 
 <details>
-<summary>src/lib/predictiveRouteRisk.js (69)</summary>
+<summary>src/lib/predictiveRouteRisk.js (76)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
 | 7 | `20` | numeric literal | RECENT_TRIP_WINDOW | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 8 | `75` | numeric literal | DEFAULT_AVG_SCORE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 9 | `18` | numeric literal | EVENT_DENSITY_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 10 | `10` | numeric literal | DANGER_ZONE_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 11 | `0.25` | numeric literal | WEATHER_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 12 | `0.45` | numeric literal | BASELINE_SCORE_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 13 | `18` | numeric literal | LATE_NIGHT_TIME_RISK | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 14 | `10` | numeric literal | EVENING_RUSH_TIME_RISK | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 15 | `0.18` | numeric literal | PERSONAL_TIME_RISK_SCALE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 16 | `0.3` | numeric literal | FALLBACK_TIME_RISK_SCALE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 17 | `0.3` | numeric literal | MIN_PERSONAL_CONFIDENCE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 18 | `0.5` | numeric literal | MIN_TEXT_CONFIDENCE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 19 | `6` | numeric literal | MIN_HOURLY_RISK_HOURS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 20 | `12` | numeric literal | WINDOW_LOOKAHEAD_HOURS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 21 | `5` | numeric literal | RISK_EQUIVALENT_MARGIN | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 22 | `2000` | numeric literal | PROXIMITY_METERS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 29 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 33 | `2` | numeric literal | tripCount | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 34 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 37 | `0` | numeric literal | riskScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 41 | `0` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 41 | `24` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 41 | `24` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 41 | `24` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 42 | `12` | numeric literal | suffix | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 42 | `'PM'` | string literal | suffix | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 42 | `'AM'` | string literal | suffix | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 43 | `12` | numeric literal | displayHour | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 43 | `12` | numeric literal | displayHour | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 44 | ``${displayHour}:00 ${suffix}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 54 | `'Late night is higher risk. Consider waiting until daylight or after a proper rest.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 57 | `'After 7 PM or before rush hour'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 59 | `'Current time looks acceptable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 63 | `1` | numeric literal | offset | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 64 | `24` | numeric literal | hour | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 70 | `0` | numeric literal | best | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 74 | `'Current time looks as good as any upcoming window for you.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 77 | ``Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`` | string literal | lower | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 95 | `0` | numeric literal | weatherRiskScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 100 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 102 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 102 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 104 | `0` | numeric literal | recent | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 106 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 106 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 109 | `0` | numeric literal | events | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 110 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 111 | `0` | numeric literal | 2 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 111 | `2` | numeric literal | 2 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 112 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 113 | `1` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 113 | `1` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 114 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 114 | `1` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 126 | `100` | numeric literal | 100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 129 | `0` | numeric literal | WEATHER_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 131 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 131 | `100` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 135 | `65` | numeric literal | riskLevel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 135 | `'high'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 135 | `40` | numeric literal | riskLevel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 135 | `'moderate'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 135 | `'low'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 139 | `'Known danger zones nearby'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 140 | `40` | numeric literal | weatherRiskScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 141 | `'Weather risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 142 | `0.6` | numeric literal | eventDensity | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 143 | `'Recent route event density'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 144 | `'Personal baseline'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 10 | `30` | numeric literal | MAX_DANGER_ZONE_RISK | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 11 | `3` | numeric literal | DANGER_ZONE_DECAY_COUNT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 12 | `0.25` | numeric literal | WEATHER_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 13 | `0.45` | numeric literal | BASELINE_SCORE_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 14 | `18` | numeric literal | LATE_NIGHT_TIME_RISK | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 15 | `10` | numeric literal | EVENING_RUSH_TIME_RISK | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 16 | `0.18` | numeric literal | PERSONAL_TIME_RISK_SCALE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 17 | `0.3` | numeric literal | FALLBACK_TIME_RISK_SCALE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 18 | `0.3` | numeric literal | MIN_PERSONAL_CONFIDENCE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 19 | `0.5` | numeric literal | MIN_TEXT_CONFIDENCE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 20 | `6` | numeric literal | MIN_HOURLY_RISK_HOURS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 21 | `12` | numeric literal | WINDOW_LOOKAHEAD_HOURS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 22 | `5` | numeric literal | RISK_EQUIVALENT_MARGIN | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 23 | `2000` | numeric literal | PROXIMITY_METERS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 30 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 34 | `2` | numeric literal | tripCount | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 35 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 38 | `0` | numeric literal | riskScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 42 | `0` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 42 | `24` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 42 | `24` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 42 | `24` | numeric literal | normalized | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 43 | `12` | numeric literal | suffix | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 43 | `'PM'` | string literal | suffix | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 43 | `'AM'` | string literal | suffix | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `12` | numeric literal | displayHour | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 44 | `12` | numeric literal | displayHour | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 45 | ``${displayHour}:00 ${suffix}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 55 | `'Late night is higher risk. Consider waiting until daylight or after a proper rest.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 58 | `'After 7 PM or before rush hour'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 60 | `'Current time looks acceptable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 64 | `1` | numeric literal | offset | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 65 | `24` | numeric literal | hour | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 71 | `0` | numeric literal | best | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 75 | `'Current time looks as good as any upcoming window for you.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 78 | ``Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`` | string literal | lower | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 84 | `1` | numeric literal | 1 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 84 | `0` | numeric literal | 1 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 90 | `1` | numeric literal | zoneLabel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 90 | `'zone'` | string literal | zoneLabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 90 | `'zones'` | string literal | zoneLabel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 91 | `1000` | numeric literal | radiusKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 92 | ``Known danger zones nearby (${zoneCount} ${zoneLabel} within ${radiusKm} km)`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 110 | `0` | numeric literal | weatherRiskScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 115 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 117 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 117 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 119 | `0` | numeric literal | recent | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 121 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 121 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 124 | `0` | numeric literal | events | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 125 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 126 | `0` | numeric literal | 2 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 126 | `2` | numeric literal | 2 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 127 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 128 | `1` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 128 | `1` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 129 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 129 | `1` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 142 | `100` | numeric literal | 100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 145 | `0` | numeric literal | WEATHER_WEIGHT | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 147 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 147 | `100` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 151 | `65` | numeric literal | riskLevel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 151 | `'high'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 151 | `40` | numeric literal | riskLevel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 151 | `'moderate'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 151 | `'low'` | string literal | riskLevel | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 157 | `40` | numeric literal | weatherRiskScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 158 | `'Weather risk'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 159 | `0.6` | numeric literal | eventDensity | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 160 | `'Recent route event density'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 161 | `'Personal baseline'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -19977,7 +20014,7 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 </details>
 
 <details>
-<summary>src/lib/ubiReport.js (107)</summary>
+<summary>src/lib/ubiReport.js (111)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -19986,108 +20023,112 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | 4 | `60` | numeric literal | MILEAGE_SCORE_WINDOW_MS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 4 | `60` | numeric literal | MILEAGE_SCORE_WINDOW_MS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 4 | `1000` | numeric literal | MILEAGE_SCORE_WINDOW_MS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 7 | `0.15` | numeric literal | mileage | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 8 | `0.20` | numeric literal | timeOfDay | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 9 | `0.25` | numeric literal | hardBraking | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 10 | `0.20` | numeric literal | acceleration | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 11 | `0.10` | numeric literal | cornering | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 12 | `0.10` | numeric literal | speedCompliance | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 16 | `90` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 16 | `'A+'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 17 | `80` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 17 | `'A'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 18 | `70` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 18 | `'B'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `60` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 19 | `'C'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 20 | `'D'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 31 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 32 | `0` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 32 | `0` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 33 | `0` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 33 | `60` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 33 | `0` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 40 | `0` | numeric literal | tripCount | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 41 | `0` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 42 | `0` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 43 | `0` | numeric literal | ubiScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 44 | `'D'` | string literal | ubiGrade | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 45 | `'Non-preferred'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 47 | `0` | numeric literal | mileage | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 47 | `'Total mileage'` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 47 | `'0.0 km'` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 48 | `0` | numeric literal | timeOfDay | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 48 | `'Time of day'` | string literal | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 48 | `'0% night'` | string literal | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 49 | `0` | numeric literal | hardBraking | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 49 | `'Hard braking'` | string literal | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 49 | `'0.0/100 km'` | string constant/key | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 50 | `0` | numeric literal | acceleration | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 50 | `'Rapid acceleration'` | string literal | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 50 | `'0.0/100 km'` | string constant/key | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 51 | `0` | numeric literal | cornering | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 51 | `'Cornering'` | string literal | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 51 | `'0.0/100 km'` | string constant/key | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 52 | `0` | numeric literal | speedCompliance | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 52 | `'Speed compliance'` | string literal | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 52 | `'0.0/100 km'` | string constant/key | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 54 | `'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.'` | string constant/key | disclaimer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 58 | `true` | boolean flag | nightTrips | Inline state/default flag; changing can flip behavior. |
-| 59 | `1` | numeric literal | nightRatio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 60 | `0` | numeric literal | totalHarshBrakes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 60 | `0` | numeric literal | totalHarshBrakes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 61 | `0` | numeric literal | totalRapidAccel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 61 | `0` | numeric literal | totalRapidAccel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 62 | `0` | numeric literal | totalSharpTurns | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 62 | `0` | numeric literal | totalSharpTurns | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 63 | `0` | numeric literal | speedingEvents | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 63 | `0` | numeric literal | speedingEvents | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 64 | `1` | numeric literal | per100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 64 | `100` | numeric literal | per100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 78 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 78 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `100` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `0` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `1000` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `1000` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `5` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `20` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 80 | `100` | numeric literal | mileageScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 81 | `0` | numeric literal | timeOfDayScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 81 | `100` | numeric literal | timeOfDayScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 81 | `150` | numeric literal | timeOfDayScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 82 | `0` | numeric literal | brakingScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 82 | `100` | numeric literal | brakingScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 82 | `8` | numeric literal | brakingScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 83 | `0` | numeric literal | accelScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 83 | `100` | numeric literal | accelScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 83 | `8` | numeric literal | accelScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 84 | `0` | numeric literal | corneringScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 84 | `100` | numeric literal | corneringScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 84 | `6` | numeric literal | corneringScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 85 | `0` | numeric literal | speedScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 85 | `100` | numeric literal | speedScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 85 | `10` | numeric literal | speedScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 102 | `10` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 102 | `10` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 106 | `85` | numeric literal | ubiTier | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 106 | `'Preferred'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 106 | `70` | numeric literal | ubiTier | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 106 | `'Standard'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 106 | `'Non-preferred'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 108 | `'12-month mileage'` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 108 | ``${mileageWindowKm.toFixed(1)} km`` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 109 | `'Time of day'` | string literal | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 109 | ``${(nightRatio * 100).toFixed(0)}% night`` | string constant/key | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 110 | `'Hard braking'` | string literal | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 110 | ``${brakesPer100Km.toFixed(1)}/100 km`` | string constant/key | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 111 | `'Rapid acceleration'` | string literal | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 111 | ``${accelPer100Km.toFixed(1)}/100 km`` | string constant/key | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 112 | `'Cornering'` | string literal | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 112 | ``${turnsPer100Km.toFixed(1)}/100 km`` | string constant/key | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 113 | `'Speed compliance'` | string literal | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 113 | ``${speedingPer100Km.toFixed(1)}/100 km`` | string constant/key | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 115 | `'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.'` | string constant/key | disclaimer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 5 | `10000` | numeric literal | OPTIMAL_ANNUAL_KM | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 6 | `8000` | numeric literal | MILEAGE_SCORE_SPREAD_KM | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 9 | `0.15` | numeric literal | mileage | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 10 | `0.20` | numeric literal | timeOfDay | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 11 | `0.25` | numeric literal | hardBraking | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 12 | `0.20` | numeric literal | acceleration | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 13 | `0.10` | numeric literal | cornering | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 14 | `0.10` | numeric literal | speedCompliance | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 18 | `90` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 18 | `'A+'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `80` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 19 | `'A'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 20 | `70` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 20 | `'B'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 21 | `60` | numeric literal | score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 21 | `'C'` | string literal | score | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 22 | `'D'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 33 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 34 | `0` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 34 | `0` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 35 | `0` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 35 | `60` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 35 | `0` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 42 | `0` | numeric literal | tripCount | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 43 | `0` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 44 | `0` | numeric literal | totalDrivingMinutes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 45 | `0` | numeric literal | ubiScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 46 | `'D'` | string literal | ubiGrade | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 47 | `'Non-preferred'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 49 | `0` | numeric literal | mileage | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 49 | `'Total mileage'` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 49 | `'0.0 km'` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 50 | `0` | numeric literal | timeOfDay | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 50 | `'Time of day'` | string literal | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 50 | `'0% night'` | string literal | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 51 | `0` | numeric literal | hardBraking | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 51 | `'Hard braking'` | string literal | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 51 | `'0.0/100 km'` | string constant/key | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 52 | `0` | numeric literal | acceleration | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 52 | `'Rapid acceleration'` | string literal | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 52 | `'0.0/100 km'` | string constant/key | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 53 | `0` | numeric literal | cornering | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 53 | `'Cornering'` | string literal | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 53 | `'0.0/100 km'` | string constant/key | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `0` | numeric literal | speedCompliance | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 54 | `'Speed compliance'` | string literal | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `'0.0/100 km'` | string constant/key | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 56 | `'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.'` | string constant/key | disclaimer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 61 | `true` | boolean flag | night_driving | Inline state/default flag; changing can flip behavior. |
+| 62 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 62 | `60` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 62 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 63 | `0` | numeric literal | nightRatio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 63 | `0` | numeric literal | nightRatio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 64 | `0` | numeric literal | totalHarshBrakes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 64 | `0` | numeric literal | totalHarshBrakes | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 65 | `0` | numeric literal | totalRapidAccel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 65 | `0` | numeric literal | totalRapidAccel | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 66 | `0` | numeric literal | totalSharpTurns | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 66 | `0` | numeric literal | totalSharpTurns | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 67 | `0` | numeric literal | speedingEvents | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 67 | `0` | numeric literal | speedingEvents | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 68 | `1` | numeric literal | per100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 68 | `100` | numeric literal | per100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 82 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 82 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 85 | `100` | numeric literal | 100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 85 | `-0.5` | numeric literal | 100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 85 | `2` | numeric literal | 100 | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 86 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 86 | `100` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 87 | `0` | numeric literal | timeOfDayScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 87 | `100` | numeric literal | timeOfDayScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 87 | `150` | numeric literal | timeOfDayScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 88 | `0` | numeric literal | brakingScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 88 | `100` | numeric literal | brakingScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 88 | `8` | numeric literal | brakingScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 89 | `0` | numeric literal | accelScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 89 | `100` | numeric literal | accelScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 89 | `8` | numeric literal | accelScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 90 | `0` | numeric literal | corneringScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 90 | `100` | numeric literal | corneringScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 90 | `6` | numeric literal | corneringScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 91 | `0` | numeric literal | speedScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 91 | `100` | numeric literal | speedScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 91 | `10` | numeric literal | speedScore | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 108 | `10` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 108 | `10` | numeric literal | totalKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 112 | `85` | numeric literal | ubiTier | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 112 | `'Preferred'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 112 | `70` | numeric literal | ubiTier | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 112 | `'Standard'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 112 | `'Non-preferred'` | string literal | ubiTier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 114 | `'12-month mileage'` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 114 | ``${mileageWindowKm.toFixed(1)} km`` | string literal | mileage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 115 | `'Time of day'` | string literal | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 115 | ``${(nightRatio * 100).toFixed(0)}% night`` | string constant/key | timeOfDay | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 116 | `'Hard braking'` | string literal | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 116 | ``${brakesPer100Km.toFixed(1)}/100 km`` | string constant/key | hardBraking | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 117 | `'Rapid acceleration'` | string literal | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 117 | ``${accelPer100Km.toFixed(1)}/100 km`` | string constant/key | acceleration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 118 | `'Cornering'` | string literal | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 118 | ``${turnsPer100Km.toFixed(1)}/100 km`` | string constant/key | cornering | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 119 | `'Speed compliance'` | string literal | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 119 | ``${speedingPer100Km.toFixed(1)}/100 km`` | string constant/key | speedCompliance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 121 | `'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.'` | string constant/key | disclaimer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -24643,19 +24684,20 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | src/lib/predictiveRouteRisk.js:7 | RECENT_TRIP_WINDOW | `20` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `RECENT_TRIP_WINDOW: 20,` |
 | src/lib/predictiveRouteRisk.js:8 | DEFAULT_AVG_SCORE | `75` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `DEFAULT_AVG_SCORE: 75,` |
 | src/lib/predictiveRouteRisk.js:9 | EVENT_DENSITY_WEIGHT | `18` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `EVENT_DENSITY_WEIGHT: 18,` |
-| src/lib/predictiveRouteRisk.js:10 | DANGER_ZONE_WEIGHT | `10` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `DANGER_ZONE_WEIGHT: 10,` |
-| src/lib/predictiveRouteRisk.js:11 | WEATHER_WEIGHT | `0.25` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `WEATHER_WEIGHT: 0.25,` |
-| src/lib/predictiveRouteRisk.js:12 | BASELINE_SCORE_WEIGHT | `0.45` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `BASELINE_SCORE_WEIGHT: 0.45,` |
-| src/lib/predictiveRouteRisk.js:13 | LATE_NIGHT_TIME_RISK | `18` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `LATE_NIGHT_TIME_RISK: 18,` |
-| src/lib/predictiveRouteRisk.js:14 | EVENING_RUSH_TIME_RISK | `10` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `EVENING_RUSH_TIME_RISK: 10,` |
-| src/lib/predictiveRouteRisk.js:15 | PERSONAL_TIME_RISK_SCALE | `0.18` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `PERSONAL_TIME_RISK_SCALE: 0.18,` |
-| src/lib/predictiveRouteRisk.js:16 | FALLBACK_TIME_RISK_SCALE | `0.3` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `FALLBACK_TIME_RISK_SCALE: 0.3,` |
-| src/lib/predictiveRouteRisk.js:17 | MIN_PERSONAL_CONFIDENCE | `0.3` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_PERSONAL_CONFIDENCE: 0.3,` |
-| src/lib/predictiveRouteRisk.js:18 | MIN_TEXT_CONFIDENCE | `0.5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_TEXT_CONFIDENCE: 0.5,` |
-| src/lib/predictiveRouteRisk.js:19 | MIN_HOURLY_RISK_HOURS | `6` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_HOURLY_RISK_HOURS: 6,` |
-| src/lib/predictiveRouteRisk.js:20 | WINDOW_LOOKAHEAD_HOURS | `12` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `WINDOW_LOOKAHEAD_HOURS: 12,` |
-| src/lib/predictiveRouteRisk.js:21 | RISK_EQUIVALENT_MARGIN | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `RISK_EQUIVALENT_MARGIN: 5,` |
-| src/lib/predictiveRouteRisk.js:22 | PROXIMITY_METERS | `2000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `PROXIMITY_METERS: 2000,` |
+| src/lib/predictiveRouteRisk.js:10 | MAX_DANGER_ZONE_RISK | `30` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MAX_DANGER_ZONE_RISK: 30,` |
+| src/lib/predictiveRouteRisk.js:11 | DANGER_ZONE_DECAY_COUNT | `3` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `DANGER_ZONE_DECAY_COUNT: 3,` |
+| src/lib/predictiveRouteRisk.js:12 | WEATHER_WEIGHT | `0.25` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `WEATHER_WEIGHT: 0.25,` |
+| src/lib/predictiveRouteRisk.js:13 | BASELINE_SCORE_WEIGHT | `0.45` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `BASELINE_SCORE_WEIGHT: 0.45,` |
+| src/lib/predictiveRouteRisk.js:14 | LATE_NIGHT_TIME_RISK | `18` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `LATE_NIGHT_TIME_RISK: 18,` |
+| src/lib/predictiveRouteRisk.js:15 | EVENING_RUSH_TIME_RISK | `10` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `EVENING_RUSH_TIME_RISK: 10,` |
+| src/lib/predictiveRouteRisk.js:16 | PERSONAL_TIME_RISK_SCALE | `0.18` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `PERSONAL_TIME_RISK_SCALE: 0.18,` |
+| src/lib/predictiveRouteRisk.js:17 | FALLBACK_TIME_RISK_SCALE | `0.3` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `FALLBACK_TIME_RISK_SCALE: 0.3,` |
+| src/lib/predictiveRouteRisk.js:18 | MIN_PERSONAL_CONFIDENCE | `0.3` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_PERSONAL_CONFIDENCE: 0.3,` |
+| src/lib/predictiveRouteRisk.js:19 | MIN_TEXT_CONFIDENCE | `0.5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_TEXT_CONFIDENCE: 0.5,` |
+| src/lib/predictiveRouteRisk.js:20 | MIN_HOURLY_RISK_HOURS | `6` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_HOURLY_RISK_HOURS: 6,` |
+| src/lib/predictiveRouteRisk.js:21 | WINDOW_LOOKAHEAD_HOURS | `12` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `WINDOW_LOOKAHEAD_HOURS: 12,` |
+| src/lib/predictiveRouteRisk.js:22 | RISK_EQUIVALENT_MARGIN | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `RISK_EQUIVALENT_MARGIN: 5,` |
+| src/lib/predictiveRouteRisk.js:23 | PROXIMITY_METERS | `2000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `PROXIMITY_METERS: 2000,` |
 | src/lib/preTripRisk.js:7 | MIN_TRIPS_FOR_BUCKET | `3` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_TRIPS_FOR_BUCKET: 3,` |
 | src/lib/preTripRisk.js:8 | MIN_TRIPS_FOR_DAY | `2` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_TRIPS_FOR_DAY: 2,` |
 | src/lib/preTripRisk.js:9 | MIN_TRIPS_FOR_CALIBRATION | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `MIN_TRIPS_FOR_CALIBRATION: 5,` |
@@ -24831,6 +24873,8 @@ Named thresholds and policies are centralized around `DEFAULT_THRESHOLDS`, `ECO_
 | src/lib/ubiReport.js:4 | MILEAGE_SCORE_WINDOW_MS | `60` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;` |
 | src/lib/ubiReport.js:4 | MILEAGE_SCORE_WINDOW_MS | `60` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;` |
 | src/lib/ubiReport.js:4 | MILEAGE_SCORE_WINDOW_MS | `1000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;` |
+| src/lib/ubiReport.js:5 | OPTIMAL_ANNUAL_KM | `10000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const OPTIMAL_ANNUAL_KM = 10000;` |
+| src/lib/ubiReport.js:6 | MILEAGE_SCORE_SPREAD_KM | `8000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const MILEAGE_SCORE_SPREAD_KM = 8000;` |
 | src/lib/weatherContext.js:5 | WEATHER_CACHE_KEY | `'drivesense_open_meteo_weather_cache_v1'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';` |
 | src/lib/weatherContext.js:6 | CACHE_MAX_AGE_MS | `6` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;` |
 | src/lib/weatherContext.js:6 | CACHE_MAX_AGE_MS | `60` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;` |
@@ -25402,16 +25446,17 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/__tests__/advancedOpenSourceFeatures.test.js | 50 | it | parses common OBD-II PID responses |
 | src/lib/__tests__/advancedOpenSourceFeatures.test.js | 55 | it | scores unusual trips against a local driver model |
 | src/lib/__tests__/advancedOpenSourceFeatures.test.js | 63 | it | includes known danger zones in predictive route risk |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 73 | it | uses the newest completed trips for predictive route risk even when input is unsorted |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 90 | it | does not describe late-night route timing as acceptable |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 100 | it | recommends a personal safer window when hourly risk is calibrated |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 121 | it | builds a local weekly coaching sentence without AI services |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 132 | describe | buildHabitProfile |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 133 | it | returns safe defaults for an empty trips array |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 141 | it | marks all time buckets insufficient with four spread-out trips |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 154 | it | calibrates night risk from thirty night trips |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 167 | it | calculates trendRisk from the most recent twenty trips |
-| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 178 | it | detects fatigue onset when scores drop after cumulative daily driving |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 74 | it | caps dense danger-zone contribution without pinning route risk to 100 |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 95 | it | uses the newest completed trips for predictive route risk even when input is unsorted |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 112 | it | does not describe late-night route timing as acceptable |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 122 | it | recommends a personal safer window when hourly risk is calibrated |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 143 | it | builds a local weekly coaching sentence without AI services |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 154 | describe | buildHabitProfile |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 155 | it | returns safe defaults for an empty trips array |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 163 | it | marks all time buckets insufficient with four spread-out trips |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 176 | it | calibrates night risk from thirty night trips |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 189 | it | calculates trendRisk from the most recent twenty trips |
+| src/lib/__tests__/advancedOpenSourceFeatures.test.js | 200 | it | detects fatigue onset when scores drop after cumulative daily driving |
 | src/lib/__tests__/brakingEfficiency.test.js | 11 | describe | braking efficiency |
 | src/lib/__tests__/brakingEfficiency.test.js | 12 | it | handles empty route points |
 | src/lib/__tests__/brakingEfficiency.test.js | 16 | it | handles a single route point |
@@ -25702,11 +25747,12 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/__tests__/ubiReport.test.js | 18 | describe | ubiReport |
 | src/lib/__tests__/ubiReport.test.js | 23 | it | handles empty trips without NaN |
 | src/lib/__tests__/ubiReport.test.js | 29 | it | zero night trips gives timeOfDay score 100 |
-| src/lib/__tests__/ubiReport.test.js | 33 | it | category weights sum to exactly 1.0 |
-| src/lib/__tests__/ubiReport.test.js | 38 | it | ubiTier is Preferred when ubiScore >= 85 |
-| src/lib/__tests__/ubiReport.test.js | 42 | it | totalKm sums all trip distances |
-| src/lib/__tests__/ubiReport.test.js | 46 | it | scores mileage from the last 12 months instead of lifetime distance |
-| src/lib/__tests__/ubiReport.test.js | 66 | it | scores lower recent annual mileage below very high recent annual mileage |
+| src/lib/__tests__/ubiReport.test.js | 33 | it | scores time-of-day exposure by night driving minutes instead of trip count |
+| src/lib/__tests__/ubiReport.test.js | 48 | it | category weights sum to exactly 1.0 |
+| src/lib/__tests__/ubiReport.test.js | 53 | it | ubiTier is Preferred when ubiScore >= 85 |
+| src/lib/__tests__/ubiReport.test.js | 57 | it | totalKm sums all trip distances |
+| src/lib/__tests__/ubiReport.test.js | 61 | it | scores mileage from the last 12 months instead of lifetime distance |
+| src/lib/__tests__/ubiReport.test.js | 81 | it | peaks mileage scoring around moderate annual mileage and decays at both extremes |
 | src/lib/__tests__/voiceAlerts.test.js | 4 | describe | voice alert cooldowns |
 | src/lib/__tests__/voiceAlerts.test.js | 9 | it | allows unkeyed alerts without cooldown tracking |
 | src/lib/__tests__/voiceAlerts.test.js | 14 | it | throttles keyed alerts after a successful spoken message |

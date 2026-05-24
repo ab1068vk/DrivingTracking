@@ -7,7 +7,8 @@ const ROUTE_RISK_CONSTANTS = {
   RECENT_TRIP_WINDOW: 20,
   DEFAULT_AVG_SCORE: 75,
   EVENT_DENSITY_WEIGHT: 18,
-  DANGER_ZONE_WEIGHT: 10,
+  MAX_DANGER_ZONE_RISK: 30,
+  DANGER_ZONE_DECAY_COUNT: 3,
   WEATHER_WEIGHT: 0.25,
   BASELINE_SCORE_WEIGHT: 0.45,
   LATE_NIGHT_TIME_RISK: 18,
@@ -77,6 +78,20 @@ function saferWindowText(currentHour, profile) {
   return `Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`;
 }
 
+function dangerZoneRisk(zoneCount) {
+  return Math.round(
+    ROUTE_RISK_CONSTANTS.MAX_DANGER_ZONE_RISK *
+    (1 - Math.exp(-Math.max(0, zoneCount) / ROUTE_RISK_CONSTANTS.DANGER_ZONE_DECAY_COUNT))
+  );
+}
+
+function dangerZonePrimaryFactor(zoneCount) {
+  if (!zoneCount) return null;
+  const zoneLabel = zoneCount === 1 ? 'zone' : 'zones';
+  const radiusKm = ROUTE_RISK_CONSTANTS.PROXIMITY_METERS / 1000;
+  return `Known danger zones nearby (${zoneCount} ${zoneLabel} within ${radiusKm} km)`;
+}
+
 /**
  * Estimate upcoming route risk from recent driving, nearby danger zones, weather, and time.
  * @param {object} params - Route risk inputs.
@@ -122,10 +137,11 @@ export function estimatePredictiveRouteRisk({
       : new Date();
   const hour = now.getHours();
   const timeRisk = personalTimeRisk(hour, habitProfile);
+  const zoneRisk = dangerZoneRisk(nearbyZones.length);
   const riskScore = clamp(Math.round(
     (100 - avgScore) * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
     eventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT +
-    nearbyZones.length * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT +
+    zoneRisk +
     Number(weatherRiskScore || 0) * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
     timeRisk
   ), 0, 100);
@@ -135,8 +151,9 @@ export function estimatePredictiveRouteRisk({
     riskLevel: riskScore >= 65 ? 'high' : riskScore >= 40 ? 'moderate' : 'low',
     safestWindow: saferWindowText(hour, habitProfile),
     nearbyDangerZoneCount: nearbyZones.length,
+    dangerZoneRisk: zoneRisk,
     primaryFactor: nearbyZones.length
-      ? 'Known danger zones nearby'
+      ? dangerZonePrimaryFactor(nearbyZones.length)
       : weatherRiskScore >= 40
         ? 'Weather risk'
         : eventDensity >= 0.6
