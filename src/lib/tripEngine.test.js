@@ -514,6 +514,12 @@ describe('tripEngine', () => {
     expect(fiveTrafficStops.intersection_score).toBeGreaterThanOrEqual(50);
     expect(fiveTrafficStops.intersection_score).toBeLessThanOrEqual(85);
 
+    const fiveRedLightStops = analyzeIntersectionBehavior(trafficStopRoute([0, 0, 0, 0], 1));
+    expect(fiveRedLightStops.traffic_stop_count).toBe(5);
+    expect(fiveRedLightStops.rolling_stop_count).toBe(0);
+    expect(fiveRedLightStops.intersection_score).toBeGreaterThanOrEqual(50);
+    expect(fiveRedLightStops.intersection_score).toBeLessThanOrEqual(85);
+
     const threeRollingStops = analyzeIntersectionBehavior(trafficStopRoute([8, 8, 8]));
     expect(threeRollingStops).toMatchObject({
       traffic_stop_count: 3,

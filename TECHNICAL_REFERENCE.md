@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-24T02:03:56.356Z
+Updated: 2026-05-24T02:05:54.441Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -8760,27 +8760,27 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 295 | (module scope) | { ...point(43.6538, -79.3832, 3, 60), heading: 85 }, | `{ ...point(43.6538, -79.3832, 3, 60), heading: 85 },` |
 | 488 | trafficStopRoute | add = (speed, elapsed = 5) => { | `const add = (speed, elapsed = 5) => {` |
 | 490 | trafficStopRoute | route.push(point(43.6532 + index x 0.001, -79.3832, seconds, speed)) | `route.push(point(43.6532 + index * 0.001, -79.3832, seconds, speed));` |
-| 545 | (module scope) | { ...point(43.6622, -79.3832, 15, 8), lat: null, lng: null, masked_for_privacy: true }, | `{ ...point(43.6622, -79.3832, 15, 8), lat: null, lng: null, masked_for_privacy: true },` |
-| 656 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
-| 680 | (module scope) | lat: 43.6532 + index x 0.0001497, | `lat: 43.6532 + index * 0.0001497,` |
-| 681 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
-| 731 | (module scope) | osmTaggedUrbanRoad = urbanFast.map((routePoint) => ({ | `const osmTaggedUrbanRoad = urbanFast.map((routePoint) => ({` |
-| 755 | (module scope) | parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({ | `const parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({` |
-| 756 | (module scope) | ...point(43.6532 + index x 0.00001, -79.3832, index x 5, speed, 6), | `...point(43.6532 + index * 0.00001, -79.3832, index * 5, speed, 6),` |
-| 817 | (module scope) | lanePoints = [0, 5, 10, 5, 0].map((heading, index) => ({ | `const lanePoints = [0, 5, 10, 5, 0].map((heading, index) => ({` |
-| 821 | (module scope) | followingPoints = [65, 66, 65, 45, 42].map((speed, index) => ( | `const followingPoints = [65, 66, 65, 45, 42].map((speed, index) => (` |
-| 822 | (module scope) | point(43.6532 + index x 0.00035, -79.3832, index x 2, speed) | `point(43.6532 + index * 0.00035, -79.3832, index * 2, speed)` |
-| 824 | (module scope) | mergePoints = [45, 58, 72, 88].map((speed, index) => ( | `const mergePoints = [45, 58, 72, 88].map((speed, index) => (` |
-| 825 | (module scope) | point(43.6532 + index x 0.00045, -79.3832, index x 5, speed) | `point(43.6532 + index * 0.00045, -79.3832, index * 5, speed)` |
-| 834 | (module scope) | gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({ | `const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({` |
-| 838 | (module scope) | roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({ | `const roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({` |
-| 856 | (module scope) | oscillating = [20, 60, 20, 60, 20, 60, 20].map((speed, index) => ( | `const oscillating = [20, 60, 20, 60, 20, 60, 20].map((speed, index) => (` |
-| 857 | (module scope) | point(43.6532 + index x 0.00022, -79.3832, index x 5, speed) | `point(43.6532 + index * 0.00022, -79.3832, index * 5, speed)` |
-| 865 | (module scope) | corner = point(43.6542, -79.3822, 10, 40) | `const corner = point(43.6542, -79.3822, 10, 40);` |
-| 922 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
-| 1050 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
-| 1190 | (module scope) | lat: 43.6532 + index x 0.0001, | `lat: 43.6532 + index * 0.0001,` |
-| 1191 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
+| 551 | (module scope) | { ...point(43.6622, -79.3832, 15, 8), lat: null, lng: null, masked_for_privacy: true }, | `{ ...point(43.6622, -79.3832, 15, 8), lat: null, lng: null, masked_for_privacy: true },` |
+| 662 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
+| 686 | (module scope) | lat: 43.6532 + index x 0.0001497, | `lat: 43.6532 + index * 0.0001497,` |
+| 687 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
+| 737 | (module scope) | osmTaggedUrbanRoad = urbanFast.map((routePoint) => ({ | `const osmTaggedUrbanRoad = urbanFast.map((routePoint) => ({` |
+| 761 | (module scope) | parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({ | `const parkedJitter = [0, 4, 0, 5, 0].map((speed, index) => ({` |
+| 762 | (module scope) | ...point(43.6532 + index x 0.00001, -79.3832, index x 5, speed, 6), | `...point(43.6532 + index * 0.00001, -79.3832, index * 5, speed, 6),` |
+| 823 | (module scope) | lanePoints = [0, 5, 10, 5, 0].map((heading, index) => ({ | `const lanePoints = [0, 5, 10, 5, 0].map((heading, index) => ({` |
+| 827 | (module scope) | followingPoints = [65, 66, 65, 45, 42].map((speed, index) => ( | `const followingPoints = [65, 66, 65, 45, 42].map((speed, index) => (` |
+| 828 | (module scope) | point(43.6532 + index x 0.00035, -79.3832, index x 2, speed) | `point(43.6532 + index * 0.00035, -79.3832, index * 2, speed)` |
+| 830 | (module scope) | mergePoints = [45, 58, 72, 88].map((speed, index) => ( | `const mergePoints = [45, 58, 72, 88].map((speed, index) => (` |
+| 831 | (module scope) | point(43.6532 + index x 0.00045, -79.3832, index x 5, speed) | `point(43.6532 + index * 0.00045, -79.3832, index * 5, speed)` |
+| 840 | (module scope) | gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({ | `const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({` |
+| 844 | (module scope) | roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({ | `const roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({` |
+| 862 | (module scope) | oscillating = [20, 60, 20, 60, 20, 60, 20].map((speed, index) => ( | `const oscillating = [20, 60, 20, 60, 20, 60, 20].map((speed, index) => (` |
+| 863 | (module scope) | point(43.6532 + index x 0.00022, -79.3832, index x 5, speed) | `point(43.6532 + index * 0.00022, -79.3832, index * 5, speed)` |
+| 871 | (module scope) | corner = point(43.6542, -79.3822, 10, 40) | `const corner = point(43.6542, -79.3822, 10, 40);` |
+| 928 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
+| 1056 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
+| 1196 | (module scope) | lat: 43.6532 + index x 0.0001, | `lat: 43.6532 + index * 0.0001,` |
+| 1197 | (module scope) | lng: -79.3832, | `lng: -79.3832,` |
 
 #### src/pages/__tests__/corePages.render.test.jsx
 
@@ -25427,45 +25427,45 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/tripEngine.test.js | 449 | it | removes the jerk-score floor for well-observed long trips |
 | src/lib/tripEngine.test.js | 471 | it | keeps insufficient jerk data neutral in the smoothness composite |
 | src/lib/tripEngine.test.js | 483 | it | detects sampled traffic stops and scores repeated rolling approaches without a floor |
-| src/lib/tripEngine.test.js | 529 | it | leaves intersection scoring unobserved for highways, low-speed-only trips, and masked stop windows |
-| src/lib/tripEngine.test.js | 584 | it | computes second-wave advanced score components from route points |
-| src/lib/tripEngine.test.js | 601 | it | scores 50 percent optimal fuel-band time as 70 |
-| src/lib/tripEngine.test.js | 614 | it | scales night penalty by night and deep-night route share |
-| src/lib/tripEngine.test.js | 624 | it | applies custom night windows to trip stats and scoring |
-| src/lib/tripEngine.test.js | 653 | it | uses GPS sunset mode for night detection when coordinates exist |
-| src/lib/tripEngine.test.js | 669 | it | uses the shared fixed-hour fallback boundary when coordinates are unavailable |
-| src/lib/tripEngine.test.js | 677 | it | keeps 2,000-point trip stats and scoring stable under the route hot-path budget |
-| src/lib/tripEngine.test.js | 709 | it | applies configured detection thresholds to event calculations |
-| src/lib/tripEngine.test.js | 722 | it | uses road-context fallback limits when OSM speed limits are missing |
-| src/lib/tripEngine.test.js | 742 | it | keeps OSM highway-default speed sources separate from posted maxspeed |
-| src/lib/tripEngine.test.js | 754 | it | ignores low-speed parked jitter for jerk, reaction, and hill scoring |
-| src/lib/tripEngine.test.js | 770 | it | detects rapid acceleration and harsh braking in the first valid acceleration window |
-| src/lib/tripEngine.test.js | 786 | it | does not emit idle events below the 90 second traffic-stop grace period |
-| src/lib/tripEngine.test.js | 797 | it | counts terminal parked time in stats and idle events |
-| src/lib/tripEngine.test.js | 816 | it | tracks urban lane changes, following-gap cycles, and merge quality proxies |
-| src/lib/tripEngine.test.js | 833 | it | detects gentler lane switches without counting sustained road curves |
-| src/lib/tripEngine.test.js | 847 | it | does not flag normal steady city speed as erratic speed |
-| src/lib/tripEngine.test.js | 855 | it | flags repeated speed oscillation in a sliding city-speed window |
-| src/lib/tripEngine.test.js | 863 | it | simplifies straight route points while preserving corners |
-| src/lib/tripEngine.test.js | 875 | it | splits trips at sustained parked stops and recalculates segment scores |
-| src/lib/tripEngine.test.js | 908 | it | infers speed zones from 60-second route windows |
-| src/lib/tripEngine.test.js | 919 | it | round-trips the last parked location through storage |
-| src/lib/tripEngine.test.js | 935 | it | keeps auto-start responsive while requiring vehicle-like proof before confirmation |
-| src/lib/tripEngine.test.js | 956 | it | discards hidden candidates that look like walking near a parked location |
-| src/lib/tripEngine.test.js | 978 | it | does not confirm slow movement near parking even after enough distance |
-| src/lib/tripEngine.test.js | 1001 | it | requires the 10 km/h vehicle-speed segment near parking even if movement passes 250 meters |
-| src/lib/tripEngine.test.js | 1024 | it | allows 10 km/h vehicle-speed proof near parking when walking is not detected |
-| src/lib/tripEngine.test.js | 1047 | it | detects recent parked cooldown and trims walking after parking from saved routes |
-| src/lib/tripEngine.test.js | 1076 | it | provides fill classes from the canonical score color tiers |
-| src/lib/tripEngine.test.js | 1085 | describe | auto tracking decision logic |
-| src/lib/tripEngine.test.js | 1086 | it | starts only when activity and speed strongly suggest driving |
-| src/lib/tripEngine.test.js | 1112 | it | stops only after still or non-vehicle signals persist |
-| src/lib/tripEngine.test.js | 1137 | describe | trip insights |
-| src/lib/tripEngine.test.js | 1138 | it | builds speed-colored route segments from GPS points |
-| src/lib/tripEngine.test.js | 1152 | it | estimates odometer, maintenance, fuel cost, CO2, tips, and badges |
-| src/lib/tripEngine.test.js | 1188 | it | unlocks expanded achievement milestones from driving behavior |
-| src/lib/tripEngine.test.js | 1224 | it | detects stops and summarizes driver-focused analytics |
-| src/lib/tripEngine.test.js | 1267 | it | computes auto tags, baselines, fuel savings, and vehicle stress impact |
+| src/lib/tripEngine.test.js | 535 | it | leaves intersection scoring unobserved for highways, low-speed-only trips, and masked stop windows |
+| src/lib/tripEngine.test.js | 590 | it | computes second-wave advanced score components from route points |
+| src/lib/tripEngine.test.js | 607 | it | scores 50 percent optimal fuel-band time as 70 |
+| src/lib/tripEngine.test.js | 620 | it | scales night penalty by night and deep-night route share |
+| src/lib/tripEngine.test.js | 630 | it | applies custom night windows to trip stats and scoring |
+| src/lib/tripEngine.test.js | 659 | it | uses GPS sunset mode for night detection when coordinates exist |
+| src/lib/tripEngine.test.js | 675 | it | uses the shared fixed-hour fallback boundary when coordinates are unavailable |
+| src/lib/tripEngine.test.js | 683 | it | keeps 2,000-point trip stats and scoring stable under the route hot-path budget |
+| src/lib/tripEngine.test.js | 715 | it | applies configured detection thresholds to event calculations |
+| src/lib/tripEngine.test.js | 728 | it | uses road-context fallback limits when OSM speed limits are missing |
+| src/lib/tripEngine.test.js | 748 | it | keeps OSM highway-default speed sources separate from posted maxspeed |
+| src/lib/tripEngine.test.js | 760 | it | ignores low-speed parked jitter for jerk, reaction, and hill scoring |
+| src/lib/tripEngine.test.js | 776 | it | detects rapid acceleration and harsh braking in the first valid acceleration window |
+| src/lib/tripEngine.test.js | 792 | it | does not emit idle events below the 90 second traffic-stop grace period |
+| src/lib/tripEngine.test.js | 803 | it | counts terminal parked time in stats and idle events |
+| src/lib/tripEngine.test.js | 822 | it | tracks urban lane changes, following-gap cycles, and merge quality proxies |
+| src/lib/tripEngine.test.js | 839 | it | detects gentler lane switches without counting sustained road curves |
+| src/lib/tripEngine.test.js | 853 | it | does not flag normal steady city speed as erratic speed |
+| src/lib/tripEngine.test.js | 861 | it | flags repeated speed oscillation in a sliding city-speed window |
+| src/lib/tripEngine.test.js | 869 | it | simplifies straight route points while preserving corners |
+| src/lib/tripEngine.test.js | 881 | it | splits trips at sustained parked stops and recalculates segment scores |
+| src/lib/tripEngine.test.js | 914 | it | infers speed zones from 60-second route windows |
+| src/lib/tripEngine.test.js | 925 | it | round-trips the last parked location through storage |
+| src/lib/tripEngine.test.js | 941 | it | keeps auto-start responsive while requiring vehicle-like proof before confirmation |
+| src/lib/tripEngine.test.js | 962 | it | discards hidden candidates that look like walking near a parked location |
+| src/lib/tripEngine.test.js | 984 | it | does not confirm slow movement near parking even after enough distance |
+| src/lib/tripEngine.test.js | 1007 | it | requires the 10 km/h vehicle-speed segment near parking even if movement passes 250 meters |
+| src/lib/tripEngine.test.js | 1030 | it | allows 10 km/h vehicle-speed proof near parking when walking is not detected |
+| src/lib/tripEngine.test.js | 1053 | it | detects recent parked cooldown and trims walking after parking from saved routes |
+| src/lib/tripEngine.test.js | 1082 | it | provides fill classes from the canonical score color tiers |
+| src/lib/tripEngine.test.js | 1091 | describe | auto tracking decision logic |
+| src/lib/tripEngine.test.js | 1092 | it | starts only when activity and speed strongly suggest driving |
+| src/lib/tripEngine.test.js | 1118 | it | stops only after still or non-vehicle signals persist |
+| src/lib/tripEngine.test.js | 1143 | describe | trip insights |
+| src/lib/tripEngine.test.js | 1144 | it | builds speed-colored route segments from GPS points |
+| src/lib/tripEngine.test.js | 1158 | it | estimates odometer, maintenance, fuel cost, CO2, tips, and badges |
+| src/lib/tripEngine.test.js | 1194 | it | unlocks expanded achievement milestones from driving behavior |
+| src/lib/tripEngine.test.js | 1230 | it | detects stops and summarizes driver-focused analytics |
+| src/lib/tripEngine.test.js | 1273 | it | computes auto tags, baselines, fuel savings, and vehicle stress impact |
 | src/pages/__tests__/corePages.render.test.jsx | 203 | describe | core page component renders |
 | src/pages/__tests__/corePages.render.test.jsx | 213 | it | renders Dashboard readiness and recent-trip surfaces |
 | src/pages/__tests__/corePages.render.test.jsx | 223 | it | renders TripDetail with road, weather, and feedback sections |
