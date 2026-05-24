@@ -107,6 +107,8 @@ export const DEFAULT_SETTINGS = {
   weekly_goal_min_avg_score: 80,
   weekly_goal_max_night_trips: 3,
   weekly_goal_max_night_km: 20,
+  ubi_optimal_annual_km: 10000,
+  ubi_mileage_score_spread_km: 8000,
   onboarding_completed: false,
   location_permission_granted: false,
   background_location_granted: false,

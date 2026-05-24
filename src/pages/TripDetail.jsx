@@ -437,6 +437,7 @@ export default function TripDetail() {
   const showOverallAvgSpeed = (trip.idle_time_seconds || 0) > 60;
   // FIX: Show overall average only when there was meaningful stopped time.
   const trafficIdleSeconds = trip.traffic_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - (trip.sustained_idle_seconds || 0));
+  const parkedIdleEstimated = trip.sustained_idle_seconds == null;
   const parkedIdleSeconds = trip.sustained_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - trafficIdleSeconds);
   const terminalParkedSeconds = trip.parking_stop_duration_seconds || 0;
   const unavailableEstimate = '—';
@@ -1063,9 +1064,9 @@ export default function TripDetail() {
             { icon: Clock, label: 'Duration', value: formatDuration(trip.duration_seconds) },
             {
               icon: Gauge,
-              label: 'Avg Speed',
+              label: 'Average moving speed',
               value: formatSpeed(primaryAvgSpeedKmh, units),
-              subValue: showOverallAvgSpeed ? `Overall avg (incl. stops): ${formatSpeed(trip.avg_speed_kmh || 0, units)}` : null,
+              subValue: showOverallAvgSpeed ? `Average speed (incl. stops): ${formatSpeed(trip.avg_speed_kmh || 0, units)}` : null,
             },
             // FIX: Add overall average as a secondary line while keeping moving speed primary.
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
@@ -1075,8 +1076,8 @@ export default function TripDetail() {
             { icon: Leaf, label: 'CO2 Saved vs Average', value: co2SavedValue, subValue: economics.co2_saved_label },
             { icon: ParkingSquare, label: 'Parking', value: `${trip.parking_approach_score ?? 100}` },
             { icon: TimerReset, label: 'Traffic Stops', value: formatDuration(trafficIdleSeconds) },
-            { icon: ParkingSquare, label: 'Parked Idle', value: formatDuration(parkedIdleSeconds) },
-            { icon: MapPin, label: 'Trip End', value: tripEndState, subValue: terminalParkedSeconds > 0 ? `${formatDuration(terminalParkedSeconds)} at final stop` : null },
+            { icon: ParkingSquare, label: 'Parked Idle', value: formatDuration(parkedIdleSeconds), subValue: parkedIdleEstimated ? 'Estimated from idle and traffic-stop time' : null },
+            { icon: MapPin, label: 'Trip End', value: tripEndState, subValue: terminalParkedSeconds > 0 ? `${formatDuration(terminalParkedSeconds)} at final stop` : trip.parking_stop_detected ? 'Trip ended from a stopped state' : null },
           ].map(({ icon: Icon, label, value, subValue }) => (
             <div key={label} className="flex items-start gap-3 p-3 bg-secondary/50 rounded-xl">
               <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />
@@ -1161,7 +1162,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? 'OSM road-type default' : 'Inferred limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? 'OSM road-type default' : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
                 </div>
               </div>
             ))}
@@ -1191,7 +1192,7 @@ export default function TripDetail() {
             { icon: Fuel, label: 'fuel band', value: trip.fuel_band_score ?? '-', color: 'text-lime-500' },
             { icon: Car, label: 'engine stress', value: trip.engine_stress_score ?? '-', color: 'text-orange-500' },
             { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
-            { icon: AlertTriangle, label: 'heading drift (beta)', value: trip.heading_drift_beta_level ?? 'none', color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true, show: trip.heading_drift_beta_available === true },
+            { icon: AlertTriangle, label: 'attention pattern (GPS beta)', value: trip.heading_drift_beta_level ?? 'none', color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true, show: trip.heading_drift_beta_available === true },
             { icon: Milestone, label: 'hill control', value: trip.hill_driving_score ?? 'N/A', color: trip.hill_driving_score == null ? 'text-muted-foreground' : 'text-emerald-500' },
           ].filter(({ show = true }) => show).map(({ icon: Icon, label, value, color, capitalize }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3">
@@ -1204,7 +1205,10 @@ export default function TripDetail() {
 
         <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
           <p>Brake onset smoothness measures how smoothly brakes were applied during detected braking events, not human neurological reaction time.</p>
-          <p className="mt-1">Stop-start pattern and heading drift Beta values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or driver drowsiness.</p>
+          <p className="mt-1">Stop-start pattern and attention pattern Beta values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or fatigue.</p>
+          {trip.intersection_score == null && (
+            <p className="mt-1">Intersection score not available for this trip.</p>
+          )}
         </div>
 
         {fatigueHeatmapData.length > 0 ? (
@@ -1267,7 +1271,9 @@ export default function TripDetail() {
               </span>
             </div>
             {trip.braking_context && (
-              <div className="mb-2 text-xs text-muted-foreground">Graded for {trip.braking_context} driving conditions.</div>
+              <div className="mb-2 text-xs text-muted-foreground">
+                Graded for {trip.braking_context} driving conditions · confidence {trip.braking_efficiency_score_confidence ?? 'unknown'} · GPS speed estimate.
+              </div>
             )}
             {Number.isFinite(trip.braking_efficiency_score) && (
               <div className="mb-2 flex items-baseline gap-2">
@@ -1309,6 +1315,9 @@ export default function TripDetail() {
               <span className="rounded-full bg-card px-2 py-0.5 text-xs font-semibold capitalize">
                 {trip.cornering_grade}
               </span>
+            </div>
+            <div className="mb-2 text-xs text-muted-foreground">
+              Confidence {trip.cornering_consistency_score_confidence ?? 'unknown'} · GPS heading estimate.
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-lg bg-card p-2">
@@ -1436,7 +1445,9 @@ export default function TripDetail() {
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
                 : evt.type === 'speeding' && evt.speed_limit_source
-                  ? `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
+                  ? evt.speed_limit_source === 'inferred'
+                    ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
+                    : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
                   : inferredTypes.includes(evt.type)
                     ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
                     : 'Measured from GPS motion';
@@ -1497,6 +1508,10 @@ export default function TripDetail() {
 }
 
 function TripScoreOverview({ trip }) {
+  const lowScoreConfidence = Number.isFinite(Number(trip.score_confidence)) && Number(trip.score_confidence) < 0.5;
+  const confidenceTitle = lowScoreConfidence
+    ? 'Score based on limited data - trip was under 2.5 km.'
+    : buildScoreExplanation(trip, 'score_overall');
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -1510,7 +1525,8 @@ function TripScoreOverview({ trip }) {
           size={100}
           strokeWidth={8}
           sublabel="overall"
-          title={buildScoreExplanation(trip, 'score_overall')}
+          title={confidenceTitle}
+          approximate={lowScoreConfidence}
         />
         <div className="flex-1 grid grid-cols-3 gap-3">
           {[
@@ -1528,6 +1544,11 @@ function TripScoreOverview({ trip }) {
           })}
         </div>
       </div>
+      {lowScoreConfidence && (
+        <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+          ~ Score based on limited data because this trip was under 2.5 km.
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-3 mt-5 sm:grid-cols-2">
         {[
           { label: 'Aggression', score: trip.aggressive_driving_score, grade: trip.aggressive_grade },

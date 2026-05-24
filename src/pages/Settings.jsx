@@ -131,7 +131,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Defensive score',
-    definition: 'Rewards steady speed, smoother stop-start patterns, fewer estimated brake-turn alerts, fewer distraction signals, and consistent control.',
+    definition: 'Blends only observed defensive-driving evidence such as smooth stops, intersection behavior, speed variability, and GPS-only stop-start patterns. It does not score following distance.',
   },
   {
     term: 'Jerk score',
@@ -159,7 +159,15 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Heading drift (Beta)',
-    definition: 'Flags sustained GPS heading-drift patterns during highway-speed travel. It is low confidence and is not a drowsiness diagnosis.',
+    definition: 'Flags sustained GPS heading-drift patterns during highway-speed travel. It is an attention pattern signal from GPS only, uses a late-night time multiplier, and is not a fatigue measurement.',
+  },
+  {
+    term: 'Braking and cornering scores',
+    definition: 'Estimated from GPS speed and heading data. They are suppressed from composite scores when trip confidence is below 0.5.',
+  },
+  {
+    term: 'Inferred speed limits',
+    definition: 'Fallback limits are estimated from road type when OSM maxspeed data is unavailable. Inferred-limit speeding penalties use half weight and may not reflect the actual legal limit.',
   },
   {
     term: 'Parking approach',
@@ -1241,7 +1249,7 @@ export default function Settings() {
               {[
                 { key: 'notif_safety_alerts_enabled', label: 'Safety alerts channel', sub: 'Urgent warnings while driving' },
                 { key: 'notif_phone_use_alert_enabled', label: 'Phone use warning', sub: 'Immediate warning for confirmed Android Usage Access detections' },
-                { key: 'notif_heading_drift_alert_enabled', label: 'Heading drift / fatigue warning', sub: 'Beta GPS heading patterns and long-drive break alerts' },
+                { key: 'notif_heading_drift_alert_enabled', label: 'Attention pattern warning', sub: 'Beta GPS heading patterns and long-drive break alerts' },
                 { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
                 { key: 'danger_zone_alerts_enabled', label: 'Danger zone proximity alerts', sub: 'Warn when approaching your historical risk hotspots' },
                 { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
@@ -1335,6 +1343,8 @@ export default function Settings() {
             { key: 'weekly_goal_min_avg_score', label: 'Minimum average score', min: 50, max: 100, step: 5 },
             { key: 'weekly_goal_max_night_km', label: 'Max night km', min: 0, max: 100, step: 5 },
             { key: 'weekly_goal_max_night_trips', label: 'Max night trips', min: 0, max: 14, step: 1 },
+            { key: 'ubi_optimal_annual_km', label: 'UBI optimal annual km', min: 3000, max: 30000, step: 500 },
+            { key: 'ubi_mileage_score_spread_km', label: 'UBI mileage spread km', min: 2000, max: 20000, step: 500 },
           ].map(({ key, label, min, max, step }) => (
             <div key={key} className="px-1">
               <div className="flex justify-between text-xs mb-1.5">
@@ -1350,6 +1360,11 @@ export default function Settings() {
                 onChange={e => updateCfg({ [key]: Number(e.target.value) })}
                 className="w-full accent-primary"
               />
+              {key.startsWith('ubi_') && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Used only for the UBI-style mileage score assumption.
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -1601,7 +1616,7 @@ export default function Settings() {
               {[
                 { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
                 { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
-                { key: 'threshold_heading_drift_std_degs', label: 'Heading Drift Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Curving roads and GPS noise can produce alerts; this is not a fatigue diagnosis.' },
+                { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Curving roads and GPS noise can produce alerts; this is not a fatigue measurement.' },
                 { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 6, max: 8, step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
                 { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
                 { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },

@@ -2,8 +2,8 @@ import { clamp } from '@/lib/mathUtils';
 
 const MILEAGE_SCORE_WINDOW_DAYS = 365;
 const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-const OPTIMAL_ANNUAL_KM = 10000;
-const MILEAGE_SCORE_SPREAD_KM = 8000;
+export const DEFAULT_OPTIMAL_ANNUAL_KM = 10000;
+export const DEFAULT_MILEAGE_SCORE_SPREAD_KM = 8000;
 export const MIN_UBI_REPORT_DISTANCE_KM = 50;
 
 export const UBI_CATEGORY_WEIGHTS = {
@@ -110,8 +110,14 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
     })
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
 
+  const optimalAnnualKm = Number.isFinite(Number(settings.ubi_optimal_annual_km)) && Number(settings.ubi_optimal_annual_km) > 0
+    ? Number(settings.ubi_optimal_annual_km)
+    : DEFAULT_OPTIMAL_ANNUAL_KM;
+  const mileageScoreSpreadKm = Number.isFinite(Number(settings.ubi_mileage_score_spread_km)) && Number(settings.ubi_mileage_score_spread_km) > 0
+    ? Number(settings.ubi_mileage_score_spread_km)
+    : DEFAULT_MILEAGE_SCORE_SPREAD_KM;
   const mileageScore = clamp(Math.round(
-    100 * Math.exp(-0.5 * ((mileageWindowKm - OPTIMAL_ANNUAL_KM) / MILEAGE_SCORE_SPREAD_KM) ** 2)
+    100 * Math.exp(-0.5 * ((mileageWindowKm - optimalAnnualKm) / mileageScoreSpreadKm) ** 2)
   ), 0, 100);
   const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));
   const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));
@@ -145,6 +151,10 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
       cornering: category(corneringScore, 'Cornering', `${turnsPer100Km.toFixed(1)}/100 km`),
       speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)}/100 km`),
     },
-    disclaimer: 'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.',
+    assumptions: {
+      optimalAnnualKm,
+      mileageScoreSpreadKm,
+    },
+    disclaimer: `This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating. Mileage scoring assumes an optimal ${optimalAnnualKm.toLocaleString()} km/year; adjust this in Settings if your region or use case differs.`,
   };
 }

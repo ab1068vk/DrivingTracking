@@ -47,7 +47,7 @@ export function scoreTripAnomaly(trip = {}, model = null) {
     const z = baseline.std > 0 ? Math.abs((value - baseline.mean) / baseline.std) : 0;
     return { key, z, value, mean: baseline.mean };
   }).filter(Boolean);
-  const score = clamp(Math.round(mean(zScores.map((item) => Math.min(item.z, 4))) * 25), 0, 100);
+  const score = clamp(Math.round(mean(zScores.map((item) => Math.min(item.z, 5))) * 20), 0, 100);
   const reasons = zScores
     .filter((item) => item.z >= 1.8)
     .sort((a, b) => b.z - a.z)
@@ -55,7 +55,7 @@ export function scoreTripAnomaly(trip = {}, model = null) {
     .map((item) => item.key);
   return {
     anomaly_score: score,
-    anomaly_level: score >= 70 ? 'high' : score >= 45 ? 'moderate' : 'normal',
+    anomaly_level: score >= 75 ? 'high' : score >= 55 ? 'moderate' : 'normal',
     reasons,
     model_trip_count: model.trip_count,
   };

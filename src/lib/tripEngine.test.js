@@ -508,7 +508,7 @@ describe('tripEngine', () => {
       heading_drift_beta_available: true,
       cornering_consistency_score_confidence: 0,
       braking_efficiency_score_confidence: 0,
-      defensive_driving_score_confidence: 1,
+      defensive_driving_score_confidence: 0,
     });
   });
 
@@ -626,7 +626,7 @@ describe('tripEngine', () => {
       jerk_score_confidence: 'high',
     });
     expect(calculateJerkScore(roughLongTrip, 2)).toMatchObject({
-      jerk_score: 20,
+      jerk_score: 0,
       jerk_score_confidence: 'low',
     });
     expect(calculateJerkScore(roughLongTrip, 50)).toMatchObject({
@@ -931,7 +931,7 @@ describe('tripEngine', () => {
       road_type: 'urban',
     });
     expect(scores.score_overall).toBeGreaterThanOrEqual(90);
-    expect(scores.score_safety).toBe(99);
+    expect(scores.score_safety).toBe(98);
   });
 
   it('applies configured detection thresholds to event calculations', () => {
@@ -1537,7 +1537,7 @@ describe('trip insights', () => {
     expect(calculatePeakHourStress([{ ...todayTrip, distance_km: 0.3 }])).toMatchObject({
       peak_stress_score: null,
       stress_ratio: null,
-      peak_stress_label: 'insufficient data',
+      peak_stress_label: 'insufficient off-peak data',
       insufficient_data: true,
     });
     expect(calculateSpeedDiscipline([todayTrip], { threshold_speeding_kmh: 130 }).level).toBe('needs_attention');

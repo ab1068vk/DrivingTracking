@@ -126,7 +126,8 @@ describe('trip engine calculation coverage', () => {
     expect(scores.score_overall).toBeGreaterThanOrEqual(0);
     expect(scores.score_overall).toBeLessThanOrEqual(100);
     expect(Number.isFinite(scores.score_safety)).toBe(true);
-    expect(calculateDefensiveDrivingScore(scores).defensive_driving_score).toBeLessThanOrEqual(100);
+    const defensive = calculateDefensiveDrivingScore(scores).defensive_driving_score;
+    expect(defensive == null || defensive <= 100).toBe(true);
   });
 
   it('summarizes full routes and applies night penalties to overnight samples', () => {

@@ -65,6 +65,8 @@ describe('driver signature', () => {
     const result = buildDriverSignature(Array.from({ length: 6 }, (_, index) => trip(index, {
       aggressive_driving_score: 35,
       avg_speed_kmh: 95,
+      distance_km: 5,
+      speeding_events_count: 3,
       score_smoothness: 60,
     })));
     expect(result.archetype).toBe('aggressive_commuter');

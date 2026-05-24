@@ -407,6 +407,11 @@ export default function Reports() {
                   Complete at least {ubiReport.minimumDistanceKm ?? 50} km to calculate rate-based score-card grades.
                 </p>
               )}
+              {!ubiReport.insufficientData && ubiReport.assumptions && (
+                <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+                  Mileage score assumes {ubiReport.assumptions.optimalAnnualKm.toLocaleString()} km/year as the optimal annual distance. Adjust the UBI mileage assumption in Settings if your region or use case differs.
+                </p>
+              )}
               <ResponsiveContainer width="100%" height={220}>
                 <RadarChart data={ubiRadarData} outerRadius={78}>
                   <PolarGrid />

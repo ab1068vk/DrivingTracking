@@ -30,7 +30,7 @@ const trip = (overrides = {}) => ({
 
 describe('mediumInsights', () => {
   it('documents the commute matching radius', () => {
-    expect(COMMUTE_MATCH_RADIUS_M).toBe(150);
+    expect(COMMUTE_MATCH_RADIUS_M).toBe(225);
   });
   it('uses route shape to compare repeated routes and detect commutes without addresses', () => {
     const trips = [

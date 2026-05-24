@@ -148,6 +148,33 @@ export const EVENT_TYPES = {
   PHONE_USE: 'phone_use',
 };
 
+export const EVENT_PENALTIES = {
+  [EVENT_TYPES.HARSH_BRAKE]: { low: 3, medium: 6, high: 12 },
+  [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
+  [EVENT_TYPES.SHARP_TURN]: { low: 2, medium: 5, high: 10 },
+  [EVENT_TYPES.SPEEDING]: { low: 5, medium: 10, high: 20 },
+  [EVENT_TYPES.IDLE]: { low: 1, medium: 3, high: 5 },
+  [EVENT_TYPES.HEADING_DEVIATION]: { low: 0, medium: 0, high: 0 },
+  [EVENT_TYPES.LANE_CHANGE]: { low: 1, medium: 3, high: 6 },
+  [EVENT_TYPES.STOP_START_PATTERN]: { low: 3, medium: 8, high: 15 },
+  [EVENT_TYPES.TAILGATE_CYCLE]: { low: 3, medium: 8, high: 15 },
+  [EVENT_TYPES.ERRATIC_SPEED]: { low: 2, medium: 5, high: 10 },
+  [EVENT_TYPES.NEAR_MISS]: { low: 4, medium: 8, high: 14 },
+  [EVENT_TYPES.CLOSE_PROXIMITY]: { low: 4, medium: 8, high: 14 },
+  [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
+  [EVENT_TYPES.PHONE_USE]: { low: 5, medium: 12, high: 20 },
+};
+
+export function weightedBlend(components = []) {
+  const valid = components
+    .filter(({ score }) => score != null && score !== '')
+    .map(({ score, weight }) => ({ score: Number(score), weight: Number(weight) }))
+    .filter(({ score, weight }) => Number.isFinite(score) && Number.isFinite(weight) && weight > 0);
+  const totalWeight = valid.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight <= 0) return null;
+  return Math.round(valid.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight);
+}
+
 function settingNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -1346,8 +1373,7 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DE
   }
 
   const distFactor = Math.max(1, distanceKm);
-  const penaltyCap = distanceKm < 3 ? 80 : 100;
-  const penaltyContribution = Math.min(totalJerkPenalty * (4 / distFactor), penaltyCap);
+  const penaltyContribution = Math.min(totalJerkPenalty * (4 / distFactor), 100);
   const jerkScore = Math.max(0, 100 - penaltyContribution);
   return {
     jerk_score: Math.round(jerkScore),
@@ -1843,7 +1869,7 @@ export function detectHighwayMergeBehavior(cleanPoints = [], thresholds = DEFAUL
     merge_event_count: mergeEventCount,
     poor_merge_count: poorMergeCount,
     harsh_merge_count: harshMergeCount,
-    merge_score: Math.max(0, 100 - poorMergeCount * 8 - harshMergeCount * 6),
+    merge_score: mergeEventCount > 0 ? Math.max(0, 100 - poorMergeCount * 8 - harshMergeCount * 6) : null,
   };
 }
 
@@ -3225,8 +3251,12 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
       : bucket.osmDefaultPoints > bucket.totalPoints / 2
         ? 'osm_highway_default'
         : 'inferred';
+    const rawScore = clamp(Math.round(rate * 100 - maxExcessKmh * 0.5), 0, 100);
+    const penaltyWeight = limitSource === 'inferred' ? 0.5 : 1;
     return {
-      score: clamp(Math.round(rate * 100 - maxExcessKmh * 0.5), 0, 100),
+      score: Math.round(100 - ((100 - rawScore) * penaltyWeight)),
+      raw_score: rawScore,
+      penalty_weight: penaltyWeight,
       confidence: round2(clamp(bucket.totalPoints / 30, 0, 1)),
       rate: round2(rate),
       max_excess_kmh: round1(maxExcessKmh),
@@ -3246,7 +3276,7 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const totalPoints = weighted.reduce((sum, item) => sum + item.point_count, 0);
   const overall = totalPoints
     ? Math.round(weighted.reduce((sum, item) => sum + item.score * item.point_count, 0) / totalPoints)
-    : 100;
+    : null;
 
   return {
     highway_compliance: highway,
@@ -4231,21 +4261,7 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
     : 0;
   const speedVarianceScore = speedCv >= 0.70 ? 2 : speedCv >= 0.45 ? 1 : 0;
 
-  const headingDeltas = [];
-  for (let i = 1; i < points.length; i++) {
-    const prevHeading = Number(points[i - 1]?.heading ?? points[i - 1]?.bearing);
-    const currHeading = Number(points[i]?.heading ?? points[i]?.bearing);
-    const speed = Number(points[i]?.speed_kmh);
-    if (Number.isFinite(prevHeading) && Number.isFinite(currHeading) && Number.isFinite(speed) && speed >= 30) {
-      headingDeltas.push(headingDiff(prevHeading, currHeading));
-    }
-  }
-  const avgHeadingDrift = headingDeltas.length
-    ? headingDeltas.reduce((sum, delta) => sum + delta, 0) / headingDeltas.length
-    : 0;
-  const headingDriftScore = avgHeadingDrift >= 14 ? 1.5 : avgHeadingDrift >= 8 ? 0.75 : 0;
-
-  const riskOnTenPointScale = Math.min(10, durationScore + timeScore + speedVarianceScore + headingDriftScore);
+  const riskOnTenPointScale = Math.min(10, durationScore + timeScore + speedVarianceScore);
   return Math.round(riskOnTenPointScale * 10);
 }
 
@@ -4656,13 +4672,18 @@ export function calculateTireWearUnits(events = []) {
 }
 
 export function calculateAggressiveDrivingScore(events = [], stats = {}) {
-  const weights = {
-    [EVENT_TYPES.HARSH_BRAKE]: { low: 3, medium: 7, high: 15 },
-    [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
-    [EVENT_TYPES.SHARP_TURN]: { low: 2, medium: 5, high: 10 },
-    [EVENT_TYPES.SPEEDING]: { low: 5, medium: 10, high: 20 },
-  };
-  const rawPenalty = events.reduce((sum, event) => sum + (weights[event.type]?.[event.severity] || 0), 0);
+  const aggressiveEventTypes = new Set([
+    EVENT_TYPES.HARSH_BRAKE,
+    EVENT_TYPES.RAPID_ACCELERATION,
+    EVENT_TYPES.SHARP_TURN,
+    EVENT_TYPES.SPEEDING,
+    EVENT_TYPES.LANE_CHANGE,
+  ]);
+  const rawPenalty = events.reduce((sum, event) => (
+    aggressiveEventTypes.has(event.type)
+      ? sum + (EVENT_PENALTIES[event.type]?.[event.severity] || 0)
+      : sum
+  ), 0);
   const avgJerkMs3 = stats.avg_jerk_ms3 ?? 0;
   const jerkPenalty = Math.min(Math.max((avgJerkMs3 - 0.3) * 20, 0), 25);
   const combinedPenalty = rawPenalty + jerkPenalty;
@@ -4677,15 +4698,15 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
 }
 
 export function calculateDefensiveDrivingScore(scores = {}) {
-  const defensiveScore = Math.round(
-    (scores.smooth_braking_ratio ?? 100) * 0.30 +
-    (scores.intersection_score ?? 100) * 0.20 +
-    (scores.svi_score ?? 100) * 0.20 +
-    (scores.stop_start_pattern_score ?? scores.following_distance_score ?? 100) * 0.30
-  );
+  const defensiveScore = weightedBlend([
+    { score: (scores.total_stops_detected || 0) > 0 ? scores.smooth_braking_ratio : null, weight: 0.30 },
+    { score: scores.intersection_score, weight: 0.20 },
+    { score: scores.svi_score, weight: 0.20 },
+    { score: scores.stop_start_pattern_score, weight: 0.30 },
+  ]);
   return {
     defensive_driving_score: defensiveScore,
-    defensive_grade: defensiveScore >= 90 ? 'exemplary' : defensiveScore >= 75 ? 'defensive' : defensiveScore >= 55 ? 'average' : 'reactive',
+    defensive_grade: defensiveScore == null ? 'unavailable' : defensiveScore >= 90 ? 'exemplary' : defensiveScore >= 75 ? 'defensive' : defensiveScore >= 55 ? 'average' : 'reactive',
   };
 }
 
@@ -4728,23 +4749,6 @@ export function calculateTripScores(
     ? phoneUseFromEvents
     : { ...phoneUseFromEvents, ...(phoneUseOrOptions || {}) };
   const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
-  const penalties = {
-    [EVENT_TYPES.HARSH_BRAKE]: { low: 3, medium: 6, high: 12 },
-    [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
-    [EVENT_TYPES.SHARP_TURN]: { low: 2, medium: 5, high: 10 },
-    [EVENT_TYPES.SPEEDING]: { low: 5, medium: 10, high: 20 },
-    [EVENT_TYPES.IDLE]: { low: 1, medium: 3, high: 5 },
-    [EVENT_TYPES.HEADING_DEVIATION]: { low: 0, medium: 0, high: 0 },
-    [EVENT_TYPES.LANE_CHANGE]: { low: 0, medium: 0, high: 0 },
-    [EVENT_TYPES.STOP_START_PATTERN]: { low: 3, medium: 8, high: 15 },
-    [EVENT_TYPES.TAILGATE_CYCLE]: { low: 3, medium: 8, high: 15 },
-    [EVENT_TYPES.ERRATIC_SPEED]: { low: 2, medium: 5, high: 10 },
-    [EVENT_TYPES.NEAR_MISS]: { low: 0, medium: 0, high: 0 },
-    [EVENT_TYPES.CLOSE_PROXIMITY]: { low: 0, medium: 0, high: 0 },
-    [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
-    [EVENT_TYPES.PHONE_USE]: { low: 5, medium: 12, high: 20 },
-  };
-
   // Count events
   const counts = {
     [EVENT_TYPES.HARSH_BRAKE]: 0,
@@ -4768,13 +4772,16 @@ export function calculateTripScores(
   let distractionPenalty = 0;
 
   for (const evt of scoringEvents) {
-    let p = penalties[evt.type]?.[evt.severity] ?? 0;
+    let p = EVENT_PENALTIES[evt.type]?.[evt.severity] ?? 0;
     if (
       [EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.SHARP_TURN].includes(evt.type) &&
       evt.speed_kmh != null
     ) {
       const speedFactor = 1 + Math.max(0, Math.min(1.5, (evt.speed_kmh - 30) / 60));
       p *= speedFactor;
+    }
+    if (evt.type === EVENT_TYPES.SPEEDING && (evt.speed_limit_source == null || evt.speed_limit_source === 'inferred')) {
+      p *= 0.5;
     }
     if (counts[evt.type] !== undefined) counts[evt.type]++;
 
@@ -4786,9 +4793,11 @@ export function calculateTripScores(
       EVENT_TYPES.ERRATIC_SPEED,
       EVENT_TYPES.AGGRESSIVE_OVERTAKE,
       EVENT_TYPES.PHONE_USE,
+      EVENT_TYPES.NEAR_MISS,
+      EVENT_TYPES.CLOSE_PROXIMITY,
     ].includes(evt.type)) safetyPenalty += p;
     // Smoothness: deducts from harsh_brake, rapid_acceleration, sharp_turn
-    if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN].includes(evt.type)) smoothnessPenalty += p;
+    if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN, EVENT_TYPES.LANE_CHANGE].includes(evt.type)) smoothnessPenalty += p;
     // Eco: deducts from speeding, rapid_acceleration, idle
     if ([EVENT_TYPES.SPEEDING, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.IDLE].includes(evt.type)) ecoPenalty += p;
     if ([EVENT_TYPES.ERRATIC_SPEED, EVENT_TYPES.PHONE_USE].includes(evt.type)) distractionPenalty += p;
@@ -4840,8 +4849,8 @@ export function calculateTripScores(
   if (phoneUseDeduction > 0) {
     distractionPenalty = Math.max(distractionPenalty, phoneUseDeduction * (distKm / 3));
   }
-  const SCORE_FLOOR = 20;
-  const MAX_DEDUCTION = 80;
+  const SCORE_FLOOR = 0;
+  const MAX_DEDUCTION = 100;
   const SCALE_FACTOR = 40.0;
   const normalize = (totalPenalty) => {
     const penaltyRate = totalPenalty / distKm;
@@ -4889,40 +4898,46 @@ export function calculateTripScores(
   const routeEvidenceConfidence = routePoints.length >= 2 ? scoreConfidence : 0;
   const measuredRouteConfidence = (score) => (score == null ? 0 : routeEvidenceConfidence);
 
-  const brakingScoreForSafety = brakingEfficiency.braking_efficiency_score ?? 100;
-  const complianceScoreForSafety = compliance.overall_compliance_score ?? 100;
+  const brakingScoreForSafety = routeEvidenceConfidence >= 0.5 ? brakingEfficiency.braking_efficiency_score : null;
+  const complianceScoreForSafety = compliance.overall_compliance_score;
   const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false || !confirmedPhoneScoreAvailable
-    ? 100
-    : (phoneUseResult.phone_use_score ?? 100);
-  const jerkScoreForSmoothness = jerk.jerk_score ?? 100;
-  const sviScoreForSmoothness = svi.svi_score ?? 100;
-  const stopStartPatternScoreForSafety = stopStartPatternScore ?? 100;
-  const safetyWithoutOvertake = Math.round(
-    baseSafety * 0.65 +
-    stopStartPatternScoreForSafety * 0.05 +
-    brakingScoreForSafety * 0.15 +
-    complianceScoreForSafety * 0.10 +
-    phoneUseScoreForSafety * PHONE_USE_SAFETY_WEIGHT
-  );
+    ? null
+    : phoneUseResult.phone_use_score;
+  const jerkScoreForSmoothness = jerk.jerk_score_confidence === 'high' ? jerk.jerk_score : null;
+  const sviScoreForSmoothness = svi.svi_score;
+  const brakeOnsetScoreForSmoothness = routeEvidenceConfidence >= 0.5 ? brakeOnset.brake_onset_smoothness_score : null;
+  const corneringScoreForSmoothness = routeEvidenceConfidence >= 0.5 ? cornering.cornering_consistency_score : null;
+  const safetyWithoutOvertake = weightedBlend([
+    { score: baseSafety, weight: 0.57 },
+    { score: stopStartPatternScore, weight: 0.05 },
+    { score: closeProximityScore, weight: 0.08 },
+    { score: brakingScoreForSafety, weight: 0.15 },
+    { score: complianceScoreForSafety, weight: 0.10 },
+    { score: phoneUseScoreForSafety, weight: PHONE_USE_SAFETY_WEIGHT },
+  ]) ?? baseSafety;
   let safety = safetyWithoutOvertake;
   safety = Math.min(100, safety + (slippery.safety_condition_bonus || 0));
-  const smoothness = Math.round(
-    baseSmoothness * 0.45 +
-    jerkScoreForSmoothness * 0.25 +
-    sviScoreForSmoothness * 0.10 +
-    (brakeOnset.brake_onset_smoothness_score ?? 100) * 0.10 +
-    (cornering.cornering_consistency_score ?? 100) * 0.10
-  );
-  const eco = ecoDriving.eco_driving_score == null
-    ? Math.round((baseEco * 0.40 + fuelBand.fuel_band_score * 0.20) / 0.60)
-    : Math.round(baseEco * 0.40 + ecoDriving.eco_driving_score * 0.40 + fuelBand.fuel_band_score * 0.20);
+  const smoothness = weightedBlend([
+    { score: baseSmoothness, weight: 0.45 },
+    { score: jerkScoreForSmoothness, weight: 0.25 },
+    { score: sviScoreForSmoothness, weight: 0.10 },
+    { score: brakeOnsetScoreForSmoothness, weight: 0.10 },
+    { score: corneringScoreForSmoothness, weight: 0.10 },
+  ]) ?? baseSmoothness;
+  const eco = weightedBlend([
+    { score: baseEco, weight: 0.40 },
+    { score: ecoDriving.eco_driving_score, weight: 0.40 },
+    { score: fuelBand.fuel_band_score, weight: 0.20 },
+  ]) ?? baseEco;
   const intersectionScore = Number.isFinite(stats.intersection_score) ? stats.intersection_score : null;
-  const intersectionScoreForOverall = intersectionScore ?? 100;
 
   // Overall = weighted combination
-  const overall = Math.min(100, Math.round(
-    safety * 0.35 + smoothness * 0.30 + eco * 0.20 + intersectionScoreForOverall * 0.15
-  ));
+  const overall = Math.min(100, weightedBlend([
+    { score: safety, weight: 0.35 },
+    { score: smoothness, weight: 0.30 },
+    { score: eco, weight: 0.20 },
+    { score: intersectionScore, weight: 0.15 },
+  ]) ?? Math.round((safety + smoothness + eco) / 3));
 
   const componentScores = {
     score_overall: overall,
@@ -4976,7 +4991,7 @@ export function calculateTripScores(
     phone_use_window_count: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_window_count || 0) : 0,
     phone_use_total_seconds: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_total_seconds || 0) : 0,
     phone_use_risk: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_risk || 'none') : 'none',
-    phone_use_score: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_score ?? 100) : null,
+    phone_use_score: confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_score : null,
     phone_use_score_available: confirmedPhoneScoreAvailable,
     phone_use_score_status: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_score_status || 'confirmed_signal') : 'usage_access_required',
     phone_use_score_confidence: confirmedPhoneScoreAvailable ? scoreConfidence : 'usage_access_required',
@@ -5009,10 +5024,11 @@ export function calculateTripScores(
   };
   delete componentScores.speed_creep_severity_counts;
 
+  const defensiveDriving = calculateDefensiveDrivingScore(componentScores);
   return {
     ...componentScores,
-    ...calculateDefensiveDrivingScore(componentScores),
-    defensive_driving_score_confidence: scoreConfidence,
+    ...defensiveDriving,
+    defensive_driving_score_confidence: defensiveDriving.defensive_driving_score == null ? 0 : scoreConfidence,
   };
 }
 
@@ -5259,7 +5275,7 @@ export function tripsToCSV(trips) {
     t.score_eco ?? '',
     t.jerk_score ?? '',
     t.eco_driving_score ?? '',
-    t.stop_start_pattern_score ?? t.following_distance_score ?? '',
+    t.stop_start_pattern_score ?? '',
     t.distraction_score ?? '',
     t.intersection_score ?? '',
     t.aggressive_driving_score ?? '',

@@ -18,6 +18,7 @@ export default function TripCard({
 }) {
   const navigate = useNavigate();
   const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
+  const lowScoreConfidence = Number.isFinite(Number(trip.score_confidence)) && Number(trip.score_confidence) < 0.5;
   const tags = normalizeTripTags(trip);
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
   const title = getTripDisplayName(trip);
@@ -151,10 +152,10 @@ export default function TripCard({
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div
             className={`w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}
-            title={buildScoreExplanation(trip, 'score_overall')}
+            title={lowScoreConfidence ? 'Score based on limited data - trip was under 2.5 km.' : buildScoreExplanation(trip, 'score_overall')}
           >
             <span className={`font-grotesk font-bold text-lg ${color}`}>
-              {trip.score_overall ?? '-'}
+              {lowScoreConfidence && trip.score_overall != null ? '~' : ''}{trip.score_overall ?? '-'}
             </span>
           </div>
           {scoreDelta && (

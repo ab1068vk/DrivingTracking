@@ -318,7 +318,11 @@ export function buildDriverSignature(trips) {
     aggression: clamp(1 - (Number(trip.aggressive_driving_score ?? 100) / 100), 0, 1),
     smoothness: clamp(Number(trip.score_smoothness ?? trip.smoothness_score ?? 0) / 100, 0, 1),
     ecoMindedness: clamp(Number(trip.score_eco ?? trip.eco_score ?? 0) / 100, 0, 1),
-    speedTolerance: clamp(((Number(trip.avg_speed_kmh) || 0) - 40) / 80, 0, 1),
+    speedTolerance: clamp(
+      ((Number(trip.speeding_events_count) || 0) / Math.max(1, Number(trip.distance_km) || 1)) / 0.4,
+      0,
+      1
+    ),
     brakingStyle: trip.braking_efficiency_score != null && Number.isFinite(Number(trip.braking_efficiency_score))
       ? clamp(Number(trip.braking_efficiency_score) / 100, 0, 1)
       : null,
@@ -902,17 +906,17 @@ export function calculatePeakHourStress(completedTrips = []) {
   const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   const peakAvg = mean(peakRates);
   const offPeakAvg = mean(offPeakRates);
-  const insufficientData = peakRates.length + offPeakRates.length === 0;
-  const stressRatio = Math.min(5, offPeakAvg > 0.01 ? peakAvg / offPeakAvg : 1.0);
-  const peakStressScore = Math.max(0, Math.round(100 - (stressRatio - 1) * 40));
+  const insufficientData = peakRates.length === 0 || offPeakRates.length === 0 || offPeakAvg <= 0.01;
+  const stressRatio = insufficientData ? null : Math.min(5, peakAvg / offPeakAvg);
+  const peakStressScore = stressRatio == null ? null : Math.max(0, Math.round(100 - (stressRatio - 1) * 40));
 
   return {
     peak_trips_event_rate: insufficientData ? null : Math.round(peakAvg * 100) / 100,
     off_peak_trips_event_rate: insufficientData ? null : Math.round(offPeakAvg * 100) / 100,
-    stress_ratio: insufficientData ? null : Math.round(stressRatio * 10) / 10,
-    peak_stress_score: insufficientData ? null : peakStressScore,
+    stress_ratio: stressRatio == null ? null : Math.round(stressRatio * 10) / 10,
+    peak_stress_score: peakStressScore,
     peak_stress_label: insufficientData
-      ? 'insufficient data'
+      ? 'insufficient off-peak data'
       : peakStressScore >= 85
       ? 'consistent'
       : peakStressScore >= 65

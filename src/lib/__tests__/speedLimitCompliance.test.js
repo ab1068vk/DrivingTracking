@@ -10,7 +10,7 @@ const p = (index, speed) => ({
 
 describe('speed-limit compliance', () => {
   it('handles empty route points', () => {
-    expect(calculateSpeedLimitCompliance([], {}, DEFAULT_THRESHOLDS).overall_compliance_score).toBe(100);
+    expect(calculateSpeedLimitCompliance([], {}, DEFAULT_THRESHOLDS).overall_compliance_score).toBeNull();
   });
 
   it('handles a single route point', () => {

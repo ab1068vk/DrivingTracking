@@ -1,6 +1,7 @@
 import { clamp } from '@/lib/mathUtils';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
+import { weightedBlend } from '@/lib/tripEngine';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -236,13 +237,15 @@ export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
     };
   }
 
-  const scoreSafety = clamp((scores.score_safety ?? 100) - weatherPenalty, 0, 100);
-  const scoreOverall = clamp(Math.round(
-    scoreSafety * 0.35 +
-    (scores.score_smoothness ?? 100) * 0.30 +
-    (scores.score_eco ?? 100) * 0.20 +
-    (scores.intersection_score ?? 100) * 0.15
-  ), 0, 100);
+  const scoreSafety = Number.isFinite(Number(scores.score_safety))
+    ? clamp(Number(scores.score_safety) - weatherPenalty, 0, 100)
+    : null;
+  const scoreOverall = clamp(weightedBlend([
+    { score: scoreSafety, weight: 0.35 },
+    { score: scores.score_smoothness, weight: 0.30 },
+    { score: scores.score_eco, weight: 0.20 },
+    { score: scores.intersection_score, weight: 0.15 },
+  ]) ?? Number(scores.score_overall) ?? 0, 0, 100);
 
   return {
     ...scores,

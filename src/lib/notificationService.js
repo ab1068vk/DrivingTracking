@@ -497,7 +497,7 @@ export async function notifyHeadingDriftBetaWarning(opts = {}, settings = localS
     title: 'Heading Drift Alert (Beta)',
     body: minutes >= 90
       ? `You've been driving for ${Math.round(minutes)} minutes. Consider taking a break.`
-      : 'GPS heading drift pattern detected. This is not a drowsiness diagnosis; take a break if you feel tired.',
+      : 'GPS heading drift pattern detected. This is not a fatigue measurement; take a break if you feel tired.',
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
     extra: { type: 'heading_drift_beta_warning', headingDriftBetaLevel: opts.headingDriftBetaLevel },

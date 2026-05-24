@@ -133,11 +133,14 @@ export function buildParkingTimeline(trip = {}) {
     });
   }
   if (trip.parking_stop_detected) {
+    const parkingStopSeconds = Number(trip.parking_stop_duration_seconds);
     timeline.push({
       timestamp: trip.end_time || trip.start_time,
       type: 'parking_detected',
       title: 'Final stop detected',
-      detail: `Trip ended from a parked/stopped state after ${Math.round(trip.parking_stop_duration_seconds || 0)} seconds.`,
+      detail: parkingStopSeconds > 0
+        ? `Trip ended from a parked/stopped state after ${Math.round(parkingStopSeconds)} seconds.`
+        : 'Trip ended from a stopped state.',
     });
   }
   if (trip.end_time) {

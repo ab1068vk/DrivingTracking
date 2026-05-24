@@ -1,4 +1,4 @@
-export const COMMUTE_MATCH_RADIUS_M = 150;
+export const COMMUTE_MATCH_RADIUS_M = 225;
 
 const routeCell = (point) => {
   const lat = Number(point?.lat);

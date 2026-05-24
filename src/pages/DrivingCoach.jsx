@@ -55,7 +55,7 @@ export default function DrivingCoach() {
       { dimension: 'Aggression', value: Math.round(driverSignature.dimensions.aggression * 100) },
       { dimension: 'Smooth', value: Math.round(driverSignature.dimensions.smoothness * 100) },
       { dimension: 'Eco', value: Math.round(driverSignature.dimensions.ecoMindedness * 100) },
-      { dimension: 'Speed', value: Math.round(driverSignature.dimensions.speedTolerance * 100) },
+      { dimension: 'Speeding', value: Math.round(driverSignature.dimensions.speedTolerance * 100) },
       { dimension: 'Braking', value: brakingStyle == null ? null : Math.round(brakingStyle * 100) },
       { dimension: 'Consistent', value: Math.round(driverSignature.dimensions.consistencyIdx * 100) },
     ].filter((item) => Number.isFinite(item.value))
@@ -75,8 +75,12 @@ export default function DrivingCoach() {
   }, [driverSignature]);
   const timeOfDay = analyzeTimeOfDay(completed);
   const dayOfWeek = analyzeDayOfWeek(completed);
-  const avgMergeScore = completed.length
-    ? Math.round(completed.reduce((sum, trip) => sum + (trip.merge_score ?? 100), 0) / completed.length)
+  const mergeScoreValues = completed
+    .map((trip) => trip.merge_score)
+    .filter((score) => score != null && Number.isFinite(Number(score)))
+    .map(Number);
+  const avgMergeScore = mergeScoreValues.length
+    ? Math.round(mergeScoreValues.reduce((sum, score) => sum + score, 0) / mergeScoreValues.length)
     : null;
   const sviValues = completed
     .map((trip) => trip.speed_variability_index)
@@ -222,6 +226,9 @@ export default function DrivingCoach() {
                 Anomaly score {latestAnomaly.anomaly_score}/100
                 {latestAnomaly.reasons.length ? ` · unusual: ${latestAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                This compares the trip with your own history. A moderate flag means the trip was notably different, not necessarily unsafe.
+              </p>
             </div>
           )}
 
@@ -340,9 +347,10 @@ export default function DrivingCoach() {
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
                 <div className={`font-grotesk font-bold text-xl ${
-                  (avgMergeScore ?? 100) >= 80 ? 'text-emerald-500' : (avgMergeScore ?? 100) >= 60 ? 'text-yellow-500' : 'text-red-500'
+                  avgMergeScore == null ? 'text-muted-foreground' : avgMergeScore >= 80 ? 'text-emerald-500' : avgMergeScore >= 60 ? 'text-yellow-500' : 'text-red-500'
                 }`}>{avgMergeScore ?? '-'}</div>
                 <div className="text-xs text-muted-foreground">merge score</div>
+                {avgMergeScore == null && <div className="text-[11px] text-muted-foreground">No merge evidence</div>}
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
                 <div className="font-grotesk font-bold text-xl">{avgSvi ?? '-'}</div>
