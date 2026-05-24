@@ -350,7 +350,7 @@ export function buildDriverSignature(trips) {
  * @param {Array<Object>} trips - Trips for the vehicle.
  * @param {{oil_change_km?:number,oil_change_interval_km?:number,tire_rotation_km?:number,tire_rotation_interval_km?:number,inspection_km?:number,odometer_km?:number,maintenance_items?:Array}} vehicle - Vehicle service settings.
  * @param {Object} settings - User settings for fallback intervals.
- * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number,corner_stress_index:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
+ * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number|null,corner_stress_index:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
  * @example
  * const maintenance = calculatePredictiveMaintenance(trips, vehicle, settings);
  */
@@ -361,9 +361,16 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
     return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : fallback;
   };
   const aggressionIndex = clamp(1 - mean(completed.map((trip) => Number(trip.aggressive_driving_score)), 100) / 100, 0, 1);
-  const brakeStressIndex = clamp(1 - mean(completed.map((trip) => Number(trip.braking_efficiency_score ?? 100)), 100) / 100, 0, 1);
+  const brakingScores = completed
+    .map((trip) => trip.braking_efficiency_score)
+    .filter((score) => score != null && Number.isFinite(Number(score)))
+    .map((score) => Number(score));
+  const brakeStressIndex = completed.length >= 5 && brakingScores.length >= 3
+    ? clamp(1 - mean(brakingScores) / 100, 0, 1)
+    : null;
   const cornerStressIndex = clamp(mean(completed.map((trip) => Number(trip.trip_tire_wear_units)), 0) / 10, 0, 1);
-  const stressIndex = clamp(aggressionIndex * 0.40 + brakeStressIndex * 0.35 + cornerStressIndex * 0.25, 0, 1);
+  const brakeStressForComposite = brakeStressIndex ?? 0;
+  const stressIndex = clamp(aggressionIndex * 0.40 + brakeStressForComposite * 0.35 + cornerStressIndex * 0.25, 0, 1);
   const adjustmentFactor = 1 - stressIndex * 0.40;
   const items = getMaintenanceItems(vehicle);
   const byId = new Map(items.map((item) => [item.id, item]));
@@ -388,7 +395,7 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
   return {
     stress_index: Math.round(stressIndex * 100) / 100,
     aggression_index: Math.round(aggressionIndex * 100) / 100,
-    brake_stress_index: Math.round(brakeStressIndex * 100) / 100,
+    brake_stress_index: brakeStressIndex == null ? null : Math.round(brakeStressIndex * 100) / 100,
     corner_stress_index: Math.round(cornerStressIndex * 100) / 100,
     oil_change: build(itemFor(['oil'], oilBase), oilBase),
     tire_rotation: build(itemFor(['tires'], tireBase), tireBase),

@@ -52,6 +52,38 @@ describe('predictive maintenance', () => {
     expect(Math.abs(one.stress_index - two.stress_index)).toBeLessThanOrEqual(0.05);
   });
 
+  it('computes brake stress only from sufficiently established braking history', () => {
+    const lowStress = calculatePredictiveMaintenance(Array.from({ length: 10 }, (_, index) => trip(index, {
+      braking_efficiency_score: 90,
+    })), vehicle, {});
+    const mediumStress = calculatePredictiveMaintenance(Array.from({ length: 10 }, (_, index) => trip(index, {
+      braking_efficiency_score: 50,
+    })), vehicle, {});
+    const belowGate = calculatePredictiveMaintenance(Array.from({ length: 3 }, (_, index) => trip(index, {
+      braking_efficiency_score: 50,
+    })), vehicle, {});
+    const mixedEvidence = calculatePredictiveMaintenance([
+      trip(0, { braking_efficiency_score: 50 }),
+      trip(1, { braking_efficiency_score: null }),
+      trip(2, { braking_efficiency_score: 70 }),
+      trip(3, { braking_efficiency_score: null }),
+      trip(4, { braking_efficiency_score: 90 }),
+    ], vehicle, {});
+    const sparseEvidence = calculatePredictiveMaintenance([
+      trip(0, { braking_efficiency_score: 50 }),
+      trip(1, { braking_efficiency_score: null }),
+      trip(2, { braking_efficiency_score: null }),
+      trip(3, { braking_efficiency_score: null }),
+      trip(4, { braking_efficiency_score: 90 }),
+    ], vehicle, {});
+
+    expect(lowStress.brake_stress_index).toBeCloseTo(0.1);
+    expect(mediumStress.brake_stress_index).toBeCloseTo(0.5);
+    expect(belowGate.brake_stress_index).toBeNull();
+    expect(mixedEvidence.brake_stress_index).toBeCloseTo(0.3);
+    expect(sparseEvidence.brake_stress_index).toBeNull();
+  });
+
   it('averages only trips with finite engine stress scores', () => {
     const result = calculateAverageEngineStressScore([
       trip(0, { engine_stress_score: 40 }),
