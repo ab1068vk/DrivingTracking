@@ -135,7 +135,7 @@ export default function TripCard({
           {((trip.near_miss_count || 0) > 0 || trip.aggressive_grade === 'aggressive' || ['possible', 'likely'].includes(trip.phone_proxy_risk)) && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {(trip.near_miss_count || 0) > 0 && (
-                <span title={`${trip.near_miss_count} near-miss event(s)`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
+                <span title={`${trip.near_miss_count} estimated close-proximity alert(s)`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
                   <ShieldAlert className="w-3 h-3" /> {trip.near_miss_count}
                 </span>
               )}

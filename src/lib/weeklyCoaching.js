@@ -2,6 +2,19 @@ import { analyzeTimeOfDay } from '@/lib/tripInsights';
 
 const eventTotal = (trips, key) => trips.reduce((sum, trip) => sum + (Number(trip[key]) || 0), 0);
 
+const distanceWeightedScore = (trips = []) => {
+  const scored = trips
+    .map((trip) => ({
+      score: Number(trip?.score_overall),
+      distance: Number(trip?.distance_km) || 0,
+    }))
+    .filter((item) => Number.isFinite(item.score));
+  const totalKm = scored.reduce((sum, item) => sum + item.distance, 0);
+  return totalKm > 0
+    ? scored.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm
+    : null;
+};
+
 export function buildWeeklyCoachSummary(trips = []) {
   const completed = (trips || [])
     .filter((trip) => trip.status === 'completed')
@@ -40,7 +53,7 @@ export function buildWeeklyCoachSummary(trips = []) {
   const evening = scope.filter((trip) => new Date(trip.start_time || 0).getHours() >= 17);
   const windows = analyzeTimeOfDay(scope).sort((a, b) => (b.events || 0) - (a.events || 0));
   const pressureWindow = windows[0]?.label || (evening.length >= scope.length / 2 ? 'Evening' : 'mixed times');
-  const avgScore = Math.round(scope.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0), 0) / scope.length);
+  const avgScore = Math.round(distanceWeightedScore(scope) ?? 0);
 
   const context = [
     cityShort.length >= 2 ? 'short city trips' : null,

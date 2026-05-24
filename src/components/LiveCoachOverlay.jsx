@@ -25,7 +25,7 @@ const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
 const VOICE_COOLDOWNS_MS = {
   phone_use: 120000,
-  near_miss: 120000,
+  close_proximity: 120000,
   harsh_brake: 30000,
   tailgate: 60000,
   speeding: 60000,
@@ -121,8 +121,8 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         const startMs = new Date(window.startTime || window.timestamp || 0).getTime();
         return Number.isFinite(startMs) && startMs > lastCoachCheckTime;
       });
-      const recentNearMiss = events.some((event) => (
-        event.type === EVENT_TYPES.NEAR_MISS &&
+      const recentCloseProximity = events.some((event) => (
+        (event.type === EVENT_TYPES.CLOSE_PROXIMITY || event.type === EVENT_TYPES.NEAR_MISS) &&
         now - new Date(event.timestamp).getTime() <= RECENT_WINDOW_MS
       ));
       const harshBrakeCount = events.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length;
@@ -155,11 +155,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
             speedKmh: highestConfidence.speed_kmh,
           }, settings).catch(() => {});
         }
-      } else if (recentNearMiss) {
+      } else if (recentCloseProximity) {
         nextMessage = {
-          text: 'Near miss detected - increase following distance',
-          voiceKey: 'near_miss',
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.near_miss,
+          text: 'Estimated close-proximity alert - increase following distance',
+          voiceKey: 'close_proximity',
+          voiceCooldownMs: VOICE_COOLDOWNS_MS.close_proximity,
         };
       } else if (stats.drowsy_risk_level === 'high') {
         nextMessage = {

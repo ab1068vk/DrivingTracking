@@ -37,11 +37,20 @@ function mostImprovedWeek(trips = []) {
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const key = weekStart.toISOString().slice(0, 10);
     const bucket = byWeek.get(key) || [];
-    bucket.push(Number(trip.score_overall) || 0);
+    bucket.push({
+      score: Number(trip.score_overall) || 0,
+      distance: Number(trip.distance_km) || 0,
+    });
     byWeek.set(key, bucket);
   });
   const weeks = [...byWeek.entries()]
-    .map(([key, scores]) => ({ key, avg: scores.reduce((sum, score) => sum + score, 0) / scores.length }))
+    .map(([key, scores]) => {
+      const totalKm = scores.reduce((sum, item) => sum + item.distance, 0);
+      return {
+        key,
+        avg: totalKm > 0 ? scores.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm : 0,
+      };
+    })
     .sort((a, b) => a.key.localeCompare(b.key));
   let best = null;
   for (let i = 1; i < weeks.length; i++) {

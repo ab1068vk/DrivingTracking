@@ -150,7 +150,7 @@ export default function Reports() {
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now - i * 86400000);
       const key = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      map[key] = { date: key, distance: 0, trips: 0, score: 0, scoreCount: 0, svi: 0, sviCount: 0 };
+      map[key] = { date: key, distance: 0, trips: 0, score: 0, scoreDistance: 0, svi: 0, sviCount: 0 };
     }
     trips.forEach(t => {
       const key = new Date(t.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -158,8 +158,9 @@ export default function Reports() {
         map[key].distance += t.distance_km || 0;
         map[key].trips += 1;
         if (t.score_overall) {
-          map[key].score += t.score_overall;
-          map[key].scoreCount += 1;
+          const distance = Number(t.distance_km) || 0;
+          map[key].score += t.score_overall * distance;
+          map[key].scoreDistance += distance;
         }
         if (t.svi_score != null && t.svi_score !== '' && Number.isFinite(Number(t.svi_score))) {
           map[key].svi += Number(t.svi_score);
@@ -170,7 +171,7 @@ export default function Reports() {
     return Object.values(map).map(d => ({
       ...d,
       distance: Math.round(d.distance * 10) / 10,
-      avgScore: d.scoreCount > 0 ? Math.round(d.score / d.scoreCount) : null,
+      avgScore: d.scoreDistance > 0 ? Math.round(d.score / d.scoreDistance) : null,
       avgSviScore: d.sviCount > 0 ? Math.round(d.svi / d.sviCount) : null,
     }));
   })();
@@ -183,7 +184,8 @@ export default function Reports() {
     lane_change: 'Lane Changes',
     tailgate_cycle: 'Following Gap',
     erratic_speed: 'Erratic Speed',
-    near_miss: 'Near-Miss',
+    near_miss: 'Close Proximity',
+    close_proximity: 'Close Proximity',
     aggressive_overtake: 'Aggressive Overtakes',
   };
 

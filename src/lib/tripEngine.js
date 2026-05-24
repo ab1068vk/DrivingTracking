@@ -6,7 +6,6 @@ import { NIGHT_END_HOUR, NIGHT_END_TIME, NIGHT_START_HOUR, NIGHT_START_TIME } fr
 
 const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
 const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.4;
-const REACTION_SCORE_FLOOR = 20;
 const FOLLOWING_DISTANCE_MIN_TRIP_KM = 0.5;
 const FOLLOWING_DISTANCE_PENALTY_SCALE = 8;
 export const PHONE_USE_SAFETY_WEIGHT = 0.05;
@@ -102,6 +101,9 @@ export const DEFAULT_THRESHOLDS = {
   LANE_CHANGE_MIN_TURN_RATE_DEG_S: 3,
   LANE_CHANGE_MAX_TURN_RATE_DEG_S: 20,
   LANE_CHANGE_MIN_WINDOW_SECONDS: 6,
+  LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG: 4,
+  LANE_CHANGE_SUPPRESS_CONTEXT_METERS: 200,
+  CORNERING_MIN_SPEED_KMH: 25,
   MERGE_ENTRY_SPEED_KMH: 65,
   MERGE_EXIT_SPEED_KMH: 85,
   PARKING_LOOKBACK_SECONDS: 90,
@@ -133,6 +135,7 @@ export const EVENT_TYPES = {
   TAILGATE_CYCLE: 'tailgate_cycle',
   ERRATIC_SPEED: 'erratic_speed',
   NEAR_MISS: 'near_miss',
+  CLOSE_PROXIMITY: 'close_proximity',
   AGGRESSIVE_OVERTAKE: 'aggressive_overtake',
   PHONE_USE: 'phone_use',
 };
@@ -1641,7 +1644,7 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
       reliablePointSpeed(points, i, thresholds) ?? finiteSpeed(curr)
     );
     const minSpeed = thresholds.LANE_CHANGE_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_SPEED_KMH;
-    if (speed < minSpeed) continue;
+    if (speed <= minSpeed) continue;
 
     const dt = (timestampMs(curr) - timestampMs(prev)) / 1000;
     if (dt <= 0 || dt > 30) continue;
@@ -1660,6 +1663,11 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
     if (windowDurationS <= 0 || windowDurationS > 40) continue;
     const minWindowSeconds = thresholds.LANE_CHANGE_MIN_WINDOW_SECONDS ?? DEFAULT_THRESHOLDS.LANE_CHANGE_MIN_WINDOW_SECONDS;
     if (windowDurationS < minWindowSeconds) continue;
+    const straightHeadingStdMax = thresholds.LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG ?? DEFAULT_THRESHOLDS.LANE_CHANGE_STRAIGHT_HEADING_STD_MAX_DEG;
+    const approachHeadingStd = headingVarianceForRange(points, windowStart, Math.max(windowStart, i - 1));
+    if (approachHeadingStd > straightHeadingStdMax) continue;
+    const suppressionRadius = thresholds.LANE_CHANGE_SUPPRESS_CONTEXT_METERS ?? DEFAULT_THRESHOLDS.LANE_CHANGE_SUPPRESS_CONTEXT_METERS;
+    if (isNearIntersectionOrRampContext(points, i, suppressionRadius)) continue;
 
     let leftChange = 0;
     let rightChange = 0;
@@ -1748,6 +1756,8 @@ export function detectLaneChanges(points = [], thresholds = DEFAULT_THRESHOLDS) 
   return merged.map(({ point, turnRate, speed, pointIndex }) => ({
     type: EVENT_TYPES.LANE_CHANGE,
     severity,
+    label: 'possible lane change',
+    confidence: 'medium',
     lat: point.lat,
     lng: point.lng,
     timestamp: point.timestamp,
@@ -1974,6 +1984,104 @@ function headingForIndex(points, index) {
     return calculateBearing(point.lat, point.lng, next.lat, next.lng);
   }
   return 0;
+}
+
+function usableHeadingSegment(a, b) {
+  if (!hasValidCoordinates(a) || !hasValidCoordinates(b)) return false;
+  const segment = calculateSegmentMetrics(a, b);
+  return segment.dt > 0 && segment.dt <= 8 && !segment.isNoise && segment.distanceM >= 8;
+}
+
+function geometryHeadingForIndex(points, index) {
+  const point = points[index];
+  if (!point) return null;
+  const prev = points[index - 1];
+  const next = points[index + 1];
+  if (usableHeadingSegment(prev, point) && usableHeadingSegment(point, next)) {
+    return calculateBearing(prev.lat, prev.lng, next.lat, next.lng);
+  }
+  if (usableHeadingSegment(point, next)) {
+    return calculateBearing(point.lat, point.lng, next.lat, next.lng);
+  }
+  if (usableHeadingSegment(prev, point)) {
+    return calculateBearing(prev.lat, prev.lng, point.lat, point.lng);
+  }
+  return headingForIndex(points, index);
+}
+
+function smoothHeading(points, index) {
+  const headings = [index - 1, index, index + 1]
+    .filter((candidateIndex) => candidateIndex >= 0 && candidateIndex < points.length)
+    .filter((candidateIndex) => (
+      candidateIndex === index ||
+      usableHeadingSegment(points[Math.min(candidateIndex, index)], points[Math.max(candidateIndex, index)])
+    ))
+    .map((candidateIndex) => geometryHeadingForIndex(points, candidateIndex))
+    .filter(Number.isFinite);
+  if (!headings.length) return null;
+  const sin = headings.reduce((sum, heading) => sum + Math.sin(heading * Math.PI / 180), 0) / headings.length;
+  const cos = headings.reduce((sum, heading) => sum + Math.cos(heading * Math.PI / 180), 0) / headings.length;
+  return ((Math.atan2(sin, cos) * 180) / Math.PI + 360) % 360;
+}
+
+function headingVarianceForRange(points, startIndex, endIndex) {
+  const headings = [];
+  for (let i = Math.max(0, startIndex); i <= Math.min(points.length - 1, endIndex); i++) {
+    const heading = smoothHeading(points, i);
+    if (Number.isFinite(heading)) headings.push(heading);
+  }
+  return headingStdDev(headings);
+}
+
+function pointHasIntersectionOrRampContext(point = {}) {
+  const textValues = [
+    point.road_type,
+    point.road_class,
+    point.highway,
+    point.junction,
+    point.osm_highway,
+    point.osm_junction,
+  ].map((value) => String(value || '').toLowerCase());
+  return Boolean(
+    point.intersection ||
+    point.is_intersection ||
+    point.near_intersection ||
+    point.ramp ||
+    point.is_ramp ||
+    textValues.some((value) => value.includes('ramp') || value.includes('_link') || value.includes('roundabout'))
+  );
+}
+
+function isNearIntersectionOrRampContext(points = [], index = 0, radiusM = 200) {
+  const current = points[index];
+  if (!hasValidCoordinates(current)) return false;
+
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+    if (!hasValidCoordinates(point)) continue;
+    if (pointHasIntersectionOrRampContext(point)) {
+      if (haversineMeters(current.lat, current.lng, point.lat, point.lng) <= radiusM) return true;
+    }
+  }
+
+  let stopDistanceM = 0;
+  for (let i = index - 1; i >= 0; i--) {
+    const segment = calculateSegmentMetrics(points[i], points[i + 1]);
+    if (segment.dt <= 0 || segment.dt > 30 || segment.isNoise) break;
+    stopDistanceM += segment.distanceM;
+    if (stopDistanceM > radiusM) break;
+    if (finiteSpeed(points[i]) <= 12) return true;
+  }
+  stopDistanceM = 0;
+  for (let i = index + 1; i < points.length; i++) {
+    const segment = calculateSegmentMetrics(points[i - 1], points[i]);
+    if (segment.dt <= 0 || segment.dt > 30 || segment.isNoise) break;
+    stopDistanceM += segment.distanceM;
+    if (stopDistanceM > radiusM) break;
+    if (finiteSpeed(points[i]) <= 12) return true;
+  }
+
+  return false;
 }
 
 export function calculateAngularStdDev(headings = []) {
@@ -2790,24 +2898,22 @@ export function extractBrakingSequences(routePoints, thresholds = DEFAULT_THRESH
 }
 
 /**
- * Estimate braking reaction timing around harsh-brake and near-miss events.
+ * Estimate braking reaction timing around harsh-brake events.
  * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number}>} routePoints - Ordered GPS route points.
  * @param {Array<{type:string,timestamp?:string,point_index?:number,speed_kmh?:number}>} drivingEvents - Events from detectDrivingEvents.
  * @param {Object} thresholds - Driving thresholds, including REACTION_SPEED_TRIGGER_KMH.
- * @returns {{reaction_score:number,avg_reaction_seconds:number,reaction_grade:string,reaction_sample_count:number}} Reaction score fields.
+ * @returns {{reaction_score:number|null,avg_reaction_seconds:number,reaction_grade:string,reaction_sample_count:number}} Reaction score fields.
  * @example
  * const reaction = calculateReactionTimeProxy(points, events, DEFAULT_THRESHOLDS);
  */
 export function calculateReactionTimeProxy(routePoints, drivingEvents = [], thresholds = DEFAULT_THRESHOLDS) {
   const points = routePoints || [];
-  const targetEvents = (drivingEvents || []).filter((event) => (
-    event.type === EVENT_TYPES.HARSH_BRAKE || event.type === EVENT_TYPES.NEAR_MISS
-  ));
-  if (points.length < 2 || !targetEvents.length) {
+  const targetEvents = (drivingEvents || []).filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE);
+  if (points.length < 2 || targetEvents.length < 3) {
     return {
-      reaction_score: 100,
+      reaction_score: null,
       avg_reaction_seconds: 0,
-      reaction_grade: 'anticipatory',
+      reaction_grade: 'insufficient_data',
       reaction_sample_count: 0,
     };
   }
@@ -2846,18 +2952,17 @@ export function calculateReactionTimeProxy(routePoints, drivingEvents = [], thre
     else totalPenalty += 12;
   }
 
-  if (!windows.length) {
+  if (windows.length < 3) {
     return {
-      reaction_score: 100,
+      reaction_score: null,
       avg_reaction_seconds: 0,
-      reaction_grade: 'anticipatory',
-      reaction_sample_count: 0,
+      reaction_grade: 'insufficient_data',
+      reaction_sample_count: windows.length,
     };
   }
 
   const distFactor = Math.max(1, calculateRouteDistanceKm(points, thresholds));
-  // Floor of 20: this is a GPS-derived reaction proxy, not a precise human reaction measurement.
-  const reactionScore = Math.max(REACTION_SCORE_FLOOR, Math.round(100 - Math.min(totalPenalty * (5 / distFactor), 80)));
+  const reactionScore = Math.max(0, Math.round(100 - Math.min(totalPenalty * (5 / distFactor), 100)));
   return {
     reaction_score: reactionScore,
     avg_reaction_seconds: round2(average(windows)),
@@ -2868,6 +2973,9 @@ export function calculateReactionTimeProxy(routePoints, drivingEvents = [], thre
 
 function lateralGForTriplet(points, index, thresholds = DEFAULT_THRESHOLDS) {
   if (index <= 0 || index >= points.length - 1) return null;
+  const speed = reliablePointSpeed(points, index, thresholds);
+  const minSpeed = thresholds.CORNERING_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.CORNERING_MIN_SPEED_KMH;
+  if (!speed || speed < minSpeed) return null;
   const prev = points[index - 1];
   const curr = points[index];
   const next = points[index + 1];
@@ -2875,13 +2983,20 @@ function lateralGForTriplet(points, index, thresholds = DEFAULT_THRESHOLDS) {
   const nextSegment = calculateSegmentMetrics(curr, next, thresholds);
   if (prevSegment.dt <= 0 || nextSegment.dt <= 0 || prevSegment.dt > 8 || nextSegment.dt > 8) return null;
   if (prevSegment.isNoise || nextSegment.isNoise || prevSegment.distanceM < 8 || nextSegment.distanceM < 8) return null;
-  const h1 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
-  const h2 = calculateBearing(curr.lat, curr.lng, next.lat, next.lng);
-  const rawHeadingChange = headingDiff(h1, h2);
-  const effectiveDt = Math.max(1.5, (prevSegment.dt + nextSegment.dt) / 2);
+  const h0 = smoothHeading(points, index - 1);
+  const h2 = smoothHeading(points, index + 1);
+  if (!Number.isFinite(h0) || !Number.isFinite(h2)) return null;
+  const rawHeadingChange = headingDiff(h0, h2);
+  const effectiveDt = Math.max(1.5, prevSegment.dt + nextSegment.dt);
   const omegaRadPerSec = (rawHeadingChange * Math.PI / 180) / effectiveDt;
-  const speed = Math.max(finiteSpeed(prev), finiteSpeed(curr), finiteSpeed(next), nextSegment.reliableSpeedKmh);
   return (speed / 3.6 * omegaRadPerSec) / 9.81;
+}
+
+function hasSustainedLateralG(points, index, thresholdG, thresholds = DEFAULT_THRESHOLDS) {
+  return [index - 1, index + 1].some((neighborIndex) => {
+    const lateralG = lateralGForTriplet(points, neighborIndex, thresholds);
+    return Number.isFinite(lateralG) && lateralG >= thresholdG;
+  });
 }
 
 /**
@@ -2896,7 +3011,6 @@ export function calculateCorneringConsistency(routePoints, thresholds = DEFAULT_
   const points = routePoints || [];
   const cornerSamples = [];
   for (let i = 1; i < points.length - 1; i++) {
-    if (finiteSpeed(points[i]) <= 20) continue;
     const lateralG = lateralGForTriplet(points, i, thresholds);
     if (Number.isFinite(lateralG) && lateralG > 0.05) cornerSamples.push(lateralG);
   }
@@ -3832,33 +3946,31 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
 
     // ── Sharp Turn
     // Sharp turns use lateral g, with stricter gates to avoid normal city corners.
-    if (speed2 >= 35 && dt <= 8 && currSegment.distanceM >= 12 && i > 1) {
-      const prevPrev = points[i - 2];
-      const prevSegment = calculateSegmentMetrics(prevPrev, prev, thresholds);
-      if (prevSegment.dt > 0 && prevSegment.dt <= 8 && !prevSegment.isNoise && prevSegment.distanceM >= 12) {
-        const h1 = calculateBearing(prevPrev.lat, prevPrev.lng, prev.lat, prev.lng);
-        const h2 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
-        const rawHeadingChange = headingDiff(h1, h2);
-        const effectiveDt = Math.max(1.5, (prevSegment.dt + dt) / 2);
-        const omegaRadPerSec = (rawHeadingChange * Math.PI / 180) / effectiveDt;
-        const vMps = speed2 / 3.6;
-        const lateralG = (vMps * omegaRadPerSec) / 9.81;
-        const lowG = thresholds.SHARP_TURN_G_LOW ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW;
-        const mediumG = thresholds.SHARP_TURN_G_MEDIUM ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM;
-        const highG = thresholds.SHARP_TURN_G_HIGH ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH;
+    if (i > 1 && i < points.length - 1) {
+      const lowG = thresholds.SHARP_TURN_G_LOW ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW;
+      const mediumG = thresholds.SHARP_TURN_G_MEDIUM ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM;
+      const highG = thresholds.SHARP_TURN_G_HIGH ?? DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH;
+      const lateralG = lateralGForTriplet(points, i, thresholds);
+      const h0 = smoothHeading(points, i - 1);
+      const h2 = smoothHeading(points, i + 1);
+      const rawHeadingChange = Number.isFinite(h0) && Number.isFinite(h2) ? headingDiff(h0, h2) : 0;
 
-        if (rawHeadingChange >= 30 && lateralG >= lowG) {
-          pushEvent({
-            type: EVENT_TYPES.SHARP_TURN,
-            severity: lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low',
-            lat: curr.lat,
-            lng: curr.lng,
-            timestamp: curr.timestamp,
-            point_index: i,
-            value: Math.round(lateralG * 100) / 100,
-            speed_kmh: Math.round(speed2),
-          });
-        }
+      if (
+        rawHeadingChange >= 30 &&
+        Number.isFinite(lateralG) &&
+        lateralG >= lowG &&
+        hasSustainedLateralG(points, i, lowG, thresholds)
+      ) {
+        pushEvent({
+          type: EVENT_TYPES.SHARP_TURN,
+          severity: lateralG >= highG ? 'high' : lateralG >= mediumG ? 'medium' : 'low',
+          lat: curr.lat,
+          lng: curr.lng,
+          timestamp: curr.timestamp,
+          point_index: i,
+          value: Math.round(lateralG * 100) / 100,
+          speed_kmh: Math.round(speed2),
+        });
       }
     }
 
@@ -3871,8 +3983,10 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       const headingRate = headingDiff(h1, h2) / dt;
       if (headingRate > nearMissTurnThreshold) {
         pushEvent({
-          type: EVENT_TYPES.NEAR_MISS,
+          type: EVENT_TYPES.CLOSE_PROXIMITY,
           severity: accel < -5.5 && headingRate > 60 ? 'high' : accel < -4.5 && headingRate > 45 ? 'medium' : 'low',
+          label: 'close-proximity alert (estimated)',
+          confidence: 'estimated',
           lat: curr.lat,
           lng: curr.lng,
           timestamp: curr.timestamp,
@@ -3996,8 +4110,10 @@ export function detectNearMisses(cleanPoints = [], thresholds = DEFAULT_THRESHOL
 
     if (accelMs2 < -brakeThreshold && headingRate > turnThreshold && dt <= 2.0) {
       events.push({
-        type: EVENT_TYPES.NEAR_MISS,
+        type: EVENT_TYPES.CLOSE_PROXIMITY,
         severity: accelMs2 < -5.5 && headingRate > 60 ? 'high' : accelMs2 < -4.5 && headingRate > 45 ? 'medium' : 'low',
+        label: 'close-proximity alert (estimated)',
+        confidence: 'estimated',
         lat: curr.lat,
         lng: curr.lng,
         timestamp: curr.timestamp,
@@ -4456,7 +4572,6 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
     [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
     [EVENT_TYPES.SHARP_TURN]: { low: 2, medium: 5, high: 10 },
     [EVENT_TYPES.SPEEDING]: { low: 5, medium: 10, high: 20 },
-    [EVENT_TYPES.NEAR_MISS]: { low: 8, medium: 18, high: 35 },
     [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
   };
   const rawPenalty = events.reduce((sum, event) => sum + (weights[event.type]?.[event.severity] || 0), 0);
@@ -4475,11 +4590,10 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
 
 export function calculateDefensiveDrivingScore(scores = {}) {
   const defensiveScore = Math.round(
-    (scores.smooth_braking_ratio ?? 100) * 0.25 +
+    (scores.smooth_braking_ratio ?? 100) * 0.30 +
     (scores.intersection_score ?? 100) * 0.20 +
     (scores.svi_score ?? 100) * 0.20 +
-    (scores.following_distance_score ?? 100) * 0.20 +
-    (scores.near_miss_score ?? 100) * 0.15
+    (scores.following_distance_score ?? 100) * 0.30
   );
   return {
     defensive_driving_score: defensiveScore,
@@ -4516,7 +4630,8 @@ export function calculateTripScores(
     [EVENT_TYPES.LANE_CHANGE]: { low: 2, medium: 5, high: 10 },
     [EVENT_TYPES.TAILGATE_CYCLE]: { low: 3, medium: 8, high: 15 },
     [EVENT_TYPES.ERRATIC_SPEED]: { low: 2, medium: 5, high: 10 },
-    [EVENT_TYPES.NEAR_MISS]: { low: 8, medium: 18, high: 35 },
+    [EVENT_TYPES.NEAR_MISS]: { low: 0, medium: 0, high: 0 },
+    [EVENT_TYPES.CLOSE_PROXIMITY]: { low: 0, medium: 0, high: 0 },
     [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
     [EVENT_TYPES.PHONE_USE]: { low: 5, medium: 12, high: 20 },
   };
@@ -4532,6 +4647,7 @@ export function calculateTripScores(
     [EVENT_TYPES.TAILGATE_CYCLE]: 0,
     [EVENT_TYPES.ERRATIC_SPEED]: 0,
     [EVENT_TYPES.NEAR_MISS]: 0,
+    [EVENT_TYPES.CLOSE_PROXIMITY]: 0,
     [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: 0,
     [EVENT_TYPES.PHONE_USE]: 0,
   };
@@ -4560,12 +4676,11 @@ export function calculateTripScores(
       EVENT_TYPES.LANE_CHANGE,
       EVENT_TYPES.TAILGATE_CYCLE,
       EVENT_TYPES.ERRATIC_SPEED,
-      EVENT_TYPES.NEAR_MISS,
       EVENT_TYPES.AGGRESSIVE_OVERTAKE,
       EVENT_TYPES.PHONE_USE,
     ].includes(evt.type)) safetyPenalty += p;
     // Smoothness: deducts from harsh_brake, rapid_acceleration, sharp_turn
-    if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN, EVENT_TYPES.NEAR_MISS].includes(evt.type)) smoothnessPenalty += p;
+    if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN].includes(evt.type)) smoothnessPenalty += p;
     // Eco: deducts from speeding, rapid_acceleration, idle
     if ([EVENT_TYPES.SPEEDING, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.IDLE].includes(evt.type)) ecoPenalty += p;
     if (evt.type === EVENT_TYPES.TAILGATE_CYCLE) {
@@ -4637,9 +4752,10 @@ export function calculateTripScores(
     : { drowsy_window_count: 0, drowsy_risk_score: 0, drowsy_risk_level: 'none' };
   const hill = calculateHillDrivingScore(routePoints, thresholds);
   const parking = analyzeParkingApproach(routePoints, thresholds, options.endTime ?? null);
-  const nearMissScore = counts[EVENT_TYPES.NEAR_MISS] === 0
+  const closeProximityCount = counts[EVENT_TYPES.NEAR_MISS] + counts[EVENT_TYPES.CLOSE_PROXIMITY];
+  const closeProximityScore = closeProximityCount === 0
     ? 100
-    : Math.max(0, Math.round(100 * Math.pow(0.60, counts[EVENT_TYPES.NEAR_MISS])));
+    : Math.max(0, Math.round(100 * Math.pow(0.60, closeProximityCount)));
   const aggressive = calculateAggressiveDrivingScore(scoringEvents, { ...stats, ...jerk });
   const tripDistanceKm = Number(stats.distance_km) || 0;
   const followingDistanceScore = tripDistanceKm < FOLLOWING_DISTANCE_MIN_TRIP_KM
@@ -4681,7 +4797,7 @@ export function calculateTripScores(
     baseSmoothness * 0.45 +
     jerkScoreForSmoothness * 0.25 +
     sviScoreForSmoothness * 0.10 +
-    reaction.reaction_score * 0.10 +
+    (reaction.reaction_score ?? 100) * 0.10 +
     (cornering.cornering_consistency_score ?? 100) * 0.10
   );
   const eco = ecoDriving.eco_driving_score == null
@@ -4711,8 +4827,10 @@ export function calculateTripScores(
     following_distance_score_confidence: followingDistanceScore == null ? 'insufficient_data' : 'observed_distance',
     distraction_events_count: counts[EVENT_TYPES.ERRATIC_SPEED],
     distraction_score: Math.round(distractionScore),
-    near_miss_count: counts[EVENT_TYPES.NEAR_MISS],
-    near_miss_score: nearMissScore,
+    close_proximity_count: closeProximityCount,
+    close_proximity_score: closeProximityScore,
+    near_miss_count: closeProximityCount,
+    near_miss_score: closeProximityScore,
     overtake_event_count: counts[EVENT_TYPES.AGGRESSIVE_OVERTAKE],
     overtake_score: Math.max(0, 100 - counts[EVENT_TYPES.AGGRESSIVE_OVERTAKE] * 20),
     intersection_score: intersectionScore,
@@ -4816,6 +4934,19 @@ export function formatDateTime(dateStr) {
 }
 
 // ─── Report Calculations ───────────────────────────────────────────────────────
+function distanceWeightedTripScore(trips = [], field = 'score_overall') {
+  const scored = trips
+    .map((trip) => ({
+      score: Number(trip?.[field]),
+      distance: Number(trip?.distance_km) || 0,
+    }))
+    .filter((item) => Number.isFinite(item.score));
+  const totalKm = scored.reduce((sum, item) => sum + item.distance, 0);
+  return totalKm > 0
+    ? scored.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm
+    : null;
+}
+
 /**
  * Generate a summary report for a set of trips.
  *
@@ -4846,7 +4977,7 @@ export function generateReportSummary(trips) {
   const totalDistance = completed.reduce((s, t) => s + (t.distance_km || 0), 0);
   const totalDuration = completed.reduce((s, t) => s + (t.duration_seconds || 0), 0);
   const scores = completed.filter(t => t.score_overall > 0).map(t => t.score_overall);
-  const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  const avgScore = Math.round(distanceWeightedTripScore(completed) ?? 0);
 
   const sorted = [...completed].sort((a, b) => (b.score_overall || 0) - (a.score_overall || 0));
   const bestTrip = sorted[0] || null;
@@ -4958,7 +5089,7 @@ export function tripsToCSV(trips) {
     'Overtake Quality Score', 'Overtake Count', 'Unsafe Re-entry Count',
     'Road Condition Proxy', 'Safety Condition Bonus',
     'Road Type', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events',
-    'Lane Changes', 'Tailgate Cycles', 'Distraction Events', 'Near Misses', 'Overtakes', 'Night Driving',
+    'Lane Changes', 'Tailgate Cycles', 'Distraction Events', 'Close Proximity Alerts', 'Overtakes', 'Night Driving',
     'Event Feedback Accurate', 'Event Feedback Wrong', 'Event Feedback JSON',
     'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];

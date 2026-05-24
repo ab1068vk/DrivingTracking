@@ -1142,8 +1142,11 @@ export default function Dashboard() {
   const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
   const weekTrips = completedTrips.filter(t => new Date(t.start_time) >= weekAgo);
   const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
+  const totalScoredKm = completedTrips.reduce((s, t) => s + (Number(t.distance_km) || 0), 0);
   const avgScore = completedTrips.length
-    ? Math.round(completedTrips.reduce((s, t) => s + (t.score_overall || 0), 0) / completedTrips.length)
+    ? Math.round(totalScoredKm > 0
+      ? completedTrips.reduce((s, t) => s + (t.score_overall || 0) * (Number(t.distance_km) || 0), 0) / totalScoredKm
+      : 0)
     : 0;
   const latestTrip = completedTrips[0];
   const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: t.score_overall || 0 }));

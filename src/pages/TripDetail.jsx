@@ -562,7 +562,7 @@ export default function TripDetail() {
 
       {(trip.near_miss_count || 0) > 0 && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
-          {trip.near_miss_count} near-miss event{trip.near_miss_count === 1 ? '' : 's'} detected on this trip. Review your route for hazardous zones.
+          {trip.near_miss_count} estimated close-proximity alert{trip.near_miss_count === 1 ? '' : 's'} on this trip. Review your route for possible hazardous zones.
         </div>
       )}
 
@@ -1366,7 +1366,7 @@ export default function TripDetail() {
               { label: 'Lane Changes', value: trip.lane_changes_count, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
               { label: 'Tailgate', value: trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
-              { label: 'Near-Miss', value: trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+              { label: 'Close Proximity', value: trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
               { label: 'Overtakes', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
               ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
@@ -1391,7 +1391,8 @@ export default function TripDetail() {
                 sharp_turn: { label: 'Sharp Turn', icon: '↰', color: 'text-blue-600' },
                 speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
-                near_miss: { label: 'Near-Miss', icon: '!', color: 'text-red-700' },
+                near_miss: { label: 'Close Proximity', icon: '!', color: 'text-red-700' },
+                close_proximity: { label: 'Close Proximity', icon: '!', color: 'text-red-700' },
                 aggressive_overtake: { label: 'Aggressive Overtake', icon: '>>', color: 'text-orange-600' },
                 lane_change: { label: 'Lane Change', icon: '<>', color: 'text-sky-600' },
                 tailgate_cycle: { label: 'Tailgate Cycle', icon: '!!', color: 'text-red-600' },
@@ -1405,7 +1406,7 @@ export default function TripDetail() {
                 : evt.type === 'phone_use'
                   ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
                   : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-              const inferredTypes = ['lane_change', 'tailgate_cycle', 'erratic_speed', 'phone_use', 'near_miss', 'aggressive_overtake'];
+              const inferredTypes = ['lane_change', 'tailgate_cycle', 'erratic_speed', 'phone_use', 'near_miss', 'close_proximity', 'aggressive_overtake'];
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
                 : evt.type === 'speeding' && evt.speed_limit_source

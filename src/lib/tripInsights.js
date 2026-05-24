@@ -45,6 +45,19 @@ export const DEFAULT_MAINTENANCE_ITEMS = [
 
 const DAY_MS = 86400000;
 
+const distanceWeightedScore = (trips = [], field = 'score_overall') => {
+  const scored = trips
+    .map((trip) => ({
+      score: Number(trip?.[field]),
+      distance: Number(trip?.distance_km) || 0,
+    }))
+    .filter((item) => Number.isFinite(item.score));
+  const totalKm = scored.reduce((sum, item) => sum + item.distance, 0);
+  return totalKm > 0
+    ? scored.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm
+    : null;
+};
+
 export const DRIVING_CONSISTENCY_IQR_MULTIPLIERS = {
   urban: 1.0,
   residential: 1.2,
@@ -571,7 +584,7 @@ export function buildScoreTips(trips = []) {
     tips.push('A large share of trips happen at night, where Road Sage applies extra safety risk. Keep routes familiar and take breaks on longer drives.');
   }
 
-  const avgScore = completed.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / completed.length;
+  const avgScore = distanceWeightedScore(completed) ?? 0;
   if (avgScore >= 85) {
     tips.push('Your recent average is excellent. Keep the streak going by protecting smooth starts and early braking.');
   } else if (avgScore < 70) {
@@ -593,10 +606,8 @@ export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
   const nightDistanceKm = Math.round(weekTrips
     .filter((trip) => trip.night_driving)
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0) * 10) / 10;
-  const scoreCount = weekTrips.filter((trip) => trip.score_overall > 0).length;
-  const avgScore = scoreCount
-    ? Math.round(weekTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount)
-    : 0;
+  const weightedScore = distanceWeightedScore(weekTrips);
+  const avgScore = weightedScore == null ? 0 : Math.round(weightedScore);
 
   return [
     {
@@ -621,7 +632,7 @@ export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
       value: avgScore,
       target: Number(settings.weekly_goal_min_avg_score ?? 80),
       direction: 'over',
-      met: scoreCount > 0 && avgScore >= Number(settings.weekly_goal_min_avg_score ?? 80),
+      met: weightedScore != null && avgScore >= Number(settings.weekly_goal_min_avg_score ?? 80),
     },
     {
       id: 'night_distance',
@@ -691,7 +702,7 @@ export function analyzeTimeOfDay(trips = []) {
       const normalized = hour < NIGHT_END_HOUR ? hour + 24 : hour;
       return normalized >= bucket.from && normalized < bucket.to;
     });
-    const scoreCount = bucketTrips.filter((trip) => trip.score_overall > 0).length;
+    const weightedScore = distanceWeightedScore(bucketTrips);
     const events = bucketTrips.reduce((sum, trip) => (
       sum +
       (trip.harsh_brakes_count || 0) +
@@ -702,9 +713,7 @@ export function analyzeTimeOfDay(trips = []) {
     return {
       ...bucket,
       trips: bucketTrips.length,
-      avgScore: scoreCount
-        ? Math.round(bucketTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount)
-        : null,
+      avgScore: weightedScore == null ? null : Math.round(weightedScore),
       events,
     };
   });
@@ -714,7 +723,7 @@ export function analyzeDayOfWeek(trips = []) {
   const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return labels.map((label, index) => {
     const dayTrips = trips.filter((trip) => trip.status === 'completed' && new Date(trip.start_time).getDay() === index);
-    const scoreCount = dayTrips.filter((trip) => trip.score_overall > 0).length;
+    const weightedScore = distanceWeightedScore(dayTrips);
     const events = dayTrips.reduce((sum, trip) => (
       sum +
       (trip.harsh_brakes_count || 0) +
@@ -725,7 +734,7 @@ export function analyzeDayOfWeek(trips = []) {
     return {
       day: label,
       trips: dayTrips.length,
-      avgScore: scoreCount ? Math.round(dayTrips.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / scoreCount) : null,
+      avgScore: weightedScore == null ? null : Math.round(weightedScore),
       events,
     };
   });
@@ -786,9 +795,10 @@ export function computePersonalBaseline(completedTrips = []) {
   const completed = [...completedTrips]
     .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  const avg = (items) => items.length
-    ? Math.round(items.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0), 0) / items.length)
-    : null;
+  const avg = (items) => {
+    const score = distanceWeightedScore(items);
+    return score == null ? null : Math.round(score);
+  };
 
   const now = new Date();
   const fourWeeksAgo = new Date(now.getTime() - 28 * DAY_MS);
@@ -891,8 +901,8 @@ export function identifyCommutePatterns(completedTrips = []) {
     .map(([routeKey, trips]) => {
       const sorted = [...trips].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
       const scores = sorted.map((trip) => Number(trip.score_overall) || 0);
-      const avgScore = mean(scores);
-      const recentAvg = mean(scores.slice(-3));
+      const avgScore = distanceWeightedScore(sorted) ?? 0;
+      const recentAvg = distanceWeightedScore(sorted.slice(-3)) ?? 0;
       const firstDriven = new Date(sorted[0].start_time).getTime();
       const lastDriven = new Date(sorted[sorted.length - 1].start_time).getTime();
       const weeksInRange = Math.max(1, (lastDriven - firstDriven) / (7 * DAY_MS));
@@ -1090,9 +1100,10 @@ export function calculateDrivingConsistency(trips = []) {
     .sort((a, b) => a - b);
 
   if (scores.length < 3) {
+    const weightedScore = distanceWeightedScore(completedWithScores);
     return {
       trip_count: scores.length,
-      avg_score: scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0,
+      avg_score: weightedScore == null ? 0 : Math.round(weightedScore),
       score_variation: null,
       consistency_score: null,
       iqr: null,
@@ -1102,7 +1113,7 @@ export function calculateDrivingConsistency(trips = []) {
     };
   }
 
-  const avg = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+  const avg = distanceWeightedScore(completedWithScores) ?? (scores.reduce((sum, score) => sum + score, 0) / scores.length);
   const q1 = percentile(scores, 25);
   const q3 = percentile(scores, 75);
   const iqr = q3 - q1;
@@ -1145,7 +1156,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     lane_changes: 'lane discipline',
     tailgate_cycles: 'following distance',
     erratic_speed: 'distraction risk',
-    near_miss: 'hazard response',
+    near_miss: 'close-proximity awareness',
     aggressive_overtake: 'highway patience',
   };
   const recentTen = [...completed]
@@ -1165,7 +1176,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   };
   const focusArea = recentNearMisses > 0
-    ? 'near-miss prevention'
+    ? 'close-proximity prevention'
     : recentPhoneRiskyTrips >= 3
       ? 'phone_distraction'
       : poorReactionTrips >= 3
@@ -1286,12 +1297,8 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
   const recentFive = [...completed]
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 5);
-  const recentFiveAvg = recentFive.length
-    ? recentFive.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / recentFive.length
-    : 0;
-  const avgScore = completed.length
-    ? completed.reduce((sum, trip) => sum + (trip.score_overall || 0), 0) / completed.length
-    : 0;
+  const recentFiveAvg = distanceWeightedScore(recentFive) ?? 0;
+  const avgScore = distanceWeightedScore(completed) ?? 0;
   const smoothBrakeTrips = completed.filter((trip) => trip.smooth_braking_ratio === 100).length;
   const distractionFreeTrips = completed.filter((trip) => trip.phone_proxy_risk === 'none').length;
   const sortedRecent = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
@@ -1561,7 +1568,7 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
     {
       id: 'near_miss_free',
       label: 'Clear Path',
-      description: 'Complete 25 trips with zero near-miss events.',
+      description: 'Complete 25 trips with zero estimated close-proximity alerts.',
       category: 'Safety',
       earned: nearMissFreeTrips >= 25,
       current: Math.min(25, nearMissFreeTrips),

@@ -385,7 +385,7 @@ export async function notifyTripCompleted(trip, { dedupeKey = null, replaceIds =
   if (!granted) return;
 
   const additions = [];
-  if ((trip.near_miss_count || 0) > 0) additions.push(`${trip.near_miss_count} near-miss event(s) detected.`);
+  if ((trip.near_miss_count || 0) > 0) additions.push(`${trip.near_miss_count} estimated close-proximity alert(s).`);
   if (trip.drowsy_risk_level === 'high') additions.push('High drowsiness risk detected.');
   if (trip.aggressive_grade === 'aggressive') additions.push('Aggressive driving pattern recorded.');
   const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`;
@@ -550,7 +550,7 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
 }
 
 export async function dispatchPostTripNotification(trip, recentTrips = [], settings = localSettings.get()) {
-  const nearMissCount = trip.driving_events?.filter((event) => event.type === 'near_miss').length ?? (trip.near_miss_count || 0);
+  const nearMissCount = trip.driving_events?.filter((event) => event.type === 'near_miss' || event.type === 'close_proximity').length ?? (trip.near_miss_count || 0);
   const phoneUseHigh = trip.phone_use_risk === 'high';
   const nearMissHigh = nearMissCount >= 2;
   const followingGapCount = Number(trip.tailgate_cycle_count) || trip.driving_events?.filter((event) => event.type === 'tailgate_cycle').length || 0;
@@ -569,8 +569,8 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   if (nearMissHigh) {
     notification = {
       id: NOTIFICATION_IDS.TRIP_NEAR_MISS_SUMMARY,
-      title: 'Near Miss Events Detected',
-      body: `${nearMissCount} near-miss events on your last trip. Review the route in Road Sage.`,
+      title: 'Estimated Close-Proximity Alerts',
+      body: `${nearMissCount} estimated close-proximity alerts on your last trip. Review the route in Road Sage.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
       extra: { tripId: trip.id, type: 'near_miss_summary' },

@@ -20,12 +20,19 @@ function ScoreBar({ label, value, max, color }) {
 
 const CHART_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#ec4899', '#eab308'];
 
+const distanceWeightedScore = (trips = []) => {
+  const totalKm = trips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  return totalKm > 0
+    ? trips.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0) * (Number(trip.distance_km) || 0), 0) / totalKm
+    : null;
+};
+
 export default function VehicleCompare({ vehicles, trips }) {
   const stats = useMemo(() => {
     return vehicles.map((v, i) => {
       const vTrips = trips.filter(t => t.vehicle_id === v.id && t.status === 'completed');
       const count = vTrips.length;
-      const avgScore = count ? Math.round(vTrips.reduce((s, t) => s + (t.score_overall || 0), 0) / count) : 0;
+      const avgScore = count ? Math.round(distanceWeightedScore(vTrips) ?? 0) : 0;
       const totalKm = Math.round(vTrips.reduce((s, t) => s + (t.distance_km || 0), 0));
       const harshBrakes = vTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
       const color = v.color || CHART_COLORS[i % CHART_COLORS.length];

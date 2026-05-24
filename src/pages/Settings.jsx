@@ -130,7 +130,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Defensive score',
-    definition: 'Rewards steady speed, safe following behavior, fewer near-miss signatures, fewer distraction signals, and consistent control.',
+    definition: 'Rewards steady speed, safe following behavior, fewer estimated close-proximity alerts, fewer distraction signals, and consistent control.',
   },
   {
     term: 'Jerk score',
@@ -1593,8 +1593,8 @@ export default function Settings() {
             </SettingRow>
             <div className="space-y-4">
               {[
-                { key: 'threshold_near_miss_brake_ms2', label: 'Near-Miss Brake Threshold', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'How much braking force is needed before Road Sage considers a combined brake-and-turn a near miss.' },
-                { key: 'threshold_near_miss_turn_degs', label: 'Near-Miss Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as a near-miss manoeuvre.' },
+                { key: 'threshold_near_miss_brake_ms2', label: 'Close-Proximity Brake Threshold', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'How much braking force is needed before Road Sage considers a combined brake-and-turn an estimated close-proximity alert.' },
+                { key: 'threshold_near_miss_turn_degs', label: 'Close-Proximity Turn Threshold', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'How quickly heading must change during braking to count as an estimated close-proximity manoeuvre.' },
                 { key: 'threshold_drowsy_heading_std', label: 'Drowsy Heading Drift', unit: 'degrees', min: 5, max: 15, step: 1, help: 'How much highway heading drift is allowed before a fatigue warning can trigger.' },
                 { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 2, max: 6, step: 1, help: 'How many left-right heading corrections are needed before distraction risk is flagged.' },
                 { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },

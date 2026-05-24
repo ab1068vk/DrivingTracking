@@ -1006,11 +1006,11 @@ describe('tripEngine', () => {
 
   it('detects gentler lane switches without counting sustained road curves', () => {
     const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({
-      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 50),
+      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 60),
       heading,
     }));
     const roadCurve = [0, 4, 8, 12, 16, 20, 24].map((heading, index) => ({
-      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 50),
+      ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 60),
       heading,
     }));
 

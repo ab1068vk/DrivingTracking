@@ -117,8 +117,9 @@ export function estimatePredictiveRouteRisk({
     new Date(b.startTime || b.start_time || 0).getTime() - new Date(a.startTime || a.start_time || 0).getTime()
   ));
   const recent = sorted.slice(0, ROUTE_RISK_CONSTANTS.RECENT_TRIP_WINDOW);
-  const avgScore = recent.length
-    ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0), 0) / recent.length
+  const recentKm = recent.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const avgScore = recentKm > 0
+    ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0) * (Number(trip.distance_km) || 0), 0) / recentKm
     : ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE;
   const eventDensity = recent.reduce((sum, trip) => {
     const events = (Number(trip.harsh_brakes_count) || 0) +

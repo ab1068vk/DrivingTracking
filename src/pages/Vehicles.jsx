@@ -60,7 +60,10 @@ export function getVehicleFormWarnings(form) {
 
 export function calculateAverageVehicleScore(trips = []) {
   if (!trips.length) return null;
-  return Math.round(trips.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0), 0) / trips.length);
+  const totalKm = trips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  return totalKm > 0
+    ? Math.round(trips.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0) * (Number(trip.distance_km) || 0), 0) / totalKm)
+    : null;
 }
 
 function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {

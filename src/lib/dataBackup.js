@@ -97,6 +97,8 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'distraction_score',
   'near_miss_count',
   'near_miss_score',
+  'close_proximity_count',
+  'close_proximity_score',
   'overtake_event_count',
   'overtake_score',
   'intersection_score',

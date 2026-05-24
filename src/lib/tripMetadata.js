@@ -136,7 +136,7 @@ export function buildScoreExplanation(trip = {}, scoreKey = 'overall') {
   if ((trip.sharp_turns_count || 0) > 0) reasons.push(plural(trip.sharp_turns_count, 'sharp turn'));
   if ((trip.rapid_accel_count || 0) > 0) reasons.push(plural(trip.rapid_accel_count, 'rapid acceleration'));
   if ((trip.speeding_events_count || 0) > 0) reasons.push(plural(trip.speeding_events_count, 'speeding event'));
-  if ((trip.near_miss_count || 0) > 0) reasons.push(plural(trip.near_miss_count, 'near-miss event'));
+  if ((trip.near_miss_count || 0) > 0) reasons.push(plural(trip.near_miss_count, 'estimated close-proximity alert'));
   if ((trip.phone_use_window_count || 0) > 0) reasons.push(plural(trip.phone_use_window_count, 'phone-use window'));
 
   if (score >= 85 && reasons.length === 0) {

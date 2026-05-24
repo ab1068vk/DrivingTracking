@@ -23,6 +23,7 @@ const EVENT_COLORS = {
   lane_change: '#0ea5e9',
   aggressive_overtake: '#f97316',
   near_miss: '#dc2626',
+  close_proximity: '#dc2626',
   phone_use: '#dc2626',
   possible_crash: '#991b1b',
 };
@@ -36,6 +37,7 @@ const EVENT_LABELS = {
   lane_change: '<>',
   aggressive_overtake: '>>',
   near_miss: '!',
+  close_proximity: '!',
   phone_use: 'P',
   possible_crash: '!!',
 };
@@ -109,7 +111,7 @@ const carIconHtml = (color, heading, label = '') => `
 
 const eventMarkerHtml = (event, color) => {
   const label = EVENT_LABELS[event.type] || '!';
-  const halo = event.severity === 'high' || event.type === 'near_miss' || event.type === 'possible_crash'
+  const halo = event.severity === 'high' || event.type === 'near_miss' || event.type === 'close_proximity' || event.type === 'possible_crash'
     ? 'rgba(220,38,38,.24)'
     : 'rgba(15,23,42,.14)';
   return `
