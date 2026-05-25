@@ -43,18 +43,22 @@ function componentExpectation(componentScore) {
 }
 
 function calculateFixture(fixture) {
+  const thresholds = {
+    ...DEFAULT_THRESHOLDS,
+    ...(fixture.thresholds || {}),
+  };
   const stats = calculateTripStats(
     fixture.points,
     fixture.startTime,
     fixture.endTime,
-    DEFAULT_THRESHOLDS
+    thresholds
   );
-  const detected = detectDrivingEvents(fixture.points, DEFAULT_THRESHOLDS, fixture.endTime);
+  const detected = detectDrivingEvents(fixture.points, thresholds, fixture.endTime);
   const scores = calculateTripScores(
     detected.events,
     stats,
     fixture.points,
-    DEFAULT_THRESHOLDS,
+    thresholds,
     stats.duration_seconds,
     detected.phoneUse,
     { endTime: fixture.endTime, includeRoadTypeSegments: false }

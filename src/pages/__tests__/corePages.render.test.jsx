@@ -88,21 +88,22 @@ vi.mock('framer-motion', () => {
 
 vi.mock('recharts', () => {
   const Box = ({ children }) => <div>{children}</div>;
+  const Chart = () => <svg />;
   return {
     Area: Box,
-    AreaChart: Box,
+    AreaChart: Chart,
     Bar: Box,
-    BarChart: Box,
+    BarChart: Chart,
     CartesianGrid: Box,
     Cell: Box,
     Line: Box,
-    LineChart: Box,
+    LineChart: Chart,
     Pie: Box,
-    PieChart: Box,
+    PieChart: Chart,
     PolarAngleAxis: Box,
     PolarGrid: Box,
     Radar: Box,
-    RadarChart: Box,
+    RadarChart: Chart,
     ResponsiveContainer: Box,
     Tooltip: Box,
     XAxis: Box,

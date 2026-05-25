@@ -1,9 +1,8 @@
-import { registerPlugin } from '@capacitor/core';
 import { isAndroid } from '@/lib/nativePlatform';
 import { requestActivityRecognitionPermission } from '@/lib/permissions';
 import { haversineDistance } from '@/lib/tripEngine';
+import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 
-const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
 const VERY_STABLE_PARKED_DRIFT_M = 5;

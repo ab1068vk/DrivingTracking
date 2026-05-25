@@ -1,8 +1,7 @@
-import { registerPlugin } from '@capacitor/core';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { localSettings } from '@/lib/trackingStore';
+import NativeSpeech from '@/lib/driveSenseNativePlugin';
 
-const NativeSpeech = registerPlugin('DriveSenseActivityRecognition');
 const lastSpokenAtByKey = new Map();
 
 export function canSpeakSafetyAlert(key, cooldownMs = 0, now = Date.now()) {

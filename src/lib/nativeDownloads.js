@@ -1,7 +1,4 @@
-import { registerPlugin } from '@capacitor/core';
-
-/** @type {any} */
-const DriveSenseNative = registerPlugin('DriveSenseActivityRecognition');
+import DriveSenseNative from '@/lib/driveSenseNativePlugin';
 
 /**
  * @param {{filename:string,data:string,mimeType:string,base64?:boolean}} options

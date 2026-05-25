@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-05-25T17:00:20.560Z
+Updated: 2026-05-25T17:16:46.175Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -27,13 +27,13 @@ This document is generated from the current repository. It keeps the reference r
 ---
 ## Coverage And Reading Guide
 
-- Text/code files scanned: 249
-- App/source files scanned: 210
+- Text/code files scanned: 250
+- App/source files scanned: 211
 - Machine-local files excluded from scanning: `android/local.properties`
 - Production calculation lines indexed: 1796
 - Test calculation/assertion lines indexed separately: 227
-- Hard-coded production literals indexed: 16904
-- Functions/methods catalogued: 1327
+- Hard-coded production literals indexed: 16901
+- Functions/methods catalogued: 1328
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -297,7 +297,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/__tests__/ubiPdfExport.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/ubiReport, @/lib/pdfExport | none | 10 | 0 | 0 |
 | src/lib/__tests__/ubiReport.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/ubiReport | none | 1 | 0 | 0 |
 | src/lib/__tests__/voiceAlerts.test.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | vitest, @/lib/voiceAlerts | none | 3 | 0 | 0 |
-| src/lib/activityRecognition.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @/lib/nativePlatform, @/lib/permissions, @/lib/tripEngine | ACTIVITY_POLL_INTERVAL_MS, AUTO_START_IN_VEHICLE_CONFIDENCE, AUTO_START_SPEED_KMH, AUTO_START_IN_VEHICLE_SECONDS, AUTO_START_GPS_FALLBACK_SECONDS, WALKING_SPEED_CUTOFF_KMH, ACTIVITY_TYPES, startActivityRecognition, startNativeAutoTracking, stopNativeAutoTracking | 17 | 12 | 92 |
+| src/lib/activityRecognition.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/nativePlatform, @/lib/permissions, @/lib/tripEngine, @/lib/driveSenseNativePlugin | ACTIVITY_POLL_INTERVAL_MS, AUTO_START_IN_VEHICLE_CONFIDENCE, AUTO_START_SPEED_KMH, AUTO_START_IN_VEHICLE_SECONDS, AUTO_START_GPS_FALLBACK_SECONDS, WALKING_SPEED_CUTOFF_KMH, ACTIVITY_TYPES, startActivityRecognition, startNativeAutoTracking, stopNativeAutoTracking | 17 | 12 | 91 |
 | src/lib/appConstants.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | ./scoringConstants | NIGHT_START_HOUR, NIGHT_END_HOUR, MORNING_RUSH_START_HOUR, MORNING_RUSH_END_HOUR, EVENING_RUSH_START_HOUR, EVENING_RUSH_END_HOUR, NIGHT_START_TIME, NIGHT_END_TIME, PENALTY_SCALE_FACTOR, FATIGUE_SAFETY_PENALTY_SCALE | 3 | 3 | 15 |
 | src/lib/AuthContext.jsx | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | react, @/api/auth, @/api/client | AuthProvider, useAuth | 6 | 0 | 25 |
 | src/lib/commuteMatching.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | COMMUTE_MATCH_RADIUS_M, routeKeyForTrip | 2 | 2 | 10 |
@@ -306,6 +306,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/dangerZoneEngine.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/tripEngine | DANGER_ZONES_KEY, buildDangerZones, checkDangerZoneProximity, saveDangerZones, loadDangerZones, invalidateDangerZoneCache | 9 | 12 | 44 |
 | src/lib/dataBackup.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/api/trips, @/api/vehicles, @/lib/nativeDownloads, @/lib/trackingStore, @/lib/privacyZones, @/lib/mobileStorage, @/lib/appConstants | BACKUP_VERSION, MAX_BACKUP_BYTES, BACKUP_TOO_LARGE_MESSAGE, MAX_IMPORTED_TRIP_ROUTE_POINTS, MAX_IMPORTED_TRIP_DRIVING_EVENTS, MAX_IMPORTED_STRING_LENGTH, MAX_IMPORTED_TRIP_NOTES_LENGTH, sanitizeImportedTrip, sanitizeSavedTripFilters, buildDriveSenseBackup | 13 | 10 | 351 |
 | src/lib/driverAnomaly.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils | tripFeatureVector, buildOnDeviceDriverModel, scoreTripAnomaly | 5 | 12 | 43 |
+| src/lib/driveSenseNativePlugin.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | DriveSenseActivityRecognition | 0 | 0 | 1 |
 | src/lib/errorReporting.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/trackingDiagnostics | logError, initializeErrorReporting | 4 | 1 | 23 |
 | src/lib/habitProfile.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/appConstants | clamp, getTimeBucket, buildHabitProfile, getFallbackTimeRisk | 9 | 27 | 108 |
 | src/lib/htmlUtils.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | escapeHtml | 1 | 0 | 11 |
@@ -319,14 +320,14 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/mediumInsights.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/commuteMatching | COMMUTE_MATCH_RADIUS_M, routeKeyForTrip, buildRouteComparisons, buildCommuteDetections, buildTripCalendarMonth, buildWeeklyDriverSummary, buildGoalStatus, buildRoadTypeBreakdown, buildRiskHotspots, buildVehicleCostSummary | 18 | 51 | 262 |
 | src/lib/metricRegistry.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | METRIC_REGISTRY, COMPONENT_METRIC_KEYS, CSV_METRIC_COLUMNS, CSV_RAW_COLUMNS, MONTHLY_PDF_METRIC_KEYS, UBI_PDF_METRIC_KEYS, UBI_CATEGORY_METRIC_KEYS, formatMetricMetadata | 1 | 49 | 789 |
 | src/lib/mobileStorage.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/nativePlatform | getJson, setJson, removeJson | 4 | 0 | 5 |
-| src/lib/nativeDownloads.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | saveExportToDownloads, openExportLocation | 2 | 0 | 1 |
+| src/lib/nativeDownloads.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/driveSenseNativePlugin | saveExportToDownloads, openExportLocation | 2 | 0 | 0 |
 | src/lib/nativePlatform.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | isNativePlatform, isAndroid, openNativeSettings | 3 | 0 | 4 |
 | src/lib/notificationService.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/local-notifications, @/lib/nativePlatform, @/lib/permissions, @/lib/trackingStore, @/lib/tripInsights, @/lib/currency | TRACKING_CHANNEL_ID, SUMMARY_CHANNEL_ID, ACHIEVEMENT_CHANNEL_ID, SAFETY_ALERTS_CHANNEL_ID, COACHING_CHANNEL_ID, VEHICLE_CHANNEL_ID, NOTIFICATION_IDS, MAX_ACHIEVEMENT_NOTIF_IDS, isQuietHours, achievementNotificationId | 45 | 22 | 435 |
 | src/lib/obdBluetooth.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | parseObdPidResponse, getObdBluetoothSupport, getObdBluetoothPermissionStatus, connectObdBleAdapter | 4 | 5 | 55 |
 | src/lib/openSourceTripContext.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripEngine, @/lib/trackingStore, @/lib/mapMatching, @/lib/speedLimitSource, @/lib/weatherContext, @/lib/phoneUsageAccess | PUBLIC_OSRM_DEMO_URL, isOsrmMapMatchingConfigured, isOsrmMapMatchingEnabled, isExternalContextAutoFetchEnabled, buildRoadContextPrivacyMessage, buildOpenSourceTripContextPatch, describeOsmSpeedLimitStatus, describeMapMatchingStatus | 9 | 7 | 90 |
 | src/lib/PageNotFound.jsx | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | react-router-dom, lucide-react | PageNotFound | 1 | 0 | 1 |
 | src/lib/pdfExport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | jspdf, @/lib/nativeDownloads, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripEngine, @/lib/currency, @/lib/metricRegistry | exportMonthlyReportPDF, exportUBIReportPDF | 9 | 19 | 379 |
-| src/lib/permissions.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @capacitor/geolocation, @capacitor/local-notifications, @/lib/nativePlatform, @/lib/trackingStore, @/lib/obdBluetooth, @/lib/sensorFusionModel | getPermissionStatus, requestForegroundLocationPermission, requestNotificationPermission, requestActivityRecognitionPermission, requestBackgroundLocationPermission, getPermissionExplanation, openNativeSettings | 7 | 0 | 55 |
+| src/lib/permissions.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/geolocation, @capacitor/local-notifications, @/lib/nativePlatform, @/lib/trackingStore, @/lib/obdBluetooth, @/lib/sensorFusionModel, @/lib/driveSenseNativePlugin | getPermissionStatus, requestForegroundLocationPermission, requestNotificationPermission, requestActivityRecognitionPermission, requestBackgroundLocationPermission, getPermissionExplanation, openNativeSettings | 7 | 0 | 54 |
 | src/lib/phoneUsageAccess.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/scoringConstants | PHONE_USE_SEVERITY_THRESHOLDS, PHONE_USE_PENALTY_POINTS, buildPhoneUseFromAndroidUsage, buildPhoneUseFromEvents, mergePhoneUseSignals, mergeManyPhoneUseSignals, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents | 19 | 19 | 202 |
 | src/lib/predictiveRouteRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/dangerZoneEngine, @/lib/habitProfile, @/lib/mathUtils, @/lib/appConstants, @/lib/scoringConstants | ROUTE_RISK_CONSTANTS, estimatePredictiveRouteRisk | 6 | 18 | 100 |
 | src/lib/preTripRisk.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripInsights, @/lib/tripEngine, @/lib/habitProfile, @/lib/mathUtils, @/lib/appConstants, @/lib/scoringConstants | PRE_TRIP_RISK_WEIGHTS, PRE_TRIP_WEIGHT_REDISTRIBUTION_RATIO, PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS, PRE_TRIP_RISK_SIGNAL_GATES, deriveWeights, deriveSignalGates, computePreTripRisk | 13 | 10 | 113 |
@@ -347,11 +348,11 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/tripMetadata.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | TRIP_TAG_OPTIONS, normalizeTripTags, getTripTagOption, getTripTagLabel, getTripDisplayName, buildTripSearchText, isHighRiskTrip, buildScoreExplanation, calculateRecentBrakingImprovement, formatParkingReminder | 13 | 12 | 95 |
 | src/lib/ubiReport.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/scoringConstants | DEFAULT_OPTIMAL_ANNUAL_KM, DEFAULT_MILEAGE_SCORE_SPREAD_KM, MIN_UBI_REPORT_DISTANCE_KM, TIME_OF_DAY_NIGHT_MULTIPLIER, BRAKING_PENALTY_PER_100KM, ACCEL_PENALTY_PER_100KM, CORNERING_PENALTY_PER_100KM, SPEED_PENALTY_PER_100KM, UBI_CATEGORY_WEIGHTS, ubiGrade | 5 | 22 | 118 |
 | src/lib/utils.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | clsx, tailwind-merge | cn, isIframe | 1 | 0 | 0 |
-| src/lib/voiceAlerts.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @/lib/nativePlatform, @/lib/trackingStore | canSpeakSafetyAlert, speakSafetyAlert, speakSafetyAlertOnce, resetSafetyAlertCooldowns, testVoiceAlert | 5 | 0 | 17 |
+| src/lib/voiceAlerts.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/nativePlatform, @/lib/trackingStore, @/lib/driveSenseNativePlugin | canSpeakSafetyAlert, speakSafetyAlert, speakSafetyAlertOnce, resetSafetyAlertCooldowns, testVoiceAlert | 5 | 0 | 16 |
 | src/lib/weatherContext.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/mobileStorage, @/lib/retry, @/lib/tripEngine, @/lib/scoringConstants | fetchWeatherContextForTrip, applyWeatherRiskToScores | 12 | 20 | 174 |
 | src/lib/weeklyCoaching.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/tripInsights | WEEKLY_COACH_MIN_SCORE_DELTA, buildWeeklyCoachSummary | 3 | 12 | 106 |
 | src/main.jsx | Project configuration or static asset metadata. | react, react-dom/client, @/App.jsx, @/index.css, @/lib/errorReporting, @/api/auth | none | 0 | 0 | 1 |
-| src/pages/__tests__/corePages.render.test.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, react-dom/server, vitest | none | 2 | 0 | 0 |
+| src/pages/__tests__/corePages.render.test.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, react-dom/server, vitest | none | 3 | 0 | 0 |
 | src/pages/__tests__/Vehicles.test.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | vitest, @/pages/Vehicles | none | 0 | 0 | 0 |
 | src/pages/Achievements.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, lucide-react, @/api/trips, @/lib/tripInsights, @/lib/notificationService | Achievements | 4 | 6 | 39 |
 | src/pages/AndroidReference.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, lucide-react, react-router-dom | AndroidReference | 3 | 22 | 0 |
@@ -1855,35 +1856,35 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 ### src/lib/activityRecognition.js
 
-- src/lib/activityRecognition.js:1 imports `registerPlugin as registerPlugin` from `@capacitor/core`
-- src/lib/activityRecognition.js:2 imports `isAndroid as isAndroid` from `@/lib/nativePlatform`
-- src/lib/activityRecognition.js:3 imports `requestActivityRecognitionPermission as requestActivityRecognitionPermission` from `@/lib/permissions`
-- src/lib/activityRecognition.js:4 imports `haversineDistance as haversineDistance` from `@/lib/tripEngine`
+- src/lib/activityRecognition.js:1 imports `isAndroid as isAndroid` from `@/lib/nativePlatform`
+- src/lib/activityRecognition.js:2 imports `requestActivityRecognitionPermission as requestActivityRecognitionPermission` from `@/lib/permissions`
+- src/lib/activityRecognition.js:3 imports `haversineDistance as haversineDistance` from `@/lib/tripEngine`
+- src/lib/activityRecognition.js:4 imports `ActivityRecognition` from `@/lib/driveSenseNativePlugin`
 
-- src/lib/activityRecognition.js:10 exports `ACTIVITY_POLL_INTERVAL_MS` (named const)
-- src/lib/activityRecognition.js:11 exports `AUTO_START_IN_VEHICLE_CONFIDENCE` (named const)
-- src/lib/activityRecognition.js:12 exports `AUTO_START_SPEED_KMH` (named const)
-- src/lib/activityRecognition.js:13 exports `AUTO_START_IN_VEHICLE_SECONDS` (named const)
-- src/lib/activityRecognition.js:14 exports `AUTO_START_GPS_FALLBACK_SECONDS` (named const)
-- src/lib/activityRecognition.js:15 exports `WALKING_SPEED_CUTOFF_KMH` (named const)
-- src/lib/activityRecognition.js:17 exports `ACTIVITY_TYPES` (named const)
-- src/lib/activityRecognition.js:28 exports `startActivityRecognition` (FunctionDeclaration)
-- src/lib/activityRecognition.js:50 exports `startNativeAutoTracking` (FunctionDeclaration)
-- src/lib/activityRecognition.js:56 exports `stopNativeAutoTracking` (FunctionDeclaration)
-- src/lib/activityRecognition.js:62 exports `getNativeAutoTrackingStatus` (FunctionDeclaration)
-- src/lib/activityRecognition.js:67 exports `getNativeDiagnostics` (FunctionDeclaration)
-- src/lib/activityRecognition.js:76 exports `clearNativeDiagnostics` (FunctionDeclaration)
-- src/lib/activityRecognition.js:81 exports `openAndroidLocationSettings` (FunctionDeclaration)
-- src/lib/activityRecognition.js:87 exports `openAndroidBatteryOptimizationSettings` (FunctionDeclaration)
-- src/lib/activityRecognition.js:93 exports `getAndroidBatteryOptimizationStatus` (FunctionDeclaration)
-- src/lib/activityRecognition.js:98 exports `getAndroidUsageAccessStatus` (FunctionDeclaration)
-- src/lib/activityRecognition.js:103 exports `openAndroidUsageAccessSettings` (FunctionDeclaration)
-- src/lib/activityRecognition.js:109 exports `getAndroidPhoneUsageSummary` (FunctionDeclaration)
-- src/lib/activityRecognition.js:121 exports `getNativeCompletedTrips` (FunctionDeclaration)
-- src/lib/activityRecognition.js:127 exports `clearNativeCompletedTrips` (FunctionDeclaration)
-- src/lib/activityRecognition.js:132 exports `shouldAutoStartTracking` (FunctionDeclaration)
-- src/lib/activityRecognition.js:148 exports `computeGpsPositionDrift` (FunctionDeclaration)
-- src/lib/activityRecognition.js:163 exports `shouldAutoStopTracking` (FunctionDeclaration)
+- src/lib/activityRecognition.js:9 exports `ACTIVITY_POLL_INTERVAL_MS` (named const)
+- src/lib/activityRecognition.js:10 exports `AUTO_START_IN_VEHICLE_CONFIDENCE` (named const)
+- src/lib/activityRecognition.js:11 exports `AUTO_START_SPEED_KMH` (named const)
+- src/lib/activityRecognition.js:12 exports `AUTO_START_IN_VEHICLE_SECONDS` (named const)
+- src/lib/activityRecognition.js:13 exports `AUTO_START_GPS_FALLBACK_SECONDS` (named const)
+- src/lib/activityRecognition.js:14 exports `WALKING_SPEED_CUTOFF_KMH` (named const)
+- src/lib/activityRecognition.js:16 exports `ACTIVITY_TYPES` (named const)
+- src/lib/activityRecognition.js:27 exports `startActivityRecognition` (FunctionDeclaration)
+- src/lib/activityRecognition.js:49 exports `startNativeAutoTracking` (FunctionDeclaration)
+- src/lib/activityRecognition.js:55 exports `stopNativeAutoTracking` (FunctionDeclaration)
+- src/lib/activityRecognition.js:61 exports `getNativeAutoTrackingStatus` (FunctionDeclaration)
+- src/lib/activityRecognition.js:66 exports `getNativeDiagnostics` (FunctionDeclaration)
+- src/lib/activityRecognition.js:75 exports `clearNativeDiagnostics` (FunctionDeclaration)
+- src/lib/activityRecognition.js:80 exports `openAndroidLocationSettings` (FunctionDeclaration)
+- src/lib/activityRecognition.js:86 exports `openAndroidBatteryOptimizationSettings` (FunctionDeclaration)
+- src/lib/activityRecognition.js:92 exports `getAndroidBatteryOptimizationStatus` (FunctionDeclaration)
+- src/lib/activityRecognition.js:97 exports `getAndroidUsageAccessStatus` (FunctionDeclaration)
+- src/lib/activityRecognition.js:102 exports `openAndroidUsageAccessSettings` (FunctionDeclaration)
+- src/lib/activityRecognition.js:108 exports `getAndroidPhoneUsageSummary` (FunctionDeclaration)
+- src/lib/activityRecognition.js:120 exports `getNativeCompletedTrips` (FunctionDeclaration)
+- src/lib/activityRecognition.js:126 exports `clearNativeCompletedTrips` (FunctionDeclaration)
+- src/lib/activityRecognition.js:131 exports `shouldAutoStartTracking` (FunctionDeclaration)
+- src/lib/activityRecognition.js:147 exports `computeGpsPositionDrift` (FunctionDeclaration)
+- src/lib/activityRecognition.js:162 exports `shouldAutoStopTracking` (FunctionDeclaration)
 
 ### src/lib/appConstants.js
 
@@ -1986,6 +1987,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/driverAnomaly.js:10 exports `tripFeatureVector` (FunctionDeclaration)
 - src/lib/driverAnomaly.js:24 exports `buildOnDeviceDriverModel` (FunctionDeclaration)
 - src/lib/driverAnomaly.js:39 exports `scoreTripAnomaly` (FunctionDeclaration)
+
+### src/lib/driveSenseNativePlugin.js
+
+- src/lib/driveSenseNativePlugin.js:1 imports `registerPlugin as registerPlugin` from `@capacitor/core`
+
+- src/lib/driveSenseNativePlugin.js:5 exports `DriveSenseActivityRecognition` (default export)
 
 ### src/lib/errorReporting.js
 
@@ -2124,10 +2131,10 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 ### src/lib/nativeDownloads.js
 
-- src/lib/nativeDownloads.js:1 imports `registerPlugin as registerPlugin` from `@capacitor/core`
+- src/lib/nativeDownloads.js:1 imports `DriveSenseNative` from `@/lib/driveSenseNativePlugin`
 
-- src/lib/nativeDownloads.js:9 exports `saveExportToDownloads` (FunctionDeclaration)
-- src/lib/nativeDownloads.js:13 exports `openExportLocation` (FunctionDeclaration)
+- src/lib/nativeDownloads.js:6 exports `saveExportToDownloads` (FunctionDeclaration)
+- src/lib/nativeDownloads.js:10 exports `openExportLocation` (FunctionDeclaration)
 
 ### src/lib/nativePlatform.js
 
@@ -2230,21 +2237,21 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 ### src/lib/permissions.js
 
-- src/lib/permissions.js:1 imports `registerPlugin as registerPlugin` from `@capacitor/core`
-- src/lib/permissions.js:2 imports `Geolocation as Geolocation` from `@capacitor/geolocation`
-- src/lib/permissions.js:3 imports `LocalNotifications as LocalNotifications` from `@capacitor/local-notifications`
-- src/lib/permissions.js:4 imports `isAndroid as isAndroid, isNativePlatform as isNativePlatform, openNativeSettings as openNativeSettings` from `@/lib/nativePlatform`
-- src/lib/permissions.js:5 imports `localSettings as localSettings` from `@/lib/trackingStore`
-- src/lib/permissions.js:6 imports `getObdBluetoothSupport as getObdBluetoothSupport` from `@/lib/obdBluetooth`
-- src/lib/permissions.js:7 imports `getMotionSensorSupport as getMotionSensorSupport` from `@/lib/sensorFusionModel`
+- src/lib/permissions.js:1 imports `Geolocation as Geolocation` from `@capacitor/geolocation`
+- src/lib/permissions.js:2 imports `LocalNotifications as LocalNotifications` from `@capacitor/local-notifications`
+- src/lib/permissions.js:3 imports `isAndroid as isAndroid, isNativePlatform as isNativePlatform, openNativeSettings as openNativeSettings` from `@/lib/nativePlatform`
+- src/lib/permissions.js:4 imports `localSettings as localSettings` from `@/lib/trackingStore`
+- src/lib/permissions.js:5 imports `getObdBluetoothSupport as getObdBluetoothSupport` from `@/lib/obdBluetooth`
+- src/lib/permissions.js:6 imports `getMotionSensorSupport as getMotionSensorSupport` from `@/lib/sensorFusionModel`
+- src/lib/permissions.js:7 imports `ActivityRecognition` from `@/lib/driveSenseNativePlugin`
 
-- src/lib/permissions.js:13 exports `getPermissionStatus` (FunctionDeclaration)
-- src/lib/permissions.js:74 exports `requestForegroundLocationPermission` (FunctionDeclaration)
-- src/lib/permissions.js:94 exports `requestNotificationPermission` (FunctionDeclaration)
-- src/lib/permissions.js:106 exports `requestActivityRecognitionPermission` (FunctionDeclaration)
-- src/lib/permissions.js:118 exports `requestBackgroundLocationPermission` (FunctionDeclaration)
-- src/lib/permissions.js:152 exports `getPermissionExplanation` (FunctionDeclaration)
-- src/lib/permissions.js:165 exports `openNativeSettings` (named export)
+- src/lib/permissions.js:11 exports `getPermissionStatus` (FunctionDeclaration)
+- src/lib/permissions.js:72 exports `requestForegroundLocationPermission` (FunctionDeclaration)
+- src/lib/permissions.js:92 exports `requestNotificationPermission` (FunctionDeclaration)
+- src/lib/permissions.js:104 exports `requestActivityRecognitionPermission` (FunctionDeclaration)
+- src/lib/permissions.js:116 exports `requestBackgroundLocationPermission` (FunctionDeclaration)
+- src/lib/permissions.js:150 exports `getPermissionExplanation` (FunctionDeclaration)
+- src/lib/permissions.js:163 exports `openNativeSettings` (named export)
 
 ### src/lib/phoneUsageAccess.js
 
@@ -2664,15 +2671,15 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 ### src/lib/voiceAlerts.js
 
-- src/lib/voiceAlerts.js:1 imports `registerPlugin as registerPlugin` from `@capacitor/core`
-- src/lib/voiceAlerts.js:2 imports `isNativePlatform as isNativePlatform` from `@/lib/nativePlatform`
-- src/lib/voiceAlerts.js:3 imports `localSettings as localSettings` from `@/lib/trackingStore`
+- src/lib/voiceAlerts.js:1 imports `isNativePlatform as isNativePlatform` from `@/lib/nativePlatform`
+- src/lib/voiceAlerts.js:2 imports `localSettings as localSettings` from `@/lib/trackingStore`
+- src/lib/voiceAlerts.js:3 imports `NativeSpeech` from `@/lib/driveSenseNativePlugin`
 
-- src/lib/voiceAlerts.js:8 exports `canSpeakSafetyAlert` (FunctionDeclaration)
-- src/lib/voiceAlerts.js:15 exports `speakSafetyAlert` (FunctionDeclaration)
-- src/lib/voiceAlerts.js:40 exports `speakSafetyAlertOnce` (FunctionDeclaration)
-- src/lib/voiceAlerts.js:47 exports `resetSafetyAlertCooldowns` (FunctionDeclaration)
-- src/lib/voiceAlerts.js:51 exports `testVoiceAlert` (FunctionDeclaration)
+- src/lib/voiceAlerts.js:7 exports `canSpeakSafetyAlert` (FunctionDeclaration)
+- src/lib/voiceAlerts.js:14 exports `speakSafetyAlert` (FunctionDeclaration)
+- src/lib/voiceAlerts.js:39 exports `speakSafetyAlertOnce` (FunctionDeclaration)
+- src/lib/voiceAlerts.js:46 exports `resetSafetyAlertCooldowns` (FunctionDeclaration)
+- src/lib/voiceAlerts.js:50 exports `testVoiceAlert` (FunctionDeclaration)
 
 ### src/lib/weatherContext.js
 
@@ -3962,23 +3969,23 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 28 | function | `async startActivityRecognition(onActivity, onError)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 50 | function | `async startNativeAutoTracking()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 56 | function | `async stopNativeAutoTracking()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 62 | function | `async getNativeAutoTrackingStatus()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 67 | function | `async getNativeDiagnostics()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 76 | function | `async clearNativeDiagnostics()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 81 | function | `async openAndroidLocationSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 87 | function | `async openAndroidBatteryOptimizationSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 93 | function | `async getAndroidBatteryOptimizationStatus()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 98 | function | `async getAndroidUsageAccessStatus()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 103 | function | `async openAndroidUsageAccessSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 109 | function | `async getAndroidPhoneUsageSummary(startMs, endMs)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 121 | function | `async getNativeCompletedTrips()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 127 | function | `async clearNativeCompletedTrips()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 132 | function | `shouldAutoStartTracking({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 148 | function | `computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = recentPoints = [])` | none detected | Time: O(n) candidate; Space: context dependent |
-| 163 | function | `shouldAutoStopTracking({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 27 | function | `async startActivityRecognition(onActivity, onError)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 49 | function | `async startNativeAutoTracking()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 55 | function | `async stopNativeAutoTracking()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 61 | function | `async getNativeAutoTrackingStatus()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 66 | function | `async getNativeDiagnostics()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 75 | function | `async clearNativeDiagnostics()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 80 | function | `async openAndroidLocationSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 86 | function | `async openAndroidBatteryOptimizationSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 92 | function | `async getAndroidBatteryOptimizationStatus()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 97 | function | `async getAndroidUsageAccessStatus()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 102 | function | `async openAndroidUsageAccessSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 108 | function | `async getAndroidPhoneUsageSummary(startMs, endMs)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 120 | function | `async getNativeCompletedTrips()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 126 | function | `async clearNativeCompletedTrips()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 131 | function | `shouldAutoStartTracking({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 147 | function | `computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = recentPoints = [])` | none detected | Time: O(n) candidate; Space: context dependent |
+| 162 | function | `shouldAutoStopTracking({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/appConstants.js
 
@@ -4258,8 +4265,8 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 9 | function | `async saveExportToDownloads({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 13 | function | `async openExportLocation(ObjectPattern = { uri, mimeType } = {})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 6 | function | `async saveExportToDownloads({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 10 | function | `async openExportLocation(ObjectPattern = { uri, mimeType } = {})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/nativePlatform.js
 
@@ -4366,13 +4373,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 11 | arrow function | `asState(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 13 | function | `async getPermissionStatus()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 74 | function | `async requestForegroundLocationPermission()` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 94 | function | `async requestNotificationPermission()` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 106 | function | `async requestActivityRecognitionPermission()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 118 | function | `async requestBackgroundLocationPermission()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 152 | function | `getPermissionExplanation(kind)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 9 | arrow function | `asState(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 11 | function | `async getPermissionStatus()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 72 | function | `async requestForegroundLocationPermission()` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 92 | function | `async requestNotificationPermission()` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 104 | function | `async requestActivityRecognitionPermission()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 116 | function | `async requestBackgroundLocationPermission()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 150 | function | `getPermissionExplanation(kind)` | none detected | Time: O(n^2) candidate; Space: context dependent |
 
 ### src/lib/phoneUsageAccess.js
 
@@ -4902,11 +4909,11 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 8 | function | `canSpeakSafetyAlert(key, cooldownMs = cooldownMs = 0, now = now = Date.now())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 15 | function | `async speakSafetyAlert(text, settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 40 | function | `async speakSafetyAlertOnce(key, text, settings = settings = localSettings.get(), cooldownMs = cooldownMs = 0, now = now = Date.now())` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 47 | function | `resetSafetyAlertCooldowns()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 51 | function | `testVoiceAlert(settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 7 | function | `canSpeakSafetyAlert(key, cooldownMs = cooldownMs = 0, now = now = Date.now())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 14 | function | `async speakSafetyAlert(text, settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 39 | function | `async speakSafetyAlertOnce(key, text, settings = settings = localSettings.get(), cooldownMs = cooldownMs = 0, now = now = Date.now())` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 46 | function | `resetSafetyAlertCooldowns()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 50 | function | `testVoiceAlert(settings = settings = localSettings.get())` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/weatherContext.js
 
@@ -4939,6 +4946,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | --- | --- | --- | --- | --- |
 | 82 | arrow function | `passthrough(tag)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 90 | arrow function | `Box({...})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 91 | arrow function | `Chart()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/pages/Achievements.jsx
 
@@ -7662,7 +7670,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 159 | computeGpsPositionDrift | return Math.max(maxDrift, haversineDistance(anchorLat, anchorLng, lat, lng) x 1000) | `return Math.max(maxDrift, haversineDistance(anchorLat, anchorLng, lat, lng) * 1000);` |
+| 158 | computeGpsPositionDrift | return Math.max(maxDrift, haversineDistance(anchorLat, anchorLng, lat, lng) x 1000) | `return Math.max(maxDrift, haversineDistance(anchorLat, anchorLng, lat, lng) * 1000);` |
 
 #### src/lib/commuteMatching.js
 
@@ -8579,17 +8587,17 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 139 | shouldAutoStartTracking | speed >= AUTO_START_SPEED_KMH AND | `speed >= AUTO_START_SPEED_KMH &&` |
-| 145 | shouldAutoStartTracking | return activityMissingOrUncertain AND speed >= AUTO_START_SPEED_KMH AND movingSeconds >= AUTO_START_GPS_FALLBACK_SECONDS | `return activityMissingOrUncertain && speed >= AUTO_START_SPEED_KMH && movingSeconds >= AUTO_START_GPS_FALLBACK_SECONDS;` |
-| 183 | shouldAutoStopTracking | if (onFoot AND speed <= WALKING_SPEED_CUTOFF_KMH AND secondsStopped >= 10) return true | `if (onFoot && speed <= WALKING_SPEED_CUTOFF_KMH && secondsStopped >= 10) return true;` |
-| 186 | shouldAutoStopTracking | if (isStill AND speed < 5 AND driftM < 8 AND secondsStopped >= 90) return true | `if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;` |
-| 188 | shouldAutoStopTracking | if (isStill AND speed < 5 AND driftM >= 8 AND secondsStopped >= 150) return true | `if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;` |
-| 191 | shouldAutoStopTracking | if (inVehicle AND speed < 2 AND secondsStopped >= 90 AND driftM < VERY_STABLE_PARKED_DRIFT_M) return true | `if (inVehicle && speed < 2 && secondsStopped >= 90 && driftM < VERY_STABLE_PARKED_DRIFT_M) return true;` |
-| 192 | shouldAutoStopTracking | if (inVehicle AND speed < 2 AND secondsStopped >= 300 AND driftM < PARKED_GPS_DRIFT_M) return true | `if (inVehicle && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return true;` |
-| 193 | shouldAutoStopTracking | if (inVehicle AND speed < 5 AND secondsStopped >= 120) { | `if (inVehicle && speed < 5 && secondsStopped >= 120) {` |
-| 198 | shouldAutoStopTracking | if (secondsStopped >= 300 AND speed < 2 AND driftM < PARKED_GPS_DRIFT_M) return true | `if (secondsStopped >= 300 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return true;` |
-| 199 | shouldAutoStopTracking | if (secondsStopped >= 420 AND speed < 2 AND lastMovingSpeed < 5) return true | `if (secondsStopped >= 420 && speed < 2 && lastMovingSpeed < 5) return true;` |
-| 204 | shouldAutoStopTracking | if (activityUnknown AND speed < 5 AND secondsStopped >= 180) { | `if (activityUnknown && speed < 5 && secondsStopped >= 180) {` |
+| 138 | shouldAutoStartTracking | speed >= AUTO_START_SPEED_KMH AND | `speed >= AUTO_START_SPEED_KMH &&` |
+| 144 | shouldAutoStartTracking | return activityMissingOrUncertain AND speed >= AUTO_START_SPEED_KMH AND movingSeconds >= AUTO_START_GPS_FALLBACK_SECONDS | `return activityMissingOrUncertain && speed >= AUTO_START_SPEED_KMH && movingSeconds >= AUTO_START_GPS_FALLBACK_SECONDS;` |
+| 182 | shouldAutoStopTracking | if (onFoot AND speed <= WALKING_SPEED_CUTOFF_KMH AND secondsStopped >= 10) return true | `if (onFoot && speed <= WALKING_SPEED_CUTOFF_KMH && secondsStopped >= 10) return true;` |
+| 185 | shouldAutoStopTracking | if (isStill AND speed < 5 AND driftM < 8 AND secondsStopped >= 90) return true | `if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;` |
+| 187 | shouldAutoStopTracking | if (isStill AND speed < 5 AND driftM >= 8 AND secondsStopped >= 150) return true | `if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;` |
+| 190 | shouldAutoStopTracking | if (inVehicle AND speed < 2 AND secondsStopped >= 90 AND driftM < VERY_STABLE_PARKED_DRIFT_M) return true | `if (inVehicle && speed < 2 && secondsStopped >= 90 && driftM < VERY_STABLE_PARKED_DRIFT_M) return true;` |
+| 191 | shouldAutoStopTracking | if (inVehicle AND speed < 2 AND secondsStopped >= 300 AND driftM < PARKED_GPS_DRIFT_M) return true | `if (inVehicle && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return true;` |
+| 192 | shouldAutoStopTracking | if (inVehicle AND speed < 5 AND secondsStopped >= 120) { | `if (inVehicle && speed < 5 && secondsStopped >= 120) {` |
+| 197 | shouldAutoStopTracking | if (secondsStopped >= 300 AND speed < 2 AND driftM < PARKED_GPS_DRIFT_M) return true | `if (secondsStopped >= 300 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return true;` |
+| 198 | shouldAutoStopTracking | if (secondsStopped >= 420 AND speed < 2 AND lastMovingSpeed < 5) return true | `if (secondsStopped >= 420 && speed < 2 && lastMovingSpeed < 5) return true;` |
+| 203 | shouldAutoStopTracking | if (activityUnknown AND speed < 5 AND secondsStopped >= 180) { | `if (activityUnknown && speed < 5 && secondsStopped >= 180) {` |
 
 #### src/lib/appConstants.js
 
@@ -10056,8 +10064,8 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 62 | (module scope) | { lat: 43.65, lng: -79.38, speed_kmh: 42, timestamp: '2026-01-01T12:00:00.000Z' }, | `{ lat: 43.65, lng: -79.38, speed_kmh: 42, timestamp: '2026-01-01T12:00:00.000Z' },` |
 | 63 | (module scope) | { lat: 43.651, lng: -79.381, speed_kmh: 46, timestamp: '2026-01-01T12:06:00.000Z' }, | `{ lat: 43.651, lng: -79.381, speed_kmh: 46, timestamp: '2026-01-01T12:06:00.000Z' },` |
 | 64 | (module scope) | { lat: 43.652, lng: -79.382, speed_kmh: 40, timestamp: '2026-01-01T12:12:00.000Z' }, | `{ lat: 43.652, lng: -79.382, speed_kmh: 40, timestamp: '2026-01-01T12:12:00.000Z' },` |
-| 132 | (module scope) | default: ({ score, label, evidence }) => <div data-evidence={evidence}>{label OR 'Score'} {score}< / div>, | `default: ({ score, label, evidence }) => <div data-evidence={evidence}>{label \|\| 'Score'} {score}</div>,` |
-| 136 | (module scope) | default: () => <div>Trip map placeholder< / div>, | `default: () => <div>Trip map placeholder</div>,` |
+| 133 | (module scope) | default: ({ score, label, evidence }) => <div data-evidence={evidence}>{label OR 'Score'} {score}< / div>, | `default: ({ score, label, evidence }) => <div data-evidence={evidence}>{label \|\| 'Score'} {score}</div>,` |
+| 137 | (module scope) | default: () => <div>Trip map placeholder< / div>, | `default: () => <div>Trip map placeholder</div>,` |
 
 #### src/pages/__tests__/Vehicles.test.jsx
 
@@ -13110,102 +13118,101 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/activityRecognition.js (92)</summary>
+<summary>src/lib/activityRecognition.js (91)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 6 | `'DriveSenseActivityRecognition'` | string literal | ActivityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 7 | `8` | numeric literal | UNKNOWN_GPS_STABLE_M | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 8 | `20` | numeric literal | PARKED_GPS_DRIFT_M | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 9 | `5` | numeric literal | VERY_STABLE_PARKED_DRIFT_M | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 10 | `5000` | numeric literal | ACTIVITY_POLL_INTERVAL_MS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 11 | `65` | numeric literal | AUTO_START_IN_VEHICLE_CONFIDENCE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 12 | `5` | numeric literal | AUTO_START_SPEED_KMH | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 13 | `2` | numeric literal | AUTO_START_IN_VEHICLE_SECONDS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 14 | `2` | numeric literal | AUTO_START_GPS_FALLBACK_SECONDS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 15 | `10` | numeric literal | WALKING_SPEED_CUTOFF_KMH | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 18 | `'in_vehicle'` | string literal | IN_VEHICLE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `'on_foot'` | string literal | ON_FOOT | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 20 | `'walking'` | string literal | WALKING | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 21 | `'running'` | string literal | RUNNING | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 22 | `'still'` | string literal | STILL | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 23 | `'on_bicycle'` | string literal | ON_BICYCLE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 24 | `'cycling'` | string literal | CYCLING | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 25 | `'unknown'` | string literal | UNKNOWN | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 33 | `'Physical activity permission was denied.'` | string literal | message | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 38 | `'activityChanged'` | string literal | listener | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 45 | `'Activity recognition is unavailable on this device.'` | string literal | message | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 51 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 53 | `true` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
-| 57 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 59 | `false` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
-| 63 | `false` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
-| 63 | `0` | numeric literal | enabled | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 68 | `false` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
-| 71 | `true` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
-| 82 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 84 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 88 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 90 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 94 | `true` | boolean flag | batteryOptimizationIgnored | Inline state/default flag; changing can flip behavior. |
-| 99 | `false` | boolean flag | usageAccessGranted | Inline state/default flag; changing can flip behavior. |
-| 104 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 106 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 112 | `false` | boolean flag | usage_access_granted | Inline state/default flag; changing can flip behavior. |
-| 114 | `0` | numeric literal | event_count | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 115 | `0` | numeric literal | total_seconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 132 | `0` | numeric literal | currentSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 132 | `0` | numeric literal | currentSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 134 | `0` | numeric literal | vehicleConfidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 134 | `0` | numeric literal | vehicleConfidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 135 | `0` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 136 | `0` | numeric literal | movingSeconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 141 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 152 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 159 | `1000` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 160 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 165 | `0` | numeric literal | currentSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 166 | `0` | numeric literal | stillSeconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 168 | `0` | numeric literal | lastMovingSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 170 | `0` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 171 | `0` | numeric literal | lastMovingSpeed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 172 | `0` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 174 | `0` | numeric literal | confidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 182 | `75` | numeric literal | confidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 183 | `10` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 183 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
-| 185 | `70` | numeric literal | isStill | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 186 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 186 | `8` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 186 | `90` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 186 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
-| 188 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 188 | `8` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 188 | `150` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 188 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
+| 6 | `8` | numeric literal | UNKNOWN_GPS_STABLE_M | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 7 | `20` | numeric literal | PARKED_GPS_DRIFT_M | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 8 | `5` | numeric literal | VERY_STABLE_PARKED_DRIFT_M | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 9 | `5000` | numeric literal | ACTIVITY_POLL_INTERVAL_MS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 10 | `65` | numeric literal | AUTO_START_IN_VEHICLE_CONFIDENCE | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 11 | `5` | numeric literal | AUTO_START_SPEED_KMH | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 12 | `2` | numeric literal | AUTO_START_IN_VEHICLE_SECONDS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 13 | `2` | numeric literal | AUTO_START_GPS_FALLBACK_SECONDS | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 14 | `10` | numeric literal | WALKING_SPEED_CUTOFF_KMH | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 17 | `'in_vehicle'` | string literal | IN_VEHICLE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 18 | `'on_foot'` | string literal | ON_FOOT | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `'walking'` | string literal | WALKING | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 20 | `'running'` | string literal | RUNNING | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 21 | `'still'` | string literal | STILL | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 22 | `'on_bicycle'` | string literal | ON_BICYCLE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 23 | `'cycling'` | string literal | CYCLING | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 24 | `'unknown'` | string literal | UNKNOWN | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 32 | `'Physical activity permission was denied.'` | string literal | message | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 37 | `'activityChanged'` | string literal | listener | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `'Activity recognition is unavailable on this device.'` | string literal | message | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 50 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 52 | `true` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
+| 56 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 58 | `false` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
+| 62 | `false` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
+| 62 | `0` | numeric literal | enabled | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 67 | `false` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
+| 70 | `true` | boolean flag | enabled | Inline state/default flag; changing can flip behavior. |
+| 81 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 83 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 87 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 89 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 93 | `true` | boolean flag | batteryOptimizationIgnored | Inline state/default flag; changing can flip behavior. |
+| 98 | `false` | boolean flag | usageAccessGranted | Inline state/default flag; changing can flip behavior. |
+| 103 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 105 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 111 | `false` | boolean flag | usage_access_granted | Inline state/default flag; changing can flip behavior. |
+| 113 | `0` | numeric literal | event_count | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 114 | `0` | numeric literal | total_seconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 131 | `0` | numeric literal | currentSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 131 | `0` | numeric literal | currentSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 133 | `0` | numeric literal | vehicleConfidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 133 | `0` | numeric literal | vehicleConfidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 134 | `0` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 135 | `0` | numeric literal | movingSeconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 140 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 151 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 158 | `1000` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 159 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 164 | `0` | numeric literal | currentSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 165 | `0` | numeric literal | stillSeconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 167 | `0` | numeric literal | lastMovingSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 169 | `0` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 170 | `0` | numeric literal | lastMovingSpeed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 171 | `0` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 173 | `0` | numeric literal | confidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 181 | `75` | numeric literal | confidence | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 182 | `10` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 182 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
+| 184 | `70` | numeric literal | isStill | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 185 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 185 | `8` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 185 | `90` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 185 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
+| 187 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 187 | `8` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 187 | `150` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 187 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
+| 190 | `2` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 190 | `90` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 190 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
 | 191 | `2` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 191 | `90` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 191 | `300` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 191 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
-| 192 | `2` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 192 | `300` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 192 | `true` | boolean flag | speed | Inline state/default flag; changing can flip behavior. |
-| 193 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 193 | `120` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 194 | `5` | numeric literal | driftM | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 194 | `true` | boolean flag | driftM | Inline state/default flag; changing can flip behavior. |
-| 196 | `300` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 196 | `20` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 196 | `true` | boolean flag | secondsStopped | Inline state/default flag; changing can flip behavior. |
-| 198 | `300` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 192 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 192 | `120` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 193 | `5` | numeric literal | driftM | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 193 | `true` | boolean flag | driftM | Inline state/default flag; changing can flip behavior. |
+| 195 | `300` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 195 | `20` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 195 | `true` | boolean flag | secondsStopped | Inline state/default flag; changing can flip behavior. |
+| 197 | `300` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 197 | `2` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 197 | `true` | boolean flag | secondsStopped | Inline state/default flag; changing can flip behavior. |
+| 198 | `420` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 198 | `2` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 198 | `5` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 198 | `true` | boolean flag | secondsStopped | Inline state/default flag; changing can flip behavior. |
-| 199 | `420` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 199 | `2` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 199 | `5` | numeric literal | secondsStopped | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 199 | `true` | boolean flag | secondsStopped | Inline state/default flag; changing can flip behavior. |
-| 204 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 204 | `180` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 208 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 203 | `5` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 203 | `180` | numeric literal | speed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 207 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 
 </details>
 
@@ -13825,6 +13832,15 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 58 | `55` | numeric literal | anomaly_level | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 58 | `'moderate'` | string literal | anomaly_level | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 58 | `'normal'` | string literal | anomaly_level | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+
+</details>
+
+<details>
+<summary>src/lib/driveSenseNativePlugin.js (1)</summary>
+
+| Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
+| --- | --- | --- | --- | --- |
+| 3 | `'DriveSenseActivityRecognition'` | string literal | DriveSenseActivityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -15745,15 +15761,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/nativeDownloads.js (1)</summary>
-
-| Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
-| --- | --- | --- | --- | --- |
-| 4 | `'DriveSenseActivityRecognition'` | string literal | DriveSenseNative | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-
-</details>
-
-<details>
 <summary>src/lib/nativePlatform.js (4)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
@@ -16766,65 +16773,64 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/permissions.js (55)</summary>
+<summary>src/lib/permissions.js (54)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 9 | `'DriveSenseActivityRecognition'` | string literal | ActivityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 11 | `'unknown'` | string literal | asState | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 15 | `'unknown'` | string literal | foregroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 16 | `'unknown'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 17 | `'unknown'` | string literal | activityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 18 | `'unknown'` | string literal | notifications | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `'unknown'` | string literal | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 20 | `'unknown'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 21 | `'unknown'` | string literal | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 29 | `'geolocation'` | string literal | location | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 38 | `'Notification'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 50 | `'granted'` | string literal | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 50 | `'not_requested'` | string literal | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 55 | `'unknown'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 56 | `'granted'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 56 | `'not_requested'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 62 | `'not_requested'` | string literal | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 62 | `'unavailable'` | string literal | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 65 | `'granted'` | string literal | location_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 66 | `'granted'` | string literal | notification_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 67 | `'granted'` | string literal | activity_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 68 | `'granted'` | string literal | background_location_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 76 | `'location'` | string literal | result | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 77 | `'granted'` | string literal | location_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 78 | `'granted'` | string literal | location | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 83 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 87 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 88 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 89 | `true` | boolean flag | enableHighAccuracy | Inline state/default flag; changing can flip behavior. |
-| 89 | `10000` | numeric literal | enableHighAccuracy | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 97 | `'granted'` | string literal | notification_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 98 | `'granted'` | string literal | display | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 101 | `'Notification'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 101 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 103 | `'granted'` | string literal | result | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 107 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 110 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 114 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 120 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 123 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 128 | `'granted'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 129 | `true` | boolean flag | background_location_granted | Inline state/default flag; changing can flip behavior. |
-| 130 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 134 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 144 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 148 | `true` | boolean flag | background_location_granted | Inline state/default flag; changing can flip behavior. |
-| 149 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 154 | `'Road Sage needs precise location while you start a trip so it can record your route, speed, distance, driving events, parking location, route comparison, road type breakdowns, and risk hotspots.'` | string literal | foregroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 155 | `'Background location is only used after you start tracking or enable background auto-tracking. Android requires a persistent notification while this is active.'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 156 | `'Physical activity helps Road Sage tell driving apart from walking, cycling, and still time before auto-tracking starts.'` | string literal | activityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 157 | `'Notifications are used for the persistent tracking notice, long-trip reminders, completed-trip summaries, weekly summaries, achievements, and maintenance reminders.'` | string literal | notifications | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 158 | `'Optional Android Usage Access lets Road Sage detect foreground app use during a trip. Without it, phone-use scoring is unavailable and GPS proxy counts stay diagnostic only.'` | string constant/key | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 159 | `'Motion and gyroscope access lets Road Sage confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 160 | `'OBD-II Bluetooth is optional and only used when you connect a compatible adapter. Android may ask for Nearby Devices/Bluetooth access before pairing.'` | string constant/key | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 162 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 9 | `'unknown'` | string literal | asState | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 13 | `'unknown'` | string literal | foregroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 14 | `'unknown'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 15 | `'unknown'` | string literal | activityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `'unknown'` | string literal | notifications | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 17 | `'unknown'` | string literal | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 18 | `'unknown'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `'unknown'` | string literal | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 27 | `'geolocation'` | string literal | location | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 36 | `'Notification'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 48 | `'granted'` | string literal | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 48 | `'not_requested'` | string literal | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 53 | `'unknown'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `'granted'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `'not_requested'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 60 | `'not_requested'` | string literal | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 60 | `'unavailable'` | string literal | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 63 | `'granted'` | string literal | location_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 64 | `'granted'` | string literal | notification_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 65 | `'granted'` | string literal | activity_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 66 | `'granted'` | string literal | background_location_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 74 | `'location'` | string literal | result | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 75 | `'granted'` | string literal | location_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 76 | `'granted'` | string literal | location | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 81 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 85 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 86 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 87 | `true` | boolean flag | enableHighAccuracy | Inline state/default flag; changing can flip behavior. |
+| 87 | `10000` | numeric literal | enableHighAccuracy | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 95 | `'granted'` | string literal | notification_permission_granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 96 | `'granted'` | string literal | display | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 99 | `'Notification'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 99 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 101 | `'granted'` | string literal | result | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 105 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 108 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 112 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 118 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 121 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 126 | `'granted'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 127 | `true` | boolean flag | background_location_granted | Inline state/default flag; changing can flip behavior. |
+| 128 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 132 | `'granted'` | string literal | granted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 142 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 146 | `true` | boolean flag | background_location_granted | Inline state/default flag; changing can flip behavior. |
+| 147 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 152 | `'Road Sage needs precise location while you start a trip so it can record your route, speed, distance, driving events, parking location, route comparison, road type breakdowns, and risk hotspots.'` | string literal | foregroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 153 | `'Background location is only used after you start tracking or enable background auto-tracking. Android requires a persistent notification while this is active.'` | string literal | backgroundLocation | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 154 | `'Physical activity helps Road Sage tell driving apart from walking, cycling, and still time before auto-tracking starts.'` | string literal | activityRecognition | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 155 | `'Notifications are used for the persistent tracking notice, long-trip reminders, completed-trip summaries, weekly summaries, achievements, and maintenance reminders.'` | string literal | notifications | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 156 | `'Optional Android Usage Access lets Road Sage detect foreground app use during a trip. Without it, phone-use scoring is unavailable and GPS proxy counts stay diagnostic only.'` | string constant/key | phoneUsageAccess | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 157 | `'Motion and gyroscope access lets Road Sage confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.'` | string literal | motionSensors | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 158 | `'OBD-II Bluetooth is optional and only used when you connect a compatible adapter. Android may ask for Nearby Devices/Bluetooth access before pairing.'` | string constant/key | bluetooth | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 160 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -23579,27 +23585,26 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/voiceAlerts.js (17)</summary>
+<summary>src/lib/voiceAlerts.js (16)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 5 | `'DriveSenseActivityRecognition'` | string literal | NativeSpeech | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 8 | `0` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 9 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 11 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 16 | `''` | string literal | message | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 17 | `false` | boolean flag | voice_alerts_enabled | Inline state/default flag; changing can flip behavior. |
-| 17 | `'undefined'` | string literal | voice_alerts_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 17 | `false` | boolean flag | voice_alerts_enabled | Inline state/default flag; changing can flip behavior. |
-| 22 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 28 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 30 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 33 | `0.95` | numeric literal | rate | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 34 | `0.95` | numeric literal | volume | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 37 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 40 | `0` | numeric literal | settings | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 41 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 52 | `'Road Sage voice alerts are working.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 7 | `0` | numeric literal | cooldownMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 8 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 10 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 15 | `''` | string literal | message | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `false` | boolean flag | voice_alerts_enabled | Inline state/default flag; changing can flip behavior. |
+| 16 | `'undefined'` | string literal | voice_alerts_enabled | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `false` | boolean flag | voice_alerts_enabled | Inline state/default flag; changing can flip behavior. |
+| 21 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 27 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 29 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 32 | `0.95` | numeric literal | rate | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 33 | `0.95` | numeric literal | volume | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 36 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 39 | `0` | numeric literal | settings | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 40 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 51 | `'Road Sage voice alerts are working.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -28155,23 +28160,23 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | src/components/VehicleCompare.jsx:24 | CHART_COLORS | `'#ec4899'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `const CHART_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#ec4899', '#eab308'];` |
 | src/components/VehicleCompare.jsx:24 | CHART_COLORS | `'#eab308'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `const CHART_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#ec4899', '#eab308'];` |
 | src/hooks/use-mobile.jsx:3 | MOBILE_BREAKPOINT | `768` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const MOBILE_BREAKPOINT = 768` |
-| src/lib/activityRecognition.js:7 | UNKNOWN_GPS_STABLE_M | `8` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const UNKNOWN_GPS_STABLE_M = 8;` |
-| src/lib/activityRecognition.js:8 | PARKED_GPS_DRIFT_M | `20` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const PARKED_GPS_DRIFT_M = 20;` |
-| src/lib/activityRecognition.js:9 | VERY_STABLE_PARKED_DRIFT_M | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const VERY_STABLE_PARKED_DRIFT_M = 5;` |
-| src/lib/activityRecognition.js:10 | ACTIVITY_POLL_INTERVAL_MS | `5000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const ACTIVITY_POLL_INTERVAL_MS = 5000;` |
-| src/lib/activityRecognition.js:11 | AUTO_START_IN_VEHICLE_CONFIDENCE | `65` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_IN_VEHICLE_CONFIDENCE = 65;` |
-| src/lib/activityRecognition.js:12 | AUTO_START_SPEED_KMH | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_SPEED_KMH = 5;` |
-| src/lib/activityRecognition.js:13 | AUTO_START_IN_VEHICLE_SECONDS | `2` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_IN_VEHICLE_SECONDS = 2;` |
-| src/lib/activityRecognition.js:14 | AUTO_START_GPS_FALLBACK_SECONDS | `2` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_GPS_FALLBACK_SECONDS = 2;` |
-| src/lib/activityRecognition.js:15 | WALKING_SPEED_CUTOFF_KMH | `10` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const WALKING_SPEED_CUTOFF_KMH = 10;` |
-| src/lib/activityRecognition.js:18 | IN_VEHICLE | `'in_vehicle'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `IN_VEHICLE: 'in_vehicle',` |
-| src/lib/activityRecognition.js:19 | ON_FOOT | `'on_foot'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `ON_FOOT: 'on_foot',` |
-| src/lib/activityRecognition.js:20 | WALKING | `'walking'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `WALKING: 'walking',` |
-| src/lib/activityRecognition.js:21 | RUNNING | `'running'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `RUNNING: 'running',` |
-| src/lib/activityRecognition.js:22 | STILL | `'still'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `STILL: 'still',` |
-| src/lib/activityRecognition.js:23 | ON_BICYCLE | `'on_bicycle'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `ON_BICYCLE: 'on_bicycle',` |
-| src/lib/activityRecognition.js:24 | CYCLING | `'cycling'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `CYCLING: 'cycling',` |
-| src/lib/activityRecognition.js:25 | UNKNOWN | `'unknown'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `UNKNOWN: 'unknown',` |
+| src/lib/activityRecognition.js:6 | UNKNOWN_GPS_STABLE_M | `8` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const UNKNOWN_GPS_STABLE_M = 8;` |
+| src/lib/activityRecognition.js:7 | PARKED_GPS_DRIFT_M | `20` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const PARKED_GPS_DRIFT_M = 20;` |
+| src/lib/activityRecognition.js:8 | VERY_STABLE_PARKED_DRIFT_M | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `const VERY_STABLE_PARKED_DRIFT_M = 5;` |
+| src/lib/activityRecognition.js:9 | ACTIVITY_POLL_INTERVAL_MS | `5000` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const ACTIVITY_POLL_INTERVAL_MS = 5000;` |
+| src/lib/activityRecognition.js:10 | AUTO_START_IN_VEHICLE_CONFIDENCE | `65` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_IN_VEHICLE_CONFIDENCE = 65;` |
+| src/lib/activityRecognition.js:11 | AUTO_START_SPEED_KMH | `5` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_SPEED_KMH = 5;` |
+| src/lib/activityRecognition.js:12 | AUTO_START_IN_VEHICLE_SECONDS | `2` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_IN_VEHICLE_SECONDS = 2;` |
+| src/lib/activityRecognition.js:13 | AUTO_START_GPS_FALLBACK_SECONDS | `2` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const AUTO_START_GPS_FALLBACK_SECONDS = 2;` |
+| src/lib/activityRecognition.js:14 | WALKING_SPEED_CUTOFF_KMH | `10` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const WALKING_SPEED_CUTOFF_KMH = 10;` |
+| src/lib/activityRecognition.js:17 | IN_VEHICLE | `'in_vehicle'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `IN_VEHICLE: 'in_vehicle',` |
+| src/lib/activityRecognition.js:18 | ON_FOOT | `'on_foot'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `ON_FOOT: 'on_foot',` |
+| src/lib/activityRecognition.js:19 | WALKING | `'walking'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `WALKING: 'walking',` |
+| src/lib/activityRecognition.js:20 | RUNNING | `'running'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `RUNNING: 'running',` |
+| src/lib/activityRecognition.js:21 | STILL | `'still'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `STILL: 'still',` |
+| src/lib/activityRecognition.js:22 | ON_BICYCLE | `'on_bicycle'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `ON_BICYCLE: 'on_bicycle',` |
+| src/lib/activityRecognition.js:23 | CYCLING | `'cycling'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `CYCLING: 'cycling',` |
+| src/lib/activityRecognition.js:24 | UNKNOWN | `'unknown'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `UNKNOWN: 'unknown',` |
 | src/lib/appConstants.js:3 | NIGHT_START_HOUR | `'NIGHT_START_HOUR'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `export const NIGHT_START_HOUR = scoringValue('NIGHT_START_HOUR');` |
 | src/lib/appConstants.js:4 | NIGHT_END_HOUR | `'NIGHT_END_HOUR'` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `export const NIGHT_END_HOUR = scoringValue('NIGHT_END_HOUR');` |
 | src/lib/appConstants.js:5 | MORNING_RUSH_START_HOUR | `7` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `export const MORNING_RUSH_START_HOUR = 7;` |
@@ -28634,12 +28639,12 @@ Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic
 | src/lib/notificationService.js | 860 | if (notifications.length) await LocalNotifications.schedule({ notifications }); |
 | src/lib/notificationService.js | 888 | const permission = await LocalNotifications.checkPermissions(); |
 | src/lib/notificationService.js | 910 | await LocalNotifications.schedule({ notifications }); |
-| src/lib/permissions.js | 2 | import { Geolocation } from '@capacitor/geolocation'; |
-| src/lib/permissions.js | 3 | import { LocalNotifications } from '@capacitor/local-notifications'; |
-| src/lib/permissions.js | 26 | const location = await Geolocation.checkPermissions(); |
-| src/lib/permissions.js | 36 | const notifications = await LocalNotifications.checkPermissions(); |
-| src/lib/permissions.js | 76 | const result = await Geolocation.requestPermissions({ permissions: ['location'] }); |
-| src/lib/permissions.js | 96 | const result = await LocalNotifications.requestPermissions(); |
+| src/lib/permissions.js | 1 | import { Geolocation } from '@capacitor/geolocation'; |
+| src/lib/permissions.js | 2 | import { LocalNotifications } from '@capacitor/local-notifications'; |
+| src/lib/permissions.js | 24 | const location = await Geolocation.checkPermissions(); |
+| src/lib/permissions.js | 34 | const notifications = await LocalNotifications.checkPermissions(); |
+| src/lib/permissions.js | 74 | const result = await Geolocation.requestPermissions({ permissions: ['location'] }); |
+| src/lib/permissions.js | 94 | const result = await LocalNotifications.requestPermissions(); |
 | src/lib/trackingDiagnostics.js | 20 | if (typeof localStorage === 'undefined') { |
 | src/lib/trackingDiagnostics.js | 23 | const events = asArray(safeJsonParse(localStorage.getItem(DIAGNOSTIC_EVENTS_KEY), [])); |
 | src/lib/trackingDiagnostics.js | 31 | if (typeof localStorage === 'undefined') return null; |
@@ -28827,8 +28832,8 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/components/ui/sidebar.jsx | 30 | try { | protected operation |
 | src/components/ui/sidebar.jsx | 42 | try { | protected operation |
 | src/components/ui/sidebar.jsx | 52 | throw new Error("useSidebar must be used within a SidebarProvider.") | raises failure to caller |
-| src/lib/activityRecognition.js | 37 | try { | protected operation |
-| src/lib/activityRecognition.js | 44 | } catch (error) { | handled fallback or diagnostic logging |
+| src/lib/activityRecognition.js | 36 | try { | protected operation |
+| src/lib/activityRecognition.js | 43 | } catch (error) { | handled fallback or diagnostic logging |
 | src/lib/AuthContext.jsx | 24 | setAuthError(null); | protected operation |
 | src/lib/AuthContext.jsx | 37 | try { | protected operation |
 | src/lib/AuthContext.jsx | 44 | } catch (error) { | handled fallback or diagnostic logging |
@@ -28884,13 +28889,13 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/openSourceTripContext.js | 100 | ).catch((error) => ({ | handled fallback or diagnostic logging |
 | src/lib/openSourceTripContext.js | 114 | ).catch((error) => ({ | handled fallback or diagnostic logging |
 | src/lib/openSourceTripContext.js | 172 | if (context.status === 'unavailable') return context.error \|\| 'OpenStreetMap speed-limit lookup is unavailable. Check internet access and try refresh again.'; | protected operation |
-| src/lib/permissions.js | 24 | try { | protected operation |
-| src/lib/permissions.js | 34 | try { | protected operation |
-| src/lib/permissions.js | 43 | try { | protected operation |
-| src/lib/permissions.js | 48 | try { | protected operation |
-| src/lib/permissions.js | 108 | try { | protected operation |
-| src/lib/permissions.js | 126 | try { | protected operation |
-| src/lib/permissions.js | 141 | try { | protected operation |
+| src/lib/permissions.js | 22 | try { | protected operation |
+| src/lib/permissions.js | 32 | try { | protected operation |
+| src/lib/permissions.js | 41 | try { | protected operation |
+| src/lib/permissions.js | 46 | try { | protected operation |
+| src/lib/permissions.js | 106 | try { | protected operation |
+| src/lib/permissions.js | 124 | try { | protected operation |
+| src/lib/permissions.js | 139 | try { | protected operation |
 | src/lib/retry.js | 8 | const error = new Error(`${key} temporarily unavailable`); | protected operation |
 | src/lib/retry.js | 23 | try { | protected operation |
 | src/lib/retry.js | 27 | } catch (error) { | handled fallback or diagnostic logging |
@@ -28921,7 +28926,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/trackingStore.js | 527 | try { | protected operation |
 | src/lib/tripEngine.js | 5974 | try { | protected operation |
 | src/lib/tripEngine.js | 5988 | } catch (error) { | handled fallback or diagnostic logging |
-| src/lib/voiceAlerts.js | 20 | try { | protected operation |
+| src/lib/voiceAlerts.js | 19 | try { | protected operation |
 | src/lib/weatherContext.js | 132 | try { | protected operation |
 | src/lib/weatherContext.js | 134 | if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`); | raises failure to caller |
 | src/pages/Achievements.jsx | 48 | syncAchievementNotifications(badges, { requestPermission: false }).catch(() => {}); | silent optional fallback; verify low impact |
@@ -29220,7 +29225,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/__tests__/feedbackRescore.test.js | 23 | it | removes fake wrong events while keeping accurate reviewed events |
 | src/lib/__tests__/feedbackRescore.test.js | 40 | it | counts a wrong detected event once during trip rescore |
 | src/lib/__tests__/feedbackRescore.test.js | 80 | it | does not remove phone-use events added during the post-score merge |
-| src/lib/__tests__/goldenFixtures.test.js | 66 | describe | golden scoring fixtures |
+| src/lib/__tests__/goldenFixtures.test.js | 70 | describe | golden scoring fixtures |
 | src/lib/__tests__/htmlUtils.test.js | 5 | describe | HTML escaping |
 | src/lib/__tests__/htmlUtils.test.js | 6 | it | escapes special characters before values are inserted into popup HTML |
 | src/lib/__tests__/htmlUtils.test.js | 12 | it | renders route risk popup values as text instead of HTML |
@@ -29590,15 +29595,15 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/tripEngine.test.js | 1830 | it | computes auto tags, baselines, fuel savings, and vehicle stress impact |
 | src/lib/tripEngine.test.js | 1866 | it | does not unlock a personal baseline before ten completed trips |
 | src/lib/tripEngine.test.js | 1876 | it | weights personal baseline by recency without distance bias |
-| src/pages/__tests__/corePages.render.test.jsx | 228 | describe | core page component renders |
-| src/pages/__tests__/corePages.render.test.jsx | 238 | it | renders Dashboard readiness and recent-trip surfaces |
-| src/pages/__tests__/corePages.render.test.jsx | 250 | it | labels predictive route risk as estimated and shows its signal breakdown |
-| src/pages/__tests__/corePages.render.test.jsx | 265 | it | withholds predictive route risk when completed history has no recorded distance |
-| src/pages/__tests__/corePages.render.test.jsx | 281 | it | renders TripDetail with road, weather, and feedback sections |
-| src/pages/__tests__/corePages.render.test.jsx | 307 | it | renders Settings tracking, permission, and external-context controls |
-| src/pages/__tests__/corePages.render.test.jsx | 320 | it | renders only insufficient-data UBI status below the score-card evidence threshold |
-| src/pages/__tests__/corePages.render.test.jsx | 337 | it | shows the insurance-validation warning beside a scored UBI card |
-| src/pages/__tests__/corePages.render.test.jsx | 353 | it | gates trip-history score deltas until three prior trips exist |
+| src/pages/__tests__/corePages.render.test.jsx | 229 | describe | core page component renders |
+| src/pages/__tests__/corePages.render.test.jsx | 239 | it | renders Dashboard readiness and recent-trip surfaces |
+| src/pages/__tests__/corePages.render.test.jsx | 251 | it | labels predictive route risk as estimated and shows its signal breakdown |
+| src/pages/__tests__/corePages.render.test.jsx | 266 | it | withholds predictive route risk when completed history has no recorded distance |
+| src/pages/__tests__/corePages.render.test.jsx | 282 | it | renders TripDetail with road, weather, and feedback sections |
+| src/pages/__tests__/corePages.render.test.jsx | 308 | it | renders Settings tracking, permission, and external-context controls |
+| src/pages/__tests__/corePages.render.test.jsx | 321 | it | renders only insufficient-data UBI status below the score-card evidence threshold |
+| src/pages/__tests__/corePages.render.test.jsx | 338 | it | shows the insurance-validation warning beside a scored UBI card |
+| src/pages/__tests__/corePages.render.test.jsx | 354 | it | gates trip-history score deltas until three prior trips exist |
 | src/pages/__tests__/Vehicles.test.jsx | 15 | describe | vehicle form validation |
 | src/pages/__tests__/Vehicles.test.jsx | 16 | it | allows higher international-market fuel prices up to the currency-neutral cap |
 | src/pages/__tests__/Vehicles.test.jsx | 20 | it | rejects fuel prices above the raised cap |

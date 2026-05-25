@@ -1,12 +1,10 @@
-import { registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { isAndroid, isNativePlatform, openNativeSettings } from '@/lib/nativePlatform';
 import { localSettings } from '@/lib/trackingStore';
 import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport } from '@/lib/sensorFusionModel';
-
-const ActivityRecognition = registerPlugin('DriveSenseActivityRecognition');
+import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 
 const asState = (value) => value || 'unknown';
 
