@@ -59,9 +59,12 @@ describe('metric registry', () => {
     const headers = lines[0].slice(1, -1).split('","');
 
     expect(lines[0]).toContain('"Safety"');
+    expect(lines[0]).toContain('"Attention-Pattern Estimate"');
+    expect(lines[0]).not.toContain('"Focus Score"');
+    expect(METRIC_REGISTRY.distraction_score.label).toBe('Attention-Pattern Estimate');
     expect(headers.filter((header) => !CSV_METRIC_COLUMNS[header] && !CSV_RAW_COLUMNS.includes(header))).toEqual([]);
     expect(lines[1]).toContain('"Metric Metadata"');
-    expect(lines[1]).toContain('Safety Score: Penalises harsh braking');
+    expect(lines[1]).toContain('Safety Pattern Estimate: Penalises harsh braking');
     expect(lines[1]).toContain('gps_events; speed_limit_osm; phone_use_usage_access');
   });
 });

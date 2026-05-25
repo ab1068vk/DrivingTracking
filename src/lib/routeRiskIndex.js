@@ -15,7 +15,8 @@ export const ROUTE_RISK_CONSTANTS = Object.freeze({
 });
 const MAX_SERIALIZED_LENGTH = 2_000_000;
 const MAX_STORED_SEGMENTS = 5000;
-const HARSH_EVENT_TYPES = new Set(['harsh_brake', 'near_miss', 'close_proximity']);
+const HARSH_EVENT_TYPES = new Set(['harsh_brake']);
+const EXCLUDED_PROXY_EVENT_TYPES = new Set(['near_miss', 'close_proximity', 'tailgate_cycle', 'stop_start_pattern']);
 const SPEED_RISK_START_KMH = scoringValue('ROUTE_RISK_SPEED_START_KMH');
 const SPEED_RISK_FULL_KMH = scoringValue('ROUTE_RISK_SPEED_FULL_KMH');
 const SPEED_RISK_MAX_POINTS = scoringValue('ROUTE_RISK_SPEED_MAX_POINTS');
@@ -94,7 +95,7 @@ export function buildRouteRiskIndex(trips = []) {
     }
 
     for (const event of trip.driving_events || []) {
-      if (event?.diagnostic_only === true) continue;
+      if (event?.diagnostic_only === true || EXCLUDED_PROXY_EVENT_TYPES.has(event?.type)) continue;
       const lat = Number(event.lat);
       const lng = Number(event.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;

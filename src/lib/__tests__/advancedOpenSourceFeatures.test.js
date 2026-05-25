@@ -60,7 +60,21 @@ describe('advanced open-source features', () => {
     expect(anomaly.reasons.length).toBeGreaterThan(0);
   });
 
-  it('includes known danger zones in predictive route risk', () => {
+  it('does not treat missing anomaly score dimensions as poor values', () => {
+    const normal = Array.from({ length: 10 }, (_, index) => trip(90, index, {
+      score_overall: null,
+      score_smoothness: null,
+    }));
+    const model = buildOnDeviceDriverModel(normal);
+    const anomaly = scoreTripAnomaly(trip(null, 11, { score_smoothness: null }), model);
+
+    expect(model.features.score).toBeUndefined();
+    expect(model.features.smoothness).toBeUndefined();
+    expect(anomaly.reasons).not.toContain('score');
+    expect(anomaly.reasons).not.toContain('smoothness');
+  });
+
+  it('includes repeated event areas in historical context risk', () => {
     const risk = estimatePredictiveRouteRisk({
       trips: [trip(80, 1)],
       currentLocation: { lat: 43.65, lng: -79.38 },
@@ -68,10 +82,10 @@ describe('advanced open-source features', () => {
     });
     expect(risk.nearbyDangerZoneCount).toBe(1);
     expect(risk.dangerZoneRisk).toBe(9);
-    expect(risk.primaryFactor).toBe('Known danger zones nearby (1 zone within 2 km)');
+    expect(risk.primaryFactor).toBe('Repeated driving-event areas nearby (1 area within 2 km)');
   });
 
-  it('caps dense danger-zone contribution without pinning route risk to 100', () => {
+  it('caps dense repeated-area contribution without pinning context risk to 100', () => {
     const dangerZones = Array.from({ length: 15 }, (_, index) => ({
       id: `dz${index}`,
       lat: 43.65 + index * 0.00001,
@@ -89,10 +103,10 @@ describe('advanced open-source features', () => {
     expect(risk.nearbyDangerZoneCount).toBe(15);
     expect(risk.dangerZoneRisk).toBeLessThanOrEqual(30);
     expect(risk.riskScore).toBeLessThan(100);
-    expect(risk.primaryFactor).toBe('Known danger zones nearby (15 zones within 2 km)');
+    expect(risk.primaryFactor).toBe('Repeated driving-event areas nearby (15 areas within 2 km)');
   });
 
-  it('uses the newest completed trips for predictive route risk even when input is unsorted', () => {
+  it('uses the newest completed trips for historical context risk even when input is unsorted', () => {
     const oldExcellentTrips = Array.from({ length: 20 }, (_, index) => trip(100, index, {
       start_time: new Date(Date.UTC(2026, 0, index + 1, 12)).toISOString(),
     }));
@@ -151,7 +165,7 @@ describe('advanced open-source features', () => {
     expect(zones).toMatchObject({ normalizedRisk: 100, contribution: 15 });
   });
 
-  it('withholds predictive route risk until completed distance exists', () => {
+  it('withholds historical context risk until completed distance exists', () => {
     const risk = estimatePredictiveRouteRisk({
       trips: [],
       now: new Date(2026, 0, 10, 12),
@@ -168,7 +182,23 @@ describe('advanced open-source features', () => {
     expect(ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE).toBeUndefined();
   });
 
-  it('does not amplify unverified current or legacy brake-turn alerts in predictive route risk', () => {
+  it('withholds historical context risk when completed distance has no scored baseline', () => {
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(null, 1, { distance_km: 12, harsh_brakes_count: 5 })],
+      now: new Date(2026, 0, 10, 12),
+    });
+
+    expect(risk).toMatchObject({
+      status: 'insufficient_history',
+      insufficientHistory: true,
+      riskScore: null,
+      riskLevel: null,
+      primaryFactor: 'Not enough scored driving history',
+      componentBreakdown: [],
+    });
+  });
+
+  it('excludes unverified current or legacy brake-turn alerts from context risk', () => {
     const withHarshBrakes = estimatePredictiveRouteRisk({
       trips: [trip(90, 1, { distance_km: 1, harsh_brakes_count: 2 })],
       now: new Date(2026, 0, 10, 12),
@@ -182,8 +212,8 @@ describe('advanced open-source features', () => {
       now: new Date(2026, 0, 10, 12),
     });
 
-    expect(withEstimatedAlerts.riskScore).toBe(withHarshBrakes.riskScore);
-    expect(withLegacyAlerts.riskScore).toBe(withHarshBrakes.riskScore);
+    expect(withEstimatedAlerts.riskScore).toBeLessThan(withHarshBrakes.riskScore);
+    expect(withLegacyAlerts.riskScore).toBeLessThan(withHarshBrakes.riskScore);
   });
 
   it('clamps weather risk before applying predictive weighting', () => {
@@ -261,6 +291,18 @@ describe('advanced open-source features', () => {
     ]);
     expect(summary.headline.toLowerCase()).toContain('late braking');
     expect(summary.insight).toContain('No AI service');
+  });
+
+  it('withholds weekly coaching when completed trips have no valid scored distance', () => {
+    const summary = buildWeeklyCoachSummary([
+      trip(null, 1, { distance_km: 10, score_overall: null }),
+      trip(null, 2, { distance_km: 10, score_overall: null }),
+      trip(null, 3, { distance_km: 10, score_overall: null }),
+    ]);
+
+    expect(summary.confidence).toBe('unavailable');
+    expect(summary.headline).toContain('waiting for scored driving distance');
+    expect(summary.insight).toContain('No AI service was used');
   });
 });
 

@@ -340,7 +340,7 @@ export function buildRoadTypeBreakdown(trips = []) {
 
 export function buildRiskHotspots(trips = []) {
   return buildDangerZones(trips, {
-    eventTypes: ['harsh_brake', 'near_miss', 'close_proximity', 'sharp_turn', 'speeding'],
+    eventTypes: ['harsh_brake', 'sharp_turn', 'speeding'],
     minEvents: 2,
   });
 }

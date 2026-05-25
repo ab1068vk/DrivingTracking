@@ -17,7 +17,7 @@ describe('HTML escaping', () => {
       dominantEventType: '<b>speeding</b>',
     });
 
-    expect(html).toContain('&lt;B&gt;High&lt;/B&gt; risk segment');
+    expect(html).toContain('&lt;B&gt;High&lt;/B&gt; repeated-event segment');
     expect(html).toContain('Most common: &lt;B&gt;Speeding&lt;/B&gt;');
     expect(html).not.toContain('<b>high</b>');
     expect(html).not.toContain('<b>speeding</b>');
@@ -48,7 +48,7 @@ describe('HTML escaping', () => {
     expect(html).not.toContain('Limit:');
   });
 
-  it('renders danger zone popup values as text instead of HTML', () => {
+  it('renders repeated event area popup values as text instead of HTML', () => {
     const html = buildDangerZonePopupHtml({
       riskLevel: '<b>critical</b>',
       dominantType: '<img src=x onerror=alert(1)>',
@@ -57,7 +57,7 @@ describe('HTML escaping', () => {
       lastSeen: 'not-a-date',
     });
 
-    expect(html).toContain('&lt;B&gt;Critical&lt;/B&gt; danger zone');
+    expect(html).toContain('&lt;B&gt;Critical&lt;/B&gt; repeated driving-event area');
     expect(html).toContain('Dominant event: &lt;Img Src=X Onerror=Alert(1)&gt;');
     expect(html).toContain('Last seen: Unknown');
     expect(html).not.toContain('<img src=x onerror=alert(1)>');

@@ -39,13 +39,15 @@ function mostImprovedWeek(trips = []) {
   trips.forEach((trip) => {
     const date = new Date(trip.start_time);
     if (Number.isNaN(date.getTime())) return;
+    const score = Number(trip.score_overall);
+    if (!Number.isFinite(score)) return;
     const weekStart = new Date(date);
     weekStart.setHours(0, 0, 0, 0);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const key = weekStart.toISOString().slice(0, 10);
     const bucket = byWeek.get(key) || [];
     bucket.push({
-      score: Number(trip.score_overall) || 0,
+      score,
       distance: Number(trip.distance_km) || 0,
     });
     byWeek.set(key, bucket);
@@ -99,12 +101,13 @@ function drawHorizontalBars(doc, title, rows, startY, options = {}) {
 
 function recentTripTrendRows(trips = []) {
   return [...trips]
+    .filter((trip) => Number.isFinite(Number(trip.score_overall)))
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(-8)
     .map((trip) => ({
       label: formatDate(trip.start_time),
-      value: Number(trip.score_overall) || 0,
-      display: `${Math.round(Number(trip.score_overall) || 0)} score`,
+      value: Number(trip.score_overall),
+      display: `${Math.round(Number(trip.score_overall))} estimated score`,
       color: (trip.score_overall || 0) >= 80 ? [34, 197, 94] : (trip.score_overall || 0) >= 60 ? [234, 179, 8] : [239, 68, 68],
     }));
 }

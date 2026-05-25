@@ -28,12 +28,21 @@ describe('dangerZoneEngine', () => {
   it('merges nearby events into one zone', () => {
     const zones = buildDangerZones([trip([
       event(43.6532, -79.3832),
-      event(43.6532, -79.3832, 'medium', 'near_miss'),
+      event(43.6532, -79.3832, 'medium', 'speeding'),
     ])], { minEvents: 2 });
 
     expect(zones).toHaveLength(1);
     expect(zones[0].eventCount).toBe(2);
-    expect(zones[0].typeBreakdown.near_miss).toBe(1);
+    expect(zones[0].typeBreakdown.speeding).toBe(1);
+  });
+
+  it('excludes low-confidence proxy events from repeated event areas', () => {
+    const zones = buildDangerZones([trip([
+      event(43.6532, -79.3832, 'medium', 'near_miss'),
+      event(43.6532, -79.3832, 'medium', 'close_proximity'),
+    ])], { minEvents: 1 });
+
+    expect(zones).toEqual([]);
   });
 
   it('assigns riskLevel for each severity band', () => {
@@ -57,7 +66,7 @@ describe('dangerZoneEngine', () => {
     expect(critical.riskLevel).toBe('critical');
   });
 
-  it('returns only nearby danger zones sorted by distance', () => {
+  it('returns only nearby repeated event areas sorted by distance', () => {
     const zones = [
       { id: 'near', lat: 43.65321, lng: -79.3832 },
       { id: 'far', lat: 43.7, lng: -79.4 },

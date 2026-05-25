@@ -46,6 +46,8 @@ export const MAINTENANCE_CALIBRATION_REGISTRY = {
   },
 };
 export const PERSONAL_BASELINE_MIN_TRIPS = 10;
+export const PERSONAL_PERCENTILE_MIN_WEEKS = 4;
+export const BEST_WINDOW_MIN_TRIPS = 3;
 export const PERSONAL_BASELINE_DECAY = 0.85;
 export const PERSONAL_BASELINE_INTERVAL_METHOD = 'normal_approximation_95';
 export const PERSONAL_BASELINE_INTERVAL_NOTE = 'Approximate 95% CI assuming roughly normal score distribution; may be too narrow for bounded or skewed scores.';
@@ -309,6 +311,12 @@ function iqr(values = []) {
   return percentile(sorted, 75) - percentile(sorted, 25);
 }
 
+const finiteScore = (value) => {
+  if (value == null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 /**
  * Build a persistent driving style signature from recent trips.
  * @param {Array<Object>} trips - Completed trips, newest or oldest order accepted.
@@ -323,8 +331,9 @@ export function buildDriverSignature(trips) {
     .slice(0, 20);
   if (completed.length < 5) return null;
 
-  const scoreIqr = iqr(completed.map((trip) => Number(trip.score_overall)).filter(Number.isFinite));
-  const consistencyIdx = clamp(1 - scoreIqr / 100, 0, 1);
+  const overallScores = completed.map((trip) => finiteScore(trip.score_overall)).filter(Number.isFinite);
+  const scoreIqr = iqr(overallScores);
+  const consistencyIdx = overallScores.length >= 2 ? clamp(1 - scoreIqr / 100, 0, 1) : null;
   const brakingScores = completed
     .map((trip) => trip.braking_efficiency_score)
     .filter((score) => score != null && Number.isFinite(Number(score)))
@@ -333,46 +342,56 @@ export function buildDriverSignature(trips) {
     ? clamp(brakingScores.reduce((sum, score) => sum + score, 0) / brakingScores.length / 100, 0, 1)
     : null;
   const brakingConfidence = clamp(brakingScores.length / 10, 0, 1);
-  const featureRows = completed.map((trip) => ({
-    aggression: clamp(1 - (Number(trip.aggressive_driving_score ?? 100) / 100), 0, 1),
-    smoothness: clamp(Number(trip.score_smoothness ?? trip.smoothness_score ?? 0) / 100, 0, 1),
-    ecoMindedness: clamp(Number(trip.score_eco ?? trip.eco_score ?? 0) / 100, 0, 1),
-    speedTolerance: clamp(
-      ((Number(trip.speeding_events_count) || 0) / Math.max(1, Number(trip.distance_km) || 1)) / 0.4,
-      0,
-      1
-    ),
-    brakingStyle: trip.braking_efficiency_score != null && Number.isFinite(Number(trip.braking_efficiency_score))
-      ? clamp(Number(trip.braking_efficiency_score) / 100, 0, 1)
-      : null,
-    consistencyIdx,
-  }));
+  const featureRows = completed.map((trip) => {
+    const aggressiveScore = finiteScore(trip.aggressive_driving_score);
+    const smoothnessScore = finiteScore(trip.score_smoothness ?? trip.smoothness_score);
+    const ecoScore = finiteScore(trip.score_eco ?? trip.eco_score);
+    return {
+      aggression: aggressiveScore == null ? null : clamp(1 - (aggressiveScore / 100), 0, 1),
+      smoothness: smoothnessScore == null ? null : clamp(smoothnessScore / 100, 0, 1),
+      ecoMindedness: ecoScore == null ? null : clamp(ecoScore / 100, 0, 1),
+      speedTolerance: clamp(
+        ((Number(trip.speeding_events_count) || 0) / Math.max(1, Number(trip.distance_km) || 1)) / 0.4,
+        0,
+        1
+      ),
+      brakingStyle: trip.braking_efficiency_score != null && Number.isFinite(Number(trip.braking_efficiency_score))
+        ? clamp(Number(trip.braking_efficiency_score) / 100, 0, 1)
+        : null,
+      consistencyIdx,
+    };
+  });
 
   const numericKeys = ['aggression', 'smoothness', 'ecoMindedness', 'speedTolerance', 'consistencyIdx'];
   const keys = [...numericKeys, 'brakingStyle'];
-  const dimensions = Object.fromEntries(numericKeys.map((key) => [
-    key,
-    Math.round((featureRows.reduce((sum, row) => sum + row[key], 0) / featureRows.length) * 100) / 100,
-  ]));
-  dimensions.brakingStyle = brakingStyle == null ? null : Math.round(brakingStyle * 100) / 100;
-
-  const archetype = dimensions.aggression > 0.55 && dimensions.speedTolerance > 0.6
-    ? 'aggressive_commuter'
-    : dimensions.ecoMindedness > 0.75 && dimensions.smoothness > 0.7
-      ? 'eco_conscious'
-      : dimensions.consistencyIdx > 0.85
-        ? 'precision_driver'
-        : dimensions.smoothness > 0.75 && dimensions.aggression < 0.3
-          ? 'smooth_cruiser'
-          : 'balanced';
-
-  const recent = featureRows.slice(0, 5);
-  const prior = featureRows.slice(5, 20);
   const avgDim = (rows, key) => {
     const validValues = rows.map((row) => row[key]).filter(Number.isFinite);
     if (!validValues.length || (key === 'brakingStyle' && validValues.length < 3)) return null;
     return validValues.reduce((sum, value) => sum + value, 0) / validValues.length;
   };
+  const dimensions = Object.fromEntries(numericKeys.map((key) => {
+    const avg = avgDim(featureRows, key);
+    return [key, avg == null ? null : Math.round(avg * 100) / 100];
+  }));
+  dimensions.brakingStyle = brakingStyle == null ? null : Math.round(brakingStyle * 100) / 100;
+
+  const aggression = dimensions.aggression ?? 0;
+  const smoothness = dimensions.smoothness ?? 0;
+  const ecoMindedness = dimensions.ecoMindedness ?? 0;
+  const speedTolerance = dimensions.speedTolerance ?? 0;
+  const consistency = dimensions.consistencyIdx ?? 0;
+  const archetype = aggression > 0.55 && speedTolerance > 0.6
+    ? 'aggressive_commuter'
+    : ecoMindedness > 0.75 && smoothness > 0.7
+      ? 'eco_conscious'
+      : consistency > 0.85
+        ? 'precision_driver'
+        : smoothness > 0.75 && aggression < 0.3
+          ? 'smooth_cruiser'
+          : 'balanced';
+
+  const recent = featureRows.slice(0, 5);
+  const prior = featureRows.slice(5, 20);
   const styleShifts = prior.length ? keys
     .map((key) => {
       const recentAvg = avgDim(recent, key);
@@ -501,7 +520,9 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const fuelCo2Kg = isElectric ? 0 : adjustedLiters * co2Factor;
   const gridCo2Kg = isElectric ? adjustedKwh * effectiveGridCo2KgPerKwh : 0;
   const co2Kg = fuelCo2Kg + gridCo2Kg;
-  const fuelSavedLiters = Math.max(0, baselineLiters - adjustedLiters);
+  const fuelSavedLiters = vehicleProfileAvailable
+    ? Math.max(0, baselineLiters - adjustedLiters)
+    : null;
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
   const roundedFuelCo2Kg = Math.round(fuelCo2Kg * 100) / 100;
   const roundedGridCo2Kg = Math.round(gridCo2Kg * 100) / 100;
@@ -551,7 +572,8 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
     ev_kwh_per_100km: evKwhPer100Km,
     actual_ev_kwh_per_100km: Math.round(actualEvKwhPer100Km * 10) / 10,
     grid_co2_kg_per_kwh: effectiveGridCo2KgPerKwh,
-    fuel_saved_liters: Math.round(fuelSavedLiters * 100) / 100,
+    fuel_saved_liters: fuelSavedLiters == null ? null : Math.round(fuelSavedLiters * 100) / 100,
+    fuel_saved_available: vehicleProfileAvailable,
     fuel_price_per_liter: fuelPrice,
   };
 }
@@ -811,7 +833,7 @@ export function calculateRiskEventRate(trips = []) {
     heading_deviations: completed.reduce((sum, trip) => sum + (trip.heading_deviation_count ?? trip.lane_changes_count ?? 0), 0),
     stop_start_patterns: completed.reduce((sum, trip) => sum + (trip.stop_start_pattern_count ?? trip.tailgate_cycle_count ?? 0), 0),
     erratic_speed: completed.reduce((sum, trip) => sum + (trip.distraction_events_count || 0), 0),
-    close_proximity: completed.reduce((sum, trip) => sum + (trip.close_proximity_count ?? trip.near_miss_count ?? 0), 0),
+    brake_turn_alerts: completed.reduce((sum, trip) => sum + (trip.close_proximity_count ?? 0), 0),
   };
   const totalEvents = Object.values(totals).reduce((sum, count) => sum + count, 0);
   const sufficientData = distanceKm >= RISK_EVENT_RATE_MIN_DISTANCE_KM;
@@ -902,9 +924,13 @@ export function computePersonalBaseline(completedTrips = []) {
     this_week_avg: thisWeekAvg,
     delta,
     trend,
-    percentile: Math.round(percentileValue),
+    percentile: weeklyAverages.length >= PERSONAL_PERCENTILE_MIN_WEEKS ? Math.round(percentileValue) : null,
+    percentile_label: 'Percentile among your recorded weeks',
+    percentile_min_weeks: PERSONAL_PERCENTILE_MIN_WEEKS,
     personal_best_week_avg: weeklyAverages.length ? Math.max(...weeklyAverages) : null,
-    personal_best_trip_score: completed.length ? Math.max(...completed.map((trip) => Number(trip.score_overall) || 0)) : null,
+    personal_best_trip_score: weeklyAverages.length
+      ? Math.max(...completed.map((trip) => finiteScore(trip.score_overall)).filter(Number.isFinite))
+      : null,
     weeks_analyzed: weeklyAverages.length,
   };
 }
@@ -973,7 +999,7 @@ export function identifyCommutePatterns(completedTrips = []) {
     .filter(([, trips]) => trips.length >= 3)
     .map(([routeKey, trips]) => {
       const sorted = [...trips].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-      const scores = sorted.map((trip) => Number(trip.score_overall) || 0);
+      const scores = sorted.map((trip) => finiteScore(trip.score_overall)).filter(Number.isFinite);
       const avgScore = distanceWeightedScore(sorted) ?? 0;
       const recentAvg = distanceWeightedScore(sorted.slice(-3)) ?? 0;
       const firstDriven = new Date(sorted[0].start_time).getTime();
@@ -987,8 +1013,8 @@ export function identifyCommutePatterns(completedTrips = []) {
         avg_distance_km: Math.round(mean(sorted.map((trip) => trip.distance_km || 0)) * 10) / 10,
         avg_duration_minutes: Math.round(avgDurationMinutes),
         avg_score: Math.round(avgScore),
-        best_score: Math.max(...scores),
-        worst_score: Math.min(...scores),
+        best_score: scores.length ? Math.max(...scores) : null,
+        worst_score: scores.length ? Math.min(...scores) : null,
         score_trend: recentAvg > avgScore + 3 ? 'improving' : recentAvg < avgScore - 3 ? 'declining' : 'stable',
         last_driven: new Date(lastDriven).toISOString(),
         weekly_minutes_estimate: Math.round((sorted.length / weeksInRange) * avgDurationMinutes),
@@ -1044,13 +1070,20 @@ export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicl
     }
     return null;
   };
+  let eligibleTripCount = 0;
   const totalCo2SavedKg = Math.round(completedTrips.reduce((sum, trip) => {
     if (trip?.status !== 'completed' || !(Number(trip?.distance_km) > 0)) return sum;
     const vehicle = vehicleForTrip(trip);
+    if (vehicles && !vehicle) return sum;
     const saved = vehicles ? null : Number(trip?.co2_saved_kg);
-    if (Number.isFinite(saved)) return sum + saved;
+    if (Number.isFinite(saved)) {
+      eligibleTripCount += 1;
+      return sum + saved;
+    }
     const estimatedSaved = estimateTripEconomics(trip, vehicle, settings).co2_saved_kg;
-    return sum + (Number.isFinite(estimatedSaved) ? estimatedSaved : 0);
+    if (!Number.isFinite(estimatedSaved)) return sum;
+    eligibleTripCount += 1;
+    return sum + estimatedSaved;
   }, 0) * 10) / 10;
   const treeCo2KgPerYear = Number(settings.tree_co2_kg_per_year);
   const effectiveTreeCo2KgPerYear = Number.isFinite(treeCo2KgPerYear) && treeCo2KgPerYear > 0
@@ -1059,6 +1092,8 @@ export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicl
   const treesEquivalent = Math.round((totalCo2SavedKg / effectiveTreeCo2KgPerYear) * 10) / 10;
   return {
     total_co2_saved_kg: totalCo2SavedKg,
+    eligible_trip_count: eligibleTripCount,
+    savings_available: eligibleTripCount > 0,
     trees_equivalent: treesEquivalent,
     carbon_grade: totalCo2SavedKg >= 100
       ? 'Climate Champion'
@@ -1249,7 +1284,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   const carbonImpact = calculateCarbonImpact(completed, settings);
   const timeOfDay = analyzeTimeOfDay(completed);
   const bestWindow = timeOfDay
-    .filter((bucket) => bucket.trips > 0 && bucket.avgScore !== null)
+    .filter((bucket) => bucket.trips >= BEST_WINDOW_MIN_TRIPS && bucket.avgScore !== null)
     .sort((a, b) => b.avgScore - a.avgScore || a.events - b.events)[0] || null;
 
   const eventLabels = {
@@ -1259,13 +1294,13 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     speeding: 'speed control',
     heading_deviations: 'heading events',
     stop_start_patterns: 'stop-start patterns',
-    erratic_speed: 'distraction risk',
-    close_proximity: 'brake-turn alert review',
+    erratic_speed: 'attention-pattern review',
+    brake_turn_alerts: 'brake-turn alert review',
   };
   const recentTen = [...completed]
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 10);
-  const recentManoeuvreAlerts = recentTen.reduce((sum, trip) => sum + (trip.close_proximity_count ?? trip.near_miss_count ?? 0), 0);
+  const recentManoeuvreAlerts = recentTen.reduce((sum, trip) => sum + (trip.close_proximity_count ?? 0), 0);
   const recentPhoneRiskyTrips = recentTen.filter((trip) => (
     trip.phone_use_score_available === true &&
     (trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high')
@@ -1355,7 +1390,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     actions.push(`This week is ${baseline.delta} points above your 4-week baseline. Protect that pattern.`);
   }
   if (bestWindow) {
-    actions.push(`Your strongest driving window is ${bestWindow.label.toLowerCase()}; compare tougher trips against that baseline.`);
+    actions.push(`Your strongest recorded driving window is ${bestWindow.label.toLowerCase()} (${bestWindow.trips} trips); compare tougher trips against that personal pattern.`);
   }
 
   return {
@@ -1371,11 +1406,12 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     commute_patterns: commutePatterns,
     carbon_impact: carbonImpact,
     best_window: bestWindow,
+    best_window_min_trips: BEST_WINDOW_MIN_TRIPS,
     actions: actions.length ? actions.slice(0, 4) : ['Record more trips to build a personalized driving plan.'],
   };
 }
 
-export function calculateAchievementBadges(trips = [], settings = {}) {
+export function calculateAchievementBadges(trips = [], settings = {}, vehicles = null) {
   const completed = trips.filter((trip) => trip.status === 'completed');
   const totalKm = completed.reduce((sum, trip) => sum + (trip.distance_km || 0), 0);
   const nightCount = completed.filter((trip) => trip.night_driving).length;
@@ -1413,8 +1449,8 @@ export function calculateAchievementBadges(trips = [], settings = {}) {
     ['defensive', 'exemplary'].includes(trip.defensive_grade)
   ));
   const cruiseMasterTrips = completed.filter((trip) => trip.band_label === 'excellent cruise').length;
-  const manoeuvreAlertFreeTrips = completed.filter((trip) => (trip.close_proximity_count ?? trip.near_miss_count ?? 0) === 0).length;
-  const carbon = calculateCarbonImpact(completed, settings);
+  const manoeuvreAlertFreeTrips = completed.filter((trip) => (trip.close_proximity_count ?? 0) === 0).length;
+  const carbon = calculateCarbonImpact(completed, settings, vehicles);
 
   return [
     {

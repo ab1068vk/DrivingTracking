@@ -67,7 +67,8 @@ describe('UBI PDF export', () => {
     const renderedText = pdfText.mock.calls.map(([text]) => String(text)).join(' ');
 
     expect(renderedText).toContain('Metric Reference');
-    expect(renderedText).toContain('Safety Score [score_safety]');
-    expect(renderedText).toContain('PENALTY_SCALE_FACTOR 40.0 provisional');
+    expect(renderedText).toContain('Total estimated fuel cost');
+    expect(renderedText).toContain('Safety Pattern Estimate [score_safety]');
+    expect(renderedText).toContain('not calibrated to crashes, claims, or safety outcomes');
   });
 });

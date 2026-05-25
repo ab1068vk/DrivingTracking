@@ -248,7 +248,7 @@ describe('core page component renders', () => {
     expect(html).toContain('approximate');
   }, 10_000);
 
-  it('labels predictive route risk as estimated and shows its signal breakdown', async () => {
+  it('labels historical context risk as estimated and shows its signal breakdown', async () => {
     queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
       id: `trip-${index + 1}`,
@@ -257,13 +257,13 @@ describe('core page component renders', () => {
     const { default: Dashboard } = await import('@/pages/Dashboard');
     const html = renderToStaticMarkup(<Dashboard />);
 
-    expect(html).toContain('Estimated route risk');
+    expect(html).toContain('Estimated historical context risk');
     expect(html).toContain('Signal contributions');
-    expect(html).toContain('Route event density');
+    expect(html).toContain('Driving-event density');
     expect(html).toContain('not validated against collision or casualty outcomes');
   });
 
-  it('withholds predictive route risk when completed history has no recorded distance', async () => {
+  it('withholds historical context risk when completed history has no recorded distance', async () => {
     queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
       id: `zero-trip-${index + 1}`,
@@ -273,9 +273,9 @@ describe('core page component renders', () => {
     const { default: Dashboard } = await import('@/pages/Dashboard');
     const html = renderToStaticMarkup(<Dashboard />);
 
-    expect(html).toContain('Predictive route risk');
+    expect(html).toContain('Historical context risk');
     expect(html).toContain('Not enough driving history');
-    expect(html).not.toContain('Estimated route risk');
+    expect(html).not.toContain('Estimated historical context risk');
     expect(html).not.toContain('Signal contributions');
   });
 
@@ -283,6 +283,8 @@ describe('core page component renders', () => {
     queryData.set(JSON.stringify(['trip', 'trip-1']), {
       ...sampleTrip,
       hill_driving_score: 80,
+      distraction_score: 88,
+      distraction_score_confidence: 'low',
       climb_distance_km: 0.7,
       descent_distance_km: 0.4,
     });
@@ -303,6 +305,24 @@ describe('core page component renders', () => {
     expect(html).toContain('Updated constants: PENALTY_SCALE_FACTOR.');
     expect(html).toContain('GPS and altitude-derived estimate only');
     expect(html).toContain('legitimate uphill manoeuvre');
+    expect(html).toContain('attention-pattern estimate');
+    expect(html).not.toContain('Focus Score');
+  });
+
+  it('renders unavailable parking score instead of a fabricated perfect score', async () => {
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      parking_approach_score: null,
+      parking_approach_score_confidence: 'unavailable',
+    });
+    const { default: TripDetail } = await import('@/pages/TripDetail');
+    const html = renderToStaticMarkup(<TripDetail />);
+    const parkingIndex = html.indexOf('Parking');
+    const parkingSlice = html.slice(parkingIndex, parkingIndex + 500);
+
+    expect(parkingIndex).toBeGreaterThanOrEqual(0);
+    expect(parkingSlice).toContain('Unavailable');
+    expect(parkingSlice).not.toContain('>100<');
   });
 
   it('renders Settings tracking, permission, and external-context controls', async () => {
@@ -349,6 +369,24 @@ describe('core page component renders', () => {
     expect(html).toContain('approximate');
     expect(html).toContain('not insurer-validated for insurance eligibility or pricing');
     expect(html).not.toContain('Insufficient data');
+  });
+
+  it('labels report fuel outputs as estimates and withholds savings without an assigned vehicle', async () => {
+    queryData.set(JSON.stringify(['vehicles']), []);
+    queryData.set(JSON.stringify(['report-trips']), [{
+      ...sampleTrip,
+      vehicle_id: null,
+      distance_km: 60,
+      start_time: new Date().toISOString(),
+      end_time: new Date().toISOString(),
+    }]);
+    const { default: Reports } = await import('@/pages/Report');
+    const html = renderToStaticMarkup(<Reports />);
+
+    expect(html).toContain('Estimated Fuel Cost');
+    expect(html).toContain('Estimated Fuel Saved');
+    expect(html).toContain('Unavailable');
+    expect(html).toContain('Assign vehicles to trips to unlock CO2 savings estimates.');
   });
 
   it('gates trip-history score deltas until three prior trips exist', async () => {

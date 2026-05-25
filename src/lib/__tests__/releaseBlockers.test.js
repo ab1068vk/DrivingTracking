@@ -20,7 +20,7 @@ import {
   detectDrivingEvents,
   PHONE_USE_SAFETY_WEIGHT,
 } from '@/lib/tripEngine';
-import { calculateCarbonImpact, estimateTripEconomics } from '@/lib/tripInsights';
+import { calculateAchievementBadges, calculateCarbonImpact, estimateTripEconomics } from '@/lib/tripInsights';
 
 const routePoints = [
   { lat: 43.6500, lng: -79.3800, speed_kmh: 20, accuracy: 8, timestamp: '2026-01-01T12:00:00.000Z' },
@@ -335,6 +335,22 @@ describe('release blocker regressions', () => {
     expect(estimate.economy_adjustment_multiplier).toBe(1);
   });
 
+  it('withholds fuel and CO2 savings until a vehicle baseline exists', () => {
+    const unassigned = estimateTripEconomics({ distance_km: 100, eco_driving_score: 80 }, null, {});
+    const assigned = estimateTripEconomics(
+      { distance_km: 100, eco_driving_score: 80 },
+      { fuel_type: 'gasoline', fuel_efficiency_l_per_100km: 10 },
+      {},
+    );
+
+    expect(unassigned.fuel_saved_available).toBe(false);
+    expect(unassigned.fuel_saved_liters).toBeNull();
+    expect(unassigned.co2_saved_available).toBe(false);
+    expect(unassigned.co2_saved_kg).toBeNull();
+    expect(assigned.fuel_saved_available).toBe(true);
+    expect(assigned.fuel_saved_liters).toBeGreaterThan(0);
+  });
+
   it('changes CO2 savings when the average vehicle baseline changes', () => {
     const trip = { distance_km: 100, eco_driving_score: 50 };
     const vehicle = { fuel_type: 'gasoline', fuel_efficiency_l_per_100km: 3 };
@@ -371,6 +387,22 @@ describe('release blocker regressions', () => {
     ], { co2_baseline_kg_per_100km: 18, grid_co2_kg_per_kwh: 0.05 }, [vehicle]);
 
     expect(impact.total_co2_saved_kg).toBeCloseTo(carbon.co2_saved_kg, 1);
+  });
+
+  it('uses the same vehicle-aware carbon source for impact and achievement badges', () => {
+    const vehicle = { id: 'ev-1', fuel_type: 'electric', ev_efficiency_kwh_per_100km: 20 };
+    const settings = { co2_baseline_kg_per_100km: 30, grid_co2_kg_per_kwh: 0.04 };
+    const trips = [
+      { status: 'completed', distance_km: 100, eco_driving_score: 80, vehicle_id: 'ev-1' },
+      { status: 'completed', distance_km: 100, eco_driving_score: 80 },
+    ];
+    const impact = calculateCarbonImpact(trips, settings, [vehicle]);
+    const badges = calculateAchievementBadges(trips, settings, [vehicle]);
+    const treePlanter = badges.find((badge) => badge.id === 'tree_planter');
+
+    expect(impact.eligible_trip_count).toBe(1);
+    expect(treePlanter.current).toBe(Math.min(21, Math.round(impact.total_co2_saved_kg)));
+    expect(treePlanter.earned).toBe(impact.total_co2_saved_kg >= 21);
   });
 
   it('retries transient external operations once', async () => {

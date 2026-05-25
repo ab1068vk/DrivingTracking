@@ -138,7 +138,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Defensive score',
-    definition: 'Blends only observed defensive-driving evidence such as smooth stops, intersection behavior, speed variability, and GPS-only stop-start patterns. It does not score following distance.',
+    definition: 'Blends only observed defensive-driving evidence such as smooth stops, approach-stop behavior, speed variability, and GPS-only stop-start patterns. It does not score following distance.',
   },
   {
     term: 'Jerk score',
@@ -161,8 +161,8 @@ const DRIVING_PATTERN_DEFINITIONS = [
     definition: 'Uses Android Usage Access evidence for phone-use scoring. GPS micro-steering patterns are diagnostic only and never reduce this score.',
   },
   {
-    term: 'Intersection score',
-    definition: 'Scores observed traffic stops lasting at least four seconds below 10 km/h, including rolling stops. Trips without enough evidence show no intersection score.',
+    term: 'Approach-stop estimate',
+    definition: 'Scores observed low-speed approaches and stops lasting at least four seconds below 10 km/h, including rolling stops. Trips without enough evidence show no approach-stop estimate.',
   },
   {
     term: 'Heading drift (Beta)',
@@ -824,7 +824,7 @@ export default function Settings() {
     { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
     { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },
     { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle brake turn heading drift calibration rescore feedback accurate wrong false positive' },
-    { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, route risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
+    { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, historical context risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
     { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },
     { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },
     { label: 'Privacy zones and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', detail: 'Privacy zones, backup, import, export, saved filters, and feedback data.', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
@@ -1039,7 +1039,7 @@ export default function Settings() {
               value: 'none',
             },
             {
-              label: 'Route comparison, commute detection, road types, parking reminder, risk hotspots',
+              label: 'Route comparison, commute detection, road types, parking reminder, repeated event areas',
               sub: 'Uses trip GPS data. Android asks for Location when you start tracking, use current location, or enable auto tracking.',
               value: locationFeatureStatus,
               action: requestForegroundLocationPermission,
@@ -1068,7 +1068,7 @@ export default function Settings() {
               value: 'none',
             },
             {
-              label: 'Live voice alerts and AI driving coach summaries',
+              label: 'Live voice alerts and local driving coach summaries',
               sub: 'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.',
               value: 'none',
             },
@@ -1273,7 +1273,7 @@ export default function Settings() {
                 { key: 'notif_phone_use_alert_enabled', label: 'Phone use warning', sub: 'Immediate warning for confirmed Android Usage Access detections' },
                 { key: 'notif_heading_drift_alert_enabled', label: 'Attention pattern warning', sub: 'Beta GPS heading patterns and long-drive break alerts' },
                 { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
-                { key: 'danger_zone_alerts_enabled', label: 'Danger zone proximity alerts', sub: 'Warn when approaching your historical risk hotspots' },
+                { key: 'danger_zone_alerts_enabled', label: 'Repeated event area alerts', sub: 'Warn when approaching your own repeated driving-event locations' },
                 { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
               ].map(({ key, label, sub }) => (
                 <SettingRow key={key} label={label} sublabel={sub}>
@@ -1833,8 +1833,8 @@ export default function Settings() {
           </div>
           <SettingRow
             icon={Target}
-            label="Predictive route risk"
-            sublabel="Estimate safest route window from history, danger zones, and context"
+            label="Historical context risk"
+            sublabel="Estimate current context from your history, repeated event areas, and time"
           >
             <Toggle
               value={cfg.predictive_route_risk_enabled !== false}
@@ -1844,7 +1844,7 @@ export default function Settings() {
           <SettingRow
             icon={Volume2}
             label="Live voice alerts"
-            sublabel="Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, danger-zone, and incident alerts"
+            sublabel="Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, repeated-event-area, and incident alerts"
           >
             <div className="flex items-center gap-2">
               <button

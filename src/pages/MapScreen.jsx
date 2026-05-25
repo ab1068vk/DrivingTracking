@@ -426,7 +426,7 @@ export default function MapScreen() {
                 showRouteRisk ? 'border-orange-500 bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300' : 'border-border bg-secondary/40 text-muted-foreground'
               }`}
             >
-              Route risk
+              Repeated-event layer
               <div className="mt-1 font-normal">{selectedTrip ? `${selectedRiskSegments.length} matched segments` : 'Select a trip first'}</div>
             </button>
             <button
@@ -435,8 +435,8 @@ export default function MapScreen() {
                 showDangerZones ? 'border-red-500 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300' : 'border-border bg-secondary/40 text-muted-foreground'
               }`}
             >
-              Risk hotspots
-              <div className="mt-1 font-normal">{visibleDangerZones.length} local zones</div>
+              Repeated event areas
+              <div className="mt-1 font-normal">{visibleDangerZones.length} local areas</div>
             </button>
           </div>
           {selectedTrip && (
@@ -486,8 +486,8 @@ export default function MapScreen() {
       <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
-            <h2 className="font-semibold text-base">Risk Hotspots</h2>
-            <p className="mt-1 text-xs text-muted-foreground">Places where harsh braking, speeding, or sharp turns repeat</p>
+            <h2 className="font-semibold text-base">Repeated Driving-Event Areas</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Your repeated harsh-braking, speeding, or sharp-turn locations</p>
           </div>
           <button
             onClick={() => setShowDangerZones(true)}
@@ -499,7 +499,7 @@ export default function MapScreen() {
         </div>
         {visibleDangerZones.length === 0 ? (
           <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
-            No risk hotspots yet. The app will highlight a place here after the same area has repeated harsh brakes, speeding, or sharp turns.
+            No repeated event areas yet. The app will highlight a place here after the same area has repeated harsh brakes, speeding, or sharp turns.
           </div>
         ) : (
           <div className="grid gap-2 md:grid-cols-3">
@@ -531,7 +531,7 @@ export default function MapScreen() {
             onClick={() => setShowAllDangerZones((value) => !value)}
             className="mt-3 text-xs font-semibold text-primary"
           >
-            {showAllDangerZones ? 'Show fewer hotspots' : `Show all hotspots (${hiddenDangerZoneCount} hidden)`}
+            {showAllDangerZones ? 'Show fewer areas' : `Show all areas (${hiddenDangerZoneCount} hidden)`}
           </button>
         )}
       </div>
@@ -556,7 +556,7 @@ export default function MapScreen() {
                   showDangerZones ? 'bg-red-500 text-white border-red-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                 }`}
               >
-                Risk hotspots
+                Event areas
               </button>
               <button
                 onClick={() => setShowRouteRisk(value => !value)}
@@ -565,7 +565,7 @@ export default function MapScreen() {
                   showRouteRisk ? 'bg-orange-500 text-white border-orange-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                 }`}
               >
-                Route risk
+                Repeated-event layer
               </button>
               <button
                 onClick={() => {

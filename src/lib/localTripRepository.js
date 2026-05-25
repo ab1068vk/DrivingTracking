@@ -2,7 +2,6 @@ import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import {
-  buildScoreProvenance,
   buildDrivingThresholds,
   calculateTripScores,
   calculateTripStats,
@@ -11,6 +10,7 @@ import {
   SCORING_VERSION,
 } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
+import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
@@ -233,9 +233,9 @@ const emitRescoreProgress = (detail) => {
   window.dispatchEvent(new CustomEvent(RESCORE_PROGRESS_EVENT, { detail }));
 };
 
-const legacyScoreProvenanceNote = 'Legacy score tagged with the current scoring version on app launch; values were not recalculated.';
+const legacyScoreProvenanceNote = 'Legacy score marked unknown on app launch; values were not recalculated.';
 
-const tagLegacyScoreProvenance = (trip, thresholds) => {
+const tagLegacyScoreProvenance = (trip) => {
   if (!trip || trip.status !== 'completed') return trip;
   if (trip.score_provenance?.scoring_version) return trip;
 
@@ -243,16 +243,18 @@ const tagLegacyScoreProvenance = (trip, thresholds) => {
   return {
     ...trip,
     score_provenance: {
-      ...buildScoreProvenance(trip.component_scores || {}, thresholds, computedAt),
       ...(trip.score_provenance && typeof trip.score_provenance === 'object' ? trip.score_provenance : {}),
-      scoring_version: SCORING_VERSION,
+      scoring_version: null,
       computed_at: computedAt,
+      calibration_status: 'unknown_legacy_unrescored',
+      components: {},
+      constants_snapshot: {},
       migrated_without_rescore: true,
       migration_note: legacyScoreProvenanceNote,
     },
     score_provenance_change: trip.score_provenance_change || {
       previous_scoring_version: null,
-      current_scoring_version: SCORING_VERSION,
+      current_scoring_version: null,
       reason: 'legacy_tagged_without_rescore',
       changed_constants: [],
       tagged_at: new Date().toISOString(),
@@ -260,9 +262,14 @@ const tagLegacyScoreProvenance = (trip, thresholds) => {
   };
 };
 
+const vehicleForTrip = (trip, vehicles = []) => (
+  Array.isArray(vehicles)
+    ? vehicles.find((vehicle) => String(vehicle.id) === String(trip?.vehicle_id)) || null
+    : null
+);
+
 const tagExistingTripsWithCurrentScoringVersion = async (trips = []) => {
-  const thresholds = buildDrivingThresholds(localSettings.get());
-  const next = trips.map((trip) => tagLegacyScoreProvenance(trip, thresholds));
+  const next = trips.map((trip) => tagLegacyScoreProvenance(trip));
   const changed = next.filter((trip, index) => trip !== trips[index]);
   if (changed.length) await putTrips(changed);
   return next;
@@ -292,7 +299,7 @@ export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
   return { events: filtered, removed };
 };
 
-const rescoreTrip = (trip) => {
+const rescoreTrip = (trip, vehicles = []) => {
   if (!trip || trip.status !== 'completed') return trip;
   const routePoints = restoreOriginalRouteGeometry(trip.route_points || []);
   const settings = localSettings.get();
@@ -303,7 +310,7 @@ const rescoreTrip = (trip) => {
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
   const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
   const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
-  const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
+  const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
   const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse);
   const scoreProvenanceChange = provenanceStatus.needsRescore || trip.needs_rescore
     ? {
@@ -359,12 +366,13 @@ const rescoreTripsIfNeeded = async (trips = []) => {
   const next = [];
   const rescoredTrips = [];
   const thresholds = buildDrivingThresholds(localSettings.get());
+  const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
   const total = trips.filter((trip) => needsRescore(trip, thresholds)).length;
   let completed = 0;
   if (total) emitRescoreProgress({ status: 'running', completed, total });
   for (const trip of trips) {
     if (needsRescore(trip, thresholds)) {
-      const rescored = rescoreTrip(trip);
+      const rescored = rescoreTrip(trip, vehicles);
       rescoredTrips.push(rescored);
       next.push(rescored);
       completed += 1;
@@ -388,6 +396,7 @@ const importNativeCompletedTrips = async () => {
     const nativeTrips = await getNativeCompletedTrips();
     if (!nativeTrips.length) return;
 
+    const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     for (const trip of nativeTrips) {
       const routePoints = trip.route_points || [];
       const settings = localSettings.get();
@@ -396,7 +405,7 @@ const importNativeCompletedTrips = async () => {
       const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
       const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
       const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
-      const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
+      const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
       const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
 
       const importedTrip = {
@@ -535,12 +544,13 @@ export const localTripRepository = {
 
   async upsertMany(trips = []) {
     const thresholds = buildDrivingThresholds(localSettings.get());
+    const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     const normalized = trips.map((trip) => {
       const next = withId({
         ...trip,
         created_at: trip.created_at || trip.start_time || new Date().toISOString(),
       });
-      return needsRescore(next, thresholds) ? rescoreTrip(next) : next;
+      return needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next;
     });
     await putTrips(normalized);
     if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();

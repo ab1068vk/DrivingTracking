@@ -390,7 +390,7 @@ export async function notifyTripCompleted(trip, { dedupeKey = null, replaceIds =
   if (!granted) return;
 
   const additions = [];
-  if ((trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0) additions.push(`${trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn alert(s).`);
+  if ((trip.close_proximity_count ?? 0) > 0) additions.push(`${trip.close_proximity_count} estimated brake-turn alert(s).`);
   if (trip.heading_drift_beta_level === 'high') additions.push('High GPS heading drift pattern detected (Beta).');
   if (trip.aggressive_grade === 'aggressive') additions.push('Aggressive driving pattern recorded.');
   const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`;
@@ -558,7 +558,7 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
 }
 
 export async function dispatchPostTripNotification(trip, recentTrips = [], settings = localSettings.get()) {
-  const manoeuvreAlertCount = trip.driving_events?.filter((event) => event.type === 'near_miss' || event.type === 'close_proximity').length ?? (trip.close_proximity_count ?? trip.near_miss_count ?? 0);
+  const manoeuvreAlertCount = trip.driving_events?.filter((event) => event.type === 'close_proximity').length ?? (trip.close_proximity_count ?? 0);
   const phoneUseHigh = trip.phone_use_risk === 'high';
   const manoeuvreAlertHigh = manoeuvreAlertCount >= 2;
   const stopStartPatternCount = Number(trip.stop_start_pattern_count ?? trip.tailgate_cycle_count) || trip.driving_events?.filter((event) => event.type === 'stop_start_pattern' || event.type === 'tailgate_cycle').length || 0;

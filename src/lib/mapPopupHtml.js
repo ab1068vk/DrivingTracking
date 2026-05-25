@@ -1,6 +1,9 @@
 import { escapeHtml } from '@/lib/htmlUtils';
 
 export const titleCase = (value) => String(value || '')
+  .replace(/^near_miss$/, 'legacy_brake_turn_alert')
+  .replace(/^close_proximity$/, 'brake_turn_alert')
+  .replace(/^tailgate_cycle$/, 'legacy_stop_start_pattern')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (char) => char.toUpperCase());
 
@@ -22,7 +25,7 @@ export const buildRouteRiskSegmentPopupHtml = (segment = {}) => {
   const perPass = tripCount ? totalEvents / tripCount : 0;
 
   return [
-    `<b>${escapeHtml(titleCase(segment.riskLevel))} risk segment</b>`,
+    `<b>${escapeHtml(titleCase(segment.riskLevel))} repeated-event segment</b>`,
     `Seen across ${escapeHtml(tripCount)} trips`,
     `Total events: ${escapeHtml(totalEvents)}`,
     `Avg ${escapeHtml(perPass.toFixed(1))} events per pass`,
@@ -39,7 +42,7 @@ export const buildDangerZonePopupHtml = (zone = {}) => {
     : 'Unknown';
 
   return [
-    `<b>${escapeHtml(titleCase(zone.riskLevel))} danger zone</b>`,
+    `<b>${escapeHtml(titleCase(zone.riskLevel))} repeated driving-event area</b>`,
     `${escapeHtml(eventCount)} repeated events`,
     `Dominant event: ${escapeHtml(titleCase(zone.dominantType || 'risk event'))}`,
     `Radius: ${escapeHtml(radius)} m`,

@@ -30,8 +30,8 @@ const SIGNAL_LABELS = {
   dailyFatigue: 'High daily fatigue accumulation',
   lastTripOutcome: 'Low score on your last trip',
   weather: 'Weather may raise trip risk',
-  dangerZones: 'Known danger zones are nearby',
-  routeForecast: 'Predicted route conditions look elevated',
+  dangerZones: 'Your repeated driving-event areas are nearby',
+  routeForecast: 'Historical context risk looks elevated',
   recentRest: 'Short recovery since your last trip',
 };
 
@@ -41,8 +41,8 @@ const SIGNAL_TIPS = {
   recentTrend: 'Pick one behaviour to protect this trip instead of fixing everything.',
   dailyFatigue: 'A short break before starting will improve alertness.',
   lastTripOutcome: 'Ease into this drive and avoid repeating the last trip pattern.',
-  weather: 'Increase following distance and brake earlier than usual.',
-  dangerZones: 'Start slowly and watch for the familiar risk segment.',
+  weather: 'Leave more space ahead and brake earlier than usual.',
+  dangerZones: 'Start slowly and watch for the familiar repeated-event area.',
   routeForecast: 'Consider the calmer window or start with a wider safety margin.',
   recentRest: 'Pause briefly before driving again, especially after a demanding trip.',
 };
@@ -192,7 +192,7 @@ const nullableRisk = (value) => {
  * @param {Array<object>} trips - Completed and recent trip records.
  * @param {object} settings - User settings object kept for API compatibility.
  * @param {object|null} dailyFatigueState - Daily fatigue state from computeDailyFatigue.
- * @param {object} context - Weather, danger-zone, route-risk, and optional now values.
+ * @param {object} context - Weather, repeated-event-area, historical-context, and optional now values.
  * @param {object|null} habitProfile - Optional learned profile returned by buildHabitProfile.
  * @returns {object} Readiness result with composite risk, score, signals, and data quality.
  * @example computePreTripRisk(completedTrips, settings, dailyFatigue, context, habitProfile)

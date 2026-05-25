@@ -325,8 +325,8 @@ describe('trip engine calculation coverage', () => {
     expect(noEvents.close_proximity_count).toBe(0);
     expect(noEvents.close_proximity_score).toBeNull();
     expect(proximityEvents.stop_start_pattern_sample_count).toBe(0);
-    expect(proximityEvents.close_proximity_count).toBe(2);
-    expect(proximityEvents.close_proximity_score).toBe(Math.round(100 * (CLOSE_PROXIMITY_DECAY_BASE ** 2)));
+    expect(proximityEvents.close_proximity_count).toBe(1);
+    expect(proximityEvents.close_proximity_score).toBe(Math.round(100 * CLOSE_PROXIMITY_DECAY_BASE));
   });
 
   it('summarizes full routes and applies night penalties to overnight samples', () => {

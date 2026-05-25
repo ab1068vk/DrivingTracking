@@ -72,6 +72,21 @@ describe('driver signature', () => {
     expect(result.archetype).toBe('aggressive_commuter');
   });
 
+  it('leaves missing score-derived dimensions unavailable instead of treating them as poor', () => {
+    const result = buildDriverSignature(Array.from({ length: 6 }, (_, index) => trip(index, {
+      aggressive_driving_score: null,
+      score_smoothness: null,
+      score_eco: null,
+      score_overall: null,
+    })));
+
+    expect(result.dimensions.aggression).toBeNull();
+    expect(result.dimensions.smoothness).toBeNull();
+    expect(result.dimensions.ecoMindedness).toBeNull();
+    expect(result.dimensions.consistencyIdx).toBeNull();
+    expect(result.archetype).toBe('balanced');
+  });
+
   it('detects an increasing aggression style shift', () => {
     const trips = [
       ...Array.from({ length: 5 }, (_, index) => trip(index + 15, { aggressive_driving_score: 45 })),

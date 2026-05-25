@@ -7,7 +7,9 @@ const eventTotal = (trips, key) => trips.reduce((sum, trip) => sum + (Number(tri
 const distanceWeightedScore = (trips = []) => {
   const scored = trips
     .map((trip) => ({
-      score: Number(trip?.score_overall),
+      score: trip?.score_overall == null || trip?.score_overall === ''
+        ? null
+        : Number(trip.score_overall),
       distance: Number(trip?.distance_km) || 0,
     }))
     .filter((item) => Number.isFinite(item.score));
@@ -40,6 +42,22 @@ export function buildWeeklyCoachSummary(trips = []) {
   const now = Date.now();
   const week = completed.filter((trip) => now - new Date(trip.start_time || 0).getTime() <= 7 * 86400000);
   const scope = week.length >= 2 ? week : completed.slice(0, 10);
+  const scopeScore = distanceWeightedScore(scope);
+  if (scopeScore == null) {
+    const actions = ['Record trips with valid distance and score evidence.', 'Keep the phone out of reach before moving.', 'Review completed trips for any obvious wrong events.'];
+    return {
+      headline: 'Weekly coaching is waiting for scored driving distance.',
+      insight: `Local rules found ${scope.length} completed trip${scope.length === 1 ? '' : 's'}, but none had valid scored distance. No AI service was used.`,
+      actions,
+      plan: actions.map((action, index) => ({
+        id: `weekly-plan-evidence-${index + 1}`,
+        title: index === 0 ? 'Build evidence' : index === 1 ? 'During each drive' : 'After driving',
+        action,
+        target: 'Unlock a reliable weekly coach',
+      })),
+      confidence: 'unavailable',
+    };
+  }
   const totals = [
     ['late braking', eventTotal(scope, 'harsh_brakes_count')],
     ['hard acceleration', eventTotal(scope, 'rapid_accel_count')],
@@ -55,7 +73,7 @@ export function buildWeeklyCoachSummary(trips = []) {
   const evening = scope.filter((trip) => new Date(trip.start_time || 0).getHours() >= 17);
   const windows = analyzeTimeOfDay(scope).sort((a, b) => (b.events || 0) - (a.events || 0));
   const pressureWindow = windows[0]?.label || (evening.length >= scope.length / 2 ? 'Evening' : 'mixed times');
-  const avgScore = Math.round(distanceWeightedScore(scope) ?? 0);
+  const avgScore = Math.round(scopeScore);
   const scopeIds = new Set(scope.map((trip) => trip.id).filter(Boolean));
   const comparison = completed.filter((trip) => !scopeIds.has(trip.id)).slice(0, scope.length);
   const priorScore = distanceWeightedScore(comparison);
@@ -72,7 +90,7 @@ export function buildWeeklyCoachSummary(trips = []) {
     : `Your recent trips are steady with an average score of ${avgScore}.`;
 
   const actions = biggest[0] === 'late braking'
-    ? ['Lift earlier before stops.', 'Add two seconds of following space.', 'Watch for repeat danger zones near intersections.']
+    ? ['Lift earlier before stops.', 'Leave more space ahead.', 'Watch for your repeated driving-event areas near stops.']
     : biggest[0] === 'speeding'
       ? ['Set cruise slightly below the limit.', 'Use the first minute of each trip to settle speed.', 'Review OSM speed-limit coverage after trips.']
       : biggest[0] === 'phone distraction'

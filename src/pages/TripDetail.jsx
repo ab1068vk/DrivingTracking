@@ -387,6 +387,14 @@ export default function TripDetail() {
   ));
   const osmSpeedLimits = [...new Set(osmSpeedLimitPoints.map((point) => Number(point.speed_limit_kmh)).filter(Number.isFinite))]
     .sort((a, b) => a - b);
+  const speedLimitCoverage = (() => {
+    const points = trip.route_points || [];
+    const limitPoints = points.filter((point) => Number.isFinite(Number(point.speed_limit_kmh)));
+    const mapDerived = limitPoints.filter((point) => ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source)).length;
+    const inferred = limitPoints.filter((point) => point.speed_limit_source === 'inferred').length;
+    const pct = (count) => points.length ? Math.round((count / points.length) * 100) : 0;
+    return { mapDerivedPct: pct(mapDerived), inferredPct: pct(inferred), sampleCount: points.length };
+  })();
   const sensorFusionSummary = trip.sensor_fusion_summary || null;
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
@@ -412,7 +420,8 @@ export default function TripDetail() {
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse)
-    .filter((event) => !(event.type === 'phone_use' && event.source === 'gps_proxy'));
+    .filter((event) => !(event.type === 'phone_use' && event.source === 'gps_proxy'))
+    .filter((event) => event.type !== 'near_miss');
   const eventFeedback = trip.event_feedback || {};
   const eventFeedbackKey = (event, index) => [
     event.type || 'event',
@@ -447,13 +456,16 @@ export default function TripDetail() {
   const parkedIdleEstimated = trip.sustained_idle_seconds == null;
   const parkedIdleSeconds = trip.sustained_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - trafficIdleSeconds);
   const terminalParkedSeconds = trip.parking_stop_duration_seconds || 0;
-  const unavailableEstimate = '—';
-  const fuelSavedValue = economics.vehicle_profile_available
-    ? `${economics.fuel_saved_liters.toFixed(2)} L`
+  const unavailableEstimate = 'Unavailable';
+  const fuelSavedValue = economics.fuel_saved_available && Number.isFinite(Number(economics.fuel_saved_liters))
+    ? `${Number(economics.fuel_saved_liters).toFixed(2)} L`
     : unavailableEstimate;
   const co2SavedValue = Number.isFinite(Number(economics.co2_saved_kg))
     ? `${economics.co2_saved_kg} kg`
     : unavailableEstimate;
+  const fuelCostAssumptions = economics.vehicle_profile_available
+    ? `Estimated from ${economics.actual_l_per_100km} L/100km and ${formatCurrencyAmount(economics.fuel_price_per_liter, settings)}/L.`
+    : `${economics.estimate_label} Assign a vehicle to replace default fuel assumptions.`;
   const tripEndState = trip.parking_stop_detected
     ? 'Parked'
     : terminalParkedSeconds > 0
@@ -573,9 +585,9 @@ export default function TripDetail() {
         </motion.div>
       )}
 
-      {(trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0 && (
+      {(trip.close_proximity_count ?? 0) > 0 && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
-          {trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn manoeuvre alert{(trip.close_proximity_count ?? trip.near_miss_count) === 1 ? '' : 's'} on this trip. GPS alone cannot establish object proximity. This advisory does not affect your trip Safety or Overall score.
+          {trip.close_proximity_count} estimated brake-turn manoeuvre alert{trip.close_proximity_count === 1 ? '' : 's'} on this trip. GPS alone cannot establish object proximity or an avoided collision. This advisory does not affect your trip Safety or Overall score.
         </div>
       )}
 
@@ -1077,11 +1089,11 @@ export default function TripDetail() {
             },
             // FIX: Add overall average as a secondary line while keeping moving speed primary.
             { icon: Gauge, label: 'Max Speed', value: formatSpeed(trip.max_speed_kmh || 0, units) },
-            { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), subValue: economics.estimate_label },
-            { icon: Leaf, label: 'Fuel Saved', value: fuelSavedValue, subValue: economics.vehicle_profile_available ? 'Eco-driving effect capped at 8%.' : 'Assign a vehicle to estimate savings.' },
+            { icon: Fuel, label: 'Estimated Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), subValue: fuelCostAssumptions },
+            { icon: Leaf, label: 'Estimated Fuel Saved', value: fuelSavedValue, subValue: economics.fuel_saved_available ? 'Assigned-vehicle baseline; eco-driving effect capped at 8%.' : 'Assign a vehicle to estimate savings.' },
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg`, subValue: economics.estimate_label },
             { icon: Leaf, label: 'CO2 Saved vs Average', value: co2SavedValue, subValue: economics.co2_saved_label },
-            { icon: ParkingSquare, label: 'Parking', value: `${trip.parking_approach_score ?? 100}` },
+            { icon: ParkingSquare, label: 'Parking', value: componentScore('parking_approach').value ?? 'Unavailable' },
             { icon: TimerReset, label: 'Traffic Stops', value: formatDuration(trafficIdleSeconds) },
             { icon: ParkingSquare, label: 'Parked Idle', value: formatDuration(parkedIdleSeconds), subValue: parkedIdleEstimated ? 'Estimated from idle and traffic-stop time' : null },
             { icon: MapPin, label: 'Trip End', value: tripEndState, subValue: terminalParkedSeconds > 0 ? `${formatDuration(terminalParkedSeconds)} at final stop` : trip.parking_stop_detected ? 'Trip ended from a stopped state' : null },
@@ -1146,6 +1158,9 @@ export default function TripDetail() {
           className="bg-card border border-border rounded-3xl p-5 shadow-sm"
         >
           <h2 className="font-semibold mb-3">Speed Zones</h2>
+          <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+            Speed-limit coverage: {speedLimitCoverage.mapDerivedPct}% map-derived/default OSM, {speedLimitCoverage.inferredPct}% inferred from GPS speed bands ({speedLimitCoverage.sampleCount} samples).
+          </div>
           <div className="space-y-2">
             {speedZoneSummary.map((zone) => (
               <div key={zone.inferredZone} className="flex items-center justify-between rounded-xl bg-secondary/50 p-3">
@@ -1193,8 +1208,8 @@ export default function TripDetail() {
             { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : 'text-emerald-500' },
             { icon: Leaf, label: 'eco driving', componentKey: 'eco_driving', color: 'text-emerald-500' },
             { icon: ShieldCheck, label: 'stop-start pattern estimate', componentKey: 'stop_start_pattern', color: 'text-blue-500' },
-            { icon: Focus, label: 'focus score', componentKey: 'distraction', color: 'text-violet-500' },
-            { icon: TimerReset, label: 'intersection score', componentKey: 'intersection', color: 'text-amber-500' },
+            { icon: Focus, label: 'attention-pattern estimate', componentKey: 'distraction', color: 'text-violet-500' },
+            { icon: TimerReset, label: 'approach-stop estimate', componentKey: 'intersection', color: 'text-amber-500' },
             { icon: Gauge, label: 'SVI', componentKey: 'speed_variability', color: 'text-indigo-500' },
             { icon: Fuel, label: 'fuel band', componentKey: 'fuel_band', color: 'text-lime-500' },
             { icon: Car, label: 'engine stress', componentKey: 'engine_stress', color: 'text-orange-500' },
@@ -1219,16 +1234,16 @@ export default function TripDetail() {
 
         <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
           <p>Brake onset smoothness measures how smoothly brakes were applied during detected braking events, not human neurological reaction time.</p>
-          <p className="mt-1">Stop-start pattern and attention pattern Beta values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or fatigue.</p>
+          <p className="mt-1">Stop-start pattern and attention-pattern values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or drowsiness.</p>
           {componentScore('intersection').value == null && (
-            <p className="mt-1">Intersection score not available for this trip.</p>
+            <p className="mt-1">Approach-stop estimate is unavailable for this trip.</p>
           )}
         </div>
 
         {fatigueHeatmapData.length > 0 ? (
           <div className="mb-4 bg-secondary/50 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-medium">Fatigue progression</div>
+              <div className="text-sm font-medium">Fatigue exposure progression</div>
               <span className="text-xs text-muted-foreground">fatigue level 0-100</span>
             </div>
             <ResponsiveContainer width="100%" height={140}>
@@ -1417,7 +1432,7 @@ export default function TripDetail() {
               ...(trip.heading_deviation_available === true ? [{ label: 'Heading Events (Beta)', value: trip.heading_deviation_count ?? 0, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' }] : []),
               { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
-              { label: 'Brake-Turn Alerts', value: trip.close_proximity_count ?? trip.near_miss_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+              { label: 'Brake-Turn Alerts', value: trip.close_proximity_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
               { label: 'Overtake Patterns (Beta)', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
               ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality (Beta)', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
@@ -1442,7 +1457,6 @@ export default function TripDetail() {
                 sharp_turn: { label: 'Sharp Turn', icon: '↰', color: 'text-blue-600' },
                 speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
-                near_miss: { label: 'Estimated brake-turn manoeuvre (GPS proxy, legacy)', icon: '!', color: 'text-red-700' },
                 close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
                 aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
                 lane_change: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
@@ -1459,7 +1473,7 @@ export default function TripDetail() {
                 : evt.type === 'phone_use'
                   ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
                   : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-              const inferredTypes = ['lane_change', 'heading_deviation', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'near_miss', 'close_proximity', 'aggressive_overtake'];
+              const inferredTypes = ['lane_change', 'heading_deviation', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity', 'aggressive_overtake'];
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
                 : evt.type === 'speeding' && evt.speed_limit_source

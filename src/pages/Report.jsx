@@ -72,9 +72,10 @@ export default function Reports() {
       cost: totals.cost + estimate.cost,
       liters: totals.liters + estimate.liters,
       co2: totals.co2 + estimate.co2_kg,
-      saved: totals.saved + estimate.fuel_saved_liters,
+      saved: totals.saved + (Number.isFinite(Number(estimate.fuel_saved_liters)) ? Number(estimate.fuel_saved_liters) : 0),
+      savedTripCount: totals.savedTripCount + (estimate.fuel_saved_available ? 1 : 0),
     };
-  }, { cost: 0, liters: 0, co2: 0, saved: 0 });
+  }, { cost: 0, liters: 0, co2: 0, saved: 0, savedTripCount: 0 });
   const tips = buildScoreTips(trips);
   const timeOfDayData = analyzeTimeOfDay(trips);
   const dayOfWeekData = analyzeDayOfWeek(trips);
@@ -189,7 +190,6 @@ export default function Reports() {
     tailgate_cycle: 'Stop-Start Patterns (Legacy)',
     stop_start_pattern: 'Stop-Start Patterns',
     erratic_speed: 'Erratic Speed',
-    near_miss: 'Brake-Turn Alerts (Legacy)',
     close_proximity: 'Brake-Turn Alerts',
   };
 
@@ -372,8 +372,8 @@ export default function Reports() {
               { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score ?? '-', evidence: 'aggregate evidence', gradient: summary.avg_score != null && getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
               { icon: Gauge, label: 'Avg Moving Speed', value: formatSpeed(avgMovingSpeedKmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
               // FIX: Display Avg Moving Speed in the report instead of an overall average including stops.
-              { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
-              { icon: Leaf, label: 'Fuel Saved', value: `${economics.saved.toFixed(2)} L`, gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
+              { icon: Fuel, label: 'Estimated Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
+              { icon: Leaf, label: 'Estimated Fuel Saved', value: economics.savedTripCount > 0 ? `${economics.saved.toFixed(2)} L` : 'Unavailable', gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
               { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },
             ].map(({ icon: Icon, label, value, gradient, evidence }, i) => (
               <motion.div
@@ -554,12 +554,13 @@ export default function Reports() {
               <Leaf className="w-5 h-5 text-emerald-500 mt-1" />
               <div>
                 <h2 className="font-semibold mb-1">Your Environmental Impact</h2>
-                <div className="font-grotesk font-bold text-2xl">{carbonImpact.trees_equivalent} tree-years of CO2 offset</div>
+                <div className="font-grotesk font-bold text-2xl">
+                  {carbonImpact.savings_available ? `${carbonImpact.trees_equivalent} tree-years of estimated CO2 offset` : 'CO2 savings unavailable'}
+                </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {carbonImpact.total_co2_saved_kg > 0
-                    ? `You saved ${carbonImpact.total_co2_saved_kg} kg CO2 vs. a vehicle/fleet baseline estimate.`
+                  {carbonImpact.savings_available
+                    ? `Estimated ${carbonImpact.total_co2_saved_kg} kg CO2 saved from assigned vehicle baselines.`
                     : 'Assign vehicles to trips to unlock CO2 savings estimates.'}
-                  {carbonImpact.total_co2_saved_kg > 0 && ' Estimates carry a +/-30% confidence band unless a vehicle baseline is available.'}
                 </p>
                 <span className="mt-3 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
                   {carbonImpact.carbon_grade}

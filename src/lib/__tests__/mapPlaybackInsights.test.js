@@ -153,4 +153,16 @@ describe('mapPlaybackInsights', () => {
     expect(comparison.notes.some((note) => note.includes('fewer'))).toBe(true);
     expect(comparison.notes.some((note) => note.includes('slower'))).toBe(true);
   });
+
+  it('keeps missing comparison scores unavailable instead of converting them to zero', () => {
+    const comparison = buildRouteComparison(
+      { score_overall: null, driving_events: [], avg_speed_kmh: 45 },
+      { score_overall: null, driving_events: [], avg_speed_kmh: 45 }
+    );
+    const scoreRow = comparison.rows.find((row) => row.label === 'Score');
+
+    expect(scoreRow.current).toBe('Unavailable');
+    expect(scoreRow.other).toBe('Unavailable');
+    expect(scoreRow.higherWins).toBeNull();
+  });
 });

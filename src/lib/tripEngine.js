@@ -42,7 +42,7 @@ export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT = scoringValue('STOP_START_MI
 export const FATIGUE_SEGMENT_SECONDS = FATIGUE_HEATMAP_SEGMENT_SECONDS;
 export const PHONE_USE_SAFETY_WEIGHT = scoringValue('PHONE_USE_SAFETY_WEIGHT');
 /**
- * Provisional close-proximity score decay per detected near-miss/proximity event.
+ * Provisional brake-turn manoeuvre alert score decay per detected GPS proxy event.
  * Not calibrated to incident, crash, or following-distance outcome data.
  */
 export const CLOSE_PROXIMITY_DECAY_BASE = scoringValue('CLOSE_PROXIMITY_DECAY_BASE');
@@ -5268,7 +5268,7 @@ export function calculateTripScores(
     };
   const hill = calculateHillDrivingScore(routePoints, thresholds);
   const parking = analyzeParkingApproach(routePoints, thresholds, options.endTime ?? null);
-  const closeProximityCount = counts[EVENT_TYPES.NEAR_MISS] + counts[EVENT_TYPES.CLOSE_PROXIMITY];
+  const closeProximityCount = counts[EVENT_TYPES.CLOSE_PROXIMITY];
   const closeProximityScore = closeProximityCount === 0
     ? null
     : Math.max(0, Math.round(100 * Math.pow(CLOSE_PROXIMITY_DECAY_BASE, closeProximityCount)));
@@ -5856,7 +5856,7 @@ export function tripsToCSV(trips) {
     'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
     'Avg Speed (km/h)', 'Avg Moving Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
     // FIX: Add exported moving-speed column immediately after the legacy overall average speed.
-    'Eco', 'Smoothness Index', 'Eco Driving Estimate', 'Stop-Start Pattern Estimate', 'Focus Score', 'Intersection Score',
+    'Eco Score Estimate', 'Smoothness Index', 'Eco Driving Estimate', 'Stop-Start Pattern Estimate', 'Attention-Pattern Estimate', 'Approach-Stop Estimate',
     'Aggressive Score', 'Aggressive Grade', 'Defensive Driving Estimate', 'Defensive Grade', 'SVI', 'Fuel Band',
     'Smooth Braking', 'Engine Stress', 'Tire Wear Units', 'Heading Drift Beta', 'Phone Proxy (Diagnostic)', 'Parking Score',
     'Highway Score', 'Urban Score', 'Residential Score', 'Dominant Road Type',
@@ -5869,7 +5869,7 @@ export function tripsToCSV(trips) {
     'Overtake Quality Score (Beta Diagnostic)', 'Overtake Pattern Count (Beta Diagnostic)', 'Unsafe Re-entry Count (Beta Diagnostic)',
     'Road Condition Proxy', 'Safety Condition Bonus',
     'Road Type', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events',
-    'Heading Deviation Events (Beta)', 'Stop-Start Patterns', 'Distraction Events', 'Close-Proximity Manoeuvre Alerts', 'Overtake Patterns (Beta Diagnostic)', 'Night Driving',
+    'Heading Deviation Events (Beta)', 'Stop-Start Patterns', 'Erratic Speed Events', 'Brake-Turn Manoeuvre Alerts', 'Overtake Patterns (Beta Diagnostic)', 'Night Driving',
     'Event Feedback Accurate', 'Event Feedback Wrong', 'Event Feedback JSON',
     'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];
@@ -5952,7 +5952,7 @@ export function tripsToCSV(trips) {
     t.heading_deviation_count ?? t.lane_changes_count ?? '',
     t.stop_start_pattern_count ?? t.tailgate_cycle_count ?? '',
     t.distraction_events_count ?? '',
-    t.close_proximity_count ?? t.near_miss_count ?? '',
+    t.close_proximity_count ?? '',
     t.overtake_event_count ?? '',
     t.night_driving ? 'Yes' : 'No',
     accurateFeedback,

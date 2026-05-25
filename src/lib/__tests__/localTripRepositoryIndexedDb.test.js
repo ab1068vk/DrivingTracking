@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createIndexedDbMigrationRunner, localTripRepository, TRIP_SCHEMA_VERSION } from '@/lib/localTripRepository';
-import { SCORING_VERSION } from '@/lib/tripEngine';
 
 const makeDomStringList = (items) => ({
   contains: (item) => items.has(item),
@@ -244,12 +243,15 @@ describe('localTripRepository IndexedDB migrations', () => {
 
     expect(trip.score_overall).toBeNull();
     expect(trip.score_provenance).toMatchObject({
-      scoring_version: SCORING_VERSION,
+      scoring_version: null,
+      calibration_status: 'unknown_legacy_unrescored',
+      components: {},
+      constants_snapshot: {},
       migrated_without_rescore: true,
     });
     expect(trip.score_provenance_change).toMatchObject({
       reason: 'legacy_tagged_without_rescore',
-      current_scoring_version: SCORING_VERSION,
+      current_scoring_version: null,
     });
   });
 });

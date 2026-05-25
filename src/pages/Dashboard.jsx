@@ -984,7 +984,7 @@ export default function Dashboard() {
         });
       });
     }
-    await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips])).catch((err) => {
+    await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips], settings, vehicles)).catch((err) => {
       logError('post_trip_achievement_notification_sync', err, { tripId: savedTrip?.id || completedTrip.id });
     });
     const newDailyFatigue = computeDailyFatigue(
@@ -1476,7 +1476,7 @@ export default function Dashboard() {
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-1 h-5 w-5 text-orange-500" />
                 <div>
-                  <h2 className="font-semibold">High fatigue detected</h2>
+                  <h2 className="font-semibold">High fatigue exposure estimate</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
                     You've driven {dailyFatigue.totalDrivingMinutes} min today. Consider a {dailyFatigue.recommendedBreakMinutes}-min break first.
                   </p>
@@ -1724,8 +1724,11 @@ export default function Dashboard() {
               <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="font-grotesk font-bold text-xl">{baseline.percentile ?? 0}%</div>
-              <div className="text-xs text-muted-foreground">percentile</div>
+              <div className="font-grotesk font-bold text-xl">{baseline.percentile == null ? '-' : `${baseline.percentile}%`}</div>
+              <div className="text-xs text-muted-foreground">percentile among your recorded weeks</div>
+              {baseline.percentile == null && (
+                <div className="mt-1 text-[11px] text-muted-foreground">Needs {baseline.percentile_min_weeks} scored weeks</div>
+              )}
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
               <div className="flex items-center gap-2">
@@ -1796,7 +1799,7 @@ export default function Dashboard() {
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="font-semibold text-base capitalize">Daily fatigue · {dailyFatigue.fatigueLevel}</h2>
+              <h2 className="font-semibold text-base capitalize">Daily fatigue exposure · {dailyFatigue.fatigueLevel}</h2>
               <p className="mt-1 text-xs text-muted-foreground">
                 {dailyFatigue.totalDrivingMinutes} min driven today across {dailyFatigue.tripCount} trips
               </p>
@@ -1970,6 +1973,7 @@ function DashboardRiskPanel({
     predictiveRouteRisk,
   }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
+  const showReadinessNumber = ['developing', 'high'].includes(readinessEvidence) && preTripRisk.readinessScore != null;
 
   return (
     <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
@@ -1986,7 +1990,7 @@ function DashboardRiskPanel({
                   : 'hsl(var(--muted-foreground))',
           }}
         >
-          {preTripRisk.readinessScore ?? '-'}
+          {showReadinessNumber ? preTripRisk.readinessScore : '-'}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -2003,7 +2007,7 @@ function DashboardRiskPanel({
             </button>
           </div>
           <div className="break-words text-sm font-medium capitalize">
-            {preTripRisk.readinessScore == null ? 'Unavailable readiness' : `${preTripRisk.readinessScore}/100 - ${preTripRisk.riskLevel} risk`}
+            {!showReadinessNumber ? 'Estimated readiness unavailable' : `Estimated ${preTripRisk.readinessScore}/100 - ${preTripRisk.riskLevel} risk`}
           </div>
           <div className="mt-0.5 break-words text-xs capitalize text-muted-foreground">
             {readinessEvidence} evidence
@@ -2046,17 +2050,17 @@ function DashboardRiskPanel({
           {settings.predictive_route_risk_enabled !== false && (
             predictiveRouteRisk.insufficientHistory ? (
               <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
-                <div className="font-semibold">Predictive route risk</div>
+                <div className="font-semibold">Historical context risk</div>
                 <div className="mt-1 font-medium text-muted-foreground">Not enough driving history</div>
                 <p className="mt-1 text-muted-foreground">
-                  Complete a scored trip with recorded distance before a route-risk estimate is shown.
+                  Complete a scored trip with recorded distance before a historical-context estimate is shown.
                 </p>
               </div>
             ) : (
               <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex min-w-0 flex-wrap items-center gap-2 break-words font-semibold">
-                    Estimated route risk
+                    Estimated historical context risk
                     {ROUTE_RISK_IS_APPROXIMATE && <CalibrationStatusTag />}
                   </span>
                   <span className={`flex-shrink-0 font-bold capitalize ${
@@ -2069,10 +2073,10 @@ function DashboardRiskPanel({
                 <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
                 {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
                   <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
-                    {predictiveRouteRisk.nearbyDangerZoneCount} nearby hotspot{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history
+                    {predictiveRouteRisk.nearbyDangerZoneCount} repeated event area{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history nearby
                   </div>
                 )}
-                <div className="mt-3 border-t border-border pt-2" aria-label="Estimated route risk component breakdown">
+                <div className="mt-3 border-t border-border pt-2" aria-label="Estimated historical context risk component breakdown">
                   <div className="mb-2 font-semibold text-muted-foreground">Signal contributions</div>
                   {predictiveRouteRisk.componentBreakdown.map((component) => (
                     <div key={component.key} className="mb-1.5 flex items-start justify-between gap-3 last:mb-0">
@@ -2085,7 +2089,7 @@ function DashboardRiskPanel({
                   ))}
                 </div>
                 <p className="mt-3 border-t border-border pt-2 text-muted-foreground">
-                  Internal estimate only. Signal thresholds are not validated against collision or casualty outcomes.
+                  Internal historical-context estimate only. No planned route is known, and signal thresholds are not validated against collision or casualty outcomes.
                 </p>
               </div>
             )

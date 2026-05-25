@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import fixture from '@/lib/__fixtures__/androidTripStatsParityFixture.json';
 import { calculateSegmentMetrics, calculateTripStats, DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
 
@@ -73,5 +74,16 @@ describe('Android auto-tracking stats parity', () => {
     expect(noiseFloorCase.expectedNoiseFloorM).toBe(18);
     expect(segment.distanceM).toBeLessThan(noiseFloorCase.expectedNoiseFloorM);
     expect(segment.isNoise).toBe(true);
+  });
+
+  it('stores native completed trips as unscored until JavaScript rescoring runs', () => {
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+
+    for (const key of ['score_overall', 'score_safety', 'score_smoothness', 'score_eco']) {
+      expect(source).toContain(`trip.put("${key}", JSONObject.NULL);`);
+    }
+    expect(source).toContain('trip.put("needs_rescore", true);');
+    expect(source).toContain('trip.put("score_status", "pending_javascript_scoring");');
+    expect(source).not.toContain('trip.put("score_overall", 100');
   });
 });

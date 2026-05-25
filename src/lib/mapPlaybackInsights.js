@@ -454,8 +454,15 @@ export function buildRouteComparison(currentTrip = {}, secondaryTrip = {}) {
   const secondaryEvents = secondaryTrip.driving_events?.length || 0;
   const currentAvg = Number(currentTrip.avg_running_speed_kmh ?? currentTrip.avg_speed_kmh) || 0;
   const secondaryAvg = Number(secondaryTrip.avg_running_speed_kmh ?? secondaryTrip.avg_speed_kmh) || 0;
+  const currentScore = currentTrip.score_overall == null || currentTrip.score_overall === ''
+    ? null
+    : Number(currentTrip.score_overall);
+  const secondaryScore = secondaryTrip.score_overall == null || secondaryTrip.score_overall === ''
+    ? null
+    : Number(secondaryTrip.score_overall);
+  const hasScoreComparison = Number.isFinite(currentScore) && Number.isFinite(secondaryScore);
   const rows = [
-    { label: 'Score', current: Number(currentTrip.score_overall) || 0, other: Number(secondaryTrip.score_overall) || 0, higherWins: true },
+    { label: 'Score', current: Number.isFinite(currentScore) ? currentScore : 'Unavailable', other: Number.isFinite(secondaryScore) ? secondaryScore : 'Unavailable', higherWins: hasScoreComparison ? true : null },
     { label: 'Events', current: currentEvents, other: secondaryEvents, higherWins: false },
     { label: 'Harsh brakes', current: currentTrip.harsh_brakes_count || 0, other: secondaryTrip.harsh_brakes_count || 0, higherWins: false },
     { label: 'Avg speed', current: currentAvg, other: secondaryAvg, higherWins: null, speed: true },

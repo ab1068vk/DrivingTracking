@@ -68,6 +68,20 @@ describe('routeRiskIndex', () => {
     expect([...harshIndex.values()][0].riskScore).toBe(60);
   });
 
+  it('excludes low-confidence proxy events from repeated-event route layers', () => {
+    const index = buildRouteRiskIndex([
+      trip([
+        { type: 'near_miss', lat: 43.6537, lng: -79.3832 },
+        { type: 'close_proximity', lat: 43.6537, lng: -79.3832 },
+      ]),
+    ]);
+    const firstSegment = [...index.values()][0];
+
+    expect(firstSegment.totalEvents).toBe(0);
+    expect(firstSegment.eventTypes).toEqual({});
+    expect(firstSegment.riskScore).toBe(0);
+  });
+
   it('graduates speed risk instead of using a binary highway-speed bonus', () => {
     expect(speedRiskBonus(99)).toBe(0);
     expect(speedRiskBonus(101)).toBeLessThan(speedRiskBonus(160));

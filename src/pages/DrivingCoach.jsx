@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Brain, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
+import { AlertTriangle, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { tripService } from '@/api/trips';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
@@ -25,7 +25,8 @@ const focusLabels = {
   'fatigue breaks': 'Break Timing',
   'heading events': 'Heading Events (Beta)',
   'stop-start patterns': 'Stop-Start Patterns',
-  'distraction risk': 'Distraction Risk',
+  'distraction risk': 'Attention Pattern Review',
+  'attention-pattern review': 'Attention Pattern Review',
   anticipation: 'Anticipation',
   'progressive braking': 'Progressive Braking',
   phone_distraction: 'Phone Distraction',
@@ -99,7 +100,7 @@ export default function DrivingCoach() {
           <p className="text-muted-foreground text-sm mt-1">Actionable driving patterns from your trip history</p>
         </div>
         <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center">
-          <Brain className="w-5 h-5 text-primary" />
+          <Target className="w-5 h-5 text-primary" />
         </div>
       </motion.div>
 
@@ -111,7 +112,7 @@ export default function DrivingCoach() {
         </div>
       ) : completed.length === 0 ? (
         <div className="flex flex-col items-center py-16 text-center">
-          <Brain className="w-12 h-12 text-muted-foreground mb-3" />
+          <Target className="w-12 h-12 text-muted-foreground mb-3" />
           <div className="font-semibold">No coaching data yet</div>
           <div className="text-muted-foreground text-sm mt-1">Complete trips to unlock driving insights</div>
         </div>
@@ -168,7 +169,7 @@ export default function DrivingCoach() {
 
           <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
             <div className="flex items-start gap-3">
-              <Brain className="mt-0.5 h-5 w-5 text-primary" />
+              <Target className="mt-0.5 h-5 w-5 text-primary" />
               <div>
                 <h2 className="font-semibold">Local Weekly Coach</h2>
                 <div className="mt-2 text-lg font-grotesk font-bold">{weeklySummary.headline}</div>
@@ -367,7 +368,9 @@ export default function DrivingCoach() {
 
           <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
             <h2 className="font-semibold mb-1">Best Driving Window</h2>
-            <p className="text-xs text-muted-foreground mb-4">Average score by trip start time</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Average score by trip start time. Best-window coaching needs at least {coach.best_window_min_trips} trips in a bucket.
+            </p>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={timeOfDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />

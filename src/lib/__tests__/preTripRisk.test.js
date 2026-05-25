@@ -97,7 +97,7 @@ describe('preTripRisk', () => {
     expect(state.primaryConcern).toBe('High daily fatigue accumulation');
   });
 
-  it('includes predictive route risk in readiness signals', () => {
+  it('includes historical context risk in readiness signals', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 12));
     const state = computePreTripRisk(
       Array.from({ length: 6 }, (_, i) => trip(90, i + 1)),
@@ -111,7 +111,7 @@ describe('preTripRisk', () => {
     vi.useRealTimers();
   });
 
-  it('treats insufficient predictive route history as unavailable route evidence', () => {
+  it('treats insufficient historical context history as unavailable route evidence', () => {
     const state = computePreTripRisk(
       [],
       {},

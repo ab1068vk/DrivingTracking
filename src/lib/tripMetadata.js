@@ -114,7 +114,7 @@ export function isHighRiskTrip(trip = {}) {
     (trip.rapid_accel_count || 0) +
     (trip.sharp_turns_count || 0) +
     (trip.speeding_events_count || 0) +
-    (trip.close_proximity_count ?? trip.near_miss_count ?? 0);
+    (trip.close_proximity_count ?? 0);
   return (trip.score_overall ?? 100) < 60 ||
     riskyEvents >= 4 ||
     trip.aggressive_grade === 'aggressive' ||
@@ -129,15 +129,22 @@ const plural = (count, label) => `${count} ${label}${count === 1 ? '' : 's'}`;
  */
 export function buildScoreExplanation(trip = {}, scoreKey = 'overall') {
   const label = SCORE_LABELS[scoreKey] || 'Score';
-  const score = Number(trip[scoreKey]) || Number(trip[`score_${scoreKey}`]) || Number(trip.score_overall) || 0;
+  const candidates = [trip[scoreKey], trip[`score_${scoreKey}`], trip.score_overall]
+    .map((value) => (value == null || value === '' ? null : Number(value)))
+    .filter(Number.isFinite);
+  const score = candidates[0] ?? null;
   const reasons = [];
 
   if ((trip.harsh_brakes_count || 0) > 0) reasons.push(plural(trip.harsh_brakes_count, 'harsh brake'));
   if ((trip.sharp_turns_count || 0) > 0) reasons.push(plural(trip.sharp_turns_count, 'sharp turn'));
   if ((trip.rapid_accel_count || 0) > 0) reasons.push(plural(trip.rapid_accel_count, 'rapid acceleration'));
   if ((trip.speeding_events_count || 0) > 0) reasons.push(plural(trip.speeding_events_count, 'speeding event'));
-  if ((trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0) reasons.push(plural(trip.close_proximity_count ?? trip.near_miss_count, 'estimated brake-turn manoeuvre alert'));
+  if ((trip.close_proximity_count ?? 0) > 0) reasons.push(plural(trip.close_proximity_count, 'estimated brake-turn manoeuvre alert'));
   if ((trip.phone_use_window_count || 0) > 0) reasons.push(plural(trip.phone_use_window_count, 'phone-use window'));
+
+  if (score == null) {
+    return `${label} is unavailable until this trip has enough scored evidence.`;
+  }
 
   if (score >= 85 && reasons.length === 0) {
     return `${label} stayed high because Road Sage found no major harsh braking, sharp turns, speeding, or confirmed phone-use events.`;

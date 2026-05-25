@@ -93,21 +93,21 @@ function dangerZoneRisk(zoneCount) {
 
 function dangerZonePrimaryFactor(zoneCount) {
   if (!zoneCount) return null;
-  const zoneLabel = zoneCount === 1 ? 'zone' : 'zones';
+  const zoneLabel = zoneCount === 1 ? 'area' : 'areas';
   const radiusKm = ROUTE_RISK_CONSTANTS.PROXIMITY_METERS / 1000;
-  return `Known danger zones nearby (${zoneCount} ${zoneLabel} within ${radiusKm} km)`;
+  return `Repeated driving-event areas nearby (${zoneCount} ${zoneLabel} within ${radiusKm} km)`;
 }
 
 /**
- * Estimate upcoming route risk from recent driving, nearby danger zones, weather, and time.
+ * Estimate current historical-context risk from recent driving, repeated event areas, weather, and time.
  * @param {object} params - Route risk inputs.
  * @param {Array<object>} [params.trips] - Completed trip history.
- * @param {Array<object>} [params.dangerZones] - Learned danger-zone coordinates.
+ * @param {Array<object>} [params.dangerZones] - Learned repeated driving-event coordinates.
  * @param {number} [params.weatherRiskScore] - Weather risk score from 0 to 100.
  * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
  * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
  * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
- * @returns {object} Predictive route risk estimate, or an insufficient-history state without a score.
+ * @returns {object} Historical context risk estimate, or an insufficient-history state without a score.
  * @example estimatePredictiveRouteRisk({ trips, dangerZones, habitProfile })
  */
 export function estimatePredictiveRouteRisk({
@@ -138,15 +138,29 @@ export function estimatePredictiveRouteRisk({
     };
   }
 
-  const avgScore = recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0) * (Number(trip.distance_km) || 0), 0) / recentKm;
-  const densityTrips = recent.filter((trip) => (Number(trip.distance_km) || 0) >= ROUTE_RISK_CONSTANTS.MIN_EVENT_DENSITY_TRIP_KM);
+  const scoredRecent = recent.filter((trip) => Number.isFinite(Number(trip.score_overall ?? trip.score)));
+  const scoredKm = scoredRecent.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  if (scoredKm <= 0) {
+    return {
+      status: 'insufficient_history',
+      insufficientHistory: true,
+      riskScore: null,
+      riskLevel: null,
+      safestWindow: null,
+      nearbyDangerZoneCount: 0,
+      dangerZoneRisk: null,
+      componentBreakdown: [],
+      primaryFactor: 'Not enough scored driving history',
+    };
+  }
+  const avgScore = scoredKm > 0
+    ? scoredRecent.reduce((sum, trip) => sum + Number(trip.score_overall ?? trip.score) * (Number(trip.distance_km) || 0), 0) / scoredKm
+    : null;
+  const densityTrips = scoredRecent.filter((trip) => (Number(trip.distance_km) || 0) >= ROUTE_RISK_CONSTANTS.MIN_EVENT_DENSITY_TRIP_KM);
   const densityKm = densityTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const riskEvents = densityTrips.reduce((sum, trip) => {
-    // Legacy near_miss records and current GPS brake-turn alerts have no persisted provenance distinction.
-    const unverifiedBrakeTurnAlerts = Number(trip.close_proximity_count ?? trip.near_miss_count) || 0;
     const events = (Number(trip.harsh_brakes_count) || 0) +
       (Number(trip.speeding_events_count) || 0) +
-      unverifiedBrakeTurnAlerts * ROUTE_RISK_CONSTANTS.UNVERIFIED_BRAKE_TURN_EVENT_WEIGHT +
       (Number(trip.sharp_turns_count) || 0);
     return sum + events;
   }, 0);
@@ -162,7 +176,7 @@ export function estimatePredictiveRouteRisk({
   const hour = now.getHours();
   const timeRisk = personalTimeRisk(hour, habitProfile);
   const zoneRisk = dangerZoneRisk(nearbyZones.length);
-  const normalizedBaselineRisk = clamp(100 - avgScore, 0, 100);
+  const normalizedBaselineRisk = avgScore == null ? null : clamp(100 - avgScore, 0, 100);
   const normalizedEventDensity = clamp(
     (eventDensity / ROUTE_RISK_CONSTANTS.EVENT_DENSITY_MAX_EVENTS_PER_KM) * 100,
     0,
@@ -175,7 +189,7 @@ export function estimatePredictiveRouteRisk({
   );
   const normalizedWeatherRisk = clamp(Number(weatherRiskScore) || 0, 0, 100);
   const riskScore = clamp(Math.round(
-    normalizedBaselineRisk * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
+    (normalizedBaselineRisk ?? 0) * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
     normalizedEventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT +
     normalizedZoneRisk * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT +
     normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
@@ -185,20 +199,20 @@ export function estimatePredictiveRouteRisk({
     {
       key: 'baseline',
       label: 'Driving baseline',
-      detail: `${Math.round(avgScore)}/100 recent average`,
-      normalizedRisk: Math.round(normalizedBaselineRisk),
-      contribution: Math.round(normalizedBaselineRisk * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT),
+      detail: avgScore == null ? 'No scored-distance baseline yet' : `${Math.round(avgScore)}/100 recent average`,
+      normalizedRisk: normalizedBaselineRisk == null ? null : Math.round(normalizedBaselineRisk),
+      contribution: normalizedBaselineRisk == null ? 0 : Math.round(normalizedBaselineRisk * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT),
     },
     {
       key: 'events',
-      label: 'Route event density',
+      label: 'Driving-event density',
       detail: `${eventDensity.toFixed(2)} events/km`,
       normalizedRisk: Math.round(normalizedEventDensity),
       contribution: Math.round(normalizedEventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT),
     },
     {
       key: 'zones',
-      label: 'Nearby danger zones',
+      label: 'Repeated event areas',
       detail: `${nearbyZones.length} within ${ROUTE_RISK_CONSTANTS.PROXIMITY_METERS / 1000} km`,
       normalizedRisk: Math.round(normalizedZoneRisk),
       contribution: Math.round(normalizedZoneRisk * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT),
@@ -233,7 +247,7 @@ export function estimatePredictiveRouteRisk({
       : normalizedWeatherRisk >= 40
         ? 'Weather risk'
         : eventDensity >= 0.6
-          ? 'Recent route event density'
+          ? 'Recent driving-event density'
           : 'Personal baseline',
   };
 }

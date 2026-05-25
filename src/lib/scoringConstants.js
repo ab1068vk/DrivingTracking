@@ -179,8 +179,8 @@ export const SCORING_CONSTANTS = Object.freeze({
   ROUTE_RISK_SPEED_START_KMH: constant(100, { label: 'Route speed-risk start', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
   ROUTE_RISK_SPEED_FULL_KMH: constant(160, { label: 'Route speed-risk saturation speed', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
   ROUTE_RISK_SPEED_MAX_POINTS: constant(15, { label: 'Route speed-risk maximum points', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
-  PREDICTIVE_EVENT_DENSITY_MAX_PER_KM: constant(5, { label: 'Route forecast event-density saturation', domain: 'route_forecast', calibration_note: 'Not calibrated to collision or casualty outcomes.', affected_metrics: routeRiskMetrics }),
-  PREDICTIVE_DANGER_ZONE_SATURATION_COUNT: constant(5, { label: 'Route forecast danger-zone saturation', domain: 'route_forecast', calibration_note: 'Not calibrated to collision or casualty outcomes.', affected_metrics: routeRiskMetrics }),
+  PREDICTIVE_EVENT_DENSITY_MAX_PER_KM: constant(5, { label: 'Historical context event-density saturation', domain: 'historical_context', calibration_note: 'Not calibrated to collision or casualty outcomes.', affected_metrics: routeRiskMetrics }),
+  PREDICTIVE_DANGER_ZONE_SATURATION_COUNT: constant(5, { label: 'Historical context repeated-area saturation', domain: 'historical_context', calibration_note: 'Not calibrated to collision or casualty outcomes.', affected_metrics: routeRiskMetrics }),
   PREDICTIVE_ROUTE_RISK_POLICY: constant(Object.freeze({
     RECENT_TRIP_WINDOW: 20,
     MIN_EVENT_DENSITY_TRIP_KM: 0.5,
@@ -203,7 +203,7 @@ export const SCORING_CONSTANTS = Object.freeze({
     WINDOW_LOOKAHEAD_HOURS: 12,
     RISK_EQUIVALENT_MARGIN: 5,
     PROXIMITY_METERS: 2000,
-  }), { label: 'Predictive route-risk policy', domain: 'route_forecast', calibration_note: 'Forecast weighting and display gates are not outcome-calibrated.', affected_metrics: routeRiskMetrics }),
+  }), { label: 'Historical context-risk policy', domain: 'historical_context', calibration_note: 'Context weighting and display gates are not outcome-calibrated route prediction.', affected_metrics: routeRiskMetrics }),
   PRE_TRIP_READINESS_POLICY: constant(Object.freeze({
     MIN_TRIPS_FOR_BUCKET: 3,
     MIN_TRIPS_FOR_DAY: 2,

@@ -91,7 +91,7 @@ describe('mediumInsights', () => {
     expect(summary.biggest_improvement).toBe('more trips needed');
   });
 
-  it('builds risk hotspots from repeated harsh or speeding events', () => {
+  it('builds repeated event areas from repeated harsh or speeding events', () => {
     const hotspots = buildRiskHotspots([
       trip({
         driving_events: [
