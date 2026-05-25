@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { computePreTripRisk, deriveSignalGates, deriveWeights, PRE_TRIP_RISK_WEIGHTS } from '@/lib/preTripRisk';
+import {
+  PRE_TRIP_RISK_WEIGHTS,
+  PRE_TRIP_WEIGHT_REDISTRIBUTION_RATIO,
+  PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS,
+  computePreTripRisk,
+  deriveSignalGates,
+  deriveWeights,
+} from '@/lib/preTripRisk';
 import { getFallbackTimeRisk } from '@/lib/habitProfile';
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
@@ -40,8 +47,9 @@ describe('preTripRisk', () => {
     const atSixPm = new Date(2026, 0, 10, 18);
     const atSevenPm = new Date(2026, 0, 10, 19);
     const preTripAtSix = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: atSixPm });
-    const routeAtSix = estimatePredictiveRouteRisk({ now: atSixPm });
-    const routeAtSeven = estimatePredictiveRouteRisk({ now: atSevenPm });
+    const routeHistory = [{ ...trip(80), distance_km: 10 }];
+    const routeAtSix = estimatePredictiveRouteRisk({ trips: routeHistory, now: atSixPm });
+    const routeAtSeven = estimatePredictiveRouteRisk({ trips: routeHistory, now: atSevenPm });
 
     expect(isEveningRushHour(18)).toBe(true);
     expect(isEveningRushHour(19)).toBe(false);
@@ -101,6 +109,24 @@ describe('preTripRisk', () => {
     expect(state.signals.routeForecast).toBe(80);
     expect(state.topSignals.some((signal) => signal.key === 'routeForecast')).toBe(true);
     vi.useRealTimers();
+  });
+
+  it('treats insufficient predictive route history as unavailable route evidence', () => {
+    const state = computePreTripRisk(
+      [],
+      {},
+      { fatigueLevel: 'low' },
+      {
+        predictiveRouteRisk: {
+          status: 'insufficient_history',
+          insufficientHistory: true,
+          riskScore: null,
+          riskLevel: null,
+        },
+      }
+    );
+
+    expect(state.signals.routeForecast).toBeNull();
   });
 
   it('does not downgrade late-night readiness to low risk', () => {
@@ -166,6 +192,27 @@ describe('computePreTripRisk - with habitProfile', () => {
     const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
 
     expect(total).toBeCloseTo(1, 3);
+  });
+
+  it('redistributes insufficient time-bucket weight to broader readiness signals', () => {
+    const habitProfile = profile({
+      timeBuckets: {
+        ...profile().timeBuckets,
+        Morning: { avgScore: 80, riskScore: 20, tripCount: 1, stdDev: 0, insufficient: true },
+      },
+    });
+    const weights = deriveWeights(habitProfile, new Date(2026, 0, 10, 8));
+    const freed = PRE_TRIP_RISK_WEIGHTS.timeOfDay * PRE_TRIP_WEIGHT_REDISTRIBUTION_RATIO;
+
+    expect(weights.timeOfDay).toBeCloseTo(PRE_TRIP_RISK_WEIGHTS.timeOfDay - freed, 5);
+    expect(weights.recentTrend).toBeCloseTo(
+      PRE_TRIP_RISK_WEIGHTS.recentTrend + freed * PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS.recentTrend,
+      5
+    );
+    expect(weights.dailyFatigue).toBeCloseTo(
+      PRE_TRIP_RISK_WEIGHTS.dailyFatigue + freed * PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS.dailyFatigue,
+      5
+    );
   });
 
   it('shifts signal gate floors for a high-scoring driver', () => {

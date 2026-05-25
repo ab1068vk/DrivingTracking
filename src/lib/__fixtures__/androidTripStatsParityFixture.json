@@ -1,0 +1,90 @@
+{
+  "description": "Shared JS/Android parity fixture covering GPS jitter, accepted movement, a >120s tracking gap, low-speed idle, local-time night classification, and the GPS noise floor.",
+  "thresholds": {
+    "STATS_MAX_SAMPLE_GAP_SECONDS": 120,
+    "MIN_POINT_DISTANCE_M": 8,
+    "STATIONARY_SPEED_KMH": 5,
+    "MIN_TRUSTED_SPEED_KMH": 18,
+    "NOISE_FLOOR_ACCURACY_MULTIPLIER": 0.6,
+    "NOISE_FLOOR_MAX_METERS": 25
+  },
+  "noiseFloorCases": [
+    {
+      "previousAccuracy": 5,
+      "currentAccuracy": 30,
+      "expectedNoiseFloorM": 18,
+      "description": "Uses the worse point accuracy so mixed-quality GPS pairs remain conservative."
+    }
+  ],
+  "startTime": "2026-01-01T17:00:00.000Z",
+  "endTime": "2026-01-01T17:03:50.000Z",
+  "points": [
+    {
+      "lat": 43.65,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:00:00.000Z",
+      "speed_kmh": 0,
+      "accuracy": 5
+    },
+    {
+      "lat": 43.650027,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:00:10.000Z",
+      "speed_kmh": 0,
+      "accuracy": 5
+    },
+    {
+      "lat": 43.651827,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:00:30.000Z",
+      "speed_kmh": 36,
+      "accuracy": 5
+    },
+    {
+      "lat": 43.652727,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:00:50.000Z",
+      "speed_kmh": 18,
+      "accuracy": 5
+    },
+    {
+      "lat": 43.652727,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:03:10.000Z",
+      "speed_kmh": 0,
+      "accuracy": 5
+    },
+    {
+      "lat": 43.653177,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:03:30.000Z",
+      "speed_kmh": 2,
+      "accuracy": 5
+    },
+    {
+      "lat": 43.653627,
+      "lng": -79.38,
+      "timestamp": "2026-01-01T17:03:50.000Z",
+      "speed_kmh": 6,
+      "accuracy": 5
+    }
+  ],
+  "expectedStats": {
+    "distance_km": 0.403,
+    "avg_speed_kmh": 16.1,
+    "avg_running_speed_kmh": 24.2,
+    "max_speed_kmh": 36,
+    "idle_time_seconds": 20,
+    "gap_seconds": 140,
+    "wall_clock_duration_seconds": 230,
+    "duration_seconds": 90,
+    "night_driving": false
+  },
+  "expectedParityResult": {
+    "distanceKm": 0.403,
+    "durationSeconds": 90,
+    "avgSpeedKmh": 16.1,
+    "nightDriving": false,
+    "noiseFloorM": 18
+  }
+}

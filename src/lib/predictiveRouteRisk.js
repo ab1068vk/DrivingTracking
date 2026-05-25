@@ -2,29 +2,27 @@ import { checkDangerZoneProximity } from '@/lib/dangerZoneEngine';
 import { getFallbackTimeRisk } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
 import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
+import { scoringValue } from '@/lib/scoringConstants';
 
-const ROUTE_RISK_CONSTANTS = {
-  RECENT_TRIP_WINDOW: 20,
-  MIN_EVENT_DENSITY_TRIP_KM: 0.5,
-  DEFAULT_AVG_SCORE: 75,
-  EVENT_DENSITY_WEIGHT: 0.25,
-  MAX_DANGER_ZONE_RISK: 30,
-  DANGER_ZONE_DECAY_COUNT: 3,
-  WEATHER_WEIGHT: 0.15,
-  BASELINE_SCORE_WEIGHT: 0.35,
-  DANGER_ZONE_WEIGHT: 0.15,
-  TIME_WEIGHT: 0.10,
-  LATE_NIGHT_TIME_RISK: 100,
-  EVENING_RUSH_TIME_RISK: 55,
-  PERSONAL_TIME_RISK_SCALE: 1,
-  FALLBACK_TIME_RISK_SCALE: 1,
-  MIN_PERSONAL_CONFIDENCE: 0.3,
-  MIN_TEXT_CONFIDENCE: 0.5,
-  MIN_HOURLY_RISK_HOURS: 6,
-  WINDOW_LOOKAHEAD_HOURS: 12,
-  RISK_EQUIVALENT_MARGIN: 5,
-  PROXIMITY_METERS: 2000,
+export const ROUTE_RISK_CONSTANTS = {
+  ...scoringValue('PREDICTIVE_ROUTE_RISK_POLICY'),
+  /**
+   * Provisional normalization only: five observed route-risk events per km
+   * saturate this signal. This is not calibrated to incident outcome data.
+   */
+  EVENT_DENSITY_MAX_EVENTS_PER_KM: scoringValue('PREDICTIVE_EVENT_DENSITY_MAX_PER_KM'),
+  /**
+   * Provisional normalization only: five nearby learned zones saturate this
+   * signal. This is not calibrated to casualty or collision data.
+   */
+  DANGER_ZONE_SATURATION_COUNT: scoringValue('PREDICTIVE_DANGER_ZONE_SATURATION_COUNT'),
+  /**
+   * Minimum observations in the recommended hour before safer-window copy may
+   * describe the pattern as personal history instead of a generic caveat.
+   */
 };
+
+const GENERIC_SAFER_WINDOW_TEXT = 'Lower-risk hours vary; see your trip history for patterns.';
 
 function personalTimeRisk(hour, profile) {
   if (!profile || Number(profile.confidence) < ROUTE_RISK_CONSTANTS.MIN_PERSONAL_CONFIDENCE) {
@@ -78,7 +76,12 @@ function saferWindowText(currentHour, profile) {
     return 'Current time looks as good as any upcoming window for you.';
   }
 
-  return `Based on your history, ${formatHour(best.hour)} tends to be a lower-risk window for you.`;
+  const bestHourTripCount = Number(profile.hourlyRisk?.[best.hour]?.tripCount) || 0;
+  if (bestHourTripCount < ROUTE_RISK_CONSTANTS.MIN_PERSONAL_WINDOW_TRIP_COUNT) {
+    return GENERIC_SAFER_WINDOW_TEXT;
+  }
+
+  return `Earliest lower-risk pattern detected: ${formatHour(best.hour)} (${bestHourTripCount} observations).`;
 }
 
 function dangerZoneRisk(zoneCount) {
@@ -104,7 +107,7 @@ function dangerZonePrimaryFactor(zoneCount) {
  * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
  * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
  * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
- * @returns {object} Predictive route risk score, level, safer window text, and primary factor.
+ * @returns {object} Predictive route risk estimate, or an insufficient-history state without a score.
  * @example estimatePredictiveRouteRisk({ trips, dangerZones, habitProfile })
  */
 export function estimatePredictiveRouteRisk({
@@ -121,15 +124,29 @@ export function estimatePredictiveRouteRisk({
   ));
   const recent = sorted.slice(0, ROUTE_RISK_CONSTANTS.RECENT_TRIP_WINDOW);
   const recentKm = recent.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
-  const avgScore = recentKm > 0
-    ? recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0) * (Number(trip.distance_km) || 0), 0) / recentKm
-    : ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE;
+  if (recentKm <= 0) {
+    return {
+      status: 'insufficient_history',
+      insufficientHistory: true,
+      riskScore: null,
+      riskLevel: null,
+      safestWindow: null,
+      nearbyDangerZoneCount: 0,
+      dangerZoneRisk: null,
+      componentBreakdown: [],
+      primaryFactor: 'Not enough driving history',
+    };
+  }
+
+  const avgScore = recent.reduce((sum, trip) => sum + (Number(trip.score_overall ?? trip.score) || 0) * (Number(trip.distance_km) || 0), 0) / recentKm;
   const densityTrips = recent.filter((trip) => (Number(trip.distance_km) || 0) >= ROUTE_RISK_CONSTANTS.MIN_EVENT_DENSITY_TRIP_KM);
   const densityKm = densityTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const riskEvents = densityTrips.reduce((sum, trip) => {
+    // Legacy near_miss records and current GPS brake-turn alerts have no persisted provenance distinction.
+    const unverifiedBrakeTurnAlerts = Number(trip.close_proximity_count ?? trip.near_miss_count) || 0;
     const events = (Number(trip.harsh_brakes_count) || 0) +
       (Number(trip.speeding_events_count) || 0) +
-      (Number(trip.close_proximity_count ?? trip.near_miss_count) || 0) * 1.5 +
+      unverifiedBrakeTurnAlerts * ROUTE_RISK_CONSTANTS.UNVERIFIED_BRAKE_TURN_EVENT_WEIGHT +
       (Number(trip.sharp_turns_count) || 0);
     return sum + events;
   }, 0);
@@ -146,8 +163,16 @@ export function estimatePredictiveRouteRisk({
   const timeRisk = personalTimeRisk(hour, habitProfile);
   const zoneRisk = dangerZoneRisk(nearbyZones.length);
   const normalizedBaselineRisk = clamp(100 - avgScore, 0, 100);
-  const normalizedEventDensity = clamp(eventDensity * 20, 0, 100);
-  const normalizedZoneRisk = clamp((nearbyZones.length / 5) * 100, 0, 100);
+  const normalizedEventDensity = clamp(
+    (eventDensity / ROUTE_RISK_CONSTANTS.EVENT_DENSITY_MAX_EVENTS_PER_KM) * 100,
+    0,
+    100
+  );
+  const normalizedZoneRisk = clamp(
+    (nearbyZones.length / ROUTE_RISK_CONSTANTS.DANGER_ZONE_SATURATION_COUNT) * 100,
+    0,
+    100
+  );
   const normalizedWeatherRisk = clamp(Number(weatherRiskScore) || 0, 0, 100);
   const riskScore = clamp(Math.round(
     normalizedBaselineRisk * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
@@ -156,13 +181,53 @@ export function estimatePredictiveRouteRisk({
     normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
     timeRisk * ROUTE_RISK_CONSTANTS.TIME_WEIGHT
   ), 0, 100);
+  const componentBreakdown = [
+    {
+      key: 'baseline',
+      label: 'Driving baseline',
+      detail: `${Math.round(avgScore)}/100 recent average`,
+      normalizedRisk: Math.round(normalizedBaselineRisk),
+      contribution: Math.round(normalizedBaselineRisk * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT),
+    },
+    {
+      key: 'events',
+      label: 'Route event density',
+      detail: `${eventDensity.toFixed(2)} events/km`,
+      normalizedRisk: Math.round(normalizedEventDensity),
+      contribution: Math.round(normalizedEventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT),
+    },
+    {
+      key: 'zones',
+      label: 'Nearby danger zones',
+      detail: `${nearbyZones.length} within ${ROUTE_RISK_CONSTANTS.PROXIMITY_METERS / 1000} km`,
+      normalizedRisk: Math.round(normalizedZoneRisk),
+      contribution: Math.round(normalizedZoneRisk * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT),
+    },
+    {
+      key: 'weather',
+      label: 'Weather',
+      detail: `${Math.round(normalizedWeatherRisk)}/100 input`,
+      normalizedRisk: Math.round(normalizedWeatherRisk),
+      contribution: Math.round(normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT),
+    },
+    {
+      key: 'time',
+      label: 'Time of day',
+      detail: `${formatHour(hour)} window`,
+      normalizedRisk: Math.round(timeRisk),
+      contribution: Math.round(timeRisk * ROUTE_RISK_CONSTANTS.TIME_WEIGHT),
+    },
+  ];
 
   return {
+    status: 'estimated',
+    insufficientHistory: false,
     riskScore,
     riskLevel: riskScore >= 65 ? 'high' : riskScore >= 40 ? 'moderate' : 'low',
     safestWindow: saferWindowText(hour, habitProfile),
     nearbyDangerZoneCount: nearbyZones.length,
     dangerZoneRisk: zoneRisk,
+    componentBreakdown,
     primaryFactor: nearbyZones.length
       ? dangerZonePrimaryFactor(nearbyZones.length)
       : normalizedWeatherRisk >= 40

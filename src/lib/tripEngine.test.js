@@ -14,6 +14,7 @@ import {
   calculateTripStats,
   calculateHillDrivingScore,
   calculateEcoDrivingScore,
+  calculateTireWearUnits,
   calculateBrakeOnsetSmoothness,
   calculateSpeedLimitCompliance,
   cleanRoutePoints,
@@ -26,11 +27,19 @@ import {
   detectErraticSpeedWindows,
   detectStopStartPatterns,
   detectCloseProximityManeuverAlerts,
+  CONFIDENCE_LEVELS,
   DEFAULT_THRESHOLDS,
   ECO_DEFAULTS,
   SVI_DEFAULTS,
+  TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH,
+  TIRE_WEAR_DEFAULT_SPEED_TURN_KMH,
   EVENT_TYPES,
+  componentConfidence,
+  buildScoreConstantsSnapshot,
+  getTripComponentScore,
+  getScoreProvenanceStatus,
   getScoreColor,
+  SCORING_VERSION,
   TRIP_STATES,
   haversineDistance,
   isNearRecentParkedLocation,
@@ -42,6 +51,7 @@ import {
   validateCandidateTrip,
   tripsToCSV,
 } from '@/lib/tripEngine';
+import { FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
 import { getLastParkedLocation, saveLastParkedLocation } from '@/lib/trackingStore';
 import {
   shouldAutoStartTracking,
@@ -64,6 +74,8 @@ import {
   computePersonalBaseline,
   detectTripStops,
   estimateTripEconomics,
+  PERSONAL_BASELINE_INTERVAL_METHOD,
+  PERSONAL_BASELINE_INTERVAL_NOTE,
   suggestTripTag,
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -162,7 +174,8 @@ describe('tripEngine', () => {
 
     expect(cleanRoutePoints(points)).toHaveLength(3);
     expect(summary.stats.distance_km).toBeGreaterThan(0.2);
-    expect(summary.scores.score_overall).toBeGreaterThan(0);
+    expect(summary.scores.score_overall).toBeNull();
+    expect(summary.scores.score_confidence_label).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
   });
 
   it('keeps first-commit distance and max-speed stats for recorded points', () => {
@@ -278,6 +291,15 @@ describe('tripEngine', () => {
     errorSpy.mockRestore();
   });
 
+  it('marks eco evidence unavailable without enough moving speed samples', () => {
+    expect(calculateEcoDrivingScore([])).toMatchObject({
+      eco_driving_score: null,
+      eco_score_confidence: 'insufficient_data',
+      speed_stability: null,
+      cruise_score: null,
+    });
+  });
+
   it('clamps avoidable idle ratio before applying its penalty multiplier', () => {
     const points = Array.from({ length: 8 }, (_, index) => (
       point(43.6532 + index * 0.0001, -79.3832, index * 5, 80, 6)
@@ -300,7 +322,7 @@ describe('tripEngine', () => {
       point(43.6532 + index * 0.0001, -79.3832, index * 5, 10, 6)
     ));
 
-    expect(calculateEcoDrivingScore(points).eco_driving_score).toBe(50);
+    expect(calculateEcoDrivingScore(points).eco_driving_score).toBeNull();
     expect(calculateEcoDrivingScore(points, {}, {
       ...DEFAULT_THRESHOLDS,
       ECO_MIN_MOVING_KMH: 5,
@@ -338,6 +360,45 @@ describe('tripEngine', () => {
 
     expect(result.climb_distance_km).toBeGreaterThanOrEqual(0.08);
     expect(result.descent_distance_km).toBeGreaterThanOrEqual(0.08);
+  });
+
+  it('uses named provisional hill acceleration and infraction penalty thresholds', () => {
+    const uphill = Array.from({ length: 30 }, (_, index) => ({
+      ...point(43.6532 + index * 0.0001, -79.3832, index * 2, index % 2 === 0 ? 20 : 45, 6),
+      altitude: 100 + index,
+      altitude_accuracy: 8,
+    }));
+
+    expect(DEFAULT_THRESHOLDS.HILL_ACCEL_THRESHOLD_MS2).toBe(2.5);
+    expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS).toBe(10);
+
+    const result = calculateHillDrivingScore(uphill);
+
+    expect(result.hill_route).toBe(true);
+    expect(result.hill_infraction_count).toBeGreaterThan(0);
+    expect(result.hill_driving_score).toBe(
+      Math.max(0, 100 - result.hill_infraction_count * DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS)
+    );
+  });
+
+  it('flags tire-wear events whose speed factor cannot be measured', () => {
+    expect({
+      harshBrake: TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH,
+      sharpTurn: TIRE_WEAR_DEFAULT_SPEED_TURN_KMH,
+    }).toEqual({ harshBrake: 50, sharpTurn: 40 });
+    expect(calculateTireWearUnits([
+      { type: EVENT_TYPES.HARSH_BRAKE, severity: 'low', speed_kmh: TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH },
+      { type: EVENT_TYPES.SHARP_TURN, severity: 'low', speed_kmh: TIRE_WEAR_DEFAULT_SPEED_TURN_KMH },
+    ]).trip_tire_wear_units).toBe(2);
+
+    expect(calculateTireWearUnits([
+      { type: EVENT_TYPES.HARSH_BRAKE, severity: 'medium' },
+      { type: EVENT_TYPES.SHARP_TURN, severity: 'low', speed_kmh: 40 },
+    ])).toEqual({
+      trip_tire_wear_units: 3.5,
+      trip_tire_wear_has_missing_speed_data: true,
+      trip_tire_wear_missing_speed_event_count: 1,
+    });
   });
 
   it('does not let one speed spike distort compliance or speed creep', () => {
@@ -407,6 +468,35 @@ describe('tripEngine', () => {
     expect(longScore.score_overall).toBe(shortScore.score_overall);
   });
 
+  it('applies the named penalty scale and its current score-floor threshold', () => {
+    expect(PENALTY_SCALE_FACTOR).toBe(40);
+
+    const partialDeduction = calculateTripScores(
+      [{ type: EVENT_TYPES.RAPID_ACCELERATION, severity: 'low' }],
+      { distance_km: 4, fatigue_risk_score: 0 },
+      []
+    );
+    const scoreFloor = calculateTripScores(
+      [{ type: EVENT_TYPES.RAPID_ACCELERATION, severity: 'medium' }],
+      { distance_km: 2, fatigue_risk_score: 0 },
+      []
+    );
+
+    expect(partialDeduction.score_smoothness).toBeNull();
+    expect(partialDeduction.component_scores.smoothness.value).toBeNull();
+    expect(scoreFloor.score_smoothness).toBeNull();
+  });
+
+  it('applies the named provisional fatigue-to-safety penalty scale', () => {
+    expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(0.12);
+
+    const rested = calculateTripScores([], { distance_km: 40, fatigue_risk_score: 0 }, []);
+    const maximumFatigue = calculateTripScores([], { distance_km: 40, fatigue_risk_score: 100 }, []);
+
+    expect(rested.score_safety).toBeNull();
+    expect(maximumFatigue.score_safety).toBeNull();
+  });
+
   it('scores stop-start patterns only after enough highway GPS evidence', () => {
     const patternEvents = (count, speedKmh, severity) => Array.from({ length: count }, () => ({
       type: EVENT_TYPES.STOP_START_PATTERN,
@@ -441,8 +531,8 @@ describe('tripEngine', () => {
     );
 
     expect(shortTrip.stop_start_pattern_score).toBeNull();
-    expect(shortTrip.stop_start_pattern_score_confidence).toBe('insufficient_highway_distance');
-    expect(Number.isFinite(shortTrip.score_safety)).toBe(true);
+    expect(shortTrip.stop_start_pattern_score_confidence).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
+    expect(shortTrip.score_safety).toBeNull();
     expect(masked.stop_start_pattern_score).toBe(100);
     expect(masked.stop_start_pattern_count).toBe(0);
   });
@@ -468,7 +558,7 @@ describe('tripEngine', () => {
     expect(scores.distraction_score).toBeLessThan(60);
   });
 
-  it('keeps distraction score perfect when there are no phone or erratic-speed events', () => {
+  it('leaves distraction score unavailable when there are no phone or erratic-speed events', () => {
     const scores = calculateTripScores(
       [],
       { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 },
@@ -479,7 +569,8 @@ describe('tripEngine', () => {
       { includeRoadTypeSegments: false }
     );
 
-    expect(scores.distraction_score).toBe(100);
+    expect(scores.distraction_score).toBeNull();
+    expect(scores.distraction_score_confidence).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
   });
 
   it('returns confidence metadata for exported component scores', () => {
@@ -494,22 +585,173 @@ describe('tripEngine', () => {
     );
 
     expect(scores).toMatchObject({
-      score_confidence: 1,
-      distraction_score_confidence: 1,
-      close_proximity_score_confidence: 'low',
-      fuel_band_score_confidence: 0,
-      smooth_braking_score_confidence: 0,
-      engine_stress_score_confidence: 1,
-      speed_creep_score_confidence: 0,
+      score_confidence: 0,
+      score_confidence_label: CONFIDENCE_LEVELS.UNAVAILABLE,
+      score_safety_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      score_smoothness_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      score_eco_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      distraction_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      close_proximity_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      fuel_band_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      smooth_braking_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      engine_stress_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      speed_creep_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       phone_use_score_confidence: 'usage_access_required',
-      hill_driving_score_confidence: 0,
-      brake_onset_smoothness_confidence: 'low',
+      hill_driving_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      brake_onset_smoothness_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       heading_deviation_available: true,
       heading_drift_beta_available: true,
-      cornering_consistency_score_confidence: 0,
-      braking_efficiency_score_confidence: 0,
-      defensive_driving_score_confidence: 0,
+      cornering_consistency_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      braking_efficiency_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
+      defensive_driving_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
     });
+  });
+
+  it('classifies component evidence from its own distance and sample requirements', () => {
+    expect(componentConfidence(0.4, 0.5, 10, 2)).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
+    expect(componentConfidence(0.75, 0.5, 2, 2)).toBe(CONFIDENCE_LEVELS.LOW);
+    expect(componentConfidence(1.5, 0.5, 2, 2)).toBe(CONFIDENCE_LEVELS.DEVELOPING);
+    expect(componentConfidence(2.5, 0.5, 2, 2)).toBe(CONFIDENCE_LEVELS.HIGH);
+    expect(componentConfidence(10, 0.5, 1, 2)).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
+  });
+
+  it('returns typed component evidence and reads legacy flat scores through the adapter', () => {
+    const points = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 10, 45, 6)
+    ));
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 10, fatigue_risk_score: 0, intersection_score: 90, traffic_stop_count: 2 },
+      points,
+      DEFAULT_THRESHOLDS,
+      600,
+      {
+        phone_use_score_available: true,
+        phone_use_score: 100,
+        phone_use_risk: 'none',
+        phone_use_window_count: 0,
+        data_sources: ['android_usage_access'],
+      },
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.component_scores.safety).toMatchObject({
+      value: scores.score_safety,
+      evidence: scores.score_safety_confidence,
+      dataSource: expect.arrayContaining(['gps', 'android_usage_access']),
+    });
+    expect(scores.component_scores.phone_use).toMatchObject({
+      value: 100,
+      dataSource: ['android_usage_access'],
+      sampleCount: 0,
+    });
+    expect(scores.component_scores.intersection).toMatchObject({
+      value: 90,
+      sampleCount: 2,
+    });
+    expect(scores.score_provenance).toMatchObject({
+      scoring_version: SCORING_VERSION,
+      calibration_status: 'approximate',
+      provisional_constants: expect.arrayContaining(['PENALTY_SCALE_FACTOR']),
+      components: {
+        safety: scores.component_scores.safety.evidence,
+        overall: scores.component_scores.overall.evidence,
+      },
+      constants_snapshot: {
+        PENALTY_SCALE_FACTOR: 40,
+        HILL_ACCEL_THRESHOLD_MS2: DEFAULT_THRESHOLDS.HILL_ACCEL_THRESHOLD_MS2,
+      },
+    });
+    expect(new Date(scores.score_provenance.computed_at).toISOString()).toBe(scores.score_provenance.computed_at);
+    expect(getTripComponentScore({
+      score_eco: 72,
+      score_eco_confidence: 'low',
+    }, 'eco')).toMatchObject({
+      value: 72,
+      evidence: 'low',
+      dataSource: [],
+    });
+    expect(getTripComponentScore({
+      component_scores: { eco: { value: 72, evidence: 'high', dataSource: 'invalid' } },
+    }, 'eco').dataSource).toEqual([]);
+    expect(getTripComponentScore({
+      component_scores: { eco: { value: 72, evidence: 'unavailable', dataSource: ['gps'] } },
+    }, 'eco').value).toBeNull();
+    expect(getTripComponentScore({ score_eco: 72 }, 'eco')).toMatchObject({
+      value: 72,
+      evidence: 'low',
+    });
+  });
+
+  it('detects missing or changed score provenance without comparing score values', () => {
+    expect(getScoreProvenanceStatus({}).status).toBe('missing');
+
+    const currentTrip = {
+      score_provenance: {
+        scoring_version: SCORING_VERSION,
+        constants_snapshot: buildScoreConstantsSnapshot(DEFAULT_THRESHOLDS),
+      },
+    };
+    expect(getScoreProvenanceStatus(currentTrip)).toMatchObject({
+      status: 'current',
+      needsRescore: false,
+    });
+    expect(getScoreProvenanceStatus(JSON.parse(JSON.stringify(currentTrip)))).toMatchObject({
+      status: 'current',
+      needsRescore: false,
+    });
+
+    const staleTrip = {
+      score_provenance: {
+        ...currentTrip.score_provenance,
+        constants_snapshot: {
+          ...currentTrip.score_provenance.constants_snapshot,
+          PENALTY_SCALE_FACTOR: 41,
+        },
+      },
+    };
+    expect(getScoreProvenanceStatus(staleTrip)).toMatchObject({
+      status: 'outdated',
+      needsRescore: true,
+      changedConstants: ['PENALTY_SCALE_FACTOR'],
+    });
+  });
+
+  it('does not report high Safety confidence without phone-use evidence', () => {
+    const points = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 10, 45, 6)
+    ));
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 10, fatigue_risk_score: 0, intersection_score: null },
+      points,
+      DEFAULT_THRESHOLDS,
+      600,
+      {},
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.phone_use_score).toBeNull();
+    expect(scores.score_safety_confidence).not.toBe(CONFIDENCE_LEVELS.HIGH);
+    expect(scores.score_confidence_label).not.toBe(CONFIDENCE_LEVELS.HIGH);
+  });
+
+  it('does not report high Overall confidence when intersection evidence is unavailable', () => {
+    const points = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 10, 45, 6)
+    ));
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 10, fatigue_risk_score: 0, intersection_score: null },
+      points,
+      DEFAULT_THRESHOLDS,
+      600,
+      { phone_use_score_available: true, phone_use_score: 100, phone_use_risk: 'none' },
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(scores.intersection_score).toBeNull();
+    expect(scores.score_confidence_label).not.toBe(CONFIDENCE_LEVELS.HIGH);
   });
 
   it('marks advanced GPS beta surfaces unavailable when advanced detection is disabled', () => {
@@ -572,6 +814,24 @@ describe('tripEngine', () => {
 
     expect(oneAlert.close_proximity_score).toBe(60);
     expect(fourAlerts.close_proximity_score).toBe(13);
+  });
+
+  it('keeps estimated and legacy brake-turn alert proxies out of Safety scoring', () => {
+    const tripStats = { distance_km: 8, fatigue_risk_score: 0, intersection_score: 100 };
+    const base = calculateTripScores([], tripStats, []);
+    const estimatedAlert = calculateTripScores([
+      { type: EVENT_TYPES.CLOSE_PROXIMITY, severity: 'high' },
+    ], tripStats, []);
+    const legacyAlert = calculateTripScores([
+      { type: EVENT_TYPES.NEAR_MISS, severity: 'high' },
+    ], tripStats, []);
+
+    expect(estimatedAlert.close_proximity_count).toBe(1);
+    expect(estimatedAlert.close_proximity_score).toBeLessThan(100);
+    expect(estimatedAlert.score_safety).toBe(base.score_safety);
+    expect(estimatedAlert.score_overall).toBe(base.score_overall);
+    expect(legacyAlert.score_safety).toBe(base.score_safety);
+    expect(legacyAlert.score_overall).toBe(base.score_overall);
   });
 
   it('classifies road type and calculates advanced smoothness fields', () => {
@@ -643,8 +903,8 @@ describe('tripEngine', () => {
     }, []);
 
     expect(scores.jerk_score).toBeNull();
-    expect(scores.jerk_score_confidence).toBe('insufficient_data');
-    expect(scores.score_smoothness).toBeGreaterThan(0);
+    expect(scores.jerk_score_confidence).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
+    expect(scores.score_smoothness).toBeNull();
   });
 
   it('detects sampled traffic stops and scores repeated rolling approaches without a floor', () => {
@@ -875,7 +1135,8 @@ describe('tripEngine', () => {
 
     expect(nightStats.night_driving).toBe(true);
     expect(dayStats.night_driving).toBe(false);
-    expect(nightScore.score_safety).toBeLessThan(dayScore.score_safety);
+    expect(nightScore.score_safety).toBeNull();
+    expect(dayScore.score_safety).toBeNull();
   });
 
   it('uses GPS sunset mode for night detection when coordinates exist', () => {
@@ -1107,11 +1368,30 @@ describe('tripEngine', () => {
   it('exports proxy-safe score labels in CSV reports', () => {
     const csv = tripsToCSV([]);
     expect(csv).toContain('Brake Onset Smoothness Score');
-    expect(csv).toContain('Stop-Start Pattern Score');
+    expect(csv).toContain('Stop-Start Pattern Estimate');
     expect(csv).toContain('Heading Drift Beta');
+    expect(csv).toContain('Speed Limit Sources');
     expect(csv).not.toContain('Reaction Time');
     expect(csv).not.toContain('Lane Changes');
     expect(csv).not.toContain('Tailgate');
+  });
+
+  it('exports speed-limit provenance in CSV reports', () => {
+    const csv = tripsToCSV([{
+      id: 'trip-speed-source',
+      route_points: [{
+        lat: 43.65,
+        lng: -79.38,
+        speed_limit_source: 'osm_highway_default',
+        speed_limit_default_country: 'gb',
+      }],
+      driving_events: [{ type: EVENT_TYPES.SPEEDING, speed_limit_source: 'openstreetmap' }],
+    }]);
+
+    expect(csv).toContain('Speed Limit Sources');
+    expect(csv).toContain('Speed Limit Default Countries');
+    expect(csv).toContain('openstreetmap;osm_highway_default');
+    expect(csv).toContain('gb');
   });
 
   it('does not flag normal steady city speed as erratic speed', () => {
@@ -1171,7 +1451,7 @@ describe('tripEngine', () => {
     expect(splits[1].start_time).toBe(points[5].timestamp);
     expect(splits[1].vehicle_id).toBe('vehicle-1');
     expect(splits[1].tag).toBe('work');
-    expect(splits[0].score_overall).toBeGreaterThan(0);
+    expect(splits[0].score_overall).toBeNull();
     expect(splits[0].split_parent_id).toBe('original-trip');
   });
 
@@ -1569,9 +1849,18 @@ describe('trip insights', () => {
     expect(suggestTripTag({ ...commute, start_time: new Date(2026, 0, 5, 19, 0, 0).toISOString() }).auto_tag).toBe('city');
     expect(suggestTripTag({ ...commute, start_time: new Date(2026, 0, 5, 5, 0, 0).toISOString() }).auto_tag).not.toBe('night');
     expect(estimateTripEconomics(commute, { fuel_efficiency_l_per_100km: 10 }).fuel_saved_liters).toBeGreaterThan(0);
-    expect(computePersonalBaseline(trips).baseline_avg).not.toBeNull();
-    expect(computePersonalBaseline(trips).baseline_confidence_interval).not.toBeNull();
-    expect(calculateVehicleHealthImpact([commute], {}).extra_wear_km).toBe(32);
+    const baseline = computePersonalBaseline(trips);
+    expect(baseline.baseline_avg).not.toBeNull();
+    expect(baseline.baseline_confidence_interval).not.toBeNull();
+    expect(baseline.baseline_confidence_interval_method).toBe(PERSONAL_BASELINE_INTERVAL_METHOD);
+    expect(baseline.baseline_confidence_interval_note).toBe(PERSONAL_BASELINE_INTERVAL_NOTE);
+    const healthImpact = calculateVehicleHealthImpact([{
+      ...commute,
+      trip_tire_wear_units: 2.5,
+    }], {});
+    expect(healthImpact.extra_wear_km).toBe(32);
+    expect(healthImpact.tire_wear_has_missing_speed_data).toBe(true);
+    expect(healthImpact.tire_wear_missing_speed_event_count).toBe(1);
   });
 
   it('does not unlock a personal baseline before ten completed trips', () => {

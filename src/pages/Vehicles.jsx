@@ -11,6 +11,7 @@ import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
+import { getTripComponentScore } from '@/lib/tripEngine';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 let odometerSyncFailureCount = 0;
@@ -59,10 +60,16 @@ export function getVehicleFormWarnings(form) {
 }
 
 export function calculateAverageVehicleScore(trips = []) {
-  if (!trips.length) return null;
-  const totalKm = trips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const scored = trips
+    .map((trip) => ({
+      score: getTripComponentScore(trip, 'overall').value,
+      distance: Number(trip.distance_km) || 0,
+    }))
+    .filter((trip) => trip.score != null);
+  if (!scored.length) return null;
+  const totalKm = scored.reduce((sum, trip) => sum + trip.distance, 0);
   return totalKm > 0
-    ? Math.round(trips.reduce((sum, trip) => sum + (Number(trip.score_overall) || 0) * (Number(trip.distance_km) || 0), 0) / totalKm)
+    ? Math.round(scored.reduce((sum, trip) => sum + trip.score * trip.distance, 0) / totalKm)
     : null;
 }
 
@@ -456,7 +463,7 @@ export default function Vehicles() {
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                         <span>{count} trip{count !== 1 ? 's' : ''}</span>
                         {score !== null && (
-                          <span className="font-semibold text-primary">Avg score: {score}</span>
+                          <span className="font-semibold text-primary">Avg score: {score} <span className="font-normal capitalize text-muted-foreground">aggregate evidence</span></span>
                         )}
                         <span>{odometerKm.toLocaleString()} km</span>
                       </div>
@@ -538,6 +545,13 @@ export default function Vehicles() {
                       </div>
                       <div className="font-semibold text-sm mt-1 capitalize">{healthImpact.tire_wear_grade}</div>
                       <div className="text-xs text-muted-foreground">{healthImpact.tire_life_impact_km.toLocaleString()} km estimated tire life reduction</div>
+                      {healthImpact.tire_wear_has_missing_speed_data && (
+                        <div className="mt-1 text-[11px] text-yellow-600 dark:text-yellow-400">
+                          {healthImpact.tire_wear_missing_speed_event_count > 0
+                            ? `${healthImpact.tire_wear_missing_speed_event_count} event${healthImpact.tire_wear_missing_speed_event_count === 1 ? '' : 's'} lacked speed; neutral estimate used.`
+                            : 'Some events lacked speed; neutral estimate used.'}
+                        </div>
+                      )}
                     </div>
                   </div>
 

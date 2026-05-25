@@ -1,7 +1,15 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
-import { buildDrivingThresholds, calculateTripScores, calculateTripStats, detectDrivingEvents } from '@/lib/tripEngine';
+import {
+  buildScoreProvenance,
+  buildDrivingThresholds,
+  calculateTripScores,
+  calculateTripStats,
+  detectDrivingEvents,
+  getScoreProvenanceStatus,
+  SCORING_VERSION,
+} from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
@@ -16,7 +24,7 @@ const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
-export const TRIP_SCHEMA_VERSION = 19;
+export const TRIP_SCHEMA_VERSION = 22;
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -79,6 +87,15 @@ export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
  *
  * Version 19 makes GPS phone and overtake signatures diagnostic only; Android
  * Usage Access remains the scoreable source for phone-use evidence.
+ *
+ * Version 20 adds canonical component_scores evidence envelopes for uniform
+ * value availability, evidence level, source attribution, and sample counts.
+ *
+ * Version 21 recalculates component evidence with registry-defined distance
+ * and sample requirements instead of one trip-wide distance confidence.
+ *
+ * Version 22 stores scoring provenance and refreshes trips when their scoring
+ * version or calibration-input snapshot no longer matches current settings.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -216,6 +233,41 @@ const emitRescoreProgress = (detail) => {
   window.dispatchEvent(new CustomEvent(RESCORE_PROGRESS_EVENT, { detail }));
 };
 
+const legacyScoreProvenanceNote = 'Legacy score tagged with the current scoring version on app launch; values were not recalculated.';
+
+const tagLegacyScoreProvenance = (trip, thresholds) => {
+  if (!trip || trip.status !== 'completed') return trip;
+  if (trip.score_provenance?.scoring_version) return trip;
+
+  const computedAt = trip.updated_at || trip.end_time || trip.created_at || new Date().toISOString();
+  return {
+    ...trip,
+    score_provenance: {
+      ...buildScoreProvenance(trip.component_scores || {}, thresholds, computedAt),
+      ...(trip.score_provenance && typeof trip.score_provenance === 'object' ? trip.score_provenance : {}),
+      scoring_version: SCORING_VERSION,
+      computed_at: computedAt,
+      migrated_without_rescore: true,
+      migration_note: legacyScoreProvenanceNote,
+    },
+    score_provenance_change: trip.score_provenance_change || {
+      previous_scoring_version: null,
+      current_scoring_version: SCORING_VERSION,
+      reason: 'legacy_tagged_without_rescore',
+      changed_constants: [],
+      tagged_at: new Date().toISOString(),
+    },
+  };
+};
+
+const tagExistingTripsWithCurrentScoringVersion = async (trips = []) => {
+  const thresholds = buildDrivingThresholds(localSettings.get());
+  const next = trips.map((trip) => tagLegacyScoreProvenance(trip, thresholds));
+  const changed = next.filter((trip, index) => trip !== trips[index]);
+  if (changed.length) await putTrips(changed);
+  return next;
+};
+
 const mergedPhoneUseForTrip = (trip, routePoints, stats, detectionPhoneUse) => {
   return buildPhoneUseFromTripEvidence(trip, routePoints, stats.duration_seconds, detectionPhoneUse);
 };
@@ -245,6 +297,7 @@ const rescoreTrip = (trip) => {
   const routePoints = restoreOriginalRouteGeometry(trip.route_points || []);
   const settings = localSettings.get();
   const thresholds = buildDrivingThresholds(settings);
+  const provenanceStatus = getScoreProvenanceStatus(trip, thresholds);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
   const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
@@ -252,6 +305,21 @@ const rescoreTrip = (trip) => {
   const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, {}, settings);
   const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse);
+  const scoreProvenanceChange = provenanceStatus.needsRescore || trip.needs_rescore
+    ? {
+      previous_scoring_version: trip.score_provenance?.scoring_version ?? null,
+      current_scoring_version: scores.score_provenance.scoring_version,
+      reason: provenanceStatus.status === 'missing'
+        ? 'provenance_added'
+        : trip.score_provenance?.scoring_version !== scores.score_provenance.scoring_version
+          ? 'scoring_version_changed'
+          : provenanceStatus.changedConstants.length
+            ? 'scoring_inputs_changed'
+            : 'user_requested_rescore',
+      changed_constants: provenanceStatus.changedConstants,
+      rescored_at: scores.score_provenance.computed_at,
+    }
+    : trip.score_provenance_change;
   return {
     ...trip,
     ...stats,
@@ -259,6 +327,7 @@ const rescoreTrip = (trip) => {
     co2_saved_kg: economics.co2_saved_kg,
     route_points: routePoints,
     driving_events: drivingEvents,
+    ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
     feedback_adjusted_events_count: feedbackAdjusted.removed,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
@@ -266,7 +335,7 @@ const rescoreTrip = (trip) => {
   };
 };
 
-const needsRescore = (trip) => (
+const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.get())) => (
   trip?.status === 'completed' &&
   (
     trip.needs_rescore ||
@@ -289,11 +358,12 @@ const needsRescore = (trip) => (
 const rescoreTripsIfNeeded = async (trips = []) => {
   const next = [];
   const rescoredTrips = [];
-  const total = trips.filter(needsRescore).length;
+  const thresholds = buildDrivingThresholds(localSettings.get());
+  const total = trips.filter((trip) => needsRescore(trip, thresholds)).length;
   let completed = 0;
   if (total) emitRescoreProgress({ status: 'running', completed, total });
   for (const trip of trips) {
-    if (needsRescore(trip)) {
+    if (needsRescore(trip, thresholds)) {
       const rescored = rescoreTrip(trip);
       rescoredTrips.push(rescored);
       next.push(rescored);
@@ -419,21 +489,24 @@ export const localTripRepository = {
   async list({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
-    const trips = await rescoreTripsIfNeeded(await getAllTrips());
+    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    const trips = await rescoreTripsIfNeeded(taggedTrips);
     return sortTrips(trips, sort).slice(0, limit);
   },
 
   async listAll({ sort = '-start_time' } = {}) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
-    const trips = await rescoreTripsIfNeeded(await getAllTrips());
+    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    const trips = await rescoreTripsIfNeeded(taggedTrips);
     return sortTrips(trips, sort);
   },
 
   async getById(id) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
-    const trips = await rescoreTripsIfNeeded(await getAllTrips());
+    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    const trips = await rescoreTripsIfNeeded(taggedTrips);
     const trip = trips.find((item) => String(item.id) === String(id));
     if (!trip) throw new Error('Trip not found');
     return trip;
@@ -461,12 +534,13 @@ export const localTripRepository = {
   },
 
   async upsertMany(trips = []) {
+    const thresholds = buildDrivingThresholds(localSettings.get());
     const normalized = trips.map((trip) => {
       const next = withId({
         ...trip,
         created_at: trip.created_at || trip.start_time || new Date().toISOString(),
       });
-      return needsRescore(next) ? rescoreTrip(next) : next;
+      return needsRescore(next, thresholds) ? rescoreTrip(next) : next;
     });
     await putTrips(normalized);
     if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
@@ -474,15 +548,47 @@ export const localTripRepository = {
     return normalized;
   },
 
-  async markCompletedForRescore() {
-    const trips = await getAllTrips();
+  async markCompletedForRescore({ onlyProvenanceMismatch = false } = {}) {
+    const thresholds = buildDrivingThresholds(localSettings.get());
+    const trips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    let count = 0;
     const updated = trips.map((trip) => (
-      trip.status === 'completed'
-        ? { ...trip, needs_rescore: true, updated_at: new Date().toISOString() }
+      trip.status === 'completed' &&
+      (!onlyProvenanceMismatch || getScoreProvenanceStatus(trip, thresholds).needsRescore)
+        ? { ...trip, needs_rescore: true, updated_at: new Date().toISOString(), score_update_acknowledged_at: null }
         : trip
-    ));
+    )).map((trip, index) => {
+      if (trip !== trips[index]) count += 1;
+      return trip;
+    });
     await putTrips(updated);
-    await invalidateTripDerivedCaches();
-    return updated.filter((trip) => trip.status === 'completed').length;
+    if (count) await invalidateTripDerivedCaches();
+    return count;
+  },
+
+  async getScoreMigrationSummary() {
+    await importNativeCompletedTrips();
+    await pruneExpiredTrips();
+    const thresholds = buildDrivingThresholds(localSettings.get());
+    const trips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    const completed = trips.filter((trip) => trip.status === 'completed');
+    const mismatched = completed
+      .map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) }))
+      .filter(({ provenance }) => provenance.needsRescore);
+    return {
+      scoring_version: SCORING_VERSION,
+      completed_count: completed.length,
+      mismatch_count: mismatched.length,
+      unavailable_score_count: completed.filter((trip) => trip.score_overall == null).length,
+      trips: mismatched.map(({ trip, provenance }) => ({
+        id: trip.id,
+        start_time: trip.start_time,
+        nickname: trip.nickname || '',
+        scoring_version: trip.score_provenance?.scoring_version || null,
+        status: provenance.status,
+        reason: provenance.reason,
+        changed_constants: provenance.changedConstants,
+      })),
+    };
   },
 };

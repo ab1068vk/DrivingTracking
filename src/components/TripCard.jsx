@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon } from 'lucide-react';
-import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/tripEngine';
+import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import {
   buildScoreExplanation,
   getTripDisplayName,
@@ -8,6 +8,12 @@ import {
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import { useNavigate } from 'react-router-dom';
+import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import { hasProvisionalCalibration } from '@/lib/scoringConstants';
+
+const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
+const evidenceLabel = (evidence) => `${evidence || 'unavailable'} evidence`;
+const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
 
 export default function TripCard({
   trip,
@@ -17,8 +23,12 @@ export default function TripCard({
   onToggleFavorite = null,
 }) {
   const navigate = useNavigate();
-  const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
-  const lowScoreConfidence = Number.isFinite(Number(trip.score_confidence)) && Number(trip.score_confidence) < 0.5;
+  const overallScore = getTripComponentScore(trip, 'overall');
+  const unavailableScore = overallScore.value == null;
+  const { color, label: scoreLabel, bg } = unavailableScore
+    ? { color: 'text-muted-foreground', label: 'Unavailable', bg: 'bg-secondary' }
+    : getScoreColor(overallScore.value);
+  const lowScoreConfidence = ['low', 'unavailable'].includes(overallScore.evidence);
   const tags = normalizeTripTags(trip);
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
   const title = getTripDisplayName(trip);
@@ -147,15 +157,21 @@ export default function TripCard({
               )}
             </div>
           )}
+
+          {unavailableScore && (
+            <div className="mt-2 text-xs font-medium text-muted-foreground">
+              {SCORE_UNAVAILABLE_MESSAGE}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div
             className={`w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}
-            title={lowScoreConfidence ? 'Score based on limited data - trip was under 2.5 km.' : buildScoreExplanation(trip, 'score_overall')}
+            title={unavailableScore ? SCORE_UNAVAILABLE_MESSAGE : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
           >
             <span className={`font-grotesk font-bold text-lg ${color}`}>
-              {lowScoreConfidence && trip.score_overall != null ? '~' : ''}{trip.score_overall ?? '-'}
+              {lowScoreConfidence && overallScore.value != null ? '~' : ''}{overallScore.value ?? '-'}
             </span>
           </div>
           {scoreDelta && (
@@ -166,10 +182,14 @@ export default function TripCard({
                   ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
                   : 'bg-secondary text-muted-foreground'
             }`}>
-              {scoreDelta.direction === 'up' ? 'Up' : scoreDelta.direction === 'down' ? 'Down' : 'Flat'} vs last 5
+              {scoreDelta.insufficientBaseline
+                ? 'Building baseline'
+                : `${scoreDelta.direction === 'up' ? 'Up' : scoreDelta.direction === 'down' ? 'Down' : 'Flat'} vs last 5`}
             </span>
           )}
           <span className={`text-xs font-medium ${color}`}>{scoreLabel}</span>
+          <span className="text-[10px] capitalize text-muted-foreground">{evidenceLabel(overallScore.evidence)}</span>
+          {OVERALL_SCORE_IS_APPROXIMATE && overallScore.value != null && <CalibrationStatusTag />}
         </div>
       </div>
 

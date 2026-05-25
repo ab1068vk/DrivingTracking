@@ -596,8 +596,8 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   } else if (stopStartPatternRisk) {
     notification = {
       id: NOTIFICATION_IDS.TRIP_STOP_START_SUMMARY,
-      title: 'Stop-Start Pattern Review',
-      body: `${stopStartPatternCount || 'Multiple'} stop-start pattern${stopStartPatternCount === 1 ? '' : 's'} detected from speed data. This does not measure following distance.`,
+      title: 'Stop-Start Pattern Estimate',
+      body: `${stopStartPatternCount || 'Multiple'} low-confidence stop-start pattern${stopStartPatternCount === 1 ? '' : 's'} estimated from GPS speed data. This does not measure following distance.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
       extra: { tripId: trip.id, type: 'stop_start_pattern_summary' },

@@ -1,0 +1,73 @@
+{
+  "id": "eventful_speeding_v2_1_0",
+  "description": "Human-verified eventful route with inferred speed-limit speeding events; validates penalties, developing evidence, and provenance component labels.",
+  "scoring_version": "2.1.0",
+  "human_verified": true,
+  "startTime": "2026-05-24T14:00:00.000Z",
+  "endTime": "2026-05-24T14:01:50.000Z",
+  "points": [
+    { "lat": 43.65, "lng": -79.38, "timestamp": "2026-05-24T14:00:00.000Z", "speed_kmh": 35, "accuracy": 6, "heading": 0, "altitude": 102, "altitude_accuracy": 8 },
+    { "lat": 43.65105, "lng": -79.38, "timestamp": "2026-05-24T14:00:10.000Z", "speed_kmh": 54, "accuracy": 6, "heading": 0, "altitude": 102.2, "altitude_accuracy": 8 },
+    { "lat": 43.6521, "lng": -79.38, "timestamp": "2026-05-24T14:00:20.000Z", "speed_kmh": 82, "accuracy": 6, "heading": 0, "altitude": 102.4, "altitude_accuracy": 8 },
+    { "lat": 43.65315, "lng": -79.38, "timestamp": "2026-05-24T14:00:30.000Z", "speed_kmh": 118, "accuracy": 6, "heading": 0, "altitude": 102.6, "altitude_accuracy": 8 },
+    { "lat": 43.6542, "lng": -79.38, "timestamp": "2026-05-24T14:00:40.000Z", "speed_kmh": 124, "accuracy": 6, "heading": 0, "altitude": 102.8, "altitude_accuracy": 8 },
+    { "lat": 43.65525, "lng": -79.38, "timestamp": "2026-05-24T14:00:50.000Z", "speed_kmh": 121, "accuracy": 6, "heading": 0, "altitude": 103, "altitude_accuracy": 8 },
+    { "lat": 43.6563, "lng": -79.38, "timestamp": "2026-05-24T14:01:00.000Z", "speed_kmh": 88, "accuracy": 6, "heading": 0, "altitude": 103.2, "altitude_accuracy": 8 },
+    { "lat": 43.65735, "lng": -79.38, "timestamp": "2026-05-24T14:01:10.000Z", "speed_kmh": 54, "accuracy": 6, "heading": 0, "altitude": 103.4, "altitude_accuracy": 8 },
+    { "lat": 43.6584, "lng": -79.38, "timestamp": "2026-05-24T14:01:20.000Z", "speed_kmh": 22, "accuracy": 6, "heading": 3, "altitude": 103.6, "altitude_accuracy": 8 },
+    { "lat": 43.65945, "lng": -79.38, "timestamp": "2026-05-24T14:01:30.000Z", "speed_kmh": 45, "accuracy": 6, "heading": 3, "altitude": 103.8, "altitude_accuracy": 8 },
+    { "lat": 43.6605, "lng": -79.38, "timestamp": "2026-05-24T14:01:40.000Z", "speed_kmh": 78, "accuracy": 6, "heading": 3, "altitude": 104, "altitude_accuracy": 8 },
+    { "lat": 43.66155, "lng": -79.38, "timestamp": "2026-05-24T14:01:50.000Z", "speed_kmh": 112, "accuracy": 6, "heading": 3, "altitude": 104.2, "altitude_accuracy": 8 }
+  ],
+  "expected": {
+    "stats": {
+      "distance_km": 1.284,
+      "duration_seconds": 110,
+      "avg_speed_kmh": 42,
+      "avg_running_speed_kmh": 42,
+      "max_speed_kmh": 124,
+      "idle_time_seconds": 0,
+      "traffic_stop_count": 0,
+      "night_driving": false
+    },
+    "scores": {
+      "score_overall": 44,
+      "score_safety": 15,
+      "score_smoothness": 95,
+      "score_eco": 20,
+      "score_confidence_label": "developing",
+      "harsh_brakes_count": 0,
+      "rapid_accel_count": 0,
+      "sharp_turns_count": 0,
+      "speeding_events_count": 2,
+      "speed_creep_score": 76,
+      "aggressive_driving_score": 61,
+      "defensive_driving_score": 74
+    },
+    "component_scores": {
+      "overall": { "value": 44, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
+      "safety": { "value": 15, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
+      "smoothness": { "value": 95, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "eco": { "value": 20, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
+      "speed_creep": { "value": 76, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "aggressive_driving": { "value": 61, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "defensive_driving": { "value": 74, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
+    },
+    "score_provenance": {
+      "scoring_version": "2.1.0",
+      "components": {
+        "overall": "developing",
+        "safety": "developing",
+        "smoothness": "developing",
+        "eco": "developing",
+        "intersection": "unavailable",
+        "speed_creep": "developing",
+        "aggressive_driving": "developing",
+        "defensive_driving": "developing",
+        "fatigue_risk": "high"
+      }
+    }
+  }
+}

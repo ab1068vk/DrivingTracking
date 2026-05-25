@@ -67,6 +67,33 @@ describe('external service contracts', () => {
     });
   });
 
+  it('marks country-aware OSM highway defaults when maxspeed is missing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        elements: [{
+          id: 202,
+          tags: { highway: 'residential', name: 'Default Street' },
+          geometry: [
+            { lat: 43.6499, lon: -79.3801 },
+            { lat: 43.6510, lon: -79.3803 },
+          ],
+        }],
+      }),
+    })));
+
+    const result = await annotateRouteSpeedLimits(route, {
+      overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
+      configurable_country_defaults: 'gb',
+    });
+
+    expect(result.routePoints[0]).toMatchObject({
+      speed_limit_kmh: 48,
+      speed_limit_source: 'osm_highway_default',
+      speed_limit_default_country: 'gb',
+    });
+  });
+
   it('calls Open-Meteo forecast with midpoint, day, timezone, and hourly fields', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => ({
       ok: true,

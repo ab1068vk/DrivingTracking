@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
+import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import {
@@ -22,6 +23,7 @@ import {
   formatDateTime,
   formatSpeed,
   getScoreColor,
+  getTripComponentScore,
   inferSpeedZones,
   PHONE_USE_SAFETY_WEIGHT,
   splitTripAtStops,
@@ -58,6 +60,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { DISMISSED_TAG_SUGGESTIONS_KEY, MAX_ROUTE_RISK_SEGMENTS_SHOWN } from '@/lib/appConstants';
+import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -73,6 +76,8 @@ const fatigueText = {
   slight: 'Fairly consistent',
 };
 const CRITICAL_FATIGUE_CHART_LEVEL = DAILY_FATIGUE_THRESHOLDS.CRITICAL * 10;
+const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
+const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
 
 export default function TripDetail() {
   const { id } = useParams();
@@ -311,7 +316,6 @@ export default function TripDetail() {
     );
   }
 
-  const { color, label: scoreLabel, bg } = getScoreColor(trip.score_overall || 0);
   const tripVehicle = vehicles.find((vehicle) => String(vehicle.id) === String(trip.vehicle_id));
   const economics = estimateTripEconomics(trip, tripVehicle, settings);
   const fatigueRisk = calculateFatigueRisk([trip], settings);
@@ -387,14 +391,17 @@ export default function TripDetail() {
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
   const displayPhoneUse = buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
+  const componentScore = (key) => getTripComponentScore(trip, key);
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
   const hasPhoneUsageAccess = displayPhoneUse.phone_use_score_available === true;
   const showPhoneUse = hasPhoneUsageAccess || phoneUseWindows.length > 0 || phoneUseRisk !== 'none';
-  const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? 100;
-  const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : 100;
+  const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? null;
+  const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : null;
   // Keep this estimate aligned with calculateTripScores' phoneUseScoreForSafety blend.
-  const phoneUseSafetyImpactPoints = Math.max(1, Math.round(Math.max(0, 100 - phoneUseScoreForImpact) * PHONE_USE_SAFETY_WEIGHT));
+  const phoneUseSafetyImpactPoints = phoneUseScoreForImpact == null
+    ? null
+    : Math.max(1, Math.round(Math.max(0, 100 - phoneUseScoreForImpact) * PHONE_USE_SAFETY_WEIGHT));
   const avgPhoneUseSpeed = phoneUseWindows.length
     ? Math.round(phoneUseWindows.reduce((sum, event) => sum + (Number(event.speed_kmh) || 0), 0) / phoneUseWindows.length)
     : 0;
@@ -568,7 +575,7 @@ export default function TripDetail() {
 
       {(trip.close_proximity_count ?? trip.near_miss_count ?? 0) > 0 && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
-          {trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn manoeuvre alert{(trip.close_proximity_count ?? trip.near_miss_count) === 1 ? '' : 's'} on this trip. GPS alone cannot establish object proximity.
+          {trip.close_proximity_count ?? trip.near_miss_count} estimated brake-turn manoeuvre alert{(trip.close_proximity_count ?? trip.near_miss_count) === 1 ? '' : 's'} on this trip. GPS alone cannot establish object proximity. This advisory does not affect your trip Safety or Overall score.
         </div>
       )}
 
@@ -792,7 +799,7 @@ export default function TripDetail() {
                 </div>
               </details>
 
-              {hasPhoneUsageAccess && settings.phone_use_affects_score !== false && phoneUseScoreForImpact < 95 && (
+              {hasPhoneUsageAccess && settings.phone_use_affects_score !== false && phoneUseScoreForImpact != null && phoneUseScoreForImpact < 95 && (
                 <div className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints} point{phoneUseSafetyImpactPoints === 1 ? '' : 's'}.
                 </div>
@@ -1181,24 +1188,31 @@ export default function TripDetail() {
         <div className="grid grid-cols-2 gap-3 mb-4">
           {[
             { icon: MapPin, label: 'traffic stops', value: trip.traffic_stop_count ?? trip.stop_count ?? 0, color: 'text-primary' },
-            { icon: AlertTriangle, label: 'fatigue risk', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
-            { icon: Waves, label: 'jerk score', value: trip.jerk_score ?? '-', color: 'text-sky-500' },
-            { icon: GitBranch, label: 'brake onset smoothness', value: trip.brake_onset_smoothness_score, color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : 'text-emerald-500', show: trip.brake_onset_smoothness_score != null },
-            { icon: Leaf, label: 'eco driving', value: trip.eco_driving_score ?? '-', color: 'text-emerald-500' },
-            { icon: ShieldCheck, label: 'stop-start pattern', value: trip.stop_start_pattern_score, color: 'text-blue-500', show: trip.stop_start_pattern_score != null },
-            { icon: Focus, label: 'focus score', value: trip.distraction_score ?? '-', color: 'text-violet-500' },
-            { icon: TimerReset, label: 'intersection score', value: trip.intersection_score ?? '-', color: 'text-amber-500' },
-            { icon: Gauge, label: 'SVI', value: trip.speed_variability_index ?? '-', color: 'text-indigo-500' },
-            { icon: Fuel, label: 'fuel band', value: trip.fuel_band_score ?? '-', color: 'text-lime-500' },
-            { icon: Car, label: 'engine stress', value: trip.engine_stress_score ?? '-', color: 'text-orange-500' },
+            { icon: AlertTriangle, label: 'estimated fatigue risk (driving-time proxy)', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
+            { icon: Waves, label: 'smoothness index', componentKey: 'smoothness_index', color: 'text-sky-500' },
+            { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : 'text-emerald-500' },
+            { icon: Leaf, label: 'eco driving', componentKey: 'eco_driving', color: 'text-emerald-500' },
+            { icon: ShieldCheck, label: 'stop-start pattern estimate', componentKey: 'stop_start_pattern', color: 'text-blue-500' },
+            { icon: Focus, label: 'focus score', componentKey: 'distraction', color: 'text-violet-500' },
+            { icon: TimerReset, label: 'intersection score', componentKey: 'intersection', color: 'text-amber-500' },
+            { icon: Gauge, label: 'SVI', componentKey: 'speed_variability', color: 'text-indigo-500' },
+            { icon: Fuel, label: 'fuel band', componentKey: 'fuel_band', color: 'text-lime-500' },
+            { icon: Car, label: 'engine stress', componentKey: 'engine_stress', color: 'text-orange-500' },
             { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
-            { icon: AlertTriangle, label: 'attention pattern (GPS beta)', value: trip.heading_drift_beta_level ?? 'none', color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true, show: trip.heading_drift_beta_available === true },
-            { icon: Milestone, label: 'hill control', value: trip.hill_driving_score ?? 'N/A', color: trip.hill_driving_score == null ? 'text-muted-foreground' : 'text-emerald-500' },
-          ].filter(({ show = true }) => show).map(({ icon: Icon, label, value, color, capitalize }) => (
-            <div key={label} className="bg-secondary/50 rounded-xl p-3">
+            { icon: AlertTriangle, label: 'attention pattern (GPS beta)', value: trip.heading_drift_beta_level ?? 'none', componentKey: 'heading_drift_beta', useComponentValue: false, color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true, show: trip.heading_drift_beta_available === true },
+            { icon: Milestone, label: 'gradient driving estimate (GPS speed proxy)', componentKey: 'hill_driving', color: 'text-emerald-500' },
+          ].map((item) => {
+            const evidenceScore = item.componentKey ? componentScore(item.componentKey) : null;
+            const value = evidenceScore && item.useComponentValue !== false ? evidenceScore.value : item.value;
+            return { ...item, evidenceScore, value, show: item.show ?? (!evidenceScore || evidenceScore.value != null) };
+          }).filter(({ show = true }) => show).map(({ icon: Icon, label, value, color, capitalize, evidenceScore }) => (
+            <div key={label} className="bg-secondary/50 rounded-xl p-3" title={evidenceScore?.note}>
               <Icon className={`w-4 h-4 mb-2 ${color}`} />
               <div className={`font-grotesk font-bold text-xl ${capitalize ? 'capitalize' : ''}`}>{value}</div>
               <div className="text-xs text-muted-foreground">{label}</div>
+              {evidenceScore && evidenceScore.evidence !== 'high' && (
+                <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(evidenceScore.evidence)}</div>
+              )}
             </div>
           ))}
         </div>
@@ -1206,7 +1220,7 @@ export default function TripDetail() {
         <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
           <p>Brake onset smoothness measures how smoothly brakes were applied during detected braking events, not human neurological reaction time.</p>
           <p className="mt-1">Stop-start pattern and attention pattern Beta values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or fatigue.</p>
-          {trip.intersection_score == null && (
+          {componentScore('intersection').value == null && (
             <p className="mt-1">Intersection score not available for this trip.</p>
           )}
         </div>
@@ -1262,7 +1276,7 @@ export default function TripDetail() {
           </div>
         )}
 
-        {(Number.isFinite(trip.braking_efficiency_score) || Number.isFinite(trip.smooth_braking_ratio)) && (
+        {(componentScore('braking_efficiency').value != null || componentScore('smooth_braking').value != null) && (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3">
             <div className="mb-2 flex items-center justify-between text-sm">
               <span className="font-medium">Braking Efficiency</span>
@@ -1272,12 +1286,12 @@ export default function TripDetail() {
             </div>
             {trip.braking_context && (
               <div className="mb-2 text-xs text-muted-foreground">
-                Graded for {trip.braking_context} driving conditions · confidence {trip.braking_efficiency_score_confidence ?? 'unknown'} · GPS speed estimate.
+                Graded for {trip.braking_context} driving conditions - {componentEvidenceText(componentScore('braking_efficiency').evidence)} - GPS speed estimate.
               </div>
             )}
-            {Number.isFinite(trip.braking_efficiency_score) && (
+            {componentScore('braking_efficiency').value != null && (
               <div className="mb-2 flex items-baseline gap-2">
-                <span className="font-grotesk text-2xl font-bold">{trip.braking_efficiency_score}</span>
+                <span className="font-grotesk text-2xl font-bold">{componentScore('braking_efficiency').value}</span>
                 <span className="text-xs text-muted-foreground">
                   {trip.braking_sequence_count || 0} stop sequence{(trip.braking_sequence_count || 0) === 1 ? '' : 's'}, smoothness {Math.round((trip.avg_braking_smoothness || 0) * 100)}%
                 </span>
@@ -1286,19 +1300,23 @@ export default function TripDetail() {
             <div className="h-2 overflow-hidden rounded-full bg-background">
               <div
                 className={`h-full rounded-full ${
-                  (trip.braking_efficiency_score ?? trip.smooth_braking_ratio) >= 80 ? 'bg-emerald-500' : (trip.braking_efficiency_score ?? trip.smooth_braking_ratio) >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                  (componentScore('braking_efficiency').value ?? componentScore('smooth_braking').value) >= 80 ? 'bg-emerald-500' : (componentScore('braking_efficiency').value ?? componentScore('smooth_braking').value) >= 50 ? 'bg-yellow-500' : 'bg-red-500'
                 }`}
-                style={{ width: `${Math.max(0, Math.min(100, trip.braking_efficiency_score ?? trip.smooth_braking_ratio))}%` }}
+                style={{ width: `${Math.max(0, Math.min(100, componentScore('braking_efficiency').value ?? componentScore('smooth_braking').value))}%` }}
               />
             </div>
           </div>
         )}
 
-        {trip.hill_driving_score != null ? (
+        {componentScore('hill_driving').value != null ? (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3 text-sm">
             <div className="font-medium">Hill Control</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {trip.climb_distance_km ?? 0} km climbing, {trip.descent_distance_km ?? 0} km descending. Use engine braking on descents rather than braking repeatedly.
+            </div>
+            <div className="mt-2 flex gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 p-2 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <span>GPS and altitude-derived estimate only. A legitimate uphill manoeuvre can trigger an inferred infraction.</span>
             </div>
           </div>
         ) : (
@@ -1308,7 +1326,7 @@ export default function TripDetail() {
           </div>
         )}
 
-        {trip.cornering_consistency_score != null && (
+        {componentScore('cornering_consistency').value != null && (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3">
             <div className="mb-3 flex items-center justify-between">
               <div className="text-sm font-medium">Cornering</div>
@@ -1317,11 +1335,11 @@ export default function TripDetail() {
               </span>
             </div>
             <div className="mb-2 text-xs text-muted-foreground">
-              Confidence {trip.cornering_consistency_score_confidence ?? 'unknown'} · GPS heading estimate.
+              {componentEvidenceText(componentScore('cornering_consistency').evidence)} - GPS heading estimate.
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-lg bg-card p-2">
-                <div className="font-grotesk text-lg font-bold">{trip.cornering_consistency_score}</div>
+                <div className="font-grotesk text-lg font-bold">{componentScore('cornering_consistency').value}</div>
                 <div className="text-[11px] text-muted-foreground">score</div>
               </div>
               <div className="rounded-lg bg-card p-2">
@@ -1424,8 +1442,8 @@ export default function TripDetail() {
                 sharp_turn: { label: 'Sharp Turn', icon: '↰', color: 'text-blue-600' },
                 speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
-                near_miss: { label: 'Brake-Turn Alert (Legacy)', icon: '!', color: 'text-red-700' },
-                close_proximity: { label: 'Brake-Turn Alert (Estimated)', icon: '!', color: 'text-red-700' },
+                near_miss: { label: 'Estimated brake-turn manoeuvre (GPS proxy, legacy)', icon: '!', color: 'text-red-700' },
+                close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
                 aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
                 lane_change: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
                 heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
@@ -1507,11 +1525,38 @@ export default function TripDetail() {
   );
 }
 
+function componentEvidenceText(evidence) {
+  if (typeof evidence === 'string' && ['high', 'developing', 'low', 'unavailable'].includes(evidence)) {
+    return `${evidence} evidence`;
+  }
+  const numeric = Number(evidence);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric <= 0) return 'unavailable evidence';
+  if (numeric < 0.5) return 'low evidence';
+  if (numeric < 0.8) return 'developing evidence';
+  return 'high evidence';
+}
+
 function TripScoreOverview({ trip }) {
-  const lowScoreConfidence = Number.isFinite(Number(trip.score_confidence)) && Number(trip.score_confidence) < 0.5;
+  const overallScore = getTripComponentScore(trip, 'overall');
+  const unavailableOverallScore = overallScore.value == null;
+  const scoreProvenance = trip.score_provenance;
+  const provenanceChange = trip.score_provenance_change;
+  const changedConstants = Array.isArray(provenanceChange?.changed_constants)
+    ? provenanceChange.changed_constants
+    : [];
+  const headlineScores = [
+    { label: 'Safety', key: 'safety' },
+    { label: 'Smooth', key: 'smoothness' },
+    { label: 'Eco', key: 'eco' },
+  ].map((item) => ({ ...item, component: getTripComponentScore(trip, item.key) }))
+    .filter(({ component }) => component.value != null);
+  const lowScoreConfidence = !unavailableOverallScore && overallScore.evidence !== 'high';
   const confidenceTitle = lowScoreConfidence
-    ? 'Score based on limited data - trip was under 2.5 km.'
-    : buildScoreExplanation(trip, 'score_overall');
+    ? 'Score based on limited available evidence.'
+    : unavailableOverallScore
+      ? SCORE_UNAVAILABLE_MESSAGE
+      : buildScoreExplanation(trip, 'score_overall');
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -1521,43 +1566,72 @@ function TripScoreOverview({ trip }) {
     >
       <div className="flex items-center gap-6">
         <ScoreRing
-          score={trip.score_overall || 0}
+          score={overallScore.value}
           size={100}
           strokeWidth={8}
           sublabel="overall"
           title={confidenceTitle}
-          approximate={lowScoreConfidence}
+          evidence={overallScore.evidence}
         />
         <div className="flex-1 grid grid-cols-3 gap-3">
-          {[
-            { label: 'Safety', key: 'score_safety', value: trip.score_safety },
-            { label: 'Smooth', key: 'score_smoothness', value: trip.score_smoothness },
-            { label: 'Eco', key: 'score_eco', value: trip.score_eco },
-          ].map(({ label, key, value }) => {
-            const { color: c } = getScoreColor(value || 0);
+          {headlineScores.map(({ label, key, component }) => {
+            const { color: c } = getScoreColor(component.value || 0);
             return (
-              <div key={label} className="text-center" title={buildScoreExplanation(trip, key)}>
-                <div className={`font-grotesk font-bold text-xl ${c}`}>{value ?? '-'}</div>
+              <div key={label} className="text-center" title={component.note || buildScoreExplanation(trip, `score_${key}`)}>
+                <div className={`font-grotesk font-bold text-xl ${c}`}>{component.value}</div>
                 <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
               </div>
             );
           })}
         </div>
       </div>
+      {unavailableOverallScore && (
+        <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+          {SCORE_UNAVAILABLE_MESSAGE}
+        </p>
+      )}
       {lowScoreConfidence && (
         <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-          ~ Score based on limited data because this trip was under 2.5 km.
+          Score based on limited available evidence. One or more contributing signals may be unavailable or still developing.
         </p>
+      )}
+      {scoreProvenance && (
+        <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-2 font-semibold text-foreground">
+              Scoring provenance
+              {OVERALL_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
+            </span>
+            <span>Version {scoreProvenance.scoring_version}</span>
+          </div>
+          <div className="mt-1">Calculated {formatDateTime(scoreProvenance.computed_at)}</div>
+          {provenanceChange && (
+            <p className="mt-2 rounded-xl bg-secondary/50 p-3">
+              {provenanceChange.reason === 'provenance_added'
+                ? 'Provenance was recorded when this trip was refreshed.'
+                : provenanceChange.reason === 'legacy_tagged_without_rescore'
+                  ? 'Provenance was tagged during migration; this score was not recalculated.'
+                : provenanceChange.reason === 'scoring_version_changed'
+                  ? `Recalculated after the scoring model changed from version ${provenanceChange.previous_scoring_version || 'unknown'} to ${provenanceChange.current_scoring_version}.`
+                  : provenanceChange.reason === 'user_requested_rescore'
+                    ? 'Recalculated after a manual re-score request.'
+                    : 'Recalculated after scoring calibration inputs changed.'}
+              {changedConstants.length > 0 && ` Updated constants: ${changedConstants.join(', ')}.`}
+            </p>
+          )}
+        </div>
       )}
       <div className="grid grid-cols-1 gap-3 mt-5 sm:grid-cols-2">
         {[
-          { label: 'Aggression', score: trip.aggressive_driving_score, grade: trip.aggressive_grade },
-          { label: 'Defensive', score: trip.defensive_driving_score, grade: trip.defensive_grade },
-        ].map(({ label, score, grade }) => (
+          { label: 'Aggression', component: getTripComponentScore(trip, 'aggressive_driving'), grade: trip.aggressive_grade },
+          { label: 'Defensive Driving Estimate', component: getTripComponentScore(trip, 'defensive_driving'), grade: trip.defensive_grade, qualifier: 'GPS + stop-behaviour proxy' },
+        ].filter(({ component }) => component.value != null).map(({ label, component, grade, qualifier }) => (
           <div key={label} className="flex min-w-0 items-center gap-3 rounded-2xl bg-secondary/50 p-3">
             <div className="shrink-0">
               <ScoreRing
-                score={score ?? 0}
+                score={component.value ?? 0}
+                evidence={component.evidence}
                 size={56}
                 strokeWidth={5}
                 title={buildScoreExplanation(trip, label === 'Aggression' ? 'aggressive_driving_score' : 'defensive_driving_score')}
@@ -1565,6 +1639,8 @@ function TripScoreOverview({ trip }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold leading-tight">{label}</div>
+              {qualifier && <div className="text-[11px] text-muted-foreground">{qualifier}</div>}
+              <div className="text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
               <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
                 ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
                   grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :

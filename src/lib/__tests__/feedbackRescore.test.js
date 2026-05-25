@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyEventFeedbackToEvents, localTripRepository } from '@/lib/localTripRepository';
-import { detectDrivingEvents } from '@/lib/tripEngine';
+import { detectDrivingEvents, SCORING_VERSION } from '@/lib/tripEngine';
 
 const feedbackKey = (event, index) => [
   event?.type || 'event',
@@ -59,6 +59,16 @@ describe('feedback-driven rescoring helpers', () => {
     ]);
 
     expect(rescored.feedback_adjusted_events_count).toBe(1);
+    expect(rescored.score_provenance).toMatchObject({
+      scoring_version: SCORING_VERSION,
+      components: expect.any(Object),
+      constants_snapshot: expect.any(Object),
+    });
+    expect(rescored.score_provenance_change).toMatchObject({
+      previous_scoring_version: null,
+      current_scoring_version: SCORING_VERSION,
+      reason: 'provenance_added',
+    });
     expect(rescored.driving_events).not.toEqual(
       expect.arrayContaining([expect.objectContaining({
         type: reviewedEvent.type,

@@ -127,6 +127,22 @@ describe('backup trip import sanitization', () => {
     expect(trip.jerk_score_confidence).toBe('insufficient_data');
   });
 
+  it('preserves tire-wear missing-speed evidence through sanitized backup imports', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-tire-speed-evidence',
+      status: 'completed',
+      trip_tire_wear_units: 3.5,
+      trip_tire_wear_has_missing_speed_data: true,
+      trip_tire_wear_missing_speed_event_count: 1,
+    }]);
+
+    expect(trip).toMatchObject({
+      trip_tire_wear_units: 3.5,
+      trip_tire_wear_has_missing_speed_data: true,
+      trip_tire_wear_missing_speed_event_count: 1,
+    });
+  });
+
   it('preserves road-type-stratified SVI evidence through sanitized backup imports', () => {
     const [trip] = parseTrips([{
       id: 'trip-svi-confidence',
@@ -211,6 +227,47 @@ describe('backup trip import sanitization', () => {
       braking_efficiency_score_confidence: 0.8,
       hill_driving_score_confidence: 0,
     });
+  });
+
+  it('preserves typed component score evidence through sanitized backup imports', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-component-evidence',
+      status: 'completed',
+      component_scores: {
+        safety: {
+          value: 84,
+          evidence: 'developing',
+          dataSource: ['gps', 'osm_speed_limit'],
+          sampleCount: 18,
+          note: 'Partial route context.',
+        },
+      },
+      score_provenance: {
+        computed_at: '2026-05-24T17:23:44.000Z',
+        scoring_version: '2.1.0',
+        components: { safety: 'developing' },
+        constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
+      },
+      score_provenance_change: {
+        previous_scoring_version: '2.0.0',
+        current_scoring_version: '2.1.0',
+        reason: 'scoring_inputs_changed',
+        changed_constants: ['PENALTY_SCALE_FACTOR'],
+      },
+    }]);
+
+    expect(trip.component_scores.safety).toEqual({
+      value: 84,
+      evidence: 'developing',
+      dataSource: ['gps', 'osm_speed_limit'],
+      sampleCount: 18,
+      note: 'Partial route context.',
+    });
+    expect(trip.score_provenance).toMatchObject({
+      scoring_version: '2.1.0',
+      constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
+    });
+    expect(trip.score_provenance_change.changed_constants).toEqual(['PENALTY_SCALE_FACTOR']);
   });
 
   it('rejects imported trips without a non-empty string id', () => {

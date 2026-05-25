@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computeUBIReport, UBI_CATEGORY_WEIGHTS } from '@/lib/ubiReport';
+import {
+  ACCEL_PENALTY_PER_100KM,
+  BRAKING_PENALTY_PER_100KM,
+  computeUBIReport,
+  CORNERING_PENALTY_PER_100KM,
+  DEFAULT_OPTIMAL_ANNUAL_KM,
+  SPEED_PENALTY_PER_100KM,
+  TIME_OF_DAY_NIGHT_MULTIPLIER,
+  UBI_CATEGORY_WEIGHTS,
+} from '@/lib/ubiReport';
 
 const trip = (distanceKm, overrides = {}) => ({
   status: 'completed',
@@ -20,10 +29,13 @@ describe('ubiReport', () => {
     vi.useRealTimers();
   });
 
-  it('handles empty trips without NaN', () => {
+  it('withholds score, grade, and tier when there are no completed trips', () => {
     const report = computeUBIReport([]);
-    expect(report.ubiScore).toBe(0);
-    expect(Number.isNaN(report.ubiScore)).toBe(false);
+    expect(report.insufficientData).toBe(true);
+    expect(report.ubiScore).toBeNull();
+    expect(report.ubiGrade).toBeNull();
+    expect(report.ubiTier).toBeNull();
+    expect(Object.values(report.categories).every((item) => item.score == null && item.grade == null)).toBe(true);
   });
 
   it('zero night trips gives timeOfDay score 100', () => {
@@ -45,6 +57,58 @@ describe('ubiReport', () => {
     expect(shortNightReport.categories.timeOfDay.score).toBeGreaterThan(longNightReport.categories.timeOfDay.score);
   });
 
+  it('applies the documented provisional night-driving multiplier and floor', () => {
+    expect(TIME_OF_DAY_NIGHT_MULTIPLIER).toBe(150);
+
+    const halfNightReport = computeUBIReport([
+      trip(30, { night_driving: true }),
+      trip(30),
+    ]);
+    const twoThirdsNightReport = computeUBIReport([
+      trip(20, { duration_seconds: 60 * 60, night_driving: true }),
+      trip(20, { duration_seconds: 60 * 60, night_driving: true }),
+      trip(20, { duration_seconds: 60 * 60 }),
+    ]);
+
+    expect(halfNightReport.categories.timeOfDay.score).toBe(25);
+    expect(twoThirdsNightReport.categories.timeOfDay.score).toBe(0);
+  });
+
+  it('documents the time-of-day cliff above 0.67 night exposure', () => {
+    const report = computeUBIReport([
+      trip(30, { duration_seconds: 68 * 60, night_driving: true }),
+      trip(30, { duration_seconds: 32 * 60 }),
+    ]);
+
+    expect(report.categories.timeOfDay.score).toBe(0);
+  });
+
+  it('applies named provisional event-rate deductions per 100 km', () => {
+    expect({
+      braking: BRAKING_PENALTY_PER_100KM,
+      acceleration: ACCEL_PENALTY_PER_100KM,
+      cornering: CORNERING_PENALTY_PER_100KM,
+      speed: SPEED_PENALTY_PER_100KM,
+    }).toEqual({
+      braking: 8,
+      acceleration: 8,
+      cornering: 6,
+      speed: 10,
+    });
+
+    const report = computeUBIReport([trip(100, {
+      harsh_brakes_count: 1,
+      rapid_accel_count: 1,
+      sharp_turns_count: 1,
+      speeding_events_count: 1,
+    })]);
+
+    expect(report.categories.hardBraking.score).toBe(92);
+    expect(report.categories.acceleration.score).toBe(92);
+    expect(report.categories.cornering.score).toBe(94);
+    expect(report.categories.speedCompliance.score).toBe(90);
+  });
+
   it('category weights sum to exactly 1.0', () => {
     const total = Object.values(UBI_CATEGORY_WEIGHTS).reduce((sum, value) => sum + value, 0);
     expect(total).toBeCloseTo(1, 5);
@@ -58,7 +122,9 @@ describe('ubiReport', () => {
     const report = computeUBIReport([trip(4, { harsh_brakes_count: 1 })]);
     expect(report.insufficientData).toBe(true);
     expect(report.ubiScore).toBeNull();
-    expect(report.ubiTier).toBe('Insufficient data');
+    expect(report.ubiGrade).toBeNull();
+    expect(report.ubiTier).toBeNull();
+    expect(Object.values(report.categories).every((item) => item.score == null && item.grade == null)).toBe(true);
   });
 
   it('totalKm sums all trip distances', () => {
@@ -113,5 +179,20 @@ describe('ubiReport', () => {
     expect(highMileageReport.categories.mileage.score).toBe(0);
     expect(moderateMileageReport.categories.mileage.score).toBeGreaterThan(lowMileageReport.categories.mileage.score);
     expect(moderateMileageReport.categories.mileage.score).toBeGreaterThan(highMileageReport.categories.mileage.score);
+  });
+
+  it('uses the default optimal annual mileage when the setting is NaN', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+
+    const report = computeUBIReport([
+      trip(DEFAULT_OPTIMAL_ANNUAL_KM, {
+        start_time: '2026-01-01T12:00:00.000Z',
+        end_time: '2026-01-01T12:30:00.000Z',
+      }),
+    ], { ubi_optimal_annual_km: Number.NaN });
+
+    expect(report.assumptions.optimalAnnualKm).toBe(DEFAULT_OPTIMAL_ANNUAL_KM);
+    expect(report.categories.mileage.score).toBe(100);
   });
 });

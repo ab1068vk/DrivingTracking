@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PHONE_USE_PENALTY_POINTS,
+  PHONE_USE_SEVERITY_THRESHOLDS,
   buildPhoneUseFromAndroidUsage,
   buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
@@ -16,6 +18,20 @@ const routePoint = (index, speed = 55) => ({
 });
 
 describe('Android phone usage access merge', () => {
+  it('exposes phone-use scoring heuristics for calibration review', () => {
+    expect(PHONE_USE_SEVERITY_THRESHOLDS).toMatchObject({
+      HIGH_DURATION_SECONDS: 90,
+      HIGH_SPEED_KMH: 100,
+      MEDIUM_DURATION_SECONDS: 20,
+      MEDIUM_SPEED_KMH: 50,
+    });
+    expect(PHONE_USE_PENALTY_POINTS).toMatchObject({
+      high: 20,
+      medium: 10,
+      low: 4,
+    });
+  });
+
   it('turns foreground app sessions into high-confidence phone-use windows', () => {
     const usage = buildPhoneUseFromAndroidUsage({
       usage_access_granted: true,
@@ -29,6 +45,8 @@ describe('Android phone usage access merge', () => {
 
     expect(usage.phone_use_window_count).toBe(1);
     expect(usage.phone_use_risk).toBe('medium');
+    expect(usage.phone_use_events[0].severity).toBe('medium');
+    expect(usage.phone_use_score).toBe(100 - PHONE_USE_PENALTY_POINTS.medium);
     expect(usage.phone_use_events[0].signals_triggered).toContain('android_usage_access');
     expect(usage.phone_use_events[0].lat).toBeDefined();
   });

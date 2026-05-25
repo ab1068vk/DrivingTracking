@@ -1,4 +1,5 @@
 import { clamp } from '@/lib/mathUtils';
+import { scoringValue } from '@/lib/scoringConstants';
 
 const startOfLocalDay = (date = new Date()) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 export const DAILY_FATIGUE_THRESHOLDS = Object.freeze({
@@ -6,10 +7,41 @@ export const DAILY_FATIGUE_THRESHOLDS = Object.freeze({
   HIGH: 5,
   CRITICAL: 7,
 });
-const DEFAULT_FATIGUE_ONSET_MINUTES = 90;
-const RECOVERY_BREAK_MINUTES = 30;
-const FULL_RECOVERY_BREAK_MINUTES = 180;
-const FATIGUE_SCORE_AT_ONSET = 5;
+export const DAILY_FATIGUE_DEFAULTS = Object.freeze({
+  /**
+   * Provisional early-warning threshold. A 90-minute simulator study observed
+   * time-on-task fatigue effects, but this score is not outcome-calibrated.
+   * @see https://doi.org/10.1016/j.physbeh.2008.02.015
+   */
+  FATIGUE_ONSET_MINUTES: scoringValue('DAILY_FATIGUE_ONSET_MINUTES'),
+  /**
+   * Provisional recovery threshold. A simulated driving study found a 30-minute
+   * rest reduced subjective fatigue but not performance; this model remains approximate.
+   * @see https://doi.org/10.1177/001872088502700207
+   */
+  RECOVERY_BREAK_MINUTES: scoringValue('DAILY_RECOVERY_BREAK_MINUTES'),
+  /**
+   * Product-model interpolation cap, not a researched full-recovery guarantee.
+   * It uses the cited rest-break evidence only as context for recovery modelling.
+   * @see https://doi.org/10.1177/001872088502700207
+   */
+  FULL_RECOVERY_BREAK_MINUTES: scoringValue('DAILY_FULL_RECOVERY_BREAK_MINUTES'),
+  /**
+   * Provisional heuristic: score assigned at the fatigue-onset minute threshold.
+   * Not calibrated to published driving-fatigue research or clinical guidance.
+   */
+  FATIGUE_SCORE_AT_ONSET: scoringValue('DAILY_FATIGUE_SCORE_AT_ONSET'),
+  /**
+   * Provisional UI guidance for suggested rest by fatigue level.
+   * Not calibrated to published driving-fatigue research or clinical guidance.
+   */
+  RECOMMENDED_BREAK_MINUTES: Object.freeze({
+    critical: 30,
+    high: 20,
+    moderate: 10,
+    low: 0,
+  }),
+});
 
 const getTimeMs = (value) => {
   const time = Date.parse(value);
@@ -22,8 +54,8 @@ const getActiveDrivingMinutes = (trip) => {
 };
 
 const applyBreakRecovery = (fatigueMinutes, breakMinutes) => {
-  if (!(breakMinutes > RECOVERY_BREAK_MINUTES)) return fatigueMinutes;
-  return fatigueMinutes * Math.max(0, 1 - breakMinutes / FULL_RECOVERY_BREAK_MINUTES);
+  if (!(breakMinutes > DAILY_FATIGUE_DEFAULTS.RECOVERY_BREAK_MINUTES)) return fatigueMinutes;
+  return fatigueMinutes * Math.max(0, 1 - breakMinutes / DAILY_FATIGUE_DEFAULTS.FULL_RECOVERY_BREAK_MINUTES);
 };
 
 /**
@@ -50,9 +82,17 @@ export function getTodayTrips(trips = []) {
  * @returns {object} Fatigue totals, level, break recommendation, and warning state.
  * @example computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes)
  */
-export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnsetMinutes = DEFAULT_FATIGUE_ONSET_MINUTES) {
+export function computeDailyFatigue(
+  todayTrips = [],
+  settings = {},
+  fatigueOnsetMinutes = DAILY_FATIGUE_DEFAULTS.FATIGUE_ONSET_MINUTES
+) {
   const trips = [...(todayTrips || [])]
-    .filter((trip) => trip?.status === 'completed')
+    .filter((trip) => (
+      trip?.status === 'completed' &&
+      getTimeMs(trip.start_time) != null &&
+      getTimeMs(trip.end_time) != null
+    ))
     .sort((a, b) => (getTimeMs(a.start_time) ?? 0) - (getTimeMs(b.start_time) ?? 0));
   const now = settings?.now instanceof Date
     ? settings.now
@@ -61,7 +101,7 @@ export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnset
       : new Date();
   const onsetMinutes = Number.isFinite(Number(fatigueOnsetMinutes)) && Number(fatigueOnsetMinutes) > 0
     ? Number(fatigueOnsetMinutes)
-    : DEFAULT_FATIGUE_ONSET_MINUTES;
+    : DAILY_FATIGUE_DEFAULTS.FATIGUE_ONSET_MINUTES;
   const totalDrivingMinutes = Math.max(0, trips.reduce((sum, trip) => sum + getActiveDrivingMinutes(trip), 0));
   const tripCount = trips.length;
 
@@ -92,7 +132,7 @@ export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnset
 
   const fatigueRatio = clamp(accumulatedFatigueMinutes / onsetMinutes, 0, 2);
   const cumulativeFatigueScore = clamp(
-    Math.round((fatigueRatio * FATIGUE_SCORE_AT_ONSET) * 10) / 10,
+    Math.round((fatigueRatio * DAILY_FATIGUE_DEFAULTS.FATIGUE_SCORE_AT_ONSET) * 10) / 10,
     0,
     10
   );
@@ -103,13 +143,7 @@ export function computeDailyFatigue(todayTrips = [], settings = {}, fatigueOnset
       : cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.MODERATE
         ? 'moderate'
         : 'low';
-  const recommendedBreakMinutes = fatigueLevel === 'critical'
-    ? 30
-    : fatigueLevel === 'high'
-      ? 20
-      : fatigueLevel === 'moderate'
-        ? 10
-        : 0;
+  const recommendedBreakMinutes = DAILY_FATIGUE_DEFAULTS.RECOMMENDED_BREAK_MINUTES[fatigueLevel] ?? 0;
 
   return {
     totalDrivingMinutes: Math.round(totalDrivingMinutes),

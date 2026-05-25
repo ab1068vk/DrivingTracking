@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CLOSE_PROXIMITY_DECAY_BASE,
   DEFAULT_THRESHOLDS,
+  ECO_SPEED_STABILITY_CV_MULTIPLIER,
+  EVENT_TYPES,
+  HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT,
+  STOP_START_NORMALISATION_WINDOW_KM,
+  SVI_DEFAULTS,
   calculateAcceleration,
   calculateAggressiveDrivingScore,
   calculateBearing,
@@ -11,9 +18,13 @@ import {
   calculateNightPenalty,
   calculateRouteSummary,
   calculateSpeedKmh,
+  calculateSpeedVariabilityIndex,
+  calculateTireWearUnits,
   calculateTripScores,
   calculateTripStats,
   classifyRoadType,
+  cleanRoutePoints,
+  detectHeadingDriftBeta,
   detectDrivingEvents,
   extractBrakingSequences,
   headingDiff,
@@ -22,6 +33,7 @@ import {
   trimParkedTail,
   validateCandidateTrip,
 } from '@/lib/tripEngine';
+import { FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
 
 const at = (seconds) => new Date(Date.UTC(2026, 0, 1, 12, 0, seconds)).toISOString();
 const point = (index, patch = {}) => ({
@@ -33,6 +45,12 @@ const point = (index, patch = {}) => ({
   timestamp: at(index * 10),
   ...patch,
 });
+
+const headingDriftPointsAtHour = (hour) => Array.from({ length: 31 }, (_, index) => point(index, {
+  speed_kmh: 90,
+  heading: index % 2 === 0 ? -12 : 12,
+  timestamp: new Date(2026, 0, 1, hour, 0, index * 10).toISOString(),
+}));
 
 describe('trip engine calculation coverage', () => {
   it('keeps base geometry calculations finite and direction-aware', () => {
@@ -103,6 +121,45 @@ describe('trip engine calculation coverage', () => {
     );
   });
 
+  it('does not invent an eco score when a trip has no route points', () => {
+    expect(calculateEcoDrivingScore([], {}, DEFAULT_THRESHOLDS).eco_driving_score).toBeNull();
+  });
+
+  it('maps speed coefficient of variation to stable eco speed-stability scores', () => {
+    const steady = [60, 60, 60, 60].map((speed, index) => point(index, { speed_kmh: speed }));
+    const uneven = [30, 30, 90, 90].map((speed, index) => point(index, { speed_kmh: speed }));
+    const expectedHalfCvScore = Math.round(100 - 0.5 * ECO_SPEED_STABILITY_CV_MULTIPLIER);
+
+    expect(calculateEcoDrivingScore(steady, { duration_seconds: 60 }, DEFAULT_THRESHOLDS).speed_stability).toBe(100);
+    expect(calculateEcoDrivingScore(uneven, { duration_seconds: 60 }, DEFAULT_THRESHOLDS).speed_stability).toBe(expectedHalfCvScore);
+  });
+
+  it('maps SVI stratum standard deviation to city and highway scores', () => {
+    const city = [40, 40, 40, 40, 40, 60, 60, 60, 60, 60]
+      .map((speed, index) => point(index, { speed_kmh: speed }));
+    const highway = [90, 90, 90, 90, 90, 110, 110, 110, 110, 110]
+      .map((speed, index) => point(index, { speed_kmh: speed }));
+
+    expect(calculateSpeedVariabilityIndex(city, DEFAULT_THRESHOLDS).svi_score).toBe(
+      Math.round(100 - 10 * SVI_DEFAULTS.CITY_MULTIPLIER)
+    );
+    expect(calculateSpeedVariabilityIndex(highway, DEFAULT_THRESHOLDS).svi_score).toBe(
+      Math.round(100 - 10 * SVI_DEFAULTS.HIGHWAY_MULTIPLIER)
+    );
+  });
+
+  it('applies the documented circadian multiplier to heading drift beta contribution', () => {
+    const daytime = detectHeadingDriftBeta(headingDriftPointsAtHour(12), 300, DEFAULT_THRESHOLDS);
+    const circadian = detectHeadingDriftBeta(headingDriftPointsAtHour(3), 300, DEFAULT_THRESHOLDS);
+
+    expect(daytime.heading_drift_beta_window_count).toBe(1);
+    expect(circadian.heading_drift_beta_window_count).toBe(1);
+    expect(circadian.heading_drift_beta_weighted_contribution).toBeCloseTo(
+      daytime.heading_drift_beta_weighted_contribution * HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
+      5
+    );
+  });
+
   it('classifies route types and speed zones from observed speeds', () => {
     const highway = Array.from({ length: 20 }, (_, index) => point(index, { speed_kmh: 104 }));
     const residential = Array.from({ length: 20 }, (_, index) => point(index, { speed_kmh: 18 }));
@@ -114,10 +171,11 @@ describe('trip engine calculation coverage', () => {
   });
 
   it('combines stats, events, and phone-use evidence into finite trip scores', () => {
-    const route = Array.from({ length: 20 }, (_, index) => point(index, { speed_kmh: index % 5 === 0 ? 95 : 52 }));
+    const route = Array.from({ length: 40 }, (_, index) => point(index, { speed_kmh: index % 5 === 0 ? 95 : 52 }));
     const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp);
     const events = detectDrivingEvents(route, DEFAULT_THRESHOLDS).events;
-    const scores = calculateTripScores(route, stats, events, DEFAULT_THRESHOLDS, stats.duration_seconds, {
+    const scores = calculateTripScores(events, stats, route, DEFAULT_THRESHOLDS, stats.duration_seconds, {
+      phone_use_score_available: true,
       phone_use_score: 55,
       phone_use_risk: 'medium',
       phone_use_total_seconds: 30,
@@ -130,8 +188,149 @@ describe('trip engine calculation coverage', () => {
     expect(defensive == null || defensive <= 100).toBe(true);
   });
 
+  it('keeps every emitted numeric score finite for a 0.01 km trip', () => {
+    const scores = calculateTripScores(
+      [],
+      { distance_km: 0.01, duration_seconds: 1, fatigue_risk_score: 0 },
+      [],
+      DEFAULT_THRESHOLDS,
+      1
+    );
+    const checkScoreFields = (object) => Object.entries(object).forEach(([key, value]) => {
+      if (/score/i.test(key) && typeof value === 'number') {
+        expect(Number.isFinite(value), key).toBe(true);
+      }
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        checkScoreFields(value);
+      }
+    });
+
+    checkScoreFields(scores);
+  });
+
+  it('floors Safety at zero at the documented 2.5 penalty-points-per-km threshold', () => {
+    const route = Array.from({ length: 20 }, (_, index) => point(0, {
+      timestamp: new Date(Date.UTC(2026, 0, 1, 18, 0, index * 10)).toISOString(),
+      speed_kmh: 0,
+    }));
+    const scores = calculateTripScores(
+      [{ type: EVENT_TYPES.ERRATIC_SPEED, severity: 'high' }],
+      { distance_km: 4, duration_seconds: 200, fatigue_risk_score: 0 },
+      route,
+      { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false },
+      200,
+      {},
+      { includeRoadTypeSegments: false }
+    );
+
+    expect(PENALTY_SCALE_FACTOR).toBe(40);
+    expect(scores.score_safety).toBe(0);
+  });
+
+  it('adds exactly the documented maximum fatigue penalty to Safety', () => {
+    const route = Array.from({ length: 20 }, (_, index) => point(0, {
+      timestamp: new Date(Date.UTC(2026, 0, 1, 18, 0, index * 10)).toISOString(),
+      speed_kmh: 0,
+    }));
+    const stats = { distance_km: 12, duration_seconds: 200, fatigue_risk_score: 100 };
+    const scores = calculateTripScores(
+      [],
+      stats,
+      route,
+      { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false },
+      stats.duration_seconds,
+      {},
+      { includeRoadTypeSegments: false }
+    );
+    const fatiguePenalty = FATIGUE_SAFETY_PENALTY_SCALE * stats.fatigue_risk_score;
+    const expectedSafety = 100 - Math.round((fatiguePenalty / stats.distance_km) * PENALTY_SCALE_FACTOR);
+
+    expect(fatiguePenalty).toBe(12);
+    expect(scores.score_safety).toBe(expectedSafety);
+  });
+
+  it('uses the missing-speed tire-wear default for an explicitly null event speed', () => {
+    expect(calculateTireWearUnits([
+      { type: EVENT_TYPES.HARSH_BRAKE, severity: 'medium', speed_kmh: null },
+    ])).toEqual({
+      trip_tire_wear_units: 2.5,
+      trip_tire_wear_has_missing_speed_data: true,
+      trip_tire_wear_missing_speed_event_count: 1,
+    });
+  });
+
+  it('filters duplicate timestamps and extreme reported-speed spikes from cleaned GPS samples', () => {
+    const route = [
+      point(0, { speed_kmh: 40 }),
+      point(1, { timestamp: at(0), speed_kmh: 40 }),
+      point(2, { speed_kmh: 320 }),
+      point(3, { speed_kmh: 42 }),
+    ];
+    const cleaned = cleanRoutePoints(route, DEFAULT_THRESHOLDS);
+
+    expect(cleaned).toHaveLength(2);
+    expect(cleaned.some((sample) => sample.speed_kmh > 300)).toBe(false);
+    expect(detectDrivingEvents(cleaned, DEFAULT_THRESHOLDS).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+  });
+
+  it('keeps confirmed phone-use distraction scoring independent of trip distance', () => {
+    const route = Array.from({ length: 20 }, (_, index) => point(index, { speed_kmh: 52 }));
+    const phoneUse = {
+      phone_use_score_available: true,
+      phone_use_score: 70,
+      phone_use_risk: 'medium',
+      phone_use_pct_of_trip: 10,
+    };
+
+    const shortTrip = calculateTripScores([], { distance_km: 5, duration_seconds: 600 }, route, DEFAULT_THRESHOLDS, 600, phoneUse);
+    const longTrip = calculateTripScores([], { distance_km: 50, duration_seconds: 6000 }, route, DEFAULT_THRESHOLDS, 6000, phoneUse);
+
+    expect(shortTrip.distraction_score).toBe(65);
+    expect(longTrip.distraction_score).toBe(shortTrip.distraction_score);
+  });
+
+  it('requires enough stop-start samples before defensive scoring uses that component', () => {
+    expect(STOP_START_NORMALISATION_WINDOW_KM).toBe(5);
+
+    const sharedScores = {
+      total_stops_detected: 1,
+      smooth_braking_ratio: 100,
+      intersection_score: 100,
+      svi_score: 100,
+      stop_start_pattern_score: 0,
+    };
+
+    const sparse = calculateDefensiveDrivingScore({
+      ...sharedScores,
+      stop_start_pattern_sample_count: STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT - 1,
+    });
+    const sufficient = calculateDefensiveDrivingScore({
+      ...sharedScores,
+      stop_start_pattern_sample_count: STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT,
+    });
+
+    expect(sparse.defensive_driving_score).toBe(100);
+    expect(sufficient.defensive_driving_score).toBe(70);
+  });
+
+  it('omits close-proximity score when no proximity events are detected', () => {
+    const route = Array.from({ length: 20 }, (_, index) => point(index, { speed_kmh: 52 }));
+    const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp);
+    const noEvents = calculateTripScores([], stats, route, DEFAULT_THRESHOLDS, stats.duration_seconds);
+    const proximityEvents = calculateTripScores([
+      { type: EVENT_TYPES.CLOSE_PROXIMITY, severity: 'medium' },
+      { type: EVENT_TYPES.NEAR_MISS, severity: 'medium' },
+    ], stats, route, DEFAULT_THRESHOLDS, stats.duration_seconds);
+
+    expect(noEvents.close_proximity_count).toBe(0);
+    expect(noEvents.close_proximity_score).toBeNull();
+    expect(proximityEvents.stop_start_pattern_sample_count).toBe(0);
+    expect(proximityEvents.close_proximity_count).toBe(2);
+    expect(proximityEvents.close_proximity_score).toBe(Math.round(100 * (CLOSE_PROXIMITY_DECAY_BASE ** 2)));
+  });
+
   it('summarizes full routes and applies night penalties to overnight samples', () => {
-    const route = Array.from({ length: 14 }, (_, index) => point(index, {
+    const route = Array.from({ length: 40 }, (_, index) => point(index, {
       timestamp: new Date(Date.UTC(2026, 0, 2, 3, index, 0)).toISOString(),
       speed_kmh: 50,
     }));
@@ -141,8 +340,8 @@ describe('trip engine calculation coverage', () => {
     expect(summary.scores.score_overall).toBeGreaterThan(0);
     expect(calculateNightPenalty(route, DEFAULT_THRESHOLDS)).toBeGreaterThan(0);
     expect(calculateJerkScore(route, DEFAULT_THRESHOLDS)).toMatchObject({
-      jerk_score: null,
-      jerk_score_confidence: 'insufficient_data',
+      jerk_score: 100,
+      jerk_score_confidence: 'low',
     });
   });
 

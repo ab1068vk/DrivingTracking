@@ -15,6 +15,8 @@ import {
   calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
+  getTripComponentScore,
+  getScoreProvenanceStatus,
   formatDistance, formatDuration, formatSpeed,
   isNearRecentParkedLocation,
   trimParkedTail,
@@ -53,6 +55,7 @@ import {
   mergePhoneUseSignals,
 } from '@/lib/phoneUsageAccess';
 import ScoreRing from '@/components/ScoreRing';
+import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import TripMap from '@/components/TripMap';
@@ -94,9 +97,13 @@ import {
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
+import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 const AUTO_START_TRIGGER_SECONDS = 2;
+const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
+const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
+const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
 
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
@@ -226,6 +233,14 @@ export default function Dashboard() {
   });
 
   const completedTrips = recentTrips.filter(t => t.status === 'completed');
+  const scoreModelMismatchTrips = useMemo(() => {
+    const thresholds = buildDrivingThresholds(settings);
+    return completedTrips.filter((trip) => getScoreProvenanceStatus(trip, thresholds).needsRescore);
+  }, [completedTrips, settings]);
+  const unavailableScoreTrips = useMemo(
+    () => completedTrips.filter((trip) => getTripComponentScore(trip, 'overall').value == null),
+    [completedTrips]
+  );
   const habitProfile = useMemo(
     () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
     [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
@@ -1142,14 +1157,22 @@ export default function Dashboard() {
   const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
   const weekTrips = completedTrips.filter(t => new Date(t.start_time) >= weekAgo);
   const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
-  const totalScoredKm = completedTrips.reduce((s, t) => s + (Number(t.distance_km) || 0), 0);
-  const avgScore = completedTrips.length
-    ? Math.round(totalScoredKm > 0
-      ? completedTrips.reduce((s, t) => s + (t.score_overall || 0) * (Number(t.distance_km) || 0), 0) / totalScoredKm
-      : 0)
-    : 0;
+  const scoredTrips = completedTrips.slice(0, 10)
+    .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
+    .filter(({ component }) => component.value != null);
+  const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
+  const avgScore = scoredTrips.length && totalScoredKm > 0
+    ? Math.round(scoredTrips.reduce((sum, { trip, component }) => sum + component.value * (Number(trip.distance_km) || 0), 0) / totalScoredKm)
+    : null;
+  const avgScoreEvidence = scoredTrips.length === 0
+    ? 'unavailable'
+    : scoredTrips.some(({ component }) => component.evidence === 'low')
+      ? 'low'
+      : scoredTrips.some(({ component }) => component.evidence === 'developing')
+        ? 'developing'
+        : 'high';
   const latestTrip = completedTrips[0];
-  const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: t.score_overall || 0 }));
+  const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value }));
   const tips = buildScoreTips(completedTrips);
   const weeklyGoals = calculateWeeklyDrivingGoals(completedTrips, settings);
   const brakingImprovement = calculateRecentBrakingImprovement(completedTrips);
@@ -1170,8 +1193,9 @@ export default function Dashboard() {
     const { events: lastEvents, phoneUse: lastPhoneUse } = detectDrivingEvents(lastPoints);
     const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
     const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
-    return calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, lastPhoneUse).score_overall <
-      calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstPhoneUse).score_overall - 15;
+    const lastScore = calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, lastPhoneUse).component_scores.overall.value;
+    const firstScore = calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstPhoneUse).component_scores.overall.value;
+    return lastScore != null && firstScore != null && lastScore < firstScore - 15;
   })();
 
   const units = settings.units || 'metric';
@@ -1397,6 +1421,20 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {(scoreModelMismatchTrips.length > 0 || unavailableScoreTrips.length > 0) && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <div>
+            <div className="text-sm font-semibold">Trip scores need review</div>
+            <div className="mt-0.5 text-xs">
+              {scoreModelMismatchTrips.length > 0
+                ? `${scoreModelMismatchTrips.length} completed trip${scoreModelMismatchTrips.length === 1 ? '' : 's'} used an older scoring model. Open Settings to re-score when you are ready.`
+                : `${unavailableScoreTrips.length} trip${unavailableScoreTrips.length === 1 ? ' has' : 's have'} unavailable scores. Re-score from Settings to update them.`}
+            </div>
+          </div>
+        </div>
+      )}
 
       {(brakingImprovement || parkingReminder) && (
         <div className="grid gap-3 md:grid-cols-2">
@@ -1666,8 +1704,8 @@ export default function Dashboard() {
                 {baseline.baseline_avg == null
                   ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
                   : baseline.delta == null
-                    ? `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; record a trip this week for a comparison.`
-                    : `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; this week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`}
+                    ? `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). Record a trip this week for a comparison.`
+                    : `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`}
               </p>
             </div>
             <div className={`text-sm font-bold capitalize ${
@@ -1683,7 +1721,7 @@ export default function Dashboard() {
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}`}</div>
-              <div className="text-xs text-muted-foreground">baseline</div>
+              <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.percentile ?? 0}%</div>
@@ -1749,7 +1787,7 @@ export default function Dashboard() {
           <div className="bg-card border border-border rounded-2xl p-4">
             <AlertTriangle className={`w-5 h-5 mb-2 ${fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500'}`} />
             <div className="font-grotesk font-bold text-2xl capitalize">{fatigueRisk.level}</div>
-            <div className="text-xs text-muted-foreground">{fatigueRisk.long_trip_count} long drives this week</div>
+            <div className="text-xs text-muted-foreground">estimated fatigue risk (driving-time proxy) - {fatigueRisk.long_trip_count} long drives this week</div>
           </div>
         </div>
       )}
@@ -1795,11 +1833,14 @@ export default function Dashboard() {
       <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="font-semibold text-base">Driving Score</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-base">Driving Score</h2>
+              {OVERALL_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
+            </div>
             <p className="text-muted-foreground text-xs mt-0.5">Last {Math.min(10, completedTrips.length)} trips</p>
           </div>
-          {avgScore > 0 && (
-            <ScoreRing score={avgScore} size={72} strokeWidth={6} sublabel="avg" />
+          {completedTrips.length > 0 && (
+            <ScoreRing score={avgScore} evidence={avgScoreEvidence} size={72} strokeWidth={6} sublabel="avg" />
           )}
         </div>
 
@@ -1928,6 +1969,7 @@ function DashboardRiskPanel({
     nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
     predictiveRouteRisk,
   }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
+  const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
 
   return (
     <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
@@ -1939,14 +1981,19 @@ function DashboardRiskPanel({
               ? '#22c55e'
               : preTripRisk.riskLevel === 'moderate'
                 ? '#eab308'
-                : '#ef4444',
+                : preTripRisk.riskLevel === 'high'
+                  ? '#ef4444'
+                  : 'hsl(var(--muted-foreground))',
           }}
         >
-          {preTripRisk.readinessScore}
+          {preTripRisk.readinessScore ?? '-'}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="min-w-0 break-words font-semibold">Trip readiness</h2>
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="min-w-0 break-words font-semibold">Trip readiness</h2>
+              {READINESS_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
+            </span>
             <button
               onClick={onDismiss}
               className="flex-shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-secondary"
@@ -1956,7 +2003,10 @@ function DashboardRiskPanel({
             </button>
           </div>
           <div className="break-words text-sm font-medium capitalize">
-            {preTripRisk.readinessScore}/100 - {preTripRisk.riskLevel} risk
+            {preTripRisk.readinessScore == null ? 'Unavailable readiness' : `${preTripRisk.readinessScore}/100 - ${preTripRisk.riskLevel} risk`}
+          </div>
+          <div className="mt-0.5 break-words text-xs capitalize text-muted-foreground">
+            {readinessEvidence} evidence
           </div>
           {preTripRisk.dataQuality?.personalised === false && (
             <div className="mt-1 break-words text-xs text-muted-foreground">
@@ -1994,23 +2044,51 @@ function DashboardRiskPanel({
             </div>
           )}
           {settings.predictive_route_risk_enabled !== false && (
-            <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 break-words font-semibold">Predictive route risk</span>
-                <span className={`flex-shrink-0 font-bold capitalize ${
-                  predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
-                }`}>
-                  {predictiveRouteRisk.riskScore}/100
-                </span>
+            predictiveRouteRisk.insufficientHistory ? (
+              <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
+                <div className="font-semibold">Predictive route risk</div>
+                <div className="mt-1 font-medium text-muted-foreground">Not enough driving history</div>
+                <p className="mt-1 text-muted-foreground">
+                  Complete a scored trip with recorded distance before a route-risk estimate is shown.
+                </p>
               </div>
-              <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
-              <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
-              {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
-                <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
-                  {predictiveRouteRisk.nearbyDangerZoneCount} nearby hotspot{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history
+            ) : (
+              <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 flex-wrap items-center gap-2 break-words font-semibold">
+                    Estimated route risk
+                    {ROUTE_RISK_IS_APPROXIMATE && <CalibrationStatusTag />}
+                  </span>
+                  <span className={`flex-shrink-0 font-bold capitalize ${
+                    predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
+                  }`}>
+                    {predictiveRouteRisk.riskScore}/100
+                  </span>
                 </div>
-              )}
-            </div>
+                <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
+                <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
+                {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
+                  <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
+                    {predictiveRouteRisk.nearbyDangerZoneCount} nearby hotspot{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history
+                  </div>
+                )}
+                <div className="mt-3 border-t border-border pt-2" aria-label="Estimated route risk component breakdown">
+                  <div className="mb-2 font-semibold text-muted-foreground">Signal contributions</div>
+                  {predictiveRouteRisk.componentBreakdown.map((component) => (
+                    <div key={component.key} className="mb-1.5 flex items-start justify-between gap-3 last:mb-0">
+                      <div className="min-w-0">
+                        <div className="break-words font-medium">{component.label}</div>
+                        <div className="break-words text-muted-foreground">{component.detail}</div>
+                      </div>
+                      <span className="flex-shrink-0 font-semibold">+{component.contribution}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 border-t border-border pt-2 text-muted-foreground">
+                  Internal estimate only. Signal thresholds are not validated against collision or casualty outcomes.
+                </p>
+              </div>
+            )
           )}
         </div>
       </div>

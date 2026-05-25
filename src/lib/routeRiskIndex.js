@@ -1,15 +1,24 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
+import { scoringValue } from '@/lib/scoringConstants';
 
 export const GRID_PRECISION = 3;
 export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
 export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
+/**
+ * Internal segment-risk weighting policy. These weights identify repeated
+ * driving-event patterns; they are not calibrated to collision or casualty data.
+ */
+export const ROUTE_RISK_CONSTANTS = Object.freeze({
+  ROUTE_RISK_EVENT_WEIGHT: scoringValue('ROUTE_RISK_EVENT_WEIGHT'),
+  ROUTE_RISK_HARSH_WEIGHT: scoringValue('ROUTE_RISK_HARSH_WEIGHT'),
+});
 const MAX_SERIALIZED_LENGTH = 2_000_000;
 const MAX_STORED_SEGMENTS = 5000;
 const HARSH_EVENT_TYPES = new Set(['harsh_brake', 'near_miss', 'close_proximity']);
-const SPEED_RISK_START_KMH = 100;
-const SPEED_RISK_FULL_KMH = 160;
-const SPEED_RISK_MAX_POINTS = 15;
+const SPEED_RISK_START_KMH = scoringValue('ROUTE_RISK_SPEED_START_KMH');
+const SPEED_RISK_FULL_KMH = scoringValue('ROUTE_RISK_SPEED_FULL_KMH');
+const SPEED_RISK_MAX_POINTS = scoringValue('ROUTE_RISK_SPEED_MAX_POINTS');
 const SNAP_BUCKET_DEGREES = ROUTE_RISK_SNAP_DISTANCE_M / 80000;
 
 const roundCoord = (value) => Number(value).toFixed(GRID_PRECISION);
@@ -103,8 +112,8 @@ export function buildRouteRiskIndex(trips = []) {
     const eventRate = item.totalEvents / Math.max(1, item.tripCount);
     const harshRate = item.harshCount / Math.max(1, item.tripCount);
     item.riskScore = Math.min(100, Math.round(
-      eventRate * 20 +
-      harshRate * 40 +
+      eventRate * ROUTE_RISK_CONSTANTS.ROUTE_RISK_EVENT_WEIGHT +
+      harshRate * ROUTE_RISK_CONSTANTS.ROUTE_RISK_HARSH_WEIGHT +
       speedRiskBonus(item.avgSpeed)
     ));
     item.riskLevel = item.riskScore >= 60 ? 'high' : item.riskScore >= 30 ? 'moderate' : 'low';

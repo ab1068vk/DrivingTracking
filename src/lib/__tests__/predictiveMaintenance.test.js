@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { calculateAverageEngineStressScore, calculatePredictiveMaintenance } from '@/lib/tripInsights';
+import {
+  calculateAverageEngineStressScore,
+  calculatePredictiveMaintenance,
+  calculateTireWearUnits,
+  MAINTENANCE_CALIBRATION_REGISTRY,
+  WEAR_KM_PER_STRESS_UNIT,
+} from '@/lib/tripInsights';
 
 const vehicle = {
   odometer_km: 10000,
@@ -19,6 +25,16 @@ const trip = (index, overrides = {}) => ({
 });
 
 describe('predictive maintenance', () => {
+  it('exposes wear conversion calibration status for maintenance review', () => {
+    expect(WEAR_KM_PER_STRESS_UNIT).toBe(8);
+    expect(MAINTENANCE_CALIBRATION_REGISTRY.wearKmPerStressUnit).toMatchObject({
+      value: WEAR_KM_PER_STRESS_UNIT,
+      unit: 'km_per_stress_unit',
+      calibrationStatus: 'provisional',
+    });
+    expect(MAINTENANCE_CALIBRATION_REGISTRY.wearKmPerStressUnit.calibrationBasis).toContain('Not calibrated');
+  });
+
   it('handles empty trips', () => {
     expect(calculatePredictiveMaintenance([], vehicle, {}).stress_index).toBe(0);
   });
@@ -44,6 +60,31 @@ describe('predictive maintenance', () => {
       trip_tire_wear_units: 12,
     })], { ...vehicle, odometer_km: 18000 }, {});
     expect(result.oil_change.status).toBe('due');
+  });
+
+  it('preserves neutral tire wear units but exposes missing event-speed evidence', () => {
+    const wear = calculateTireWearUnits([
+      { type: 'harsh_brake', severity: 'medium' },
+      { type: 'sharp_turn', severity: 'low', speed_kmh: 40 },
+    ]);
+    const result = calculatePredictiveMaintenance([trip(0, wear)], vehicle, {});
+
+    expect(wear).toEqual({
+      trip_tire_wear_units: 3.5,
+      trip_tire_wear_has_missing_speed_data: true,
+      trip_tire_wear_missing_speed_event_count: 1,
+    });
+    expect(result.has_missing_speed_data).toBe(true);
+    expect(result.missing_speed_event_count).toBe(1);
+  });
+
+  it('detects missing tire-wear speed evidence from legacy stored events', () => {
+    const result = calculatePredictiveMaintenance([trip(0, {
+      driving_events: [{ type: 'harsh_brake', severity: 'low' }],
+    })], vehicle, {});
+
+    expect(result.has_missing_speed_data).toBe(true);
+    expect(result.missing_speed_event_count).toBe(1);
   });
 
   it('keeps same-rate stress stable when trip count doubles', () => {

@@ -1,21 +1,34 @@
 import { clamp } from '@/lib/mathUtils';
+import { scoringValue } from '@/lib/scoringConstants';
 
 const MILEAGE_SCORE_WINDOW_DAYS = 365;
 const MILEAGE_SCORE_WINDOW_MS = MILEAGE_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-export const DEFAULT_OPTIMAL_ANNUAL_KM = 10000;
-export const DEFAULT_MILEAGE_SCORE_SPREAD_KM = 8000;
-export const MIN_UBI_REPORT_DISTANCE_KM = 50;
+export const DEFAULT_OPTIMAL_ANNUAL_KM = scoringValue('UBI_OPTIMAL_ANNUAL_KM');
+export const DEFAULT_MILEAGE_SCORE_SPREAD_KM = scoringValue('UBI_MILEAGE_SPREAD_KM');
+export const MIN_UBI_REPORT_DISTANCE_KM = scoringValue('UBI_MIN_REPORT_DISTANCE_KM');
+
+/**
+ * Approximate UBI time-of-day penalty: this is not calibrated to an insurer
+ * or a published geographic risk model. At 150, two-thirds night exposure
+ * reaches the category score floor; revise only with documented evidence.
+ */
+export const TIME_OF_DAY_NIGHT_MULTIPLIER = scoringValue('UBI_NIGHT_MULTIPLIER');
+
+/**
+ * Internal UBI-style rate deductions per event/100 km. These constants are
+ * approximations for personal feedback, not insurer-validated safe event rates.
+ */
+export const BRAKING_PENALTY_PER_100KM = scoringValue('UBI_BRAKING_PENALTY_PER_100KM');
+export const ACCEL_PENALTY_PER_100KM = scoringValue('UBI_ACCEL_PENALTY_PER_100KM');
+export const CORNERING_PENALTY_PER_100KM = scoringValue('UBI_CORNERING_PENALTY_PER_100KM');
+export const SPEED_PENALTY_PER_100KM = scoringValue('UBI_SPEED_PENALTY_PER_100KM');
 
 export const UBI_CATEGORY_WEIGHTS = {
-  mileage: 0.15,
-  timeOfDay: 0.20,
-  hardBraking: 0.30,
-  acceleration: 0.20,
-  cornering: 0.05,
-  speedCompliance: 0.10,
+  ...scoringValue('UBI_CATEGORY_WEIGHTS'),
 };
 
 export function ubiGrade(score) {
+  if (score == null || score === '' || !Number.isFinite(Number(score))) return null;
   if (score >= 90) return 'A+';
   if (score >= 80) return 'A';
   if (score >= 70) return 'B';
@@ -26,6 +39,13 @@ export function ubiGrade(score) {
 const category = (score, label, value) => ({
   score,
   grade: ubiGrade(score),
+  label,
+  value,
+});
+
+const unavailableCategory = (label, value) => ({
+  score: null,
+  grade: null,
   label,
   value,
 });
@@ -45,19 +65,20 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
       tripCount: 0,
       totalKm: 0,
       totalDrivingMinutes: 0,
-      ubiScore: 0,
-      ubiGrade: 'D',
-      ubiTier: 'Non-preferred',
+      ubiScore: null,
+      ubiGrade: null,
+      ubiTier: null,
       insufficientData: true,
+      minimumDistanceKm: MIN_UBI_REPORT_DISTANCE_KM,
       categories: {
-        mileage: category(0, 'Total mileage', '0.0 km'),
-        timeOfDay: category(0, 'Time of day', '0% night'),
-        hardBraking: category(0, 'Hard braking', '0.0/100 km'),
-        acceleration: category(0, 'Rapid acceleration', '0.0/100 km'),
-        cornering: category(0, 'Cornering', '0.0/100 km'),
-        speedCompliance: category(0, 'Speed compliance', '0.0/100 km'),
+        mileage: unavailableCategory('Total mileage', '0.0 km'),
+        timeOfDay: unavailableCategory('Time of day', 'Insufficient data'),
+        hardBraking: unavailableCategory('Hard braking', 'Insufficient data'),
+        acceleration: unavailableCategory('Rapid acceleration', 'Insufficient data'),
+        cornering: unavailableCategory('Cornering', 'Insufficient data'),
+        speedCompliance: unavailableCategory('Speed compliance', 'Insufficient data'),
       },
-      disclaimer: 'This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating.',
+      disclaimer: `Complete at least ${MIN_UBI_REPORT_DISTANCE_KM} km before generating a UBI-style score.`,
     };
   }
 
@@ -70,17 +91,17 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
       totalKm: Math.round(totalKm * 10) / 10,
       totalDrivingMinutes: Math.round(totalDrivingMinutes),
       ubiScore: null,
-      ubiGrade: 'N/A',
-      ubiTier: 'Insufficient data',
+      ubiGrade: null,
+      ubiTier: null,
       insufficientData: true,
       minimumDistanceKm: MIN_UBI_REPORT_DISTANCE_KM,
       categories: {
-        mileage: category(0, 'Total mileage', `${totalKm.toFixed(1)} km`),
-        timeOfDay: category(0, 'Time of day', 'Insufficient data'),
-        hardBraking: category(0, 'Hard braking', 'Insufficient data'),
-        acceleration: category(0, 'Rapid acceleration', 'Insufficient data'),
-        cornering: category(0, 'Cornering', 'Insufficient data'),
-        speedCompliance: category(0, 'Speed compliance', 'Insufficient data'),
+        mileage: unavailableCategory('Total mileage', `${totalKm.toFixed(1)} km`),
+        timeOfDay: unavailableCategory('Time of day', 'Insufficient data'),
+        hardBraking: unavailableCategory('Hard braking', 'Insufficient data'),
+        acceleration: unavailableCategory('Rapid acceleration', 'Insufficient data'),
+        cornering: unavailableCategory('Cornering', 'Insufficient data'),
+        speedCompliance: unavailableCategory('Speed compliance', 'Insufficient data'),
       },
       disclaimer: `Complete at least ${MIN_UBI_REPORT_DISTANCE_KM} km before generating a UBI-style score.`,
     };
@@ -119,11 +140,11 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
   const mileageScore = clamp(Math.round(
     100 * Math.exp(-0.5 * ((mileageWindowKm - optimalAnnualKm) / mileageScoreSpreadKm) ** 2)
   ), 0, 100);
-  const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * 150));
-  const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * 8));
-  const accelScore = Math.max(0, Math.round(100 - accelPer100Km * 8));
-  const corneringScore = Math.max(0, Math.round(100 - turnsPer100Km * 6));
-  const speedScore = Math.max(0, Math.round(100 - speedingPer100Km * 10));
+  const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * TIME_OF_DAY_NIGHT_MULTIPLIER));
+  const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * BRAKING_PENALTY_PER_100KM));
+  const accelScore = Math.max(0, Math.round(100 - accelPer100Km * ACCEL_PENALTY_PER_100KM));
+  const corneringScore = Math.max(0, Math.round(100 - turnsPer100Km * CORNERING_PENALTY_PER_100KM));
+  const speedScore = Math.max(0, Math.round(100 - speedingPer100Km * SPEED_PENALTY_PER_100KM));
   const ubiScore = Math.round(
     mileageScore * UBI_CATEGORY_WEIGHTS.mileage +
     timeOfDayScore * UBI_CATEGORY_WEIGHTS.timeOfDay +
@@ -155,6 +176,6 @@ export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
       optimalAnnualKm,
       mileageScoreSpreadKm,
     },
-    disclaimer: `This score is estimated from GPS data collected by Road Sage. It is not an official insurance rating. Mileage scoring assumes an optimal ${optimalAnnualKm.toLocaleString()} km/year; adjust this in Settings if your region or use case differs.`,
+    disclaimer: `Estimated score only. This UBI-style report uses internal GPS-derived approximations and is not an insurer-validated insurance rating, eligibility decision, or pricing estimate. Mileage scoring assumes an optimal ${optimalAnnualKm.toLocaleString()} km/year; adjust this in Settings if your region or use case differs.`,
   };
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createIndexedDbMigrationRunner, localTripRepository } from '@/lib/localTripRepository';
+import { createIndexedDbMigrationRunner, localTripRepository, TRIP_SCHEMA_VERSION } from '@/lib/localTripRepository';
+import { SCORING_VERSION } from '@/lib/tripEngine';
 
 const makeDomStringList = (items) => ({
   contains: (item) => items.has(item),
@@ -205,5 +206,50 @@ describe('localTripRepository IndexedDB migrations', () => {
 
     expect(runner.version).toBe(2);
     expect(calls).toEqual(['v2']);
+  });
+
+  it('tags legacy completed trip provenance without silently recalculating scores on launch', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    values.set('drivesense_trips', JSON.stringify([{
+      id: 'legacy-null-score',
+      status: 'completed',
+      start_time: '2026-01-01T17:00:00.000Z',
+      end_time: '2026-01-01T17:05:00.000Z',
+      route_points: [],
+      score_overall: null,
+      score_safety: null,
+      score_smoothness: null,
+      score_eco: null,
+      defensive_driving_score: 80,
+      brake_onset_sequence_count: 0,
+      heading_deviation_available: true,
+      heading_drift_beta_available: true,
+      braking_efficiency_grade: 'unknown',
+      overall_compliance_score: 100,
+      dominant_road_type: 'urban',
+      co2_saved_kg: 0,
+      phone_use_score: 100,
+      phone_use_risk: 'none',
+      schema_version: TRIP_SCHEMA_VERSION,
+    }]));
+
+    const [trip] = await localTripRepository.listAll();
+
+    expect(trip.score_overall).toBeNull();
+    expect(trip.score_provenance).toMatchObject({
+      scoring_version: SCORING_VERSION,
+      migrated_without_rescore: true,
+    });
+    expect(trip.score_provenance_change).toMatchObject({
+      reason: 'legacy_tagged_without_rescore',
+      current_scoring_version: SCORING_VERSION,
+    });
   });
 });

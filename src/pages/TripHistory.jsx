@@ -6,7 +6,7 @@ import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import { localSettings } from '@/lib/trackingStore';
-import { getScoreColor } from '@/lib/tripEngine';
+import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
@@ -45,6 +45,44 @@ const SCORE_SPARKLINES = [
   { key: 'score_eco', label: 'Eco' },
 ];
 
+export const SCORE_DELTA_MIN_PREVIOUS_TRIPS = 3;
+
+const scoreValue = (trip, key = 'overall') => getTripComponentScore(trip, key).value;
+const sortableScore = (trip, direction = 'desc') => {
+  const value = scoreValue(trip);
+  if (value == null) return direction === 'asc' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  return value;
+};
+
+export function scoreDeltaForTrip(trip, tripsByRecentOrder = []) {
+  const index = tripsByRecentOrder.findIndex((item) => String(item.id) === String(trip?.id));
+  const currentScore = scoreValue(trip);
+  if (index < 0 || !Number.isFinite(currentScore)) return null;
+
+  const previousFive = tripsByRecentOrder
+    .slice(index + 1, index + 6)
+    .map((item) => scoreValue(item))
+    .filter(Number.isFinite);
+
+  if (previousFive.length < SCORE_DELTA_MIN_PREVIOUS_TRIPS) {
+    return {
+      delta: null,
+      direction: 'flat',
+      insufficientBaseline: true,
+      sampleCount: previousFive.length,
+    };
+  }
+
+  const avg = previousFive.reduce((sum, score) => sum + score, 0) / previousFive.length;
+  const delta = currentScore - avg;
+  return {
+    delta,
+    direction: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
+    insufficientBaseline: false,
+    sampleCount: previousFive.length,
+  };
+}
+
 const startOfWeek = () => {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
@@ -64,8 +102,8 @@ const matchesQuickFilter = (trip, filter) => {
   if (!Number.isFinite(start)) return false;
   if (filter === 'this_week') return start >= startOfWeek();
   if (filter === 'this_month') return start >= startOfMonth();
-  if (filter === 'best') return (trip.score_overall ?? 0) >= 85;
-  if (filter === 'worst') return (trip.score_overall ?? 100) < 60;
+  if (filter === 'best') return (scoreValue(trip) ?? Number.NEGATIVE_INFINITY) >= 85;
+  if (filter === 'worst') return (scoreValue(trip) ?? Number.POSITIVE_INFINITY) < 60;
   if (filter === 'night') return trip.night_driving || normalizeTripTags(trip).includes('night');
   if (filter === 'high_risk') return isHighRiskTrip(trip);
   if (filter === 'favorites') return trip.is_favorite === true;
@@ -112,24 +150,13 @@ export default function TripHistory() {
     .slice(-5);
   const sparklineData = recentChronological.map((trip, index) => ({
     index,
-    score_overall: trip.score_overall ?? 0,
-    score_safety: trip.score_safety ?? 0,
-    score_smoothness: trip.score_smoothness ?? 0,
-    score_eco: trip.score_eco ?? 0,
+    score_overall: getTripComponentScore(trip, 'overall').value,
+    score_safety: getTripComponentScore(trip, 'safety').value,
+    score_smoothness: getTripComponentScore(trip, 'smoothness').value,
+    score_eco: getTripComponentScore(trip, 'eco').value,
   }));
   const improvement = calculateRecentBrakingImprovement(completed);
   const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  const scoreDeltaForTrip = (trip) => {
-    const index = tripsByRecentOrder.findIndex((item) => String(item.id) === String(trip.id));
-    const previousFive = tripsByRecentOrder.slice(index + 1, index + 6).map((item) => Number(item.score_overall)).filter(Number.isFinite);
-    if (index < 0 || previousFive.length === 0 || !Number.isFinite(Number(trip.score_overall))) return null;
-    const avg = previousFive.reduce((sum, score) => sum + score, 0) / previousFive.length;
-    const delta = Number(trip.score_overall) - avg;
-    return {
-      delta,
-      direction: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
-    };
-  };
 
   const filtered = completed.filter((trip) => {
     if (!matchesQuickFilter(trip, filterBy)) return false;
@@ -145,8 +172,8 @@ export default function TripHistory() {
     switch (sortBy) {
       case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
       case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
-      case 'score_desc': return (b.score_overall ?? 0) - (a.score_overall ?? 0);
-      case 'score_asc': return (a.score_overall ?? 0) - (b.score_overall ?? 0);
+      case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
+      case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
       case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
       case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
       default: return 0;
@@ -231,8 +258,8 @@ export default function TripHistory() {
       {sparklineData.length > 1 && (
         <div className="grid grid-cols-2 gap-2">
           {SCORE_SPARKLINES.map((score, index) => {
-            const latest = sparklineData[sparklineData.length - 1]?.[score.key] || 0;
-            const scoreColor = getScoreColor(latest).color;
+            const latest = sparklineData[sparklineData.length - 1]?.[score.key];
+            const scoreColor = latest == null ? 'text-muted-foreground' : getScoreColor(latest).color;
             const color = scoreColor.includes('green')
               ? '#22c55e'
               : scoreColor.includes('blue')
@@ -408,7 +435,7 @@ export default function TripHistory() {
               trip={trip}
               units={units}
               index={index}
-              scoreDelta={scoreDeltaForTrip(trip)}
+              scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
               onToggleFavorite={(target) => updateTripMut.mutate({
                 id: target.id,
                 patch: { is_favorite: target.is_favorite !== true },

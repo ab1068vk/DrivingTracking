@@ -15,6 +15,52 @@ const DIRECT_BBOX_SPAN_DEG = 0.08;
 const MAX_CORRIDOR_QUERIES = 6;
 const MAX_CORRIDOR_SAMPLE_POINTS = 180;
 const CORRIDOR_PAD_DEG = 0.006;
+export const DEFAULT_SPEED_LIMIT_COUNTRY = 'global';
+export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
+  global: Object.freeze({
+    living_street: 20,
+    service: 30,
+    residential: 40,
+    unclassified: 50,
+    road: 50,
+    tertiary: 50,
+    tertiary_link: 50,
+    secondary: 60,
+    secondary_link: 60,
+    primary: 60,
+    primary_link: 60,
+    trunk_link: 80,
+    motorway_link: 80,
+    trunk: 100,
+    motorway: 100,
+  }),
+  gb: Object.freeze({
+    residential: 48,
+    unclassified: 48,
+    road: 48,
+    trunk: 113,
+    motorway: 113,
+  }),
+  uk: Object.freeze({
+    residential: 48,
+    unclassified: 48,
+    road: 48,
+    trunk: 113,
+    motorway: 113,
+  }),
+  us: Object.freeze({
+    motorway: 113,
+    trunk: 105,
+    motorway_link: 89,
+    trunk_link: 89,
+    residential: 40,
+  }),
+  ca: Object.freeze({
+    motorway: 100,
+    trunk: 90,
+    residential: 40,
+  }),
+});
 
 const round = (value, places = 4) => Number(value).toFixed(places);
 
@@ -50,6 +96,24 @@ function cacheKeyForBounds(bounds) {
     round(bounds.north, 2),
     round(bounds.east, 2),
   ].join(',');
+}
+
+export function speedLimitDefaultCountryKey(settings = {}) {
+  const raw = typeof settings === 'string'
+    ? settings
+    : settings?.configurable_country_defaults ?? settings?.speed_limit_default_country ?? DEFAULT_SPEED_LIMIT_COUNTRY;
+  const value = String(raw || DEFAULT_SPEED_LIMIT_COUNTRY).toLowerCase().trim();
+  return Object.prototype.hasOwnProperty.call(OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH, value)
+    ? value
+    : DEFAULT_SPEED_LIMIT_COUNTRY;
+}
+
+export function speedLimitDefaultsForCountry(settings = {}) {
+  const country = speedLimitDefaultCountryKey(settings);
+  return {
+    ...OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH.global,
+    ...(OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH[country] || {}),
+  };
 }
 
 function bboxSpan(bounds) {
@@ -136,13 +200,14 @@ async function fetchOverpassWaysFromUrl(bounds, url) {
 }
 
 async function loadCachedWaysForBounds(bounds, settings, cache, nextCache) {
-  const key = cacheKeyForBounds(bounds);
+  const defaultCountry = speedLimitDefaultCountryKey(settings);
+  const key = `${cacheKeyForBounds(bounds)}:${defaultCountry}`;
   const cached = cache[key];
   if (cached && Date.now() - cached.savedAt < CACHE_MAX_AGE_MS) {
     return { ways: cached.ways || [], status: 'cache_hit', error: null };
   }
   try {
-    const ways = normalizeWays(await fetchOverpassWays(bounds, settings));
+    const ways = normalizeWays(await fetchOverpassWays(bounds, settings), settings);
     nextCache[key] = { savedAt: Date.now(), ways };
     return { ways, status: ways.length ? 'fetched' : 'no_tagged_ways', error: null };
   } catch (error) {
@@ -154,27 +219,21 @@ async function loadCachedWaysForBounds(bounds, settings, cache, nextCache) {
   }
 }
 
-export function defaultSpeedLimitKmhForOsmHighway(highway) {
+export function defaultSpeedLimitKmhForOsmHighway(highway, settings = {}) {
   const value = String(highway || '').toLowerCase().trim();
   if (!value) return null;
-  if (value === 'living_street') return 20;
-  if (value === 'service') return 30;
-  if (value === 'residential') return 40;
-  if (value === 'tertiary' || value === 'tertiary_link' || value === 'unclassified' || value === 'road') return 50;
-  if (value === 'primary' || value === 'primary_link' || value === 'secondary' || value === 'secondary_link') return 60;
-  if (value === 'trunk_link' || value === 'motorway_link') return 80;
-  if (value === 'motorway' || value === 'trunk') return 100;
-  return null;
+  return speedLimitDefaultsForCountry(settings)[value] ?? null;
 }
 
-function normalizeWays(elements = []) {
+function normalizeWays(elements = [], settings = {}) {
+  const defaultCountry = speedLimitDefaultCountryKey(settings);
   return elements
     .map((element) => {
       const taggedLimitKmh = parseMaxspeedKmh(
         element.tags?.maxspeed ?? element.tags?.['maxspeed:forward'] ?? element.tags?.['maxspeed:backward']
       );
       const highway = element.tags?.highway || null;
-      const defaultLimitKmh = taggedLimitKmh ? null : defaultSpeedLimitKmhForOsmHighway(highway);
+      const defaultLimitKmh = taggedLimitKmh ? null : defaultSpeedLimitKmhForOsmHighway(highway, settings);
       const limitKmh = taggedLimitKmh ?? defaultLimitKmh;
       const geometry = Array.isArray(element.geometry)
         ? element.geometry
@@ -187,6 +246,7 @@ function normalizeWays(elements = []) {
         id: element.id,
         limitKmh,
         limitSource: taggedLimitKmh ? 'openstreetmap' : 'osm_highway_default',
+        limitDefaultCountry: taggedLimitKmh ? null : defaultCountry,
         highway,
         name: element.tags?.name || element.tags?.ref || null,
         geometry,
@@ -304,6 +364,7 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
         ...point,
         speed_limit_kmh: match.limitKmh,
         speed_limit_source: match.limitSource,
+        speed_limit_default_country: match.limitDefaultCountry,
         speed_limit_way_id: match.id,
         speed_limit_road_name: match.name,
         speed_limit_highway: match.highway,

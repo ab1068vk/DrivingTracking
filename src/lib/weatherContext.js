@@ -2,6 +2,7 @@ import { clamp } from '@/lib/mathUtils';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { weightedBlend } from '@/lib/tripEngine';
+import { scoringValue } from '@/lib/scoringConstants';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -222,12 +223,15 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
 
 export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
   if (!weatherContext || weatherContext.riskScore <= 0) return scores;
+  // Brake-turn alerts are GPS-only advisories, not scored Safety evidence.
   const eventCount =
     (scores.harsh_brakes_count || 0) +
     (scores.sharp_turns_count || 0) +
-    (scores.close_proximity_count ?? scores.near_miss_count ?? 0) * 1.5 +
     (scores.speeding_events_count || 0);
-  const weatherPenalty = Math.min(12, Math.round(eventCount * ((weatherContext.riskMultiplier || 1) - 1) * 6));
+  const weatherPenalty = Math.min(
+    scoringValue('WEATHER_SCORE_PENALTY_CAP'),
+    Math.round(eventCount * ((weatherContext.riskMultiplier || 1) - 1) * scoringValue('WEATHER_EVENT_PENALTY_SCALE'))
+  );
   if (weatherPenalty <= 0) {
     return {
       ...scores,
@@ -240,17 +244,34 @@ export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
   const scoreSafety = Number.isFinite(Number(scores.score_safety))
     ? clamp(Number(scores.score_safety) - weatherPenalty, 0, 100)
     : null;
+  const overallBlend = scoringValue('OVERALL_SCORE_BLEND_WEIGHTS');
   const scoreOverall = clamp(weightedBlend([
-    { score: scoreSafety, weight: 0.35 },
-    { score: scores.score_smoothness, weight: 0.30 },
-    { score: scores.score_eco, weight: 0.20 },
-    { score: scores.intersection_score, weight: 0.15 },
+    { score: scoreSafety, weight: overallBlend.safety },
+    { score: scores.score_smoothness, weight: overallBlend.smoothness },
+    { score: scores.score_eco, weight: overallBlend.eco },
+    { score: scores.intersection_score, weight: overallBlend.intersection },
   ]) ?? Number(scores.score_overall) ?? 0, 0, 100);
+  const componentScores = scores.component_scores
+    ? {
+      ...scores.component_scores,
+      safety: {
+        ...scores.component_scores.safety,
+        value: scoreSafety,
+        dataSource: [...new Set([...(scores.component_scores.safety?.dataSource || []), 'open_meteo_weather'])],
+      },
+      overall: {
+        ...scores.component_scores.overall,
+        value: scoreOverall,
+        dataSource: [...new Set([...(scores.component_scores.overall?.dataSource || []), 'open_meteo_weather'])],
+      },
+    }
+    : undefined;
 
   return {
     ...scores,
     score_safety: scoreSafety,
     score_overall: scoreOverall,
+    ...(componentScores ? { component_scores: componentScores } : {}),
     weather_context: weatherContext,
     weather_risk_score: weatherContext.riskScore,
     weather_score_adjustment: -weatherPenalty,

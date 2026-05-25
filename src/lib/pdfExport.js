@@ -4,6 +4,13 @@ import { isNativePlatform } from '@/lib/nativePlatform';
 import { calculateNoHarshBrakeStreak, estimateTripEconomics } from '@/lib/tripInsights';
 import { formatDate, formatDistance, formatDuration, generateReportSummary } from '@/lib/tripEngine';
 import { formatCurrencyAmount } from '@/lib/currency';
+import {
+  METRIC_REGISTRY,
+  MONTHLY_PDF_METRIC_KEYS,
+  UBI_CATEGORY_METRIC_KEYS,
+  UBI_PDF_METRIC_KEYS,
+  formatMetricMetadata,
+} from '@/lib/metricRegistry';
 
 function periodLabel(period) {
   if (period === 'week') return 'This Week';
@@ -100,6 +107,27 @@ function recentTripTrendRows(trips = []) {
       display: `${Math.round(Number(trip.score_overall) || 0)} score`,
       color: (trip.score_overall || 0) >= 80 ? [34, 197, 94] : (trip.score_overall || 0) >= 60 ? [234, 179, 8] : [239, 68, 68],
     }));
+}
+
+function writeMetricReferencePage(doc, title, metricKeys) {
+  doc.addPage();
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(title, 14, 20);
+  let y = 31;
+  metricKeys.forEach((metricKey) => {
+    if (y > 265) {
+      doc.addPage();
+      y = 20;
+    }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(`${METRIC_REGISTRY[metricKey].label} [${metricKey}]`, 14, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text(formatMetricMetadata(metricKey), 14, y + 5, { maxWidth: 180 });
+    y += 18;
+  });
 }
 
 /**
@@ -221,6 +249,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
     { label: 'Speeding', value: summary.total_speeding_events || 0, color: [249, 115, 22] },
   ];
   drawHorizontalBars(doc, 'Risk Event Breakdown', riskRows, y + 12, { barWidth: 82, barX: 78 });
+  writeMetricReferencePage(doc, 'Metric Reference', MONTHLY_PDF_METRIC_KEYS);
 
   if (isNativePlatform()) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
@@ -240,6 +269,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
 export async function exportUBIReportPDF(ubiReport, settings = {}) {
   const doc = new jsPDF();
   const now = new Date(ubiReport.generatedAt || Date.now());
+  const insufficientData = ubiReport.insufficientData === true || ubiReport.ubiScore == null;
   const filename = `road-sage-driver-score-card-${now.toISOString().slice(0, 10)}.pdf`;
   const period = ubiReport.periodStart && ubiReport.periodEnd
     ? `${formatDate(ubiReport.periodStart)} to ${formatDate(ubiReport.periodEnd)}`
@@ -254,12 +284,19 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.text(`Period: ${period}`, 14, 39);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(42);
-  doc.text(ubiReport.ubiScore == null ? '-' : `${ubiReport.ubiScore}`, 92, 70, { align: 'center' });
-  doc.setFontSize(12);
-  doc.text('/ 100', 111, 70);
-  doc.setFontSize(14);
-  doc.text(`${ubiReport.ubiGrade} - ${ubiReport.ubiTier}`, 92, 82, { align: 'center' });
+  if (insufficientData) {
+    doc.setFontSize(18);
+    doc.text('Insufficient data', 92, 70, { align: 'center' });
+    doc.setFontSize(10);
+    doc.text(`Complete at least ${ubiReport.minimumDistanceKm ?? 50} km before a score card can be generated.`, 92, 82, { align: 'center' });
+  } else {
+    doc.setFontSize(42);
+    doc.text(`${ubiReport.ubiScore}`, 92, 70, { align: 'center' });
+    doc.setFontSize(12);
+    doc.text('/ 100', 111, 70);
+    doc.setFontSize(14);
+    doc.text(`${ubiReport.ubiGrade} - ${ubiReport.ubiTier}`, 92, 82, { align: 'center' });
+  }
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   const hours = Math.floor((ubiReport.totalDrivingMinutes || 0) / 60);
@@ -271,16 +308,20 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
     { align: 'center' }
   );
 
-  const rows = Object.values(ubiReport.categories || {});
+  const rows = insufficientData
+    ? []
+    : Object.entries(ubiReport.categories || {}).map(([key, row]) => ({ ...row, key }));
   let y = 114;
   doc.setFont('helvetica', 'bold');
   writeRow(doc, ['Category', 'Score', 'Grade', 'Detail'], y, [58, 28, 24, 60]);
   y += 8;
   doc.setFont('helvetica', 'normal');
   rows.forEach((row) => {
+    const metricKey = UBI_CATEGORY_METRIC_KEYS[row.key];
+    const label = metricKey ? METRIC_REGISTRY[metricKey].label : row.label;
     const score = Number(row.score) || 0;
     const color = score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68];
-    writeRow(doc, [row.label, score, row.grade, row.value], y, [58, 28, 24, 60]);
+    writeRow(doc, [label, score, row.grade, row.value], y, [58, 28, 24, 60]);
     doc.setFillColor(color[0], color[1], color[2]);
     doc.rect(72, y + 2, Math.max(1, score / 5), 2, 'F');
     y += 11;
@@ -291,6 +332,7 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.text(ubiReport.disclaimer || '', 14, 270, { maxWidth: 180 });
   doc.text('Powered by Road Sage - private, local-only data', 14, 280);
   doc.setTextColor(0);
+  writeMetricReferencePage(doc, 'Metric Reference', UBI_PDF_METRIC_KEYS);
 
   if (isNativePlatform()) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));

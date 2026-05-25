@@ -939,26 +939,26 @@ public class DriveSenseAutoTrackingService extends Service {
                 curr.optDouble("lng")
             );
             if (!Double.isFinite(distance)) continue;
+            stats.distanceKm += distance;
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
             long dt = (currMs - prevMs) / 1000L;
             if (dt <= 0L) continue;
+            double impliedSpeed = distance / (dt / 3600d);
+            double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
+            stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, reportedSpeed);
             if (dt > STATS_MAX_SAMPLE_GAP_SECONDS) {
                 stats.gapSeconds += dt;
                 continue;
             }
 
-            double impliedSpeed = distance / (dt / 3600d);
-            double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
             double distanceM = distance * 1000d;
             if (isNoise(distanceM, impliedSpeed, reportedSpeed, prev.optDouble("accuracy", 0d), curr.optDouble("accuracy", 0d))) {
                 continue;
             }
 
             double speed = reliableSpeed(impliedSpeed, reportedSpeed);
-            stats.distanceKm += distance;
             stats.speedSamples += 1;
-            stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
 
             if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
             else stats.idleSeconds += dt;
@@ -992,10 +992,8 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private double noiseFloor(double previousAccuracy, double currentAccuracy) {
-        double bestAccuracy = (previousAccuracy > 0d && currentAccuracy > 0d)
-            ? Math.min(previousAccuracy, currentAccuracy)
-            : Math.max(previousAccuracy, currentAccuracy);
-        return Math.max(MIN_POINT_DISTANCE_M, Math.min(25d, bestAccuracy * 0.6d));
+        double effectiveAccuracy = Math.max(previousAccuracy, currentAccuracy);
+        return Math.max(MIN_POINT_DISTANCE_M, Math.min(25d, effectiveAccuracy * 0.6d));
     }
 
     private boolean isNoise(double distanceM, double impliedSpeedKmh, double reportedSpeedKmh, double previousAccuracy, double currentAccuracy) {

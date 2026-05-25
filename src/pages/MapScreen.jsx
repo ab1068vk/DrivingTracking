@@ -5,7 +5,7 @@ import { tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { formatDistance, formatDate, getScoreColor } from '@/lib/tripEngine';
+import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
@@ -150,10 +150,13 @@ export default function MapScreen() {
     const routeRuns = allCompleted
       .filter((trip) => String(trip.id) !== String(selectedTrip.id) && routeKeyForTrip(trip) === selectedKey)
       .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-    const bestRun = [...routeRuns].sort((a, b) => (b.score_overall || 0) - (a.score_overall || 0))[0];
+    const bestRun = [...routeRuns].sort((a, b) => (
+      (getTripComponentScore(b, 'overall').value ?? Number.NEGATIVE_INFINITY) -
+      (getTripComponentScore(a, 'overall').value ?? Number.NEGATIVE_INFINITY)
+    ))[0];
     const recentRuns = routeRuns.slice(0, 5);
     return [
-      ...(bestRun ? [{ ...bestRun, compareLabel: `Best run - score ${bestRun.score_overall ?? '-'}` }] : []),
+      ...(bestRun ? [{ ...bestRun, compareLabel: `Best run - score ${getTripComponentScore(bestRun, 'overall').value ?? '-'}` }] : []),
       ...recentRuns
         .filter((trip) => String(trip.id) !== String(bestRun?.id))
         .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
@@ -604,7 +607,10 @@ export default function MapScreen() {
             </button>
 
             {completed.slice(0, 30).map(trip => {
-              const { color } = getScoreColor(trip.score_overall || 0);
+              const overallScore = getTripComponentScore(trip, 'overall');
+              const { color } = overallScore.value == null
+                ? { color: 'text-muted-foreground' }
+                : getScoreColor(overallScore.value);
               return (
                 <button
                   key={trip.id}
@@ -623,7 +629,8 @@ export default function MapScreen() {
                       </div>
                     </div>
                     <div className={`font-grotesk font-bold text-xl ${color}`}>
-                      {trip.score_overall || '-'}
+                      {overallScore.value ?? '-'}
+                      <div className="text-[10px] font-medium capitalize text-muted-foreground">{overallScore.evidence} evidence</div>
                     </div>
                   </div>
                 </button>

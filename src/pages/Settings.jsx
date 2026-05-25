@@ -17,7 +17,7 @@ import { toast } from '@/components/ui/use-toast';
 import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
-import { buildDrivingThresholds } from '@/lib/tripEngine';
+import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
 import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
@@ -58,6 +58,13 @@ import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sen
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL } from '@/lib/openSourceTripContext';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
+import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import {
+  CALIBRATION_STATUSES,
+  calibrationEntryForSetting,
+  getProvisionalScoringConstants,
+  scoringValue,
+} from '@/lib/scoringConstants';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -167,7 +174,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Inferred speed limits',
-    definition: 'Fallback limits are estimated from road type when OSM maxspeed data is unavailable. Inferred-limit speeding penalties use half weight and may not reflect the actual legal limit.',
+    definition: 'Fallback limits are estimated from road type and the configured country default when OSM maxspeed data is unavailable. Inferred-limit speeding penalties use half weight and may not reflect the actual legal limit.',
   },
   {
     term: 'Parking approach',
@@ -178,6 +185,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
 const PRIVACY_RADIUS_MIN_M = 50;
 const PRIVACY_RADIUS_MAX_M = 1000;
 const PRIVACY_RADIUS_DEFAULT_M = 180;
+const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
 
 function validatePrivacyRadius(value) {
   const raw = String(value ?? '').trim();
@@ -224,6 +232,17 @@ export default function Settings() {
   const { data: allTrips = [] } = useQuery({
     queryKey: ['settings-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+  });
+
+  const { data: scoreMigrationSummary = {
+    scoring_version: SCORING_VERSION,
+    completed_count: 0,
+    mismatch_count: 0,
+    unavailable_score_count: 0,
+    trips: [],
+  } } = useQuery({
+    queryKey: ['score-migration-summary'],
+    queryFn: () => tripService.getScoreMigrationSummary(),
   });
 
   const { data: allVehicles = [] } = useQuery({
@@ -328,9 +347,12 @@ export default function Settings() {
   };
 
   const rescoreTrips = async () => {
-    const count = await tripService.markCompletedForRescore();
+    const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
+    const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
     await qc.invalidateQueries();
-    setRescoreStatus(`${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
+    setRescoreStatus(onlyProvenanceMismatch
+      ? `${count} outdated trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`
+      : `${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
     setTimeout(() => setRescoreStatus(''), 5000);
   };
 
@@ -1348,7 +1370,10 @@ export default function Settings() {
           ].map(({ key, label, min, max, step }) => (
             <div key={key} className="px-1">
               <div className="flex justify-between text-xs mb-1.5">
-                <span className="font-medium">{label}</span>
+                <span className="flex items-center gap-2 font-medium">
+                  {label}
+                  {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
+                </span>
                 <span className="text-primary font-semibold">{cfg[key]}</span>
               </div>
               <input
@@ -1557,10 +1582,58 @@ export default function Settings() {
               onClick={rescoreTrips}
               className="rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary"
             >
-              Re-score completed trips
+              {scoreMigrationSummary.mismatch_count > 0 ? 'Re-score outdated trips' : 'Re-score completed trips'}
             </button>
             {rescoreStatus && <span className="text-xs text-muted-foreground">{rescoreStatus}</span>}
           </div>
+          {(scoreMigrationSummary.mismatch_count > 0 || scoreMigrationSummary.unavailable_score_count > 0) && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+              {scoreMigrationSummary.mismatch_count > 0 && (
+                <>
+                  <div className="font-semibold">Scoring model update available</div>
+                  <div className="mt-1">
+                    {scoreMigrationSummary.mismatch_count} completed trip{scoreMigrationSummary.mismatch_count === 1 ? '' : 's'} used a different scoring model than version {scoreMigrationSummary.scoring_version || SCORING_VERSION}. Re-score only when you want those stored scores updated.
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {scoreMigrationSummary.trips.slice(0, 4).map((item) => (
+                      <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-card/70 px-2 py-1">
+                        <span className="truncate">{item.nickname || new Date(item.start_time).toLocaleDateString()}</span>
+                        <span className="shrink-0 text-amber-700 dark:text-amber-200">v{item.scoring_version || 'unknown'}</span>
+                      </div>
+                    ))}
+                    {scoreMigrationSummary.trips.length > 4 && (
+                      <div className="text-amber-700 dark:text-amber-200">+{scoreMigrationSummary.trips.length - 4} more</div>
+                    )}
+                  </div>
+                </>
+              )}
+              {scoreMigrationSummary.unavailable_score_count > 0 && (
+                <div className={scoreMigrationSummary.mismatch_count > 0 ? 'mt-3 border-t border-amber-200 pt-3 dark:border-amber-800/50' : ''}>
+                  {scoreMigrationSummary.unavailable_score_count} trip{scoreMigrationSummary.unavailable_score_count === 1 ? '' : 's'} currently have unavailable overall scores and will show a placeholder until re-scored.
+                </div>
+              )}
+            </div>
+          )}
+          <details className="mt-3 rounded-xl border border-border bg-card p-3 text-xs">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 font-semibold">
+              <span>Calibration registry</span>
+              <span className="flex items-center gap-2">
+                <CalibrationStatusTag />
+                {PROVISIONAL_SCORING_CONSTANTS.length}
+              </span>
+            </summary>
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {PROVISIONAL_SCORING_CONSTANTS.map((entry) => (
+                <div key={entry.key} className="rounded-lg bg-secondary/60 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{entry.label}</span>
+                    <span className="font-mono text-primary">{typeof entry.value === 'object' ? 'policy' : String(entry.value)}</span>
+                  </div>
+                  <div className="mt-1 text-muted-foreground">{entry.calibration_note}</div>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
         <div className="space-y-4">
           {[
@@ -1585,6 +1658,9 @@ export default function Settings() {
               <div className="flex justify-between text-xs mb-1.5">
                 <span className="font-medium">{label}</span>
                 <span className="flex items-center gap-2 text-primary font-semibold">
+                  {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
+                    <CalibrationStatusTag />
+                  )}
                   {sliderWarning(cfg[key], min, max) && thresholdEditingEnabled && (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
                       {sliderWarning(cfg[key], min, max)}
@@ -1625,6 +1701,9 @@ export default function Settings() {
                   <div className="flex justify-between text-xs mb-1.5">
                     <span className="font-medium">{label}</span>
                     <span className="flex items-center gap-2 text-primary font-semibold">
+                      {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
+                        <CalibrationStatusTag />
+                      )}
                       {sliderWarning(cfg[key], min, max) && thresholdEditingEnabled && cfg.advanced_safety_detection_enabled !== false && (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
                           {sliderWarning(cfg[key], min, max)}
@@ -1868,7 +1947,11 @@ export default function Settings() {
                 ))}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low' ? '0.60' : (cfg.phone_use_sensitivity || 'medium') === 'high' ? '0.25' : '0.40'} confidence.
+                Threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low'
+                  ? scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
+                  : (cfg.phone_use_sensitivity || 'medium') === 'high'
+                    ? scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
+                    : scoringValue('PHONE_CONFIDENCE_THRESHOLD').toFixed(2)} confidence.
               </p>
             </div>
             <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">
@@ -1910,7 +1993,10 @@ export default function Settings() {
                 ].map(({ key, label, min, max, step, unit }) => (
                   <div key={key}>
                     <div className="mb-1 flex justify-between text-xs">
-                      <span className="font-medium">{label}</span>
+                      <span className="flex items-center gap-2 font-medium">
+                        {label}
+                        {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
+                      </span>
                       <span className="font-semibold text-primary">{cfg[key]} {unit}</span>
                     </div>
                     <input
@@ -1953,6 +2039,22 @@ export default function Settings() {
           />
         </SettingRow>
         <SettingRow
+          icon={Gauge}
+          label="Fallback limit country"
+          sublabel="Used only when OpenStreetMap has no maxspeed tag; inferred limits are approximate and may not match local law"
+        >
+          <select
+            className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
+            value={cfg.configurable_country_defaults || 'global'}
+            onChange={event => updateCfg({ configurable_country_defaults: event.target.value })}
+          >
+            <option value="global">Global</option>
+            <option value="ca">Canada</option>
+            <option value="us">United States</option>
+            <option value="gb">United Kingdom</option>
+          </select>
+        </SettingRow>
+        <SettingRow
           icon={Droplets}
           label="Get trip weather"
           sublabel="When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"
@@ -1979,7 +2081,7 @@ export default function Settings() {
               <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.speed_limit_lookup_enabled === false
                 ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
-                : 'sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits.'}
+                : `sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
             </div>
             <div>
               <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}

@@ -6,6 +6,14 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(false);
   });
 
+  it('keeps inferred speed-limit country defaults configurable', () => {
+    expect(DEFAULT_SETTINGS.configurable_country_defaults).toBe('global');
+    expect(sanitizeImportedSettings({ configurable_country_defaults: 'gb' })).toMatchObject({
+      configurable_country_defaults: 'gb',
+    });
+    expect(sanitizeImportedSettings({ configurable_country_defaults: 'mars' }).configurable_country_defaults).toBeUndefined();
+  });
+
   it('keeps the rapid acceleration minimum speed at 5 km/h', () => {
     expect(DEFAULT_SETTINGS.min_speed_rapid_accel_kmh).toBe(5);
   });

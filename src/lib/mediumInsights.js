@@ -86,31 +86,34 @@ export function buildRouteComparisons(trips = []) {
       sorted.forEach((trip) => {
         const label = timeBucketLabel(trip.start_time);
         const current = byWindow.get(label) || [];
-        current.push(Number(trip.score_overall) || 0);
+        const score = Number(trip.score_overall);
+        if (Number.isFinite(score)) current.push(score);
         byWindow.set(label, current);
       });
       const bestWindow = [...byWindow.entries()]
-        .map(([label, values]) => ({ label, avg: average(values) || 0, count: values.length }))
+        .map(([label, values]) => ({ label, avg: average(values), count: values.length }))
+        .filter((window) => window.avg != null)
         .sort((a, b) => b.avg - a.avg || b.count - a.count)[0] || null;
       const recent = sorted.slice(-3);
-      const firstAvg = distanceWeightedScore(sorted.slice(0, Math.min(3, sorted.length))) ?? 0;
-      const recentAvg = distanceWeightedScore(recent) ?? 0;
+      const firstAvg = distanceWeightedScore(sorted.slice(0, Math.min(3, sorted.length)));
+      const recentAvg = distanceWeightedScore(recent);
+      const avgScore = distanceWeightedScore(sorted);
       return {
         route_key: routeKey,
         label: inferRouteLabel(sorted),
         trip_count: sorted.length,
-        avg_score: Math.round(distanceWeightedScore(sorted) ?? 0),
-        best_score: Math.max(...scores, 0),
-        worst_score: Math.min(...scores, 100),
+        avg_score: avgScore == null ? null : Math.round(avgScore),
+        best_score: scores.length ? Math.max(...scores) : null,
+        worst_score: scores.length ? Math.min(...scores) : null,
         avg_distance_km: Math.round((average(distanceValues) || 0) * 10) / 10,
         avg_duration_minutes: Math.round((average(durationValues) || 0) / 60),
         safest_time: bestWindow?.label || 'More trips needed',
         safest_time_score: bestWindow ? Math.round(bestWindow.avg) : null,
-        trend: recentAvg > firstAvg + 3 ? 'improving' : recentAvg < firstAvg - 3 ? 'declining' : 'stable',
+        trend: recentAvg != null && firstAvg != null && recentAvg > firstAvg + 3 ? 'improving' : recentAvg != null && firstAvg != null && recentAvg < firstAvg - 3 ? 'declining' : 'stable',
         last_trip_id: sorted[sorted.length - 1]?.id,
       };
     })
-    .sort((a, b) => b.trip_count - a.trip_count || b.avg_score - a.avg_score);
+    .sort((a, b) => b.trip_count - a.trip_count || (b.avg_score ?? Number.NEGATIVE_INFINITY) - (a.avg_score ?? Number.NEGATIVE_INFINITY));
 }
 
 export function buildCommuteDetections(trips = []) {
@@ -173,8 +176,9 @@ export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
     }
   });
 
-  const bestDay = [...driveDays].sort((a, b) => (b.avg_score || 0) - (a.avg_score || 0))[0] || null;
-  const worstDay = [...driveDays].sort((a, b) => (a.avg_score || 100) - (b.avg_score || 100))[0] || null;
+  const scoredDriveDays = driveDays.filter((day) => day.avg_score != null);
+  const bestDay = [...scoredDriveDays].sort((a, b) => b.avg_score - a.avg_score)[0] || null;
+  const worstDay = [...scoredDriveDays].sort((a, b) => a.avg_score - b.avg_score)[0] || null;
 
   return {
     label: monthStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
@@ -208,9 +212,11 @@ export function buildWeeklyDriverSummary(trips = [], settings = {}) {
   });
   const dayScores = [...byDay.entries()].map(([day, dayTrips]) => ({
     day,
-    avg_score: Math.round(distanceWeightedScore(dayTrips) ?? 0),
+    avg_score: distanceWeightedScore(dayTrips) == null ? null : Math.round(distanceWeightedScore(dayTrips)),
   }));
-  const bestDay = dayScores.sort((a, b) => b.avg_score - a.avg_score)[0]?.day || 'More trips needed';
+  const bestDay = dayScores
+    .filter((day) => day.avg_score != null)
+    .sort((a, b) => b.avg_score - a.avg_score)[0]?.day || 'More trips needed';
   const issueCounts = {
     'late braking': completed.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0),
     'sharp turns': completed.reduce((sum, trip) => sum + (trip.sharp_turns_count || 0), 0),
@@ -252,7 +258,7 @@ export function buildWeeklyDriverSummary(trips = [], settings = {}) {
 export function buildGoalStatus(weekTrips = [], settings = {}) {
   const harshBrakes = weekTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
   const weightedScore = distanceWeightedScore(weekTrips);
-  const avgScore = weightedScore == null ? 0 : Math.round(weightedScore);
+  const avgScore = weightedScore == null ? null : Math.round(weightedScore);
   const nightKm = weekTrips
     .filter((trip) => trip.night_driving)
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
@@ -321,8 +327,8 @@ export function buildRoadTypeBreakdown(trips = []) {
     id: key,
     label: labels[key] || key,
     trip_count: group.length,
-    avg_score: Math.round(distanceWeightedScore(group) ?? 0),
-    avg_safety: Math.round(average(group.map((trip) => Number(trip.score_safety) || 0)) || 0),
+    avg_score: distanceWeightedScore(group) == null ? null : Math.round(distanceWeightedScore(group)),
+    avg_safety: average(group.map((trip) => Number(trip.score_safety)).filter(Number.isFinite)) == null ? null : Math.round(average(group.map((trip) => Number(trip.score_safety)).filter(Number.isFinite))),
     distance_km: Math.round(group.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0) * 10) / 10,
     risk_events: group.reduce((sum, trip) => sum +
       (trip.harsh_brakes_count || 0) +

@@ -12,8 +12,10 @@ import {
   ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell,
   RadarChart, Radar, PolarGrid, PolarAngleAxis
 } from 'recharts';
-import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, getTripComponentScore, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import ScoreRing from '@/components/ScoreRing';
+import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
@@ -157,9 +159,10 @@ export default function Reports() {
       if (map[key]) {
         map[key].distance += t.distance_km || 0;
         map[key].trips += 1;
-        if (t.score_overall) {
+        const overallScore = getTripComponentScore(t, 'overall').value;
+        if (overallScore != null) {
           const distance = Number(t.distance_km) || 0;
-          map[key].score += t.score_overall * distance;
+          map[key].score += overallScore * distance;
           map[key].scoreDistance += distance;
         }
         if (t.svi_score != null && t.svi_score !== '' && Number.isFinite(Number(t.svi_score))) {
@@ -247,8 +250,10 @@ export default function Reports() {
     }
   };
 
-  const { color: bestColor } = getScoreColor(summary.best_trip?.score_overall || 0);
-  const { color: worstColor } = getScoreColor(summary.worst_trip?.score_overall || 0);
+  const bestTripScore = summary.best_trip ? getTripComponentScore(summary.best_trip, 'overall') : null;
+  const worstTripScore = summary.worst_trip ? getTripComponentScore(summary.worst_trip, 'overall') : null;
+  const { color: bestColor } = bestTripScore?.value == null ? { color: 'text-muted-foreground' } : getScoreColor(bestTripScore.value);
+  const { color: worstColor } = worstTripScore?.value == null ? { color: 'text-muted-foreground' } : getScoreColor(worstTripScore.value);
   const previousTrips = (() => {
     if (period === 'all') return [];
     const previousCutoff = cutoff - periodDays * 24 * 3600 * 1000;
@@ -267,9 +272,9 @@ export default function Reports() {
     .sort((a, b) => b.count - a.count)[0];
   const reportTakeaways = [
     summary.total_trips > 0
-      ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${summary.avg_score}.`
+      ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${summary.avg_score ?? 'unavailable'}.`
       : 'No trips were recorded in this report period.',
-    previousTrips.length > 0
+    previousTrips.length > 0 && summary.avg_score != null && previousSummary.avg_score != null
       ? `Compared with the previous period, score ${summary.avg_score >= previousSummary.avg_score ? 'improved' : 'dropped'} by ${Math.abs(summary.avg_score - previousSummary.avg_score)} points.`
       : 'Complete another matching period to unlock period-over-period comparison.',
     topRisk?.count > 0
@@ -302,7 +307,8 @@ export default function Reports() {
           </button>
           <button
             onClick={handleUbiExport}
-            disabled={ubiLoading}
+            disabled={ubiLoading || ubiReport.insufficientData}
+            title={ubiReport.insufficientData ? `Complete at least ${ubiReport.minimumDistanceKm ?? 50} km to export a score card.` : 'Export score card as PDF'}
             className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors disabled:opacity-60"
           >
             <Award className="w-4 h-4" />
@@ -363,13 +369,13 @@ export default function Reports() {
               { icon: Car, label: 'Total Trips', value: summary.total_trips, gradient: 'gradient-primary' },
               { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), gradient: 'gradient-success' },
               { icon: Clock, label: 'Drive Time', value: formatDuration(summary.total_duration_seconds), gradient: 'bg-gradient-to-br from-purple-500 to-purple-700' },
-              { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score, gradient: getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
+              { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score ?? '-', evidence: 'aggregate evidence', gradient: summary.avg_score != null && getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
               { icon: Gauge, label: 'Avg Moving Speed', value: formatSpeed(avgMovingSpeedKmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
               // FIX: Display Avg Moving Speed in the report instead of an overall average including stops.
               { icon: Fuel, label: 'Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
               { icon: Leaf, label: 'Fuel Saved', value: `${economics.saved.toFixed(2)} L`, gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
               { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },
-            ].map(({ icon: Icon, label, value, gradient }, i) => (
+            ].map(({ icon: Icon, label, value, gradient, evidence }, i) => (
               <motion.div
                 key={label}
                 initial={{ opacity: 0, y: 20 }}
@@ -381,6 +387,7 @@ export default function Reports() {
                 <Icon className="w-5 h-5 mb-2 opacity-80" />
                 <div className="font-grotesk font-bold text-2xl leading-none">{value}</div>
                 <div className="text-white/70 text-xs mt-1">{label}</div>
+                {evidence && <div className="text-white/70 text-[10px] capitalize">{evidence}</div>}
               </motion.div>
             ))}
           </div>
@@ -394,40 +401,60 @@ export default function Reports() {
             <div className="mb-5 rounded-2xl border border-border p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="font-semibold">Driver Score Card</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-semibold">Driver Score Card</h2>
+                    {UBI_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
+                  </div>
                   <p className="mt-1 text-xs text-muted-foreground">UBI-style telematics report for insurance or personal records</p>
                 </div>
-                <div className="text-right">
-                  <div className="font-grotesk text-3xl font-bold">{ubiReport.ubiScore ?? '-'}</div>
-                  <div className="text-xs font-semibold text-primary">{ubiReport.ubiGrade} · {ubiReport.ubiTier}</div>
-                </div>
+                {ubiReport.insufficientData ? (
+                  <div className="text-right text-sm font-semibold text-muted-foreground">Insufficient data</div>
+                ) : (
+                  <div className="text-right">
+                    <div className="font-grotesk text-3xl font-bold">{ubiReport.ubiScore}</div>
+                    <div className="text-xs font-semibold text-primary">Estimated {ubiReport.ubiGrade} / {ubiReport.ubiTier}</div>
+                  </div>
+                )}
               </div>
               {ubiReport.insufficientData && (
                 <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-                  Complete at least {ubiReport.minimumDistanceKm ?? 50} km to calculate rate-based score-card grades.
+                  Add at least {ubiReport.minimumDistanceKm ?? 50} km of trips before rate-based score-card grades are shown.
                 </p>
+              )}
+              {!ubiReport.insufficientData && (
+                <div role="note" className="mt-3 flex gap-3 rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                  <div>
+                    <p className="font-semibold text-foreground">Estimated score, not an insurance rating</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      This UBI-style report uses internal GPS-derived approximations and is not insurer-validated for insurance eligibility or pricing.
+                    </p>
+                  </div>
+                </div>
               )}
               {!ubiReport.insufficientData && ubiReport.assumptions && (
                 <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
                   Mileage score assumes {ubiReport.assumptions.optimalAnnualKm.toLocaleString()} km/year as the optimal annual distance. Adjust the UBI mileage assumption in Settings if your region or use case differs.
                 </p>
               )}
-              <ResponsiveContainer width="100%" height={220}>
-                <RadarChart data={ubiRadarData} outerRadius={78}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="category" tick={{ fontSize: 10 }} />
-                  <Radar dataKey="score" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.28} />
-                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                </RadarChart>
-              </ResponsiveContainer>
+              {!ubiReport.insufficientData && (
+                <ResponsiveContainer width="100%" height={220}>
+                  <RadarChart data={ubiRadarData} outerRadius={78}>
+                    <PolarGrid />
+                    <PolarAngleAxis dataKey="category" tick={{ fontSize: 10 }} />
+                    <Radar dataKey="score" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.28} />
+                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              )}
             </div>
             <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
             <p className="text-xs text-muted-foreground mb-4">
               {baseline.baseline_avg == null
                 ? `A baseline unlocks after 10 completed trips in 4 weeks (${baseline.baseline_trip_count}/10 recorded).`
                 : baseline.delta == null
-                  ? `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; no trip was recorded this week.`
-                  : `Your baseline is ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}; this week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`}
+                  ? `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). No trip was recorded this week.`
+                  : `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`}
             </p>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
@@ -436,7 +463,7 @@ export default function Reports() {
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
                 <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}`}</div>
-                <div className="text-xs text-muted-foreground">baseline</div>
+                <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
                 <div className="font-grotesk font-bold text-xl">{baseline.personal_best_week_avg ?? '-'}</div>
@@ -593,9 +620,12 @@ export default function Reports() {
             transition={{ delay: 0.195 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
-            <h2 className="font-semibold mb-1">Fatigue Risk</h2>
+            <div className="mb-1 flex items-center gap-2">
+              <h2 className="font-semibold">Estimated Fatigue Risk</h2>
+              {FATIGUE_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
+            </div>
             <p className="text-xs text-muted-foreground mb-4">
-              Long-drive threshold: {fatigueRisk.threshold_minutes} minutes
+              Driving-time proxy. Long-drive threshold: {fatigueRisk.threshold_minutes} minutes
             </p>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
@@ -827,7 +857,10 @@ export default function Reports() {
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-muted-foreground">{formatDate(summary.best_trip.start_time)}</div>
-                  <div className={`font-grotesk font-bold text-2xl ${bestColor}`}>{summary.best_trip.score_overall}</div>
+                  <div className={`text-right font-grotesk font-bold text-2xl ${bestColor}`}>
+                    {bestTripScore?.value ?? '-'}
+                    <div className="text-[10px] font-medium capitalize text-muted-foreground">{bestTripScore?.evidence ?? 'unavailable'} evidence</div>
+                  </div>
                 </div>
               </div>
               {summary.worst_trip && summary.worst_trip.id !== summary.best_trip.id && (
@@ -838,7 +871,10 @@ export default function Reports() {
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="text-sm text-muted-foreground">{formatDate(summary.worst_trip.start_time)}</div>
-                    <div className={`font-grotesk font-bold text-2xl ${worstColor}`}>{summary.worst_trip.score_overall}</div>
+                    <div className={`text-right font-grotesk font-bold text-2xl ${worstColor}`}>
+                      {worstTripScore?.value ?? '-'}
+                      <div className="text-[10px] font-medium capitalize text-muted-foreground">{worstTripScore?.evidence ?? 'unavailable'} evidence</div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -849,3 +885,5 @@ export default function Reports() {
     </div>
   );
 }
+const UBI_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['ubi_score']);
+const FATIGUE_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['fatigue_risk_score']);

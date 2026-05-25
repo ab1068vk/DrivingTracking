@@ -25,8 +25,8 @@ const SCORE_LABELS = {
   score_eco: 'Eco score',
   aggressive: 'Aggression score',
   aggressive_driving_score: 'Aggression score',
-  defensive: 'Defensive score',
-  defensive_driving_score: 'Defensive score',
+  defensive: 'Defensive driving estimate',
+  defensive_driving_score: 'Defensive driving estimate',
 };
 
 const TAG_BY_ID = new Map(TRIP_TAG_OPTIONS.map((tag) => [tag.id, tag]));

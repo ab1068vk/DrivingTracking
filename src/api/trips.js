@@ -61,14 +61,26 @@ export const tripService = {
     )));
   },
 
-  markCompletedForRescore: async () => {
+  markCompletedForRescore: async (options = {}) => {
     const local = repository();
-    if (local?.markCompletedForRescore) return local.markCompletedForRescore();
+    if (local?.markCompletedForRescore) return local.markCompletedForRescore(options);
     const trips = await apiClient.get("/trips", { query: { sort: "-start_time", limit: 5000 } });
     const completed = trips.filter((trip) => trip.status === "completed");
     await Promise.all(completed.map((trip) => (
       apiClient.patch(`/trips/${encodeURIComponent(trip.id)}`, { needs_rescore: true })
     )));
     return completed.length;
+  },
+
+  getScoreMigrationSummary: async () => {
+    const local = repository();
+    if (local?.getScoreMigrationSummary) return local.getScoreMigrationSummary();
+    return {
+      scoring_version: null,
+      completed_count: 0,
+      mismatch_count: 0,
+      unavailable_score_count: 0,
+      trips: [],
+    };
   },
 };

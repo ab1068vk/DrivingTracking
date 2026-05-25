@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
+import { DAILY_FATIGUE_DEFAULTS, computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 
 const baseNow = new Date(2026, 0, 2, 18, 0, 0);
 
@@ -12,6 +12,21 @@ const trip = (start, end, durationSeconds, idleSeconds = 0) => ({
 });
 
 describe('dailyFatigueEngine', () => {
+  it('exposes daily fatigue heuristic defaults for calibration review', () => {
+    expect(DAILY_FATIGUE_DEFAULTS).toMatchObject({
+      FATIGUE_ONSET_MINUTES: 90,
+      RECOVERY_BREAK_MINUTES: 30,
+      FULL_RECOVERY_BREAK_MINUTES: 180,
+      FATIGUE_SCORE_AT_ONSET: 5,
+      RECOMMENDED_BREAK_MINUTES: {
+        critical: 30,
+        high: 20,
+        moderate: 10,
+        low: 0,
+      },
+    });
+  });
+
   it('getTodayTrips returns only today trips', () => {
     vi.setSystemTime(baseNow);
     const today = trip(new Date(2026, 0, 2, 9), new Date(2026, 0, 2, 10), 3600);
@@ -23,6 +38,20 @@ describe('dailyFatigueEngine', () => {
 
   it('returns score 0 with no trips', () => {
     expect(computeDailyFatigue([]).cumulativeFatigueScore).toBe(0);
+  });
+
+  it('excludes completed trips with invalid timestamps without crashing', () => {
+    const valid = trip(new Date(2026, 0, 2, 9), new Date(2026, 0, 2, 10), 3600);
+    const invalid = {
+      ...valid,
+      start_time: 'not-a-date',
+      end_time: 'not-a-date',
+      duration_seconds: 10 * 3600,
+    };
+    const state = computeDailyFatigue([valid, invalid], { now: new Date(2026, 0, 2, 10) });
+
+    expect(state.tripCount).toBe(1);
+    expect(state.totalDrivingMinutes).toBe(60);
   });
 
   it('caps accumulated active fatigue at score 10', () => {

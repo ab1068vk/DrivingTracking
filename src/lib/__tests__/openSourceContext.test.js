@@ -24,6 +24,13 @@ describe('open-source trip context', () => {
     expect(defaultSpeedLimitKmhForOsmHighway('unclassified')).toBe(50);
   });
 
+  it('uses configured country defaults when OSM maxspeed tags are missing', () => {
+    expect(defaultSpeedLimitKmhForOsmHighway('residential', { configurable_country_defaults: 'gb' })).toBe(48);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'gb' })).toBe(113);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'us' })).toBe(113);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'unknown' })).toBe(100);
+  });
+
   it('treats OSRM road matching as explicit opt-in', () => {
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: '' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
@@ -56,6 +63,10 @@ describe('open-source trip context', () => {
       intersection_score: 90,
       score_overall: 90,
       harsh_brakes_count: 2,
+      component_scores: {
+        safety: { value: 90, evidence: 'high', dataSource: ['gps'] },
+        overall: { value: 90, evidence: 'high', dataSource: ['gps'] },
+      },
     };
     const adjusted = applyWeatherRiskToScores(scores, {
       riskScore: 70,
@@ -65,6 +76,28 @@ describe('open-source trip context', () => {
     });
     expect(adjusted.score_safety).toBeLessThan(scores.score_safety);
     expect(adjusted.weather_score_adjustment).toBeLessThan(0);
+    expect(adjusted.component_scores.safety.value).toBe(adjusted.score_safety);
+    expect(adjusted.component_scores.overall.value).toBe(adjusted.score_overall);
+    expect(adjusted.component_scores.overall.dataSource).toContain('open_meteo_weather');
+  });
+
+  it('keeps estimated brake-turn alerts advisory-only during risky weather', () => {
+    const scores = {
+      score_safety: 90,
+      score_smoothness: 90,
+      score_eco: 90,
+      score_overall: 90,
+      close_proximity_count: 2,
+    };
+    const adjusted = applyWeatherRiskToScores(scores, {
+      riskScore: 70,
+      riskMultiplier: 1.45,
+      riskLevel: 'high',
+    });
+
+    expect(adjusted.score_safety).toBe(scores.score_safety);
+    expect(adjusted.score_overall).toBe(scores.score_overall);
+    expect(adjusted.weather_score_adjustment).toBe(0);
   });
 
   it('clips route coordinates to privacy-zone boundaries and hides private events', () => {

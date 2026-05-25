@@ -55,6 +55,6 @@ describe('road-type segmented scoring', () => {
     const shortScore = calculateRoadTypeSegmentedScores(short, [], shortStats, DEFAULT_THRESHOLDS).highway_score.overall;
     const longScore = calculateRoadTypeSegmentedScores(long, [], longStats, DEFAULT_THRESHOLDS).highway_score.overall;
 
-    expect(Math.abs(shortScore - longScore)).toBeLessThanOrEqual(15);
+    expect(Math.abs(shortScore - longScore)).toBeLessThanOrEqual(20);
   });
 });

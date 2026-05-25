@@ -1,11 +1,22 @@
-export const NIGHT_START_HOUR = 22;
-export const NIGHT_END_HOUR = 5;
+import { scoringValue } from './scoringConstants';
+
+export const NIGHT_START_HOUR = scoringValue('NIGHT_START_HOUR');
+export const NIGHT_END_HOUR = scoringValue('NIGHT_END_HOUR');
 export const MORNING_RUSH_START_HOUR = 7;
 export const MORNING_RUSH_END_HOUR = 9;
 export const EVENING_RUSH_START_HOUR = 16;
 export const EVENING_RUSH_END_HOUR = 19;
 export const NIGHT_START_TIME = `${String(NIGHT_START_HOUR).padStart(2, '0')}:00`;
 export const NIGHT_END_TIME = `${String(NIGHT_END_HOUR).padStart(2, '0')}:00`;
+
+export const PENALTY_SCALE_FACTOR = scoringValue('PENALTY_SCALE_FACTOR');
+
+/**
+ * Provisional Safety penalty applied to the normalized 0-100 fatigue proxy.
+ * A maximum fatigue proxy currently adds 12 raw penalty points; this has not
+ * been calibrated against collision or impairment outcome data.
+ */
+export const FATIGUE_SAFETY_PENALTY_SCALE = scoringValue('FATIGUE_SAFETY_PENALTY_SCALE');
 
 export const MAX_VISIBLE_DANGER_ZONES = 6;
 export const MAX_ROUTE_RISK_SEGMENTS_SHOWN = 3;

@@ -1,0 +1,69 @@
+{
+  "id": "urban_smooth_v2_1_0",
+  "description": "Human-verified smooth urban route with no detected events; validates low-confidence score exposure and null unavailable components.",
+  "scoring_version": "2.1.0",
+  "human_verified": true,
+  "startTime": "2026-05-24T14:00:00.000Z",
+  "endTime": "2026-05-24T14:01:10.000Z",
+  "points": [
+    { "lat": 43.65, "lng": -79.38, "timestamp": "2026-05-24T14:00:00.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.65075, "lng": -79.38, "timestamp": "2026-05-24T14:00:10.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.6515, "lng": -79.38, "timestamp": "2026-05-24T14:00:20.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.65225, "lng": -79.38, "timestamp": "2026-05-24T14:00:30.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.653, "lng": -79.38, "timestamp": "2026-05-24T14:00:40.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.65375, "lng": -79.38, "timestamp": "2026-05-24T14:00:50.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.6545, "lng": -79.38, "timestamp": "2026-05-24T14:01:00.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 },
+    { "lat": 43.65525, "lng": -79.38, "timestamp": "2026-05-24T14:01:10.000Z", "speed_kmh": 50, "accuracy": 6, "heading": 0 }
+  ],
+  "expected": {
+    "stats": {
+      "distance_km": 0.584,
+      "duration_seconds": 70,
+      "avg_speed_kmh": 30,
+      "avg_running_speed_kmh": 30,
+      "max_speed_kmh": 50,
+      "idle_time_seconds": 0,
+      "traffic_stop_count": 0,
+      "night_driving": false
+    },
+    "scores": {
+      "score_overall": 92,
+      "score_safety": 100,
+      "score_smoothness": 100,
+      "score_eco": 66,
+      "score_confidence_label": "low",
+      "harsh_brakes_count": 0,
+      "rapid_accel_count": 0,
+      "sharp_turns_count": 0,
+      "speeding_events_count": 0,
+      "speed_creep_score": 100,
+      "aggressive_driving_score": 100,
+      "defensive_driving_score": null
+    },
+    "component_scores": {
+      "overall": { "value": 92, "evidence": "low", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 8 },
+      "safety": { "value": 100, "evidence": "low", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 8 },
+      "smoothness": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
+      "eco": { "value": 66, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
+      "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
+      "speed_creep": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
+      "aggressive_driving": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
+      "defensive_driving": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 8 },
+      "fatigue_risk": { "value": 0, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
+    },
+    "score_provenance": {
+      "scoring_version": "2.1.0",
+      "components": {
+        "overall": "low",
+        "safety": "low",
+        "smoothness": "low",
+        "eco": "low",
+        "intersection": "unavailable",
+        "speed_creep": "low",
+        "aggressive_driving": "low",
+        "defensive_driving": "unavailable",
+        "fatigue_risk": "high"
+      }
+    }
+  }
+}

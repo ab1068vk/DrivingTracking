@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { parseObdPidResponse } from '@/lib/obdBluetooth';
 import { buildSensorFusionSummary, detectCrashIncident, enrichEventsWithSensorContext, getMotionSensorSupport } from '@/lib/sensorFusionModel';
-import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
+import { estimatePredictiveRouteRisk, ROUTE_RISK_CONSTANTS } from '@/lib/predictiveRouteRisk';
 import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildHabitProfile } from '@/lib/habitProfile';
 
@@ -128,7 +128,47 @@ describe('advanced open-source features', () => {
     expect(withMoreEligibleDistance.riskScore).toBeLessThan(withBase.riskScore);
   });
 
-  it('uses reduced estimated brake-turn weighting in predictive route risk', () => {
+  it('exposes provisional route-risk normalization saturation and component contributions', () => {
+    expect(ROUTE_RISK_CONSTANTS.EVENT_DENSITY_MAX_EVENTS_PER_KM).toBe(5);
+    expect(ROUTE_RISK_CONSTANTS.DANGER_ZONE_SATURATION_COUNT).toBe(5);
+
+    const dangerZones = Array.from({ length: 5 }, (_, index) => ({
+      id: `zone-${index}`,
+      lat: 43.65 + index * 0.00001,
+      lng: -79.38,
+      riskLevel: 'high',
+    }));
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1, { distance_km: 1, harsh_brakes_count: 5 })],
+      currentLocation: { lat: 43.65, lng: -79.38 },
+      dangerZones,
+      now: new Date(2026, 0, 10, 12),
+    });
+    const events = risk.componentBreakdown.find((component) => component.key === 'events');
+    const zones = risk.componentBreakdown.find((component) => component.key === 'zones');
+
+    expect(events).toMatchObject({ normalizedRisk: 100, contribution: 25 });
+    expect(zones).toMatchObject({ normalizedRisk: 100, contribution: 15 });
+  });
+
+  it('withholds predictive route risk until completed distance exists', () => {
+    const risk = estimatePredictiveRouteRisk({
+      trips: [],
+      now: new Date(2026, 0, 10, 12),
+    });
+
+    expect(risk).toMatchObject({
+      status: 'insufficient_history',
+      insufficientHistory: true,
+      riskScore: null,
+      riskLevel: null,
+      primaryFactor: 'Not enough driving history',
+      componentBreakdown: [],
+    });
+    expect(ROUTE_RISK_CONSTANTS.DEFAULT_AVG_SCORE).toBeUndefined();
+  });
+
+  it('does not amplify unverified current or legacy brake-turn alerts in predictive route risk', () => {
     const withHarshBrakes = estimatePredictiveRouteRisk({
       trips: [trip(90, 1, { distance_km: 1, harsh_brakes_count: 2 })],
       now: new Date(2026, 0, 10, 12),
@@ -137,8 +177,13 @@ describe('advanced open-source features', () => {
       trips: [trip(90, 1, { distance_km: 1, close_proximity_count: 2 })],
       now: new Date(2026, 0, 10, 12),
     });
+    const withLegacyAlerts = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1, { distance_km: 1, near_miss_count: 2 })],
+      now: new Date(2026, 0, 10, 12),
+    });
 
-    expect(withEstimatedAlerts.riskScore - withHarshBrakes.riskScore).toBe(5);
+    expect(withEstimatedAlerts.riskScore).toBe(withHarshBrakes.riskScore);
+    expect(withLegacyAlerts.riskScore).toBe(withHarshBrakes.riskScore);
   });
 
   it('clamps weather risk before applying predictive weighting', () => {
@@ -173,6 +218,27 @@ describe('advanced open-source features', () => {
         confidence: 0.6,
         allTimeAvgScore: 85,
         hourlyRisk: {
+          0: { riskScore: 80, tripCount: 3 },
+          1: { riskScore: 70, tripCount: 3 },
+          2: { riskScore: 50, tripCount: 3 },
+          3: { riskScore: 10, tripCount: 3 },
+          4: { riskScore: 20, tripCount: 3 },
+          5: { riskScore: 30, tripCount: 3 },
+        },
+      },
+    });
+
+    expect(risk.safestWindow).toContain('3:00 AM');
+  });
+
+  it('uses generic safer-window copy when the best hour has sparse evidence', () => {
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1)],
+      now: new Date(2026, 0, 10, 0, 45),
+      habitProfile: {
+        confidence: 0.6,
+        allTimeAvgScore: 85,
+        hourlyRisk: {
           0: { riskScore: 80, tripCount: 2 },
           1: { riskScore: 70, tripCount: 2 },
           2: { riskScore: 50, tripCount: 2 },
@@ -183,7 +249,8 @@ describe('advanced open-source features', () => {
       },
     });
 
-    expect(risk.safestWindow).toContain('3:00 AM');
+    expect(ROUTE_RISK_CONSTANTS.MIN_PERSONAL_WINDOW_TRIP_COUNT).toBe(3);
+    expect(risk.safestWindow).toBe('Lower-risk hours vary; see your trip history for patterns.');
   });
 
   it('builds a local weekly coaching sentence without AI services', () => {

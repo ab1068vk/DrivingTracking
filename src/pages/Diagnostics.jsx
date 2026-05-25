@@ -36,6 +36,7 @@ import {
 } from '@/lib/trackingDiagnostics';
 import { localSettings } from '@/lib/trackingStore';
 import { formatDateTime } from '@/lib/tripEngine';
+import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -116,12 +117,23 @@ export default function Diagnostics() {
   const [nativeDiagnostics, setNativeDiagnostics] = useState({ enabled: false, events: [] });
   const [webDiagnostics, setWebDiagnostics] = useState(() => getTrackingDiagnostics());
   const [refreshing, setRefreshing] = useState(false);
+  const [testDataBusy, setTestDataBusy] = useState(false);
+  const [testDataNotice, setTestDataNotice] = useState('');
 
   const { data: trips = [], refetch } = useQuery({
     queryKey: ['diagnostics-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 20 }),
   });
+  const { data: storedTestTrips = [], refetch: refetchStoredTestTrips } = useQuery({
+    queryKey: ['diagnostics-local-test-trips'],
+    queryFn: async () => {
+      const storedTrips = await tripService.listAll({ sort: '-start_time' });
+      return storedTrips.filter((trip) => String(trip.id || '').startsWith(LOCAL_TEST_TRIP_PREFIX));
+    },
+    enabled: import.meta.env.DEV,
+  });
   const latestTrip = trips.find((trip) => trip.status === 'completed') || null;
+  const localTestTripCount = storedTestTrips.length;
 
   const refresh = async () => {
     setRefreshing(true);
@@ -137,7 +149,10 @@ export default function Diagnostics() {
       setNativeStatus(native);
       setBatteryStatus(battery);
       setNativeDiagnostics(nativeLog || { enabled: false, events: [] });
-      await refetch();
+      await Promise.all([
+        refetch(),
+        import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),
+      ]);
     } finally {
       setRefreshing(false);
     }
@@ -178,6 +193,28 @@ export default function Diagnostics() {
     await refresh();
   };
 
+  const seedLocalTestTrips = async () => {
+    setTestDataBusy(true);
+    try {
+      const seeded = await tripService.upsertMany(buildLocalFeatureTestTrips());
+      await refresh();
+      setTestDataNotice(`${seeded.length} synthetic trips are available in this local profile.`);
+    } finally {
+      setTestDataBusy(false);
+    }
+  };
+
+  const removeLocalTestTrips = async () => {
+    setTestDataBusy(true);
+    try {
+      await Promise.all(storedTestTrips.map((trip) => tripService.delete(trip.id)));
+      await refresh();
+      setTestDataNotice(`${storedTestTrips.length} synthetic trips removed from this local profile.`);
+    } finally {
+      setTestDataBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -206,6 +243,38 @@ export default function Diagnostics() {
           </button>
         </div>
       </div>
+
+      {import.meta.env.DEV && (
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="font-semibold">Local Test Data</h2>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Synthetic completed trips in this profile: {localTestTripCount}
+              </div>
+              {testDataNotice && <div className="mt-1 text-xs font-medium text-primary">{testDataNotice}</div>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={seedLocalTestTrips}
+                disabled={testDataBusy}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                <Car className="h-4 w-4" />
+                Seed test trips
+              </button>
+              <button
+                onClick={removeLocalTestTrips}
+                disabled={testDataBusy || localTestTripCount === 0}
+                className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Remove test trips
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">

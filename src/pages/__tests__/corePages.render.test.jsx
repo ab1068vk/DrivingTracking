@@ -32,8 +32,23 @@ const sampleTrip = {
   duration_seconds: 720,
   score_overall: 88,
   score_safety: 91,
+  score_safety_confidence: 'developing',
   score_smoothness: 86,
+  score_smoothness_confidence: 'low',
   score_eco: 84,
+  score_eco_confidence: 'high',
+  score_provenance: {
+    computed_at: '2026-05-24T17:23:44.000Z',
+    scoring_version: '2.1.0',
+    components: { overall: 'developing', safety: 'developing' },
+    constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
+  },
+  score_provenance_change: {
+    previous_scoring_version: '2.0.0',
+    current_scoring_version: '2.1.0',
+    reason: 'scoring_inputs_changed',
+    changed_constants: ['PENALTY_SCALE_FACTOR'],
+  },
   avg_speed_kmh: 42,
   avg_running_speed_kmh: 48,
   max_speed_kmh: 74,
@@ -76,8 +91,18 @@ vi.mock('recharts', () => {
   return {
     Area: Box,
     AreaChart: Box,
+    Bar: Box,
+    BarChart: Box,
+    CartesianGrid: Box,
+    Cell: Box,
     Line: Box,
     LineChart: Box,
+    Pie: Box,
+    PieChart: Box,
+    PolarAngleAxis: Box,
+    PolarGrid: Box,
+    Radar: Box,
+    RadarChart: Box,
     ResponsiveContainer: Box,
     Tooltip: Box,
     XAxis: Box,
@@ -104,7 +129,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('@/components/ScoreRing', () => ({
-  default: ({ score, label }) => <div>{label || 'Score'} {score}</div>,
+  default: ({ score, label, evidence }) => <div data-evidence={evidence}>{label || 'Score'} {score}</div>,
 }));
 
 vi.mock('@/components/TripMap', () => ({
@@ -218,9 +243,48 @@ describe('core page component renders', () => {
     expect(html).toContain('Tracking is ready');
     expect(html).toContain('Why tracking did or did not start');
     expect(html).toContain('trip-1');
+    expect(html).toContain('data-evidence="low"');
+    expect(html).toContain('approximate');
   }, 10_000);
 
+  it('labels predictive route risk as estimated and shows its signal breakdown', async () => {
+    queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
+      ...sampleTrip,
+      id: `trip-${index + 1}`,
+      start_time: new Date(Date.now() - index * 3600000).toISOString(),
+    })));
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+    const html = renderToStaticMarkup(<Dashboard />);
+
+    expect(html).toContain('Estimated route risk');
+    expect(html).toContain('Signal contributions');
+    expect(html).toContain('Route event density');
+    expect(html).toContain('not validated against collision or casualty outcomes');
+  });
+
+  it('withholds predictive route risk when completed history has no recorded distance', async () => {
+    queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
+      ...sampleTrip,
+      id: `zero-trip-${index + 1}`,
+      distance_km: 0,
+      start_time: new Date(Date.now() - index * 3600000).toISOString(),
+    })));
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+    const html = renderToStaticMarkup(<Dashboard />);
+
+    expect(html).toContain('Predictive route risk');
+    expect(html).toContain('Not enough driving history');
+    expect(html).not.toContain('Estimated route risk');
+    expect(html).not.toContain('Signal contributions');
+  });
+
   it('renders TripDetail with road, weather, and feedback sections', async () => {
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      hill_driving_score: 80,
+      climb_distance_km: 0.7,
+      descent_distance_km: 0.4,
+    });
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const html = renderToStaticMarkup(<TripDetail />);
 
@@ -229,6 +293,15 @@ describe('core page component renders', () => {
     expect(html).toContain('OpenStreetMap');
     expect(html).toContain('Open-Meteo');
     expect(html).toContain('Safety');
+    expect(html).toContain('developing evidence');
+    expect(html).toContain('low evidence');
+    expect(html).toContain('high evidence');
+    expect(html).toContain('Scoring provenance');
+    expect(html).toContain('approximate');
+    expect(html).toContain('Version 2.1.0');
+    expect(html).toContain('Updated constants: PENALTY_SCALE_FACTOR.');
+    expect(html).toContain('GPS and altitude-derived estimate only');
+    expect(html).toContain('legitimate uphill manoeuvre');
   });
 
   it('renders Settings tracking, permission, and external-context controls', async () => {
@@ -240,5 +313,63 @@ describe('core page component renders', () => {
     expect(html).toContain('Android Permissions');
     expect(html).toContain('Snap route to roads');
     expect(html).toContain('Automatically get speed limits');
+    expect(html).toContain('Calibration registry');
+    expect(html).toContain('approximate');
+  });
+
+  it('renders only insufficient-data UBI status below the score-card evidence threshold', async () => {
+    queryData.set(JSON.stringify(['report-trips']), [{
+      ...sampleTrip,
+      distance_km: 8.4,
+      start_time: new Date().toISOString(),
+      end_time: new Date().toISOString(),
+    }]);
+    const { default: Reports } = await import('@/pages/Report');
+    const html = renderToStaticMarkup(<Reports />);
+
+    expect(html).toContain('Driver Score Card');
+    expect(html).toContain('Insufficient data');
+    expect(html).toContain('Complete at least 50 km');
+    expect(html).not.toContain('Non-preferred');
+    expect(html).not.toContain('N/A');
+  });
+
+  it('shows the insurance-validation warning beside a scored UBI card', async () => {
+    queryData.set(JSON.stringify(['report-trips']), [{
+      ...sampleTrip,
+      distance_km: 60,
+      start_time: new Date().toISOString(),
+      end_time: new Date().toISOString(),
+    }]);
+    const { default: Reports } = await import('@/pages/Report');
+    const html = renderToStaticMarkup(<Reports />);
+
+    expect(html).toContain('Estimated score, not an insurance rating');
+    expect(html).toContain('approximate');
+    expect(html).toContain('not insurer-validated for insurance eligibility or pricing');
+    expect(html).not.toContain('Insufficient data');
+  });
+
+  it('gates trip-history score deltas until three prior trips exist', async () => {
+    const { scoreDeltaForTrip, SCORE_DELTA_MIN_PREVIOUS_TRIPS } = await import('@/pages/TripHistory');
+    const ordered = [
+      { id: 'newest', score_overall: 90 },
+      { id: 'prior-1', score_overall: 70 },
+      { id: 'prior-2', score_overall: 72 },
+      { id: 'prior-3', score_overall: 75 },
+    ];
+
+    expect(SCORE_DELTA_MIN_PREVIOUS_TRIPS).toBe(3);
+    expect(scoreDeltaForTrip(ordered[0], ordered.slice(0, 2))).toMatchObject({
+      delta: null,
+      direction: 'flat',
+      insufficientBaseline: true,
+      sampleCount: 1,
+    });
+    expect(scoreDeltaForTrip(ordered[0], ordered)).toMatchObject({
+      direction: 'up',
+      insufficientBaseline: false,
+      sampleCount: 3,
+    });
   });
 });

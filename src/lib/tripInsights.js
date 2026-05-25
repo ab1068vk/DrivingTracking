@@ -27,9 +27,28 @@ export const CO2_KG_PER_LITER = {
   electric: 0,
   ev: 0,
 };
+/**
+ * Provisional maintenance conversion used for extra-wear estimates.
+ *
+ * Calibration intent: one driving stress unit is currently treated as about
+ * 8 km of service-life reserve consumed. This has not been calibrated against
+ * OEM tire/service interval data, so maintenance reminders should treat it as
+ * a planning heuristic rather than a manufacturer-backed life estimate.
+ */
 export const WEAR_KM_PER_STRESS_UNIT = 8;
+export const MAINTENANCE_CALIBRATION_REGISTRY = {
+  wearKmPerStressUnit: {
+    value: WEAR_KM_PER_STRESS_UNIT,
+    unit: 'km_per_stress_unit',
+    calibrationStatus: 'provisional',
+    calibrationBasis: 'Not calibrated to OEM tire or maintenance interval data.',
+    note: '1 stress unit is assumed to consume about 8 km of service-life reserve until manufacturer or fleet outcome data is available.',
+  },
+};
 export const PERSONAL_BASELINE_MIN_TRIPS = 10;
 export const PERSONAL_BASELINE_DECAY = 0.85;
+export const PERSONAL_BASELINE_INTERVAL_METHOD = 'normal_approximation_95';
+export const PERSONAL_BASELINE_INTERVAL_NOTE = 'Approximate 95% CI assuming roughly normal score distribution; may be too narrow for bounded or skewed scores.';
 export const PEAK_STRESS_MIN_TRIP_KM = 0.5;
 export const RISK_EVENT_RATE_MIN_DISTANCE_KM = 50;
 export const SCORE_TIP_MIN_TRIP_KM = 2;
@@ -381,7 +400,7 @@ export function buildDriverSignature(trips) {
  * @param {Array<Object>} trips - Trips for the vehicle.
  * @param {{oil_change_km?:number,oil_change_interval_km?:number,tire_rotation_km?:number,tire_rotation_interval_km?:number,inspection_km?:number,odometer_km?:number,maintenance_items?:Array}} vehicle - Vehicle service settings.
  * @param {Object} settings - User settings for fallback intervals.
- * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number|null,corner_stress_index:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
+ * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number|null,corner_stress_index:number,has_missing_speed_data:boolean,missing_speed_event_count:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
  * @example
  * const maintenance = calculatePredictiveMaintenance(trips, vehicle, settings);
  */
@@ -400,6 +419,8 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
     ? clamp(1 - mean(brakingScores) / 100, 0, 1)
     : null;
   const cornerStressIndex = clamp(mean(completed.map((trip) => Number(trip.trip_tire_wear_units)), 0) / 10, 0, 1);
+  const missingSpeedEventCount = completed.reduce((sum, trip) => sum + getTripTireWearMissingSpeedEventCount(trip), 0);
+  const hasMissingSpeedData = missingSpeedEventCount > 0 || completed.some((trip) => trip.trip_tire_wear_has_missing_speed_data === true);
   const brakeStressForComposite = brakeStressIndex ?? 0;
   const stressIndex = clamp(aggressionIndex * 0.40 + brakeStressForComposite * 0.35 + cornerStressIndex * 0.25, 0, 1);
   const adjustmentFactor = 1 - stressIndex * 0.40;
@@ -428,6 +449,8 @@ export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {
     aggression_index: Math.round(aggressionIndex * 100) / 100,
     brake_stress_index: brakeStressIndex == null ? null : Math.round(brakeStressIndex * 100) / 100,
     corner_stress_index: Math.round(cornerStressIndex * 100) / 100,
+    has_missing_speed_data: hasMissingSpeedData,
+    missing_speed_event_count: missingSpeedEventCount,
     oil_change: build(itemFor(['oil'], oilBase), oilBase),
     tire_rotation: build(itemFor(['tires'], tireBase), tireBase),
     inspection: build(itemFor(['inspection'], inspectionBase), inspectionBase),
@@ -872,6 +895,8 @@ export function computePersonalBaseline(completedTrips = []) {
   return {
     baseline_avg: baselineAvg,
     baseline_confidence_interval: baselineInterval,
+    baseline_confidence_interval_method: baselineAvg == null ? null : PERSONAL_BASELINE_INTERVAL_METHOD,
+    baseline_confidence_interval_note: baselineAvg == null ? null : PERSONAL_BASELINE_INTERVAL_NOTE,
     baseline_trip_count: baselineTrips.length,
     baseline_confidence: baselineAvg == null ? 'insufficient_data' : baselineTrips.length >= 20 ? 'high' : 'developing',
     this_week_avg: thisWeekAvg,
@@ -975,12 +1000,39 @@ export function identifyCommutePatterns(completedTrips = []) {
 
 export function calculateTireWearUnits(events = []) {
   const severityBase = { low: 1, medium: 2.5, high: 5 };
-  const units = events.reduce((sum, event) => {
-    if (event.type === 'harsh_brake') return sum + (severityBase[event.severity] || 0) * Math.pow((event.speed_kmh ?? 50) / 50, 2);
-    if (event.type === 'sharp_turn') return sum + (severityBase[event.severity] || 0) * Math.pow((event.speed_kmh ?? 40) / 40, 2);
-    return sum;
-  }, 0);
-  return { trip_tire_wear_units: Math.round(units * 10) / 10 };
+  let units = 0;
+  let missingSpeedEventCount = 0;
+  for (const event of events) {
+    if (event.type !== 'harsh_brake' && event.type !== 'sharp_turn') continue;
+    const referenceSpeed = event.type === 'harsh_brake' ? 50 : 40;
+    const speed = Number(event.speed_kmh);
+    const hasSpeed = event.speed_kmh != null && event.speed_kmh !== '' && Number.isFinite(speed) && speed >= 0;
+    if (!hasSpeed) missingSpeedEventCount++;
+    const speedFactor = hasSpeed ? Math.pow(speed / referenceSpeed, 2) : 1;
+    units += (severityBase[event.severity] || 0) * speedFactor;
+  }
+  return {
+    trip_tire_wear_units: Math.round(units * 10) / 10,
+    trip_tire_wear_has_missing_speed_data: missingSpeedEventCount > 0,
+    trip_tire_wear_missing_speed_event_count: missingSpeedEventCount,
+  };
+}
+
+function getTripTireWearMissingSpeedEventCount(trip = {}) {
+  const storedCount = Number(trip.trip_tire_wear_missing_speed_event_count);
+  if (
+    trip.trip_tire_wear_missing_speed_event_count != null &&
+    trip.trip_tire_wear_missing_speed_event_count !== '' &&
+    Number.isFinite(storedCount) &&
+    storedCount >= 0
+  ) return storedCount;
+  if (
+    trip.trip_tire_wear_units == null ||
+    trip.trip_tire_wear_units === '' ||
+    !Number.isFinite(Number(trip.trip_tire_wear_units))
+  ) return 0;
+  return calculateTireWearUnits(Array.isArray(trip.driving_events) ? trip.driving_events : [])
+    .trip_tire_wear_missing_speed_event_count;
 }
 
 export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicles = null) {
@@ -1039,6 +1091,8 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
   const oilBase = Number(vehicle.oil_change_interval_km) || 8000;
   const tireBase = Number(vehicle.tire_rotation_interval_km) || 10000;
   const totalTireWear = completed.reduce((sum, trip) => sum + (Number(trip.trip_tire_wear_units) || 0), 0);
+  const tireWearMissingSpeedEventCount = completed.reduce((sum, trip) => sum + getTripTireWearMissingSpeedEventCount(trip), 0);
+  const tireWearHasMissingSpeedData = tireWearMissingSpeedEventCount > 0 || completed.some((trip) => trip.trip_tire_wear_has_missing_speed_data === true);
   const tireWearGrade = totalTireWear < 50 ? 'minimal' : totalTireWear < 150 ? 'normal' : totalTireWear < 300 ? 'elevated' : 'accelerated';
   const avgEngineStressScore = calculateAverageEngineStressScore(completed);
   const baseHealthGrade = totalStressUnits < 50 ? 'A' : totalStressUnits < 150 ? 'B' : totalStressUnits < 300 ? 'C' : 'D';
@@ -1067,6 +1121,8 @@ export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
     engine_stress_grade: engineStressGrade,
     vehicle_tire_wear_total: Math.round(totalTireWear * 10) / 10,
     tire_wear_grade: tireWearGrade,
+    tire_wear_has_missing_speed_data: tireWearHasMissingSpeedData,
+    tire_wear_missing_speed_event_count: tireWearMissingSpeedEventCount,
     tire_life_impact_km: Math.round(totalTireWear * 0.5),
   };
 }

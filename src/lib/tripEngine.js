@@ -2,26 +2,105 @@ import { saveExportToDownloads } from './nativeDownloads';
 import { clamp } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
 import { maskTripForPrivacy } from './privacyZones';
-import { NIGHT_END_HOUR, NIGHT_END_TIME, NIGHT_START_HOUR, NIGHT_START_TIME } from './appConstants';
+import {
+  COMPONENT_METRIC_KEYS,
+  CSV_METRIC_COLUMNS,
+  METRIC_REGISTRY,
+  formatMetricMetadata,
+} from './metricRegistry';
+import {
+  NIGHT_END_HOUR,
+  NIGHT_END_TIME,
+  NIGHT_START_HOUR,
+  NIGHT_START_TIME,
+  FATIGUE_SAFETY_PENALTY_SCALE,
+  PENALTY_SCALE_FACTOR,
+} from './appConstants';
+import {
+  SCORING_CONSTANTS,
+  getProvisionalScoringConstants,
+  hasProvisionalCalibration,
+  scoringValue,
+} from './scoringConstants';
 
-const ECO_SPEED_STABILITY_CV_MULTIPLIER = 150;
+/**
+ * Provisional multiplier for converting coefficient of variation in moving
+ * speeds into the 0-100 eco speed-stability score. A CV of 0.5 maps to 25/100,
+ * making very uneven speed control visible without zeroing the component.
+ */
+export const ECO_SPEED_STABILITY_CV_MULTIPLIER = scoringValue('ECO_SPEED_STABILITY_CV_MULTIPLIER');
 // A perfect fuel-band score should require sustained efficient cruising, not a bare majority of samples.
-export const FUEL_BAND_FULL_SCORE_MULTIPLIER = 1.1;
-const STOP_START_MIN_HIGHWAY_DISTANCE_KM = 5;
-const STOP_START_MAX_CYCLES_PER_5_KM = 5;
+export const FUEL_BAND_FULL_SCORE_MULTIPLIER = scoringValue('FUEL_BAND_FULL_SCORE_MULTIPLIER');
+const STOP_START_MIN_HIGHWAY_DISTANCE_KM = scoringValue('STOP_START_MIN_HIGHWAY_DISTANCE_KM');
+export const STOP_START_NORMALISATION_WINDOW_KM = scoringValue('STOP_START_NORMALISATION_WINDOW_KM');
+const STOP_START_MAX_CYCLES_PER_5_KM = scoringValue('STOP_START_MAX_CYCLES_PER_WINDOW');
+/**
+ * Minimum observed stop-start/tailgate cycles before the diagnostic score can
+ * influence the defensive-driving blend. Below this, the sample is too sparse.
+ */
+export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT = scoringValue('STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT');
 export const FATIGUE_SEGMENT_SECONDS = FATIGUE_HEATMAP_SEGMENT_SECONDS;
-export const PHONE_USE_SAFETY_WEIGHT = 0.05;
+export const PHONE_USE_SAFETY_WEIGHT = scoringValue('PHONE_USE_SAFETY_WEIGHT');
+/**
+ * Provisional close-proximity score decay per detected near-miss/proximity event.
+ * Not calibrated to incident, crash, or following-distance outcome data.
+ */
+export const CLOSE_PROXIMITY_DECAY_BASE = scoringValue('CLOSE_PROXIMITY_DECAY_BASE');
+/**
+ * Provisional reference speeds used to scale tire-wear units by squared speed.
+ * These defaults are diagnostic approximations, not calibrated wear estimates.
+ */
+export const TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH = scoringValue('TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH');
+export const TIRE_WEAR_DEFAULT_SPEED_TURN_KMH = scoringValue('TIRE_WEAR_DEFAULT_SPEED_TURN_KMH');
+/**
+ * Provisional circadian weighting for Heading Drift Beta windows starting
+ * between 02:00 and 05:00 local time. NHTSA notes drowsy-driving crashes most
+ * often occur from midnight to 06:00 during circadian dips and lists crossing
+ * roadway lines as a drowsiness warning sign, but this 2.5x factor is not
+ * calibrated to lane-keeping or crash outcome data.
+ * @see https://www.nhtsa.gov/risky-driving/drowsy-driving
+ */
+export const HEADING_DRIFT_CIRCADIAN_MULTIPLIER = scoringValue('HEADING_DRIFT_CIRCADIAN_MULTIPLIER');
+export const CONFIDENCE_LEVELS = Object.freeze({
+  HIGH: 'high',
+  DEVELOPING: 'developing',
+  LOW: 'low',
+  UNAVAILABLE: 'unavailable',
+});
+/**
+ * Stored-trip scoring contract version. Bump this whenever score algorithms,
+ * calibration constants, or evidence classification rules change.
+ */
+export const SCORING_VERSION = '2.1.0';
+/**
+ * @typedef {'high'|'developing'|'low'|'unavailable'} EvidenceLevel
+ * @typedef {{
+ *   value: number|null,
+ *   evidence: EvidenceLevel,
+ *   dataSource: string[],
+ *   sampleCount?: number,
+ *   note?: string
+ * }} ComponentScore
+ */
 export const ECO_DEFAULTS = Object.freeze({
-  CRUISE_SCORE_MULTIPLIER: 130,
-  IDLE_PENALTY_MULTIPLIER: 150,
-  IDLE_MAX_PENALTY: 25,
+  CRUISE_SCORE_MULTIPLIER: scoringValue('ECO_CRUISE_SCORE_MULTIPLIER'),
+  IDLE_PENALTY_MULTIPLIER: scoringValue('ECO_IDLE_PENALTY_MULTIPLIER'),
+  IDLE_MAX_PENALTY: scoringValue('ECO_IDLE_MAX_PENALTY'),
 });
 export const SVI_DEFAULTS = Object.freeze({
   MOVING_SPEED_FLOOR_KMH: 5,
   MIN_MOVING_SAMPLES: 10,
   MIN_STRATUM_SAMPLES: 6,
   HIGHWAY_MIN_KMH: 80,
+  /**
+   * Provisional city/urban SVI calibration: each 1 km/h of within-stratum
+   * speed standard deviation deducts 1 point, so 10 km/h maps to 90/100.
+   */
   CITY_MULTIPLIER: 1,
+  /**
+   * Provisional highway SVI calibration: each 1 km/h of within-stratum speed
+   * standard deviation deducts 2 points, so 10 km/h maps to 80/100.
+   */
   HIGHWAY_MULTIPLIER: 2,
 });
 let reportedInvalidEcoThresholds = false;
@@ -35,18 +114,18 @@ let reportedInvalidEcoThresholds = false;
 // ─── Default Thresholds ────────────────────────────────────────────────────────
 export const DEFAULT_THRESHOLDS = {
   // Harsh braking: deceleration > 3.5 m/s2, a common telematics trigger.
-  HARSH_BRAKE_MS2: 3.5,
+  HARSH_BRAKE_MS2: scoringValue('HARSH_BRAKE_MS2'),
   // Rapid acceleration: > 3.0 m/s2, about 10.8 km/h per second gain.
-  RAPID_ACCEL_MS2: 3.0,
+  RAPID_ACCEL_MS2: scoringValue('RAPID_ACCEL_MS2'),
   // Sharp turn: heading change > 45° per GPS sample at > 30 km/h
-  SHARP_TURN_G_LOW: 0.35,
-  SHARP_TURN_G_MEDIUM: 0.45,
-  SHARP_TURN_G_HIGH: 0.60,
+  SHARP_TURN_G_LOW: scoringValue('SHARP_TURN_G_LOW'),
+  SHARP_TURN_G_MEDIUM: scoringValue('SHARP_TURN_G_MEDIUM'),
+  SHARP_TURN_G_HIGH: scoringValue('SHARP_TURN_G_HIGH'),
   // Speeding fallback: above 100 km/h when no open-source speed limit data is available.
-  SPEEDING_FALLBACK_KMH: 100,
-  SPEED_OVER_KMH: 5,
-  ECO_CRUISE_MIN_KMH: 55,
-  ECO_CRUISE_MAX_KMH: 110,
+  SPEEDING_FALLBACK_KMH: scoringValue('SPEEDING_FALLBACK_KMH'),
+  SPEED_OVER_KMH: scoringValue('SPEED_OVER_KMH'),
+  ECO_CRUISE_MIN_KMH: scoringValue('ECO_CRUISE_MIN_KMH'),
+  ECO_CRUISE_MAX_KMH: scoringValue('ECO_CRUISE_MAX_KMH'),
   // Cruise score multiplier: 130 gives full credit when about 77% of moving samples are in the cruise band.
   ECO_CRUISE_SCORE_MULTIPLIER: ECO_DEFAULTS.CRUISE_SCORE_MULTIPLIER,
   // Idle penalty curve: each 1% of avoidable parked idle costs 1.5 points before the cap below.
@@ -54,13 +133,13 @@ export const DEFAULT_THRESHOLDS = {
   // Idle penalty cap: avoidable idling can reduce the eco-driving component by at most 25 points.
   ECO_IDLE_MAX_PENALTY: ECO_DEFAULTS.IDLE_MAX_PENALTY,
   // Moving sample floor: ignore GPS crawl/jitter below 15 km/h unless a city profile lowers this threshold.
-  ECO_MIN_MOVING_KMH: 15,
+  ECO_MIN_MOVING_KMH: scoringValue('ECO_MIN_MOVING_KMH'),
   // Idle threshold: speed < 5 km/h
-  IDLE_SPEED_KMH: 5,
+  IDLE_SPEED_KMH: scoringValue('IDLE_SPEED_KMH'),
   // Idle event: idling for > 90 consecutive seconds
-  IDLE_EVENT_SECONDS: 90,
+  IDLE_EVENT_SECONDS: scoringValue('IDLE_EVENT_SECONDS'),
   // Long drive: > 120 continuous minutes
-  LONG_DRIVE_MINUTES: 120,
+  LONG_DRIVE_MINUTES: scoringValue('LONG_DRIVE_MINUTES'),
   // Night driving defaults: sunset/sunrise when coordinates exist, otherwise the shared fixed-hour window.
   NIGHT_DETECTION_MODE: 'sunset',
   NIGHT_START_TIME,
@@ -70,64 +149,68 @@ export const DEFAULT_THRESHOLDS = {
   NIGHT_SUNSET_OFFSET_MINUTES: 0,
   NIGHT_SUNRISE_OFFSET_MINUTES: 0,
   // Minimum trip distance to save (< 0.1 km = likely noise)
-  MIN_TRIP_DISTANCE_KM: 0.1,
+  MIN_TRIP_DISTANCE_KM: scoringValue('MIN_TRIP_DISTANCE_KM'),
   // Minimum trip duration
-  MIN_TRIP_DURATION_SECONDS: 30,
+  MIN_TRIP_DURATION_SECONDS: scoringValue('MIN_TRIP_DURATION_SECONDS'),
   // GPS accuracy filter: ignore points with accuracy > 50m
-  MAX_GPS_ACCURACY_M: 50,
+  MAX_GPS_ACCURACY_M: scoringValue('MAX_GPS_ACCURACY_M'),
   // Ignore small point-to-point hops that are inside normal GPS drift.
-  MIN_POINT_DISTANCE_M: 8,
+  MIN_POINT_DISTANCE_M: scoringValue('MIN_POINT_DISTANCE_M'),
   // Do not trust low-speed GPS speed unless movement also backs it up.
-  MIN_TRUSTED_SPEED_KMH: 18,
+  MIN_TRUSTED_SPEED_KMH: scoringValue('MIN_TRUSTED_SPEED_KMH'),
   // Stationary / crawling speed used to suppress jitter in stats and events.
-  STATIONARY_SPEED_KMH: 5,
+  STATIONARY_SPEED_KMH: scoringValue('STATIONARY_SPEED_KMH'),
   // Count traffic-control stops from sustained low-speed windows without requiring a full idle event.
-  TRAFFIC_STOP_SPEED_KMH: 10,
-  TRAFFIC_STOP_MIN_SECONDS: 4,
-  TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS: 10,
-  INTERSECTION_MIN_DISTANCE_KM: 0.5,
-  MAX_SPEED_SPIKE_DELTA_KMH: 45,
-  MAX_SPEED_SPIKE_RATIO: 1.8,
-  MAX_ALTITUDE_ACCURACY_M: 40,
-  MIN_HILL_SEGMENT_DISTANCE_M: 5,
-  HILL_GRADE_THRESHOLD_PCT: 5,
-  MIN_SPEED_RAPID_ACCEL_KMH: 5,
-  MIN_SPEED_HARSH_BRAKE_KMH: 25,
-  STOP_START_DECEL_MS2: 2.5,
-  STOP_START_MIN_SPEED_KMH: 40,
-  STOP_START_CRUISE_SECONDS: 4,
-  STOP_START_SPEED_DROP_KMH: 10,
-  HEADING_DEVIATION_MIN_SPEED_KMH: 50,
-  HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH: 80,
-  HEADING_DEVIATION_MIN_TURN_RATE_DEG_S: 3,
-  HEADING_DEVIATION_MAX_TURN_RATE_DEG_S: 20,
-  HEADING_DEVIATION_MIN_WINDOW_SECONDS: 6,
-  HEADING_DEVIATION_STRAIGHT_HEADING_STD_MAX_DEG: 4,
-  HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS: 200,
-  CORNERING_MIN_SPEED_KMH: 25,
-  MERGE_ENTRY_SPEED_KMH: 65,
-  MERGE_EXIT_SPEED_KMH: 85,
-  PARKING_LOOKBACK_SECONDS: 90,
-  MAX_TERMINAL_IDLE_SECONDS: 1800,
-  MANOEUVRE_ALERT_BRAKE_MS2: 4.0,
-  MANOEUVRE_ALERT_TURN_DEG_S: 25,
-  HEADING_DRIFT_STD_DEG: 8,
-  threshold_phone_proxy_oscillations: 6,
-  PHONE_MICRO_STEER_COUNT: 6,
-  PHONE_MICRO_STEER_WINDOW_S: 15,
-  PHONE_PROXY_MAX_ACCURACY_M: 20,
-  PHONE_CREEP_RATE_KMH_S: 1.5,
-  PHONE_LANE_DRIFT_DEG: 8,
-  PHONE_COUPLING_THRESHOLD: 0.15,
-  PHONE_CONFIDENCE_THRESHOLD: 0.40,
-  PHONE_MIN_WINDOW_S: 4,
+  TRAFFIC_STOP_SPEED_KMH: scoringValue('TRAFFIC_STOP_SPEED_KMH'),
+  TRAFFIC_STOP_MIN_SECONDS: scoringValue('TRAFFIC_STOP_MIN_SECONDS'),
+  TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS: scoringValue('TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS'),
+  INTERSECTION_MIN_DISTANCE_KM: scoringValue('INTERSECTION_MIN_DISTANCE_KM'),
+  MAX_SPEED_SPIKE_DELTA_KMH: scoringValue('MAX_SPEED_SPIKE_DELTA_KMH'),
+  MAX_SPEED_SPIKE_RATIO: scoringValue('MAX_SPEED_SPIKE_RATIO'),
+  MAX_ALTITUDE_ACCURACY_M: scoringValue('MAX_ALTITUDE_ACCURACY_M'),
+  MIN_HILL_SEGMENT_DISTANCE_M: scoringValue('MIN_HILL_SEGMENT_DISTANCE_M'),
+  HILL_GRADE_THRESHOLD_PCT: scoringValue('HILL_GRADE_THRESHOLD_PCT'),
+  // GPS/altitude-derived proxy only: this provisional uphill acceleration threshold is not outcome-calibrated.
+  HILL_ACCEL_THRESHOLD_MS2: scoringValue('HILL_ACCEL_THRESHOLD_MS2'),
+  // Provisional deduction per inferred hill infraction; recalibrate before changing the scoring curve.
+  HILL_INFRACTION_PENALTY_POINTS: scoringValue('HILL_INFRACTION_PENALTY_POINTS'),
+  MIN_SPEED_RAPID_ACCEL_KMH: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
+  MIN_SPEED_HARSH_BRAKE_KMH: scoringValue('MIN_SPEED_HARSH_BRAKE_KMH'),
+  STOP_START_DECEL_MS2: scoringValue('STOP_START_DECEL_MS2'),
+  STOP_START_MIN_SPEED_KMH: scoringValue('STOP_START_MIN_SPEED_KMH'),
+  STOP_START_CRUISE_SECONDS: scoringValue('STOP_START_CRUISE_SECONDS'),
+  STOP_START_SPEED_DROP_KMH: scoringValue('STOP_START_SPEED_DROP_KMH'),
+  HEADING_DEVIATION_MIN_SPEED_KMH: scoringValue('HEADING_DEVIATION_MIN_SPEED_KMH'),
+  HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH: scoringValue('HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH'),
+  HEADING_DEVIATION_MIN_TURN_RATE_DEG_S: scoringValue('HEADING_DEVIATION_MIN_TURN_RATE_DEG_S'),
+  HEADING_DEVIATION_MAX_TURN_RATE_DEG_S: scoringValue('HEADING_DEVIATION_MAX_TURN_RATE_DEG_S'),
+  HEADING_DEVIATION_MIN_WINDOW_SECONDS: scoringValue('HEADING_DEVIATION_MIN_WINDOW_SECONDS'),
+  HEADING_DEVIATION_STRAIGHT_HEADING_STD_MAX_DEG: scoringValue('HEADING_DEVIATION_STRAIGHT_STD_MAX_DEG'),
+  HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS: scoringValue('HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS'),
+  CORNERING_MIN_SPEED_KMH: scoringValue('CORNERING_MIN_SPEED_KMH'),
+  MERGE_ENTRY_SPEED_KMH: scoringValue('MERGE_ENTRY_SPEED_KMH'),
+  MERGE_EXIT_SPEED_KMH: scoringValue('MERGE_EXIT_SPEED_KMH'),
+  PARKING_LOOKBACK_SECONDS: scoringValue('PARKING_LOOKBACK_SECONDS'),
+  MAX_TERMINAL_IDLE_SECONDS: scoringValue('MAX_TERMINAL_IDLE_SECONDS'),
+  MANOEUVRE_ALERT_BRAKE_MS2: scoringValue('MANOEUVRE_ALERT_BRAKE_MS2'),
+  MANOEUVRE_ALERT_TURN_DEG_S: scoringValue('MANOEUVRE_ALERT_TURN_DEG_S'),
+  HEADING_DRIFT_STD_DEG: scoringValue('HEADING_DRIFT_STD_DEG'),
+  threshold_phone_proxy_oscillations: scoringValue('PHONE_MICRO_STEER_COUNT'),
+  PHONE_MICRO_STEER_COUNT: scoringValue('PHONE_MICRO_STEER_COUNT'),
+  PHONE_MICRO_STEER_WINDOW_S: scoringValue('PHONE_MICRO_STEER_WINDOW_S'),
+  PHONE_PROXY_MAX_ACCURACY_M: scoringValue('PHONE_PROXY_MAX_ACCURACY_M'),
+  PHONE_CREEP_RATE_KMH_S: scoringValue('PHONE_CREEP_RATE_KMH_S'),
+  PHONE_LANE_DRIFT_DEG: scoringValue('PHONE_LANE_DRIFT_DEG'),
+  PHONE_COUPLING_THRESHOLD: scoringValue('PHONE_COUPLING_THRESHOLD'),
+  PHONE_CONFIDENCE_THRESHOLD: scoringValue('PHONE_CONFIDENCE_THRESHOLD'),
+  PHONE_MIN_WINDOW_S: scoringValue('PHONE_MIN_WINDOW_S'),
   PHONE_USE_DETECTION_ENABLED: true,
   PHONE_USE_AFFECTS_SCORE: true,
-  threshold_speed_creep_kmh: 5,
-  threshold_overtake_accel_ms2: 3.0,
-  OVERTAKE_MIN_BASELINE_SPEED_KMH: 80,
-  OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: 1,
-  OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG: 4,
+  threshold_speed_creep_kmh: scoringValue('SPEED_CREEP_THRESHOLD_KMH'),
+  threshold_overtake_accel_ms2: scoringValue('OVERTAKE_ACCEL_THRESHOLD_MS2'),
+  OVERTAKE_MIN_BASELINE_SPEED_KMH: scoringValue('OVERTAKE_MIN_BASELINE_SPEED_KMH'),
+  OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: scoringValue('OVERTAKE_MIN_STRAIGHT_DISTANCE_KM'),
+  OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG: scoringValue('OVERTAKE_STRAIGHT_STD_MAX_DEG'),
   ADVANCED_SAFETY_DETECTION_ENABLED: true,
 };
 
@@ -148,24 +231,11 @@ export const EVENT_TYPES = {
   PHONE_USE: 'phone_use',
 };
 
-export const EVENT_PENALTIES = {
-  [EVENT_TYPES.HARSH_BRAKE]: { low: 3, medium: 6, high: 12 },
-  [EVENT_TYPES.RAPID_ACCELERATION]: { low: 2, medium: 5, high: 10 },
-  [EVENT_TYPES.SHARP_TURN]: { low: 2, medium: 5, high: 10 },
-  [EVENT_TYPES.SPEEDING]: { low: 5, medium: 10, high: 20 },
-  [EVENT_TYPES.IDLE]: { low: 1, medium: 3, high: 5 },
-  [EVENT_TYPES.HEADING_DEVIATION]: { low: 0, medium: 0, high: 0 },
-  [EVENT_TYPES.LANE_CHANGE]: { low: 1, medium: 3, high: 6 },
-  [EVENT_TYPES.STOP_START_PATTERN]: { low: 3, medium: 8, high: 15 },
-  [EVENT_TYPES.TAILGATE_CYCLE]: { low: 3, medium: 8, high: 15 },
-  [EVENT_TYPES.ERRATIC_SPEED]: { low: 2, medium: 5, high: 10 },
-  [EVENT_TYPES.NEAR_MISS]: { low: 4, medium: 8, high: 14 },
-  [EVENT_TYPES.CLOSE_PROXIMITY]: { low: 4, medium: 8, high: 14 },
-  [EVENT_TYPES.AGGRESSIVE_OVERTAKE]: { low: 12, medium: 25, high: 45 },
-  [EVENT_TYPES.PHONE_USE]: { low: 5, medium: 12, high: 20 },
-};
+export const EVENT_PENALTIES = scoringValue('EVENT_PENALTY_POINTS');
 
 export function weightedBlend(components = []) {
+  // Null is the only acceptable "not computed" input. Callers must not pass
+  // neutral fallback scores such as 50, 75, or 100 to represent missing evidence.
   const valid = components
     .filter(({ score }) => score != null && score !== '')
     .map(({ score, weight }) => ({ score: Number(score), weight: Number(weight) }))
@@ -173,6 +243,153 @@ export function weightedBlend(components = []) {
   const totalWeight = valid.reduce((sum, item) => sum + item.weight, 0);
   if (totalWeight <= 0) return null;
   return Math.round(valid.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight);
+}
+
+function confidenceLevelFromNumeric(value) {
+  if (!Number.isFinite(value) || value <= 0) return CONFIDENCE_LEVELS.UNAVAILABLE;
+  if (value < 0.5) return CONFIDENCE_LEVELS.LOW;
+  if (value < 0.8) return CONFIDENCE_LEVELS.DEVELOPING;
+  return CONFIDENCE_LEVELS.HIGH;
+}
+
+function confidenceNumericValue(level) {
+  return {
+    [CONFIDENCE_LEVELS.HIGH]: 1,
+    [CONFIDENCE_LEVELS.DEVELOPING]: 0.65,
+    [CONFIDENCE_LEVELS.LOW]: 0.25,
+    [CONFIDENCE_LEVELS.UNAVAILABLE]: 0,
+  }[level] ?? 0;
+}
+
+/**
+ * Classify the evidence available for a registered component metric.
+ * @param {number} distanceKm
+ * @param {number} minDistKm
+ * @param {number} sampleCount
+ * @param {number} minSamples
+ * @returns {EvidenceLevel}
+ */
+export function componentConfidence(distanceKm, minDistKm, sampleCount, minSamples) {
+  const distance = Math.max(0, Number(distanceKm) || 0);
+  const minimumDistance = Math.max(0, Number(minDistKm) || 0);
+  const samples = Math.max(0, Number(sampleCount) || 0);
+  const minimumSamples = Math.max(0, Number(minSamples) || 0);
+  if (distance < minimumDistance || samples < minimumSamples) return CONFIDENCE_LEVELS.UNAVAILABLE;
+  if (minimumDistance > 0 && distance < minimumDistance * 2) return CONFIDENCE_LEVELS.LOW;
+  if (minimumDistance > 0 && distance < minimumDistance * 5) return CONFIDENCE_LEVELS.DEVELOPING;
+  return CONFIDENCE_LEVELS.HIGH;
+}
+
+function cappedEvidenceLevel(level, maximumLevel) {
+  const rank = {
+    [CONFIDENCE_LEVELS.UNAVAILABLE]: 0,
+    [CONFIDENCE_LEVELS.LOW]: 1,
+    [CONFIDENCE_LEVELS.DEVELOPING]: 2,
+    [CONFIDENCE_LEVELS.HIGH]: 3,
+  };
+  return rank[level] > rank[maximumLevel] ? maximumLevel : level;
+}
+
+function registeredComponentConfidence(componentKey, distanceKm, sampleCount, value) {
+  if (value == null) return CONFIDENCE_LEVELS.UNAVAILABLE;
+  const metric = METRIC_REGISTRY[COMPONENT_METRIC_KEYS[componentKey]];
+  return componentConfidence(
+    distanceKm,
+    metric?.minDistanceKm ?? 0,
+    sampleCount,
+    metric?.minSamples ?? 1
+  );
+}
+
+function normalizedEvidenceLevel(evidence, value) {
+  if (value == null) return CONFIDENCE_LEVELS.UNAVAILABLE;
+  if (Object.values(CONFIDENCE_LEVELS).includes(evidence)) return evidence;
+  if (['insufficient_data', 'insufficient_highway_distance', 'usage_access_required', 'beta_diagnostic_only'].includes(evidence)) {
+    return CONFIDENCE_LEVELS.UNAVAILABLE;
+  }
+  if (evidence === 'observed_stops' || evidence === 'observed' || evidence === 'road_type_stratified') {
+    return CONFIDENCE_LEVELS.HIGH;
+  }
+  if (evidence === 'partial_road_type_data') return CONFIDENCE_LEVELS.DEVELOPING;
+  return confidenceLevelFromNumeric(Number(evidence));
+}
+
+/**
+ * Build the stable evidence envelope used by score surfaces and exports.
+ * @param {number|string|null|undefined} value
+ * @param {EvidenceLevel|string|number} evidence
+ * @param {string[]} dataSource
+ * @param {{sampleCount?:number,note?:string}} options
+ * @returns {ComponentScore}
+ */
+export function createComponentScore(value, evidence, dataSource = [], options = {}) {
+  const numericValue = value == null || value === '' ? null : Number(value);
+  const normalizedValue = Number.isFinite(numericValue) ? numericValue : null;
+  const normalizedEvidence = normalizedEvidenceLevel(evidence, normalizedValue);
+  const component = {
+    value: normalizedEvidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : normalizedValue,
+    evidence: normalizedEvidence,
+    dataSource: [...new Set((Array.isArray(dataSource) ? dataSource : []).filter((source) => typeof source === 'string' && source))],
+  };
+  if (Number.isFinite(Number(options.sampleCount))) component.sampleCount = Math.max(0, Number(options.sampleCount));
+  if (options.note) component.note = options.note;
+  return component;
+}
+
+const LEGACY_COMPONENT_FIELDS = Object.freeze({
+  overall: { value: 'score_overall', evidence: 'score_confidence_label', fallbackEvidence: 'score_confidence' },
+  safety: { value: 'score_safety', evidence: 'score_safety_confidence' },
+  smoothness: { value: 'score_smoothness', evidence: 'score_smoothness_confidence' },
+  eco: { value: 'score_eco', evidence: 'score_eco_confidence' },
+  intersection: { value: 'intersection_score', evidence: 'intersection_score_confidence' },
+  distraction: { value: 'distraction_score', evidence: 'distraction_score_confidence' },
+  phone_use: { value: 'phone_use_score', evidence: 'phone_use_score_confidence' },
+  stop_start_pattern: { value: 'stop_start_pattern_score', evidence: 'stop_start_pattern_score_confidence' },
+  close_proximity: { value: 'close_proximity_score', evidence: 'close_proximity_score_confidence' },
+  smoothness_index: { value: 'jerk_score', evidence: 'jerk_score_confidence' },
+  eco_driving: { value: 'eco_driving_score', evidence: 'eco_driving_score_confidence' },
+  speed_variability: { value: 'svi_score', evidence: 'svi_score_confidence' },
+  fuel_band: { value: 'fuel_band_score', evidence: 'fuel_band_score_confidence' },
+  merge: { value: 'merge_score', evidence: 'merge_score_confidence' },
+  smooth_braking: { value: 'smooth_braking_score', evidence: 'smooth_braking_score_confidence' },
+  engine_stress: { value: 'engine_stress_score', evidence: 'engine_stress_score_confidence' },
+  speed_creep: { value: 'speed_creep_score', evidence: 'speed_creep_score_confidence' },
+  heading_drift_beta: { value: 'heading_drift_beta_score', evidence: 'heading_drift_beta_confidence' },
+  hill_driving: { value: 'hill_driving_score', evidence: 'hill_driving_score_confidence' },
+  parking_approach: { value: 'parking_approach_score', evidence: 'parking_approach_score_confidence' },
+  brake_onset_smoothness: { value: 'brake_onset_smoothness_score', evidence: 'brake_onset_smoothness_confidence' },
+  cornering_consistency: { value: 'cornering_consistency_score', evidence: 'cornering_consistency_score_confidence' },
+  braking_efficiency: { value: 'braking_efficiency_score', evidence: 'braking_efficiency_score_confidence' },
+  speed_limit_compliance: { value: 'overall_compliance_score', evidence: 'overall_compliance_score_confidence' },
+  overtake_quality: { value: 'overtake_quality_score', evidence: 'overtake_quality_score_confidence' },
+  aggressive_driving: { value: 'aggressive_driving_score', evidence: 'aggressive_driving_score_confidence' },
+  defensive_driving: { value: 'defensive_driving_score', evidence: 'defensive_driving_score_confidence' },
+  fatigue_risk: { value: 'fatigue_risk_score', evidence: 'fatigue_risk_score_confidence' },
+});
+
+/**
+ * Read the typed component contract, with a legacy flat-trip adapter for saved records.
+ * @param {object} trip
+ * @param {string} componentKey
+ * @returns {ComponentScore}
+ */
+export function getTripComponentScore(trip = {}, componentKey) {
+  const stored = trip?.component_scores?.[componentKey];
+  if (stored && typeof stored === 'object') {
+    return createComponentScore(stored.value, stored.evidence, stored.dataSource, {
+      sampleCount: stored.sampleCount,
+      note: stored.note,
+    });
+  }
+  const legacy = LEGACY_COMPONENT_FIELDS[componentKey];
+  if (!legacy) return createComponentScore(null, CONFIDENCE_LEVELS.UNAVAILABLE, []);
+  const value = trip?.[legacy.value];
+  const evidence = trip?.[legacy.evidence] ?? trip?.[legacy.fallbackEvidence] ?? (
+    value == null ? CONFIDENCE_LEVELS.UNAVAILABLE : CONFIDENCE_LEVELS.LOW
+  );
+  return createComponentScore(value, evidence, [], {
+    note: 'Legacy score record; rescore this trip to expose evidence sources.',
+  });
 }
 
 function settingNumber(value, fallback) {
@@ -241,9 +458,9 @@ export function buildDrivingThresholds(settings = {}) {
     PHONE_LANE_DRIFT_DEG: settingNumber(settings.phone_lane_drift_deg, DEFAULT_THRESHOLDS.PHONE_LANE_DRIFT_DEG),
     PHONE_COUPLING_THRESHOLD: settingNumber(settings.phone_coupling_threshold, DEFAULT_THRESHOLDS.PHONE_COUPLING_THRESHOLD),
     PHONE_CONFIDENCE_THRESHOLD: settings.phone_use_sensitivity === 'low'
-      ? 0.60
+      ? scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD')
       : settings.phone_use_sensitivity === 'high'
-        ? 0.25
+        ? scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD')
         : settingNumber(settings.phone_confidence_threshold, DEFAULT_THRESHOLDS.PHONE_CONFIDENCE_THRESHOLD),
     PHONE_MIN_WINDOW_S: settingNumber(settings.phone_min_window_s, DEFAULT_THRESHOLDS.PHONE_MIN_WINDOW_S),
     PHONE_USE_DETECTION_ENABLED: settings.phone_use_detection_enabled !== false,
@@ -263,12 +480,143 @@ export function buildDrivingThresholds(settings = {}) {
 }
 
 // ─── Haversine Distance ────────────────────────────────────────────────────────
+/** Dynamic scoring thresholds retained in stored provenance snapshots. */
+const PROVENANCE_THRESHOLD_KEYS = Object.freeze([
+  'HARSH_BRAKE_MS2',
+  'RAPID_ACCEL_MS2',
+  'SHARP_TURN_G_LOW',
+  'SHARP_TURN_G_MEDIUM',
+  'SHARP_TURN_G_HIGH',
+  'SPEEDING_FALLBACK_KMH',
+  'SPEED_OVER_KMH',
+  'ECO_CRUISE_MIN_KMH',
+  'ECO_CRUISE_MAX_KMH',
+  'ECO_CRUISE_SCORE_MULTIPLIER',
+  'ECO_IDLE_PENALTY_MULTIPLIER',
+  'ECO_IDLE_MAX_PENALTY',
+  'ECO_MIN_MOVING_KMH',
+  'IDLE_EVENT_SECONDS',
+  'LONG_DRIVE_MINUTES',
+  'TRAFFIC_STOP_SPEED_KMH',
+  'TRAFFIC_STOP_MIN_SECONDS',
+  'TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS',
+  'INTERSECTION_MIN_DISTANCE_KM',
+  'HILL_GRADE_THRESHOLD_PCT',
+  'HILL_ACCEL_THRESHOLD_MS2',
+  'HILL_INFRACTION_PENALTY_POINTS',
+  'MIN_SPEED_RAPID_ACCEL_KMH',
+  'MIN_SPEED_HARSH_BRAKE_KMH',
+  'STOP_START_DECEL_MS2',
+  'STOP_START_MIN_SPEED_KMH',
+  'STOP_START_CRUISE_SECONDS',
+  'STOP_START_SPEED_DROP_KMH',
+  'MANOEUVRE_ALERT_BRAKE_MS2',
+  'MANOEUVRE_ALERT_TURN_DEG_S',
+  'HEADING_DRIFT_STD_DEG',
+  'threshold_phone_proxy_oscillations',
+  'PHONE_MICRO_STEER_COUNT',
+  'PHONE_MICRO_STEER_WINDOW_S',
+  'PHONE_PROXY_MAX_ACCURACY_M',
+  'PHONE_CREEP_RATE_KMH_S',
+  'PHONE_LANE_DRIFT_DEG',
+  'PHONE_COUPLING_THRESHOLD',
+  'PHONE_CONFIDENCE_THRESHOLD',
+  'PHONE_MIN_WINDOW_S',
+  'PHONE_USE_DETECTION_ENABLED',
+  'PHONE_USE_AFFECTS_SCORE',
+  'threshold_speed_creep_kmh',
+  'threshold_overtake_accel_ms2',
+  'OVERTAKE_MIN_BASELINE_SPEED_KMH',
+  'OVERTAKE_MIN_STRAIGHT_DISTANCE_KM',
+  'OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG',
+  'NIGHT_DETECTION_MODE',
+  'NIGHT_START_TIME',
+  'NIGHT_END_TIME',
+  'NIGHT_SUNSET_OFFSET_MINUTES',
+  'NIGHT_SUNRISE_OFFSET_MINUTES',
+  'ADVANCED_SAFETY_DETECTION_ENABLED',
+]);
+
+/**
+ * Capture score-affecting calibration inputs alongside persisted scores.
+ * Formula changes remain governed by SCORING_VERSION.
+ */
+export function buildScoreConstantsSnapshot(thresholds = DEFAULT_THRESHOLDS) {
+  const configured = thresholds && typeof thresholds === 'object' ? thresholds : DEFAULT_THRESHOLDS;
+  const snapshot = Object.fromEntries(
+    Object.entries(SCORING_CONSTANTS)
+      .filter(([, entry]) => entry.affected_metrics.includes('score_overall'))
+      .map(([key, entry]) => [key, entry.value])
+  );
+  PROVENANCE_THRESHOLD_KEYS.forEach((key) => {
+    snapshot[key] = configured[key] ?? DEFAULT_THRESHOLDS[key];
+  });
+  return snapshot;
+}
+
+export function buildScoreProvenance(componentScores = {}, thresholds = DEFAULT_THRESHOLDS, computedAt = new Date().toISOString()) {
+  const provisionalConstants = getProvisionalScoringConstants()
+    .filter((entry) => entry.affected_metrics.includes('score_overall'))
+    .map((entry) => entry.key);
+  return {
+    computed_at: computedAt,
+    scoring_version: SCORING_VERSION,
+    calibration_status: hasProvisionalCalibration(['score_overall']) ? 'approximate' : 'calibrated',
+    provisional_constants: provisionalConstants,
+    components: Object.fromEntries(
+      Object.entries(componentScores).map(([key, component]) => [
+        key,
+        component?.evidence ?? CONFIDENCE_LEVELS.UNAVAILABLE,
+      ])
+    ),
+    constants_snapshot: buildScoreConstantsSnapshot(thresholds),
+  };
+}
+
+/**
+ * Determine whether persisted scores were generated with the current inputs.
+ */
+export function getScoreProvenanceStatus(trip = {}, thresholds = DEFAULT_THRESHOLDS) {
+  const provenance = trip?.score_provenance;
+  if (!provenance || typeof provenance !== 'object') {
+    return {
+      status: 'missing',
+      needsRescore: true,
+      changedConstants: [],
+      reason: 'No scoring provenance is stored for this trip.',
+    };
+  }
+  if (provenance.scoring_version !== SCORING_VERSION) {
+    return {
+      status: 'outdated',
+      needsRescore: true,
+      changedConstants: [],
+      reason: `Scored with version ${provenance.scoring_version || 'unknown'}; current version is ${SCORING_VERSION}.`,
+    };
+  }
+  const currentSnapshot = buildScoreConstantsSnapshot(thresholds);
+  const storedSnapshot = provenance.constants_snapshot || {};
+  const changedConstants = Object.keys(currentSnapshot).filter((key) => (
+    JSON.stringify(storedSnapshot[key]) !== JSON.stringify(currentSnapshot[key])
+  ));
+  if (changedConstants.length) {
+    return {
+      status: 'outdated',
+      needsRescore: true,
+      changedConstants,
+      reason: 'One or more scoring calibration inputs changed.',
+    };
+  }
+  return {
+    status: 'current',
+    needsRescore: false,
+    changedConstants: [],
+    reason: null,
+  };
+}
+
 /**
  * Calculate great-circle distance between two GPS points using Haversine formula.
- * @param {number} lat1 - Latitude of point 1 in degrees
- * @param {number} lng1 - Longitude of point 1 in degrees
- * @param {number} lat2 - Latitude of point 2 in degrees
- * @param {number} lng2 - Longitude of point 2 in degrees
  * @returns {number} Distance in kilometers
  */
 export function haversineDistance(lat1, lng1, lat2, lng2) {
@@ -1409,6 +1757,14 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
   const harshBrakeThreshold = thresholds.threshold_harsh_brake_ms2 ?? thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
   const minHillDistanceM = thresholds.MIN_HILL_SEGMENT_DISTANCE_M ?? DEFAULT_THRESHOLDS.MIN_HILL_SEGMENT_DISTANCE_M;
   const hillGradeThreshold = thresholds.HILL_GRADE_THRESHOLD_PCT ?? DEFAULT_THRESHOLDS.HILL_GRADE_THRESHOLD_PCT;
+  const hillAccelThreshold = Math.max(
+    0,
+    settingNumber(thresholds.HILL_ACCEL_THRESHOLD_MS2, DEFAULT_THRESHOLDS.HILL_ACCEL_THRESHOLD_MS2)
+  );
+  const hillInfractionPenaltyPoints = Math.max(
+    0,
+    settingNumber(thresholds.HILL_INFRACTION_PENALTY_POINTS, DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS)
+  );
 
   for (let i = 1; i < cleanPoints.length; i++) {
     const prev = cleanPoints[i - 1];
@@ -1442,7 +1798,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
 
     if (isClimb) {
       climbDistanceKm += distanceM / 1000;
-      if (!segment.isNoise && speed >= 15 && accelMs2 > 2.5) infractionCount++;
+      if (!segment.isNoise && speed >= 15 && accelMs2 > hillAccelThreshold) infractionCount++;
       descentWindowStart = null;
     } else if (isDescent) {
       descentDistanceKm += distanceM / 1000;
@@ -1476,7 +1832,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
     climb_distance_km: Math.round(climbDistanceKm * 100) / 100,
     descent_distance_km: Math.round(descentDistanceKm * 100) / 100,
     hill_infraction_count: infractionCount,
-    hill_driving_score: Math.max(0, 100 - infractionCount * 10),
+    hill_driving_score: Math.max(0, 100 - infractionCount * hillInfractionPenaltyPoints),
     hill_route: true,
   };
 }
@@ -1500,7 +1856,7 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, threshold
     .filter((speed) => Number.isFinite(speed) && speed >= minMovingKmh);
 
   if (movingSpeeds.length < 3) {
-    return { eco_driving_score: 50, eco_score_confidence: 'insufficient_data', speed_stability: 50, cruise_score: 50, idle_penalty_points: 0 };
+    return { eco_driving_score: null, eco_score_confidence: 'insufficient_data', speed_stability: null, cruise_score: null, idle_penalty_points: 0 };
   }
 
   const mean = average(movingSpeeds);
@@ -2834,7 +3190,7 @@ export function calculateSmoothBrakingRatio(cleanPoints = [], thresholds = DEFAU
   }
 
   const smoothStops = Math.max(0, totalStops - harshStops);
-  const smoothBrakingRatio = totalStops > 0 ? Math.round((smoothStops / totalStops) * 100) : 100;
+  const smoothBrakingRatio = totalStops > 0 ? Math.round((smoothStops / totalStops) * 100) : null;
   return {
     total_stops_detected: totalStops,
     harsh_stops_count: harshStops,
@@ -3478,7 +3834,7 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
       duration_seconds: Math.round(metric.seconds),
       avg_speed_kmh: metric.seconds > 0 ? round1(calculateSpeedKmh(metric.distance, metric.seconds)) : 0,
       fatigue_risk_score: 0,
-      intersection_score: 100,
+      intersection_score: null,
       idle_time_seconds: 0,
     };
     const segmentEvents = eventBuckets[type];
@@ -3503,8 +3859,8 @@ export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = []
 export function analyzeParkingApproach(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS, endTime = null) {
   if (!cleanPoints || cleanPoints.length < 3) {
     return {
-      parking_approach_score: 100,
-      parking_approach_grade: 'smooth',
+      parking_approach_score: null,
+      parking_approach_grade: 'insufficient_data',
       parking_stop_detected: false,
       parking_stop_duration_seconds: 0,
     };
@@ -3527,8 +3883,8 @@ export function analyzeParkingApproach(cleanPoints = [], thresholds = DEFAULT_TH
   const window = cleanPoints.slice(startIndex);
   if (window.length < 3) {
     return {
-      parking_approach_score: 100,
-      parking_approach_grade: 'smooth',
+      parking_approach_score: null,
+      parking_approach_grade: 'insufficient_data',
       parking_stop_detected: finiteSpeed(lastPoint) < (thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH),
       parking_stop_duration_seconds: Math.round(terminalStoppedSeconds),
     };
@@ -3570,19 +3926,19 @@ function calculateSegmentStats(points = [], thresholds = DEFAULT_THRESHOLDS) {
     avg_speed_kmh: durationSeconds > 0 ? calculateSpeedKmh(distanceKm, durationSeconds) : 0,
     idle_time_seconds: 0,
     fatigue_risk_score: 0,
-    intersection_score: 100,
+    intersection_score: null,
   };
 }
 
 export function scoreSegmentPoints(points = [], thresholds = DEFAULT_THRESHOLDS) {
-  if (!points || points.length < 3) return 0;
+  if (!points || points.length < 3) return null;
   const { events, phoneUse } = detectDrivingEvents(points, thresholds);
   const stats = calculateSegmentStats(points, thresholds);
-  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, phoneUse).score_overall;
+  return calculateTripScores(events, stats, points, thresholds, stats.duration_seconds, phoneUse).component_scores.overall.value;
 }
 
 function scoreFatigueSegment(points = [], thresholds = DEFAULT_THRESHOLDS) {
-  if (!points || points.length < 3) return 0;
+  if (!points || points.length < 3) return null;
 
   const harshBrakeThreshold = thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
   const rapidAccelThreshold = thresholds.RAPID_ACCEL_MS2 ?? DEFAULT_THRESHOLDS.RAPID_ACCEL_MS2;
@@ -3674,7 +4030,13 @@ export function analyzeFatigueProgression(cleanPoints = [], startTimeMs, endTime
 
 export function detectHeadingDriftBeta(cleanPoints = [], durationSeconds = 0, thresholds = DEFAULT_THRESHOLDS) {
   if (!cleanPoints || cleanPoints.length < 4 || durationSeconds <= 0) {
-    return { heading_drift_beta_window_count: 0, heading_drift_beta_score: 0, heading_drift_beta_level: 'none', heading_drift_beta_confidence: 'low' };
+    return {
+      heading_drift_beta_window_count: 0,
+      heading_drift_beta_weighted_contribution: 0,
+      heading_drift_beta_score: null,
+      heading_drift_beta_level: 'none',
+      heading_drift_beta_confidence: 'insufficient_data',
+    };
   }
 
   const headingThreshold = thresholds.HEADING_DRIFT_STD_DEG ?? thresholds.threshold_drowsy_heading_std ?? DEFAULT_THRESHOLDS.HEADING_DRIFT_STD_DEG;
@@ -3738,7 +4100,7 @@ export function detectHeadingDriftBeta(cleanPoints = [], durationSeconds = 0, th
     if (windowHeadingStdDev > headingThreshold && windowSpeedStdDev < 6) {
       const elapsedFraction = Math.max(0, (startMs - startTime) / 1000) / Math.max(1, durationSeconds);
       const startHour = new Date(startMs).getHours();
-      const circadianMultiplier = startHour >= 2 && startHour < 5 ? 2.5 : 1;
+      const circadianMultiplier = startHour >= 2 && startHour < 5 ? HEADING_DRIFT_CIRCADIAN_MULTIPLIER : 1;
       weightedScore += (1 + elapsedFraction) * circadianMultiplier;
       headingDriftWindowCount++;
       const nextIndex = i + Math.max(1, windowLength - 1);
@@ -3756,6 +4118,7 @@ export function detectHeadingDriftBeta(cleanPoints = [], durationSeconds = 0, th
   const riskScore = Math.min(100, Math.round(weightedScore * 15));
   return {
     heading_drift_beta_window_count: headingDriftWindowCount,
+    heading_drift_beta_weighted_contribution: round2(weightedScore),
     heading_drift_beta_score: riskScore,
     heading_drift_beta_level: riskScore >= 60 ? 'high' : riskScore >= 30 ? 'medium' : riskScore > 0 ? 'low' : 'none',
     heading_drift_beta_confidence: 'low',
@@ -4464,7 +4827,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       duration_seconds: Math.round(wallClockDurationSeconds),
       night_driving: false,
       fatigue_risk_score: calculateFatigueScore(wallClockDurationSeconds, routePoints || []),
-      fatigue_risk_score_confidence: 0,
+      fatigue_risk_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       ...roadStats,
       intersection_score: null,
       intersection_score_confidence: 'insufficient_data',
@@ -4482,11 +4845,12 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       hill_driving_score: null,
       hill_route: false,
       heading_drift_beta_window_count: 0,
-      heading_drift_beta_score: 0,
+      heading_drift_beta_weighted_contribution: 0,
+      heading_drift_beta_score: null,
       heading_drift_beta_level: 'none',
-      heading_drift_beta_confidence: 'low',
-      parking_approach_score: 100,
-      parking_approach_grade: 'smooth',
+      heading_drift_beta_confidence: 'insufficient_data',
+      parking_approach_score: null,
+      parking_approach_grade: 'insufficient_data',
       parking_stop_detected: false,
       parking_stop_duration_seconds: 0,
     };
@@ -4584,7 +4948,13 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     : { fatigue_progression: 'unknown', segment_scores: [] };
   const hillStats = calculateHillDrivingScore(routePoints, thresholds);
   const headingDriftStats = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED === false
-    ? { heading_drift_beta_window_count: 0, heading_drift_beta_score: 0, heading_drift_beta_level: 'none', heading_drift_beta_confidence: 'low' }
+    ? {
+      heading_drift_beta_window_count: 0,
+      heading_drift_beta_weighted_contribution: 0,
+      heading_drift_beta_score: null,
+      heading_drift_beta_level: 'none',
+      heading_drift_beta_confidence: 'insufficient_data',
+    }
     : detectHeadingDriftBeta(routePoints, durationSeconds, thresholds);
   const parkingStats = analyzeParkingApproach(routePoints, thresholds, endTime);
 
@@ -4603,7 +4973,12 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     duration_seconds: Math.round(durationSeconds),
     night_driving: nightDriving,
     fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints),
-    fatigue_risk_score_confidence: round2(clamp(totalDistance / 5, 0, 1)),
+    fatigue_risk_score_confidence: componentConfidence(
+      totalDistance,
+      METRIC_REGISTRY.fatigue_risk_score.minDistanceKm,
+      routePoints.length,
+      METRIC_REGISTRY.fatigue_risk_score.minSamples
+    ),
     ...roadStats,
     speed_zones: speedZones,
     ...intersectionStats,
@@ -4660,15 +5035,28 @@ export function calculateEngineStressScore(events = [], stats = {}) {
 export function calculateTireWearUnits(events = []) {
   const severityBase = { low: 1, medium: 2.5, high: 5 };
   let units = 0;
+  let missingSpeedEventCount = 0;
+  const speedFactor = (event, referenceSpeed) => {
+    const speed = Number(event.speed_kmh);
+    if (event.speed_kmh == null || event.speed_kmh === '' || !Number.isFinite(speed) || speed < 0) {
+      missingSpeedEventCount++;
+      return 1;
+    }
+    return (speed / referenceSpeed) ** 2;
+  };
   for (const event of events) {
     if (event.type === EVENT_TYPES.HARSH_BRAKE) {
-      units += (severityBase[event.severity] || 0) * ((event.speed_kmh ?? 50) / 50) ** 2;
+      units += (severityBase[event.severity] || 0) * speedFactor(event, TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH);
     }
     if (event.type === EVENT_TYPES.SHARP_TURN) {
-      units += (severityBase[event.severity] || 0) * ((event.speed_kmh ?? 40) / 40) ** 2;
+      units += (severityBase[event.severity] || 0) * speedFactor(event, TIRE_WEAR_DEFAULT_SPEED_TURN_KMH);
     }
   }
-  return { trip_tire_wear_units: round1(units) };
+  return {
+    trip_tire_wear_units: round1(units),
+    trip_tire_wear_has_missing_speed_data: missingSpeedEventCount > 0,
+    trip_tire_wear_missing_speed_event_count: missingSpeedEventCount,
+  };
 }
 
 export function calculateAggressiveDrivingScore(events = [], stats = {}) {
@@ -4698,11 +5086,18 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
 }
 
 export function calculateDefensiveDrivingScore(scores = {}) {
+  const blend = scoringValue('DEFENSIVE_SCORE_BLEND_WEIGHTS');
+  const stopStartSampleCount = Number(
+    scores.stop_start_pattern_sample_count ?? scores.stop_start_pattern_count ?? 0
+  );
+  const stopStartPatternScoreForBlend = stopStartSampleCount >= STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT
+    ? scores.stop_start_pattern_score
+    : null;
   const defensiveScore = weightedBlend([
-    { score: (scores.total_stops_detected || 0) > 0 ? scores.smooth_braking_ratio : null, weight: 0.30 },
-    { score: scores.intersection_score, weight: 0.20 },
-    { score: scores.svi_score, weight: 0.20 },
-    { score: scores.stop_start_pattern_score, weight: 0.30 },
+    { score: (scores.total_stops_detected || 0) > 0 ? scores.smooth_braking_ratio : null, weight: blend.smoothBraking },
+    { score: scores.intersection_score, weight: blend.intersection },
+    { score: scores.svi_score, weight: blend.speedVariability },
+    { score: stopStartPatternScoreForBlend, weight: blend.stopStart },
   ]);
   return {
     defensive_driving_score: defensiveScore,
@@ -4785,16 +5180,13 @@ export function calculateTripScores(
     }
     if (counts[evt.type] !== undefined) counts[evt.type]++;
 
-    // Safety: deducts from harsh_brake, speeding, sharp_turn
+    // Safety uses scored driving evidence only; GPS-only advisory patterns stay diagnostic.
     if ([
       EVENT_TYPES.HARSH_BRAKE,
       EVENT_TYPES.SPEEDING,
       EVENT_TYPES.SHARP_TURN,
       EVENT_TYPES.ERRATIC_SPEED,
-      EVENT_TYPES.AGGRESSIVE_OVERTAKE,
       EVENT_TYPES.PHONE_USE,
-      EVENT_TYPES.NEAR_MISS,
-      EVENT_TYPES.CLOSE_PROXIMITY,
     ].includes(evt.type)) safetyPenalty += p;
     // Smoothness: deducts from harsh_brake, rapid_acceleration, sharp_turn
     if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN, EVENT_TYPES.LANE_CHANGE].includes(evt.type)) smoothnessPenalty += p;
@@ -4808,14 +5200,17 @@ export function calculateTripScores(
     : {
       speed_creep_event_count: 0,
       max_speed_creep_kmh: 0,
-      speed_creep_score: 100,
+      speed_creep_score: null,
       speed_creep_severity_counts: { low: 0, medium: 0, high: 0 },
     };
   const phoneUseResult = {
     ...emptyPhoneUseResult(),
     ...(advancedSafetyEnabled ? phoneUse : {}),
   };
-  const confirmedPhoneScoreAvailable = phoneUseResult.phone_use_score_available !== false;
+  const confirmedPhoneScoreAvailable = (
+    phoneUseResult.phone_use_score_available !== false &&
+    Number.isFinite(Number(phoneUseResult.phone_use_score))
+  );
   const diagnosticOvertakeCount = serializableEventList.filter((event) => event.type === EVENT_TYPES.AGGRESSIVE_OVERTAKE).length;
   const proxyEvents = phoneUseResult.phone_proxy_events || (
     confirmedPhoneScoreAvailable
@@ -4826,35 +5221,28 @@ export function calculateTripScores(
     phone_proxy_count: phoneUseResult.phone_proxy_count ?? proxyEvents.length,
     phone_proxy_risk: phoneUseResult.phone_proxy_risk || 'none',
   };
-  ecoPenalty += (speedCreep.speed_creep_severity_counts?.low || 0) * 2;
-  ecoPenalty += (speedCreep.speed_creep_severity_counts?.medium || 0) * 5;
-  ecoPenalty += (speedCreep.speed_creep_severity_counts?.high || 0) * 10;
+  const speedCreepPenalties = scoringValue('SPEED_CREEP_ECO_PENALTY_POINTS');
+  ecoPenalty += (speedCreep.speed_creep_severity_counts?.low || 0) * speedCreepPenalties.low;
+  ecoPenalty += (speedCreep.speed_creep_severity_counts?.medium || 0) * speedCreepPenalties.medium;
+  ecoPenalty += (speedCreep.speed_creep_severity_counts?.high || 0) * speedCreepPenalties.high;
   safetyPenalty += calculateNightPenalty(routePoints, thresholds);
 
-  // Fatigue is stored on a 0-100 scale; preserve the former 0-10 penalty calibration.
-  safetyPenalty += (stats.fatigue_risk_score || 0) * 0.12;
+  safetyPenalty += (stats.fatigue_risk_score || 0) * FATIGUE_SAFETY_PENALTY_SCALE;
 
   const distKm = Math.max(1, stats.distance_km || 1);
-  const phoneUseScoreDeduction = Math.max(0, Math.min(100, 100 - (phoneUseResult.phone_use_score ?? 100)));
-  const phoneUseRiskDeduction = {
-    none: 0,
-    low: 10,
-    medium: 35,
-    high: 55,
-  }[phoneUseResult.phone_use_risk] ?? 0;
+  const phoneUseScoreDeduction = confirmedPhoneScoreAvailable
+    ? Math.max(0, Math.min(100, 100 - Number(phoneUseResult.phone_use_score)))
+    : null;
+  const phoneUseRiskDeduction = scoringValue('PHONE_USE_RISK_DEDUCTION_POINTS')[phoneUseResult.phone_use_risk] ?? 0;
   const phoneUsePctDeduction = Math.max(0, Math.min(70, (phoneUseResult.phone_use_pct_of_trip || 0) * 0.5));
   const phoneUseDeduction = confirmedPhoneScoreAvailable
     ? Math.max(phoneUseScoreDeduction, phoneUseRiskDeduction, phoneUsePctDeduction)
     : 0;
-  if (phoneUseDeduction > 0) {
-    distractionPenalty = Math.max(distractionPenalty, phoneUseDeduction * (distKm / 3));
-  }
   const SCORE_FLOOR = 0;
   const MAX_DEDUCTION = 100;
-  const SCALE_FACTOR = 40.0;
   const normalize = (totalPenalty) => {
     const penaltyRate = totalPenalty / distKm;
-    const deduction = Math.min(penaltyRate * SCALE_FACTOR, MAX_DEDUCTION);
+    const deduction = Math.min(penaltyRate * PENALTY_SCALE_FACTOR, MAX_DEDUCTION);
     return Math.max(SCORE_FLOOR, Math.round(100 - deduction));
   };
 
@@ -4871,84 +5259,157 @@ export function calculateTripScores(
   const tireWear = calculateTireWearUnits(scoringEvents);
   const headingDrift = advancedSafetyEnabled
     ? detectHeadingDriftBeta(routePoints, durationSeconds, thresholds)
-    : { heading_drift_beta_window_count: 0, heading_drift_beta_score: 0, heading_drift_beta_level: 'none', heading_drift_beta_confidence: 'low' };
+    : {
+      heading_drift_beta_window_count: 0,
+      heading_drift_beta_weighted_contribution: 0,
+      heading_drift_beta_score: null,
+      heading_drift_beta_level: 'none',
+      heading_drift_beta_confidence: 'insufficient_data',
+    };
   const hill = calculateHillDrivingScore(routePoints, thresholds);
   const parking = analyzeParkingApproach(routePoints, thresholds, options.endTime ?? null);
   const closeProximityCount = counts[EVENT_TYPES.NEAR_MISS] + counts[EVENT_TYPES.CLOSE_PROXIMITY];
   const closeProximityScore = closeProximityCount === 0
-    ? 100
-    : Math.max(0, Math.round(100 * Math.pow(0.60, closeProximityCount)));
+    ? null
+    : Math.max(0, Math.round(100 * Math.pow(CLOSE_PROXIMITY_DECAY_BASE, closeProximityCount)));
   const aggressive = calculateAggressiveDrivingScore(scoringEvents, { ...stats, ...jerk });
   const tripDistanceKm = Number(stats.distance_km) || 0;
   const highwayDistanceKm = highwayEvidenceDistanceKm(routePoints, thresholds);
   const stopStartPatternCount = counts[EVENT_TYPES.STOP_START_PATTERN] + counts[EVENT_TYPES.TAILGATE_CYCLE];
-  const maxObservedPatternCycles = (highwayDistanceKm / 5) * STOP_START_MAX_CYCLES_PER_5_KM;
+  const maxObservedPatternCycles = (highwayDistanceKm / STOP_START_NORMALISATION_WINDOW_KM) * STOP_START_MAX_CYCLES_PER_5_KM;
   const stopStartPatternScore = highwayDistanceKm < STOP_START_MIN_HIGHWAY_DISTANCE_KM
     ? null
     : Math.round(100 - clamp((stopStartPatternCount / Math.max(1, maxObservedPatternCycles)) * 100, 0, 100));
   const distractionDeductionCap = thresholds.DISTRACTION_DEDUCTION_CAP ?? 70;
-  const distractionScore = Math.max(0, 100 - Math.min(distractionPenalty * (3 / distKm), distractionDeductionCap));
+  const gpsDistractionDeduction = distractionPenalty * (3 / distKm);
+  const distractionDeduction = confirmedPhoneScoreAvailable
+    ? phoneUseDeduction
+    : gpsDistractionDeduction;
+  const distractionScore = Math.max(0, 100 - Math.min(distractionDeduction, distractionDeductionCap));
   const brakeOnset = calculateBrakeOnsetSmoothness(routePoints, scoringEvents, thresholds);
   const cornering = calculateCorneringConsistency(routePoints, thresholds);
   const brakingEfficiency = calculateBrakingEfficiency(routePoints, scoringEvents, thresholds);
   const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds);
   const overtakeQuality = calculateOvertakeQualityScore(routePoints, serializableEventList, thresholds);
   const slippery = detectSlipperyConditionProxy(routePoints, scoringEvents, thresholds);
-  const scoreConfidence = round2(clamp(tripDistanceKm / 5, 0, 1));
-  const routeEvidenceConfidence = routePoints.length >= 2 ? scoreConfidence : 0;
-  const measuredRouteConfidence = (score) => (score == null ? 0 : routeEvidenceConfidence);
+  const routeSampleCount = routePoints.length;
+  const altitudeSampleCount = routePoints.filter((point) => (
+    Number.isFinite(Number(point?.altitude ?? point?.altitude_m))
+  )).length;
+  const evidenceFor = (componentKey, sampleCount, value, distanceKm = tripDistanceKm) => (
+    registeredComponentConfidence(componentKey, distanceKm, sampleCount, value)
+  );
 
-  const brakingScoreForSafety = routeEvidenceConfidence >= 0.5 ? brakingEfficiency.braking_efficiency_score : null;
+  const brakingEvidence = evidenceFor('braking_efficiency', brakingEfficiency.braking_sequence_count, brakingEfficiency.braking_efficiency_score);
+  const brakeOnsetEvidence = evidenceFor('brake_onset_smoothness', brakeOnset.brake_onset_sequence_count, brakeOnset.brake_onset_smoothness_score);
+  const corneringEvidence = evidenceFor('cornering_consistency', cornering.corner_sample_count, cornering.cornering_consistency_score);
+  const brakingScoreForSafety = brakingEvidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : brakingEfficiency.braking_efficiency_score;
   const complianceScoreForSafety = compliance.overall_compliance_score;
   const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false || !confirmedPhoneScoreAvailable
     ? null
     : phoneUseResult.phone_use_score;
   const jerkScoreForSmoothness = jerk.jerk_score_confidence === 'high' ? jerk.jerk_score : null;
   const sviScoreForSmoothness = svi.svi_score;
-  const brakeOnsetScoreForSmoothness = routeEvidenceConfidence >= 0.5 ? brakeOnset.brake_onset_smoothness_score : null;
-  const corneringScoreForSmoothness = routeEvidenceConfidence >= 0.5 ? cornering.cornering_consistency_score : null;
+  const brakeOnsetScoreForSmoothness = brakeOnsetEvidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : brakeOnset.brake_onset_smoothness_score;
+  const corneringScoreForSmoothness = corneringEvidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : cornering.cornering_consistency_score;
+  const safetyBlend = scoringValue('SAFETY_SCORE_BLEND_WEIGHTS');
   const safetyWithoutOvertake = weightedBlend([
-    { score: baseSafety, weight: 0.57 },
-    { score: stopStartPatternScore, weight: 0.05 },
-    { score: closeProximityScore, weight: 0.08 },
-    { score: brakingScoreForSafety, weight: 0.15 },
-    { score: complianceScoreForSafety, weight: 0.10 },
+    { score: baseSafety, weight: safetyBlend.base },
+    { score: stopStartPatternScore, weight: safetyBlend.stopStart },
+    { score: brakingScoreForSafety, weight: safetyBlend.braking },
+    { score: complianceScoreForSafety, weight: safetyBlend.compliance },
     { score: phoneUseScoreForSafety, weight: PHONE_USE_SAFETY_WEIGHT },
   ]) ?? baseSafety;
   let safety = safetyWithoutOvertake;
   safety = Math.min(100, safety + (slippery.safety_condition_bonus || 0));
+  const smoothnessBlend = scoringValue('SMOOTHNESS_SCORE_BLEND_WEIGHTS');
   const smoothness = weightedBlend([
-    { score: baseSmoothness, weight: 0.45 },
-    { score: jerkScoreForSmoothness, weight: 0.25 },
-    { score: sviScoreForSmoothness, weight: 0.10 },
-    { score: brakeOnsetScoreForSmoothness, weight: 0.10 },
-    { score: corneringScoreForSmoothness, weight: 0.10 },
+    { score: baseSmoothness, weight: smoothnessBlend.base },
+    { score: jerkScoreForSmoothness, weight: smoothnessBlend.jerk },
+    { score: sviScoreForSmoothness, weight: smoothnessBlend.speedVariability },
+    { score: brakeOnsetScoreForSmoothness, weight: smoothnessBlend.brakeOnset },
+    { score: corneringScoreForSmoothness, weight: smoothnessBlend.cornering },
   ]) ?? baseSmoothness;
+  const ecoBlend = scoringValue('ECO_SCORE_BLEND_WEIGHTS');
   const eco = weightedBlend([
-    { score: baseEco, weight: 0.40 },
-    { score: ecoDriving.eco_driving_score, weight: 0.40 },
-    { score: fuelBand.fuel_band_score, weight: 0.20 },
+    { score: baseEco, weight: ecoBlend.base },
+    { score: ecoDriving.eco_driving_score, weight: ecoBlend.ecoDriving },
+    { score: fuelBand.fuel_band_score, weight: ecoBlend.fuelBand },
   ]) ?? baseEco;
   const intersectionScore = Number.isFinite(stats.intersection_score) ? stats.intersection_score : null;
 
   // Overall = weighted combination
+  const overallBlend = scoringValue('OVERALL_SCORE_BLEND_WEIGHTS');
   const overall = Math.min(100, weightedBlend([
-    { score: safety, weight: 0.35 },
-    { score: smoothness, weight: 0.30 },
-    { score: eco, weight: 0.20 },
-    { score: intersectionScore, weight: 0.15 },
+    { score: safety, weight: overallBlend.safety },
+    { score: smoothness, weight: overallBlend.smoothness },
+    { score: eco, weight: overallBlend.eco },
+    { score: intersectionScore, weight: overallBlend.intersection },
   ]) ?? Math.round((safety + smoothness + eco) / 3));
+  const phoneUseRequiredForSafety = thresholds.PHONE_USE_AFFECTS_SCORE !== false;
+  const hasGpsDistractionEvidence = routeSampleCount >= 2 || counts[EVENT_TYPES.ERRATIC_SPEED] > 0;
+  const distractionValue = hasGpsDistractionEvidence || confirmedPhoneScoreAvailable ? Math.round(distractionScore) : null;
+  const safetyEvidence = evidenceFor('safety', routeSampleCount, safety);
+  const limitedSafetyEvidence = phoneUseScoreForSafety == null && phoneUseRequiredForSafety
+    ? cappedEvidenceLevel(safetyEvidence, CONFIDENCE_LEVELS.DEVELOPING)
+    : safetyEvidence;
+  const overallEvidence = evidenceFor('overall', routeSampleCount, overall);
+  const limitedOverallEvidence = intersectionScore == null || (phoneUseScoreForSafety == null && phoneUseRequiredForSafety)
+    ? cappedEvidenceLevel(overallEvidence, CONFIDENCE_LEVELS.DEVELOPING)
+    : overallEvidence;
+  const componentEvidence = {
+    overall: limitedOverallEvidence,
+    safety: limitedSafetyEvidence,
+    smoothness: evidenceFor('smoothness', routeSampleCount, smoothness),
+    eco: evidenceFor('eco', routeSampleCount, eco),
+    intersection: evidenceFor('intersection', stats.traffic_stop_count ?? 0, intersectionScore),
+    distraction: evidenceFor('distraction', confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_window_count : counts[EVENT_TYPES.ERRATIC_SPEED], distractionValue),
+    phone_use: evidenceFor('phone_use', phoneUseResult.phone_use_window_count ?? 0, confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_score : null),
+    stop_start_pattern: evidenceFor('stop_start_pattern', stopStartPatternCount, stopStartPatternScore, highwayDistanceKm),
+    close_proximity: evidenceFor('close_proximity', closeProximityCount, closeProximityScore),
+    smoothness_index: evidenceFor('smoothness_index', routeSampleCount, jerk.jerk_score),
+    eco_driving: evidenceFor('eco_driving', routeSampleCount, ecoDriving.eco_driving_score),
+    speed_variability: evidenceFor('speed_variability', svi.svi_moving_sample_count, svi.svi_score),
+    fuel_band: evidenceFor('fuel_band', routeSampleCount, fuelBand.fuel_band_score),
+    merge: evidenceFor('merge', merge.merge_event_count, merge.merge_score),
+    smooth_braking: evidenceFor('smooth_braking', smoothBraking.total_stops_detected, smoothBraking.total_stops_detected > 0 ? smoothBraking.smooth_braking_score : null),
+    engine_stress: evidenceFor('engine_stress', routeSampleCount, engineStress.engine_stress_score),
+    speed_creep: evidenceFor('speed_creep', routeSampleCount, advancedSafetyEnabled ? speedCreep.speed_creep_score : null),
+    heading_drift_beta: evidenceFor('heading_drift_beta', routeSampleCount, advancedSafetyEnabled ? headingDrift.heading_drift_beta_score : null),
+    hill_driving: evidenceFor('hill_driving', altitudeSampleCount, hill.hill_driving_score),
+    parking_approach: evidenceFor('parking_approach', routeSampleCount, routeSampleCount >= 3 ? parking.parking_approach_score : null),
+    brake_onset_smoothness: brakeOnsetEvidence,
+    cornering_consistency: corneringEvidence,
+    braking_efficiency: brakingEvidence,
+    speed_limit_compliance: evidenceFor('speed_limit_compliance', routeSampleCount, compliance.overall_compliance_score),
+    overtake_quality: evidenceFor('overtake_quality', overtakeQuality.overtake_count, overtakeQuality.overtake_quality_score),
+    aggressive_driving: evidenceFor('aggressive_driving', routeSampleCount, aggressive.aggressive_driving_score),
+    fatigue_risk: evidenceFor('fatigue_risk', durationSeconds > 0 ? 1 : 0, stats.fatigue_risk_score),
+  };
+  const safetyConfidence = componentEvidence.safety;
+  const smoothnessConfidence = componentEvidence.smoothness;
+  const ecoConfidence = componentEvidence.eco;
+  const distractionConfidence = componentEvidence.distraction;
+  const overallConfidenceLevel = componentEvidence.overall;
+  const scoreConfidence = confidenceNumericValue(overallConfidenceLevel);
+  const scoreOrNull = (value, evidence) => (
+    evidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : value
+  );
+  const overallScoreValue = scoreOrNull(overall, componentEvidence.overall);
+  const safetyScoreValue = scoreOrNull(safety, componentEvidence.safety);
+  const smoothnessScoreValue = scoreOrNull(smoothness, componentEvidence.smoothness);
+  const ecoScoreValue = scoreOrNull(eco, componentEvidence.eco);
 
   const componentScores = {
-    score_overall: overall,
+    score_overall: overallScoreValue,
     score_confidence: scoreConfidence,
-    score_confidence_label: scoreConfidence < 0.5 ? 'low' : scoreConfidence < 0.8 ? 'developing' : 'high',
-    score_safety: safety,
-    score_safety_confidence: scoreConfidence,
-    score_smoothness: smoothness,
-    score_smoothness_confidence: scoreConfidence,
-    score_eco: eco,
-    score_eco_confidence: scoreConfidence,
+    score_confidence_label: overallConfidenceLevel,
+    score_safety: safetyScoreValue,
+    score_safety_confidence: safetyConfidence,
+    score_smoothness: smoothnessScoreValue,
+    score_smoothness_confidence: smoothnessConfidence,
+    score_eco: ecoScoreValue,
+    score_eco_confidence: ecoConfidence,
     harsh_brakes_count: counts[EVENT_TYPES.HARSH_BRAKE],
     rapid_accel_count: counts[EVENT_TYPES.RAPID_ACCELERATION],
     sharp_turns_count: counts[EVENT_TYPES.SHARP_TURN],
@@ -4957,35 +5418,38 @@ export function calculateTripScores(
     heading_deviations_per_10km: round1(((counts[EVENT_TYPES.HEADING_DEVIATION] + counts[EVENT_TYPES.LANE_CHANGE]) / distKm) * 10),
     heading_deviation_available: advancedSafetyEnabled,
     stop_start_pattern_count: stopStartPatternCount,
+    stop_start_pattern_sample_count: stopStartPatternCount,
     stop_start_pattern_score: stopStartPatternScore,
-    stop_start_pattern_score_confidence: stopStartPatternScore == null ? 'insufficient_highway_distance' : 'low',
+    stop_start_pattern_score_confidence: componentEvidence.stop_start_pattern,
     distraction_events_count: counts[EVENT_TYPES.ERRATIC_SPEED],
-    distraction_score: Math.round(distractionScore),
-    distraction_score_confidence: scoreConfidence,
+    distraction_score: distractionValue,
+    distraction_score_confidence: distractionConfidence,
     close_proximity_count: closeProximityCount,
     close_proximity_score: closeProximityScore,
-    close_proximity_score_confidence: 'low',
+    close_proximity_score_confidence: componentEvidence.close_proximity,
     overtake_event_count: diagnosticOvertakeCount,
     overtake_score: null,
     overtake_score_confidence: 'beta_diagnostic_only',
     overtake_affects_score: false,
     intersection_score: intersectionScore,
-    intersection_score_confidence: stats.intersection_score_confidence ?? (intersectionScore == null ? 'insufficient_data' : 'observed_stops'),
+    intersection_score_confidence: componentEvidence.intersection,
     ...jerk,
+    jerk_score_confidence: componentEvidence.smoothness_index,
     ...ecoDriving,
-    eco_driving_score_confidence: ecoDriving.eco_score_confidence === 'observed' ? routeEvidenceConfidence : 0,
+    eco_driving_score_confidence: componentEvidence.eco_driving,
     ...svi,
+    svi_score_confidence: componentEvidence.speed_variability,
     ...fuelBand,
-    fuel_band_score_confidence: routeEvidenceConfidence,
+    fuel_band_score_confidence: componentEvidence.fuel_band,
     ...merge,
-    merge_score_confidence: measuredRouteConfidence(merge.merge_score),
+    merge_score_confidence: componentEvidence.merge,
     ...smoothBraking,
-    smooth_braking_score_confidence: smoothBraking.total_stops_detected > 0 ? routeEvidenceConfidence : 0,
+    smooth_braking_score_confidence: componentEvidence.smooth_braking,
     ...engineStress,
-    engine_stress_score_confidence: scoreConfidence,
+    engine_stress_score_confidence: componentEvidence.engine_stress,
     ...tireWear,
     ...speedCreep,
-    speed_creep_score_confidence: routeEvidenceConfidence,
+    speed_creep_score_confidence: componentEvidence.speed_creep,
     ...phoneProxy,
     phone_use_events: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_events || []) : [],
     phone_use_window_count: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_window_count || 0) : 0,
@@ -4994,41 +5458,169 @@ export function calculateTripScores(
     phone_use_score: confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_score : null,
     phone_use_score_available: confirmedPhoneScoreAvailable,
     phone_use_score_status: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_score_status || 'confirmed_signal') : 'usage_access_required',
-    phone_use_score_confidence: confirmedPhoneScoreAvailable ? scoreConfidence : 'usage_access_required',
+    phone_use_score_confidence: confirmedPhoneScoreAvailable ? componentEvidence.phone_use : 'usage_access_required',
     phone_use_pct_of_trip: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_pct_of_trip || 0) : 0,
     phone_use_high_confidence_count: confirmedPhoneScoreAvailable ? (phoneUseResult.phone_use_high_confidence_count || 0) : 0,
     phone_proxy_events: proxyEvents,
     ...headingDrift,
+    heading_drift_beta_confidence: componentEvidence.heading_drift_beta,
     heading_drift_beta_available: advancedSafetyEnabled,
     ...hill,
-    hill_driving_score_confidence: measuredRouteConfidence(hill.hill_driving_score),
+    hill_driving_score_confidence: componentEvidence.hill_driving,
     ...parking,
-    parking_approach_score_confidence: routeEvidenceConfidence,
+    parking_approach_score_confidence: componentEvidence.parking_approach,
     ...brakeOnset,
+    brake_onset_smoothness_confidence: componentEvidence.brake_onset_smoothness,
     ...cornering,
-    cornering_consistency_score_confidence: measuredRouteConfidence(cornering.cornering_consistency_score),
+    cornering_consistency_score_confidence: componentEvidence.cornering_consistency,
     ...brakingEfficiency,
-    braking_efficiency_score_confidence: measuredRouteConfidence(brakingEfficiency.braking_efficiency_score),
+    braking_efficiency_score_confidence: componentEvidence.braking_efficiency,
     ...compliance,
-    overall_compliance_score_confidence: [compliance.highway_compliance, compliance.urban_compliance, compliance.residential_compliance].some(Boolean)
-      ? routeEvidenceConfidence
-      : 0,
+    overall_compliance_score_confidence: componentEvidence.speed_limit_compliance,
     ...overtakeQuality,
-    overtake_quality_score_confidence: 'beta_diagnostic_only',
+    overtake_quality_score_confidence: componentEvidence.overtake_quality,
     overtake_quality_beta: true,
     ...slippery,
     ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, scoringEvents, stats, thresholds)),
     ...aggressive,
-    aggressive_driving_score_confidence: scoreConfidence,
+    aggressive_driving_score_confidence: componentEvidence.aggressive_driving,
     driving_events: serializableEvents,
   };
   delete componentScores.speed_creep_severity_counts;
 
   const defensiveDriving = calculateDefensiveDrivingScore(componentScores);
-  return {
+  const scoredTrip = {
     ...componentScores,
     ...defensiveDriving,
-    defensive_driving_score_confidence: defensiveDriving.defensive_driving_score == null ? 0 : scoreConfidence,
+    defensive_driving_score_confidence: evidenceFor('defensive_driving', routeSampleCount, defensiveDriving.defensive_driving_score),
+  };
+  const gpsSources = tripDistanceKm > 0 || routePoints.length > 0 || scoringEvents.length > 0 ? ['gps'] : [];
+  const osmSpeedLimitObserved = routePoints.some((point) => (
+    ['openstreetmap', 'osm_highway_default'].includes(point?.speed_limit_source)
+  ));
+  const speedLimitSources = compliance.overall_compliance_score == null
+    ? []
+    : [...gpsSources, osmSpeedLimitObserved ? 'osm_speed_limit' : 'gps_inferred_speed_limit'];
+  const phoneSources = confirmedPhoneScoreAvailable
+    ? [...new Set(phoneUseResult.data_sources?.length ? phoneUseResult.data_sources : ['android_usage_access'])]
+    : [];
+  const combinedSources = (...sources) => [...new Set(sources.flat().filter(Boolean))];
+  const component_scores = {
+    overall: createComponentScore(overallScoreValue, componentEvidence.overall, combinedSources(gpsSources, phoneSources, speedLimitSources), {
+      sampleCount: routeSampleCount,
+      note: overallConfidenceLevel === CONFIDENCE_LEVELS.HIGH ? undefined : 'Some contributing signals are unavailable or still developing.',
+    }),
+    safety: createComponentScore(safetyScoreValue, componentEvidence.safety, combinedSources(gpsSources, phoneSources, speedLimitSources), {
+      sampleCount: routeSampleCount,
+      note: phoneUseScoreForSafety == null && phoneUseRequiredForSafety ? 'Confirmed phone-use evidence is unavailable.' : undefined,
+    }),
+    smoothness: createComponentScore(smoothnessScoreValue, componentEvidence.smoothness, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    eco: createComponentScore(ecoScoreValue, componentEvidence.eco, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    intersection: createComponentScore(intersectionScore, componentEvidence.intersection, gpsSources, {
+      sampleCount: stats.traffic_stop_count ?? 0,
+      note: intersectionScore == null ? 'No qualifying traffic-stop evidence was recorded.' : undefined,
+    }),
+    distraction: createComponentScore(distractionValue, componentEvidence.distraction, combinedSources(gpsSources, phoneSources), {
+      sampleCount: confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_window_count : counts[EVENT_TYPES.ERRATIC_SPEED],
+    }),
+    phone_use: createComponentScore(
+      confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_score : null,
+      componentEvidence.phone_use,
+      phoneSources,
+      {
+        sampleCount: confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_window_count : 0,
+        note: confirmedPhoneScoreAvailable ? undefined : 'Android Usage Access is required for a scored phone-use signal.',
+      }
+    ),
+    stop_start_pattern: createComponentScore(stopStartPatternScore, componentEvidence.stop_start_pattern, gpsSources, {
+      sampleCount: stopStartPatternCount,
+      note: 'GPS-only pattern estimate; it does not measure following distance.',
+    }),
+    close_proximity: createComponentScore(closeProximityScore, componentEvidence.close_proximity, gpsSources, {
+      sampleCount: closeProximityCount,
+      note: 'GPS brake-turn manoeuvre alert; object proximity is not measured.',
+    }),
+    smoothness_index: createComponentScore(jerk.jerk_score, componentEvidence.smoothness_index, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    eco_driving: createComponentScore(ecoDriving.eco_driving_score, componentEvidence.eco_driving, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    speed_variability: createComponentScore(svi.svi_score, componentEvidence.speed_variability, gpsSources, {
+      sampleCount: svi.svi_moving_sample_count,
+    }),
+    fuel_band: createComponentScore(fuelBand.fuel_band_score, componentEvidence.fuel_band, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    merge: createComponentScore(merge.merge_score, componentEvidence.merge, gpsSources, {
+      sampleCount: merge.merge_event_count,
+    }),
+    smooth_braking: createComponentScore(
+      smoothBraking.total_stops_detected > 0 ? smoothBraking.smooth_braking_score : null,
+      componentEvidence.smooth_braking,
+      gpsSources,
+      { sampleCount: smoothBraking.total_stops_detected }
+    ),
+    engine_stress: createComponentScore(engineStress.engine_stress_score, componentEvidence.engine_stress, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    speed_creep: createComponentScore(
+      advancedSafetyEnabled ? speedCreep.speed_creep_score : null,
+      componentEvidence.speed_creep,
+      gpsSources,
+      { sampleCount: routeSampleCount }
+    ),
+    heading_drift_beta: createComponentScore(
+      advancedSafetyEnabled ? headingDrift.heading_drift_beta_score : null,
+      componentEvidence.heading_drift_beta,
+      gpsSources,
+      {
+        sampleCount: routeSampleCount,
+        note: 'GPS heading-drift beta estimate; this is not a fatigue diagnosis.',
+      }
+    ),
+    hill_driving: createComponentScore(hill.hill_driving_score, componentEvidence.hill_driving, combinedSources(gpsSources, ['gps_altitude']), {
+      sampleCount: altitudeSampleCount,
+      note: 'GPS altitude-derived estimate.',
+    }),
+    parking_approach: createComponentScore(routeSampleCount >= 3 ? parking.parking_approach_score : null, componentEvidence.parking_approach, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    brake_onset_smoothness: createComponentScore(brakeOnset.brake_onset_smoothness_score, componentEvidence.brake_onset_smoothness, gpsSources, {
+      sampleCount: brakeOnset.brake_onset_sequence_count,
+    }),
+    cornering_consistency: createComponentScore(cornering.cornering_consistency_score, componentEvidence.cornering_consistency, gpsSources, {
+      sampleCount: cornering.corner_sample_count,
+    }),
+    braking_efficiency: createComponentScore(brakingEfficiency.braking_efficiency_score, componentEvidence.braking_efficiency, gpsSources, {
+      sampleCount: brakingEfficiency.braking_sequence_count,
+    }),
+    speed_limit_compliance: createComponentScore(compliance.overall_compliance_score, componentEvidence.speed_limit_compliance, speedLimitSources, {
+      sampleCount: routeSampleCount,
+    }),
+    overtake_quality: createComponentScore(overtakeQuality.overtake_quality_score, componentEvidence.overtake_quality, gpsSources, {
+      sampleCount: overtakeQuality.overtake_count,
+      note: 'Beta diagnostic only; excluded from Safety.',
+    }),
+    aggressive_driving: createComponentScore(aggressive.aggressive_driving_score, componentEvidence.aggressive_driving, gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    defensive_driving: createComponentScore(defensiveDriving.defensive_driving_score, evidenceFor('defensive_driving', routeSampleCount, defensiveDriving.defensive_driving_score), gpsSources, {
+      sampleCount: routeSampleCount,
+    }),
+    fatigue_risk: createComponentScore(stats.fatigue_risk_score, componentEvidence.fatigue_risk, gpsSources, {
+      sampleCount: durationSeconds > 0 ? 1 : 0,
+      note: 'Driving-time proxy only; not a diagnosis of fatigue.',
+    }),
+  };
+  return {
+    ...scoredTrip,
+    component_scores,
+    score_provenance: buildScoreProvenance(component_scores, thresholds),
   };
 }
 
@@ -5119,7 +5711,7 @@ export function generateReportSummary(trips) {
       total_trips: 0,
       total_distance_km: 0,
       total_duration_seconds: 0,
-      avg_score: 0,
+      avg_score: null,
       best_trip: null,
       worst_trip: null,
       total_harsh_brakes: 0,
@@ -5136,10 +5728,14 @@ export function generateReportSummary(trips) {
   const completed = trips.filter(t => t.status === 'completed');
   const totalDistance = completed.reduce((s, t) => s + (t.distance_km || 0), 0);
   const totalDuration = completed.reduce((s, t) => s + (t.duration_seconds || 0), 0);
-  const scores = completed.filter(t => t.score_overall > 0).map(t => t.score_overall);
-  const avgScore = Math.round(distanceWeightedTripScore(completed) ?? 0);
+  const scores = completed
+    .map((trip) => Number(trip.score_overall))
+    .filter((score) => Number.isFinite(score));
+  const weightedScore = distanceWeightedTripScore(completed);
+  const avgScore = weightedScore == null ? null : Math.round(weightedScore);
 
-  const sorted = [...completed].sort((a, b) => (b.score_overall || 0) - (a.score_overall || 0));
+  const scoredTrips = completed.filter((trip) => Number.isFinite(Number(trip.score_overall)));
+  const sorted = [...scoredTrips].sort((a, b) => Number(b.score_overall) - Number(a.score_overall));
   const bestTrip = sorted[0] || null;
   const worstTrip = sorted[sorted.length - 1] || null;
 
@@ -5232,13 +5828,36 @@ export function createLocationService() {
 }
 
 // ─── CSV Export ────────────────────────────────────────────────────────────────
+const csvSpeedLimitSources = (trip = {}) => {
+  const sources = new Set();
+  (trip.route_points || []).forEach((point) => {
+    if (point?.speed_limit_source) sources.add(point.speed_limit_source);
+  });
+  (trip.driving_events || []).forEach((event) => {
+    if (event?.speed_limit_source) sources.add(event.speed_limit_source);
+    if (event?.limit_source) sources.add(event.limit_source);
+  });
+  ['highway_compliance', 'urban_compliance', 'residential_compliance'].forEach((key) => {
+    if (trip[key]?.limit_source) sources.add(trip[key].limit_source);
+  });
+  return [...sources].sort().join(';');
+};
+
+const csvSpeedLimitDefaultCountries = (trip = {}) => {
+  const countries = new Set();
+  (trip.route_points || []).forEach((point) => {
+    if (point?.speed_limit_default_country) countries.add(point.speed_limit_default_country);
+  });
+  return [...countries].sort().join(';');
+};
+
 export function tripsToCSV(trips) {
   const headers = [
     'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
     'Avg Speed (km/h)', 'Avg Moving Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
     // FIX: Add exported moving-speed column immediately after the legacy overall average speed.
-    'Eco', 'Jerk Score', 'Eco Driving Score', 'Stop-Start Pattern Score', 'Focus Score', 'Intersection Score',
-    'Aggressive Score', 'Aggressive Grade', 'Defensive Score', 'Defensive Grade', 'SVI', 'Fuel Band',
+    'Eco', 'Smoothness Index', 'Eco Driving Estimate', 'Stop-Start Pattern Estimate', 'Focus Score', 'Intersection Score',
+    'Aggressive Score', 'Aggressive Grade', 'Defensive Driving Estimate', 'Defensive Grade', 'SVI', 'Fuel Band',
     'Smooth Braking', 'Engine Stress', 'Tire Wear Units', 'Heading Drift Beta', 'Phone Proxy (Diagnostic)', 'Parking Score',
     'Highway Score', 'Urban Score', 'Residential Score', 'Dominant Road Type',
     'Brake Onset Smoothness Score', 'Avg Brake Onset Ramp (s)', 'Brake Onset Smoothness Grade',
@@ -5246,6 +5865,7 @@ export function tripsToCSV(trips) {
     'Cornering Consistency Score', 'Mean Lateral G', 'Peak Lateral G',
     'Braking Efficiency Score', 'Braking Efficiency Grade', 'Braking Sequence Count',
     'Highway Compliance Score', 'Urban Compliance Score', 'Residential Compliance Score', 'Overall Compliance Score',
+    'Speed Limit Sources', 'Speed Limit Default Countries',
     'Overtake Quality Score (Beta Diagnostic)', 'Overtake Pattern Count (Beta Diagnostic)', 'Unsafe Re-entry Count (Beta Diagnostic)',
     'Road Condition Proxy', 'Safety Condition Bonus',
     'Road Type', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events',
@@ -5253,6 +5873,11 @@ export function tripsToCSV(trips) {
     'Event Feedback Accurate', 'Event Feedback Wrong', 'Event Feedback JSON',
     'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
   ];
+  const metricMetadata = headers.map((header, index) => {
+    if (index === 0) return 'Metric Metadata';
+    const metricKey = CSV_METRIC_COLUMNS[header];
+    return metricKey ? formatMetricMetadata(metricKey) : '';
+  });
 
   const rows = trips.map((rawTrip) => {
     const t = /** @type {any} */ (maskTripForPrivacy(rawTrip));
@@ -5312,6 +5937,8 @@ export function tripsToCSV(trips) {
     t.urban_compliance?.score ?? '',
     t.residential_compliance?.score ?? '',
     t.overall_compliance_score ?? '',
+    csvSpeedLimitSources(t),
+    csvSpeedLimitDefaultCountries(t),
     t.overtake_quality_score ?? '',
     t.overtake_count ?? '',
     t.unsafe_reentry_count ?? '',
@@ -5338,7 +5965,7 @@ export function tripsToCSV(trips) {
   });
 
   const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  return [headers, ...rows].map(r => r.map(escape).join(',')).join('\n');
+  return [headers, metricMetadata, ...rows].map(r => r.map(escape).join(',')).join('\n');
 }
 
 export async function downloadCSV(content, filename) {

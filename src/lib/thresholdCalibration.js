@@ -1,17 +1,18 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp } from '@/lib/mathUtils';
 import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/tripEngine';
+import { scoringValue } from '@/lib/scoringConstants';
 
 export const CALIBRATION_PROFILE_KEY = 'drivesense_calibration_profile';
 
 const round1 = (value) => Math.round(value * 10) / 10;
 const round2 = (value) => Math.round(value * 100) / 100;
 const DEFAULT_THRESHOLDS = {
-  threshold_harsh_brake_ms2: 4.5,
-  threshold_rapid_accel_ms2: 3.5,
-  threshold_sharp_turn_g_low: 0.3,
-  threshold_sharp_turn_g_medium: 0.45,
-  threshold_sharp_turn_g_high: 0.6,
+  threshold_harsh_brake_ms2: scoringValue('CALIBRATION_FALLBACK_HARSH_BRAKE_MS2'),
+  threshold_rapid_accel_ms2: scoringValue('CALIBRATION_FALLBACK_RAPID_ACCEL_MS2'),
+  threshold_sharp_turn_g_low: scoringValue('CALIBRATION_FALLBACK_SHARP_TURN_G_LOW'),
+  threshold_sharp_turn_g_medium: scoringValue('SHARP_TURN_G_MEDIUM'),
+  threshold_sharp_turn_g_high: scoringValue('SHARP_TURN_G_HIGH'),
 };
 
 const percentile = (values, p) => {

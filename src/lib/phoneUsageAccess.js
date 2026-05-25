@@ -1,3 +1,5 @@
+import { scoringValue } from '@/lib/scoringConstants';
+
 const round2 = (value) => Math.round(value * 100) / 100;
 
 const timestampMs = (value) => {
@@ -9,6 +11,49 @@ const riskRank = { none: 0, low: 1, medium: 2, high: 3 };
 const MOVING_USAGE_SPEED_KMH = 15;
 const MAX_ROUTE_EVENT_DELTA_MS = 20_000;
 const MIN_USAGE_SESSION_SECONDS = 5;
+export const PHONE_USE_SEVERITY_THRESHOLDS = Object.freeze({
+  /**
+   * Provisional heuristic: Android foreground-session duration that marks a
+   * moving phone-use event as high severity.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  HIGH_DURATION_SECONDS: scoringValue('PHONE_HIGH_DURATION_SECONDS'),
+  /**
+   * Provisional heuristic: vehicle speed that marks any moving phone-use event
+   * as high severity.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  HIGH_SPEED_KMH: scoringValue('PHONE_HIGH_SPEED_KMH'),
+  /**
+   * Provisional heuristic: Android foreground-session duration that marks a
+   * moving phone-use event as medium severity.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  MEDIUM_DURATION_SECONDS: scoringValue('PHONE_MEDIUM_DURATION_SECONDS'),
+  /**
+   * Provisional heuristic: vehicle speed that marks any moving phone-use event
+   * as medium severity.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  MEDIUM_SPEED_KMH: scoringValue('PHONE_MEDIUM_SPEED_KMH'),
+});
+export const PHONE_USE_PENALTY_POINTS = Object.freeze({
+  /**
+   * Provisional score deduction for a high-severity confirmed phone-use event.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  high: scoringValue('PHONE_PENALTY_HIGH'),
+  /**
+   * Provisional score deduction for a medium-severity confirmed phone-use event.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  medium: scoringValue('PHONE_PENALTY_MEDIUM'),
+  /**
+   * Provisional score deduction for a low-severity confirmed phone-use event.
+   * Not calibrated to published distracted-driving research or NHTSA data.
+   */
+  low: scoringValue('PHONE_PENALTY_LOW'),
+});
 const PASSIVE_USAGE_PACKAGE_PATTERNS = [
   /^android$/,
   /^com\.android\.(systemui|launcher|settings|permissioncontroller|inputmethod|providers|phone|server\.telecom)/,
@@ -83,6 +128,24 @@ const competingSignalsOverlap = (left = {}, right = {}) => {
 
 const eventConfidence = (event = {}) => Number(event.confidence ?? event.value) || 0;
 
+const phoneUseSeverity = (durationS, speedKmh) => {
+  if (
+    durationS >= PHONE_USE_SEVERITY_THRESHOLDS.HIGH_DURATION_SECONDS ||
+    speedKmh >= PHONE_USE_SEVERITY_THRESHOLDS.HIGH_SPEED_KMH
+  ) {
+    return 'high';
+  }
+  if (
+    durationS >= PHONE_USE_SEVERITY_THRESHOLDS.MEDIUM_DURATION_SECONDS ||
+    speedKmh >= PHONE_USE_SEVERITY_THRESHOLDS.MEDIUM_SPEED_KMH
+  ) {
+    return 'medium';
+  }
+  return 'low';
+};
+
+const phoneUsePenalty = (event = {}) => PHONE_USE_PENALTY_POINTS[event.severity] ?? PHONE_USE_PENALTY_POINTS.low;
+
 export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tripDurationSeconds = 0) {
   const sessions = Array.isArray(summary?.events) ? summary.events : [];
   const events = sessions
@@ -101,12 +164,8 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
       if (!nearest.point || nearest.deltaMs > MAX_ROUTE_EVENT_DELTA_MS) return null;
       const speedKmh = Number(routePoint.speed_kmh) || 0;
       if (speedKmh < MOVING_USAGE_SPEED_KMH) return null;
-      const confidence = durationS >= 20 ? 0.92 : 0.82;
-      const severity = durationS >= 90 || speedKmh >= 100
-        ? 'high'
-        : durationS >= 20 || speedKmh >= 50
-          ? 'medium'
-          : 'low';
+      const confidence = durationS >= PHONE_USE_SEVERITY_THRESHOLDS.MEDIUM_DURATION_SECONDS ? 0.92 : 0.82;
+      const severity = phoneUseSeverity(durationS, speedKmh);
 
       return {
         type: 'phone_use',
@@ -138,9 +197,7 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
       : totalSeconds >= 10
         ? 'medium'
         : 'low';
-  const penalty = events.reduce((sum, event) => (
-    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 10 : 4)
-  ), 0);
+  const penalty = events.reduce((sum, event) => sum + phoneUsePenalty(event), 0);
   const duration = Math.max(1, Number(tripDurationSeconds) || 1);
 
   return {
@@ -206,9 +263,7 @@ export function buildPhoneUseFromEvents(events = [], tripDurationSeconds = 0, fa
       : 'low';
   const phoneUseRisk = [fallbackRisk || 'none', calculatedRisk]
     .sort((a, b) => (riskRank[b] || 0) - (riskRank[a] || 0))[0] || 'none';
-  const penalty = confirmedEvents.reduce((sum, event) => (
-    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 10 : 4)
-  ), 0);
+  const penalty = confirmedEvents.reduce((sum, event) => sum + phoneUsePenalty(event), 0);
 
   return {
     phone_use_events: confirmedEvents,
@@ -286,9 +341,7 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
       : totalSeconds >= 10
         ? 'medium'
         : 'low';
-  const penalty = confirmedEvents.reduce((sum, event) => (
-    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 10 : 4)
-  ), 0);
+  const penalty = confirmedEvents.reduce((sum, event) => sum + phoneUsePenalty(event), 0);
   const proxyRisk = proxyEvents.length === 0
     ? 'none'
     : proxyEvents.some((event) => event.confidence_level === 'high' || Number(event.confidence) >= 0.75)

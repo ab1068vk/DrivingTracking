@@ -3,6 +3,7 @@ import {
   buildRouteRiskIndex,
   getSegmentsForTrip,
   loadRouteRiskIndex,
+  ROUTE_RISK_CONSTANTS,
   saveRouteRiskIndex,
   segmentKey,
   speedRiskBonus,
@@ -39,6 +40,32 @@ describe('routeRiskIndex', () => {
   it('riskScore is 0 when no events are associated', () => {
     const index = buildRouteRiskIndex([trip()]);
     expect([...index.values()][0].riskScore).toBe(0);
+  });
+
+  it('keeps riskScore finite when all source trips report zero distance', () => {
+    const index = buildRouteRiskIndex([
+      { ...trip(), distance_km: 0 },
+      { ...trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]), distance_km: 0 },
+    ]);
+
+    expect([...index.values()].every((segment) => Number.isFinite(segment.riskScore))).toBe(true);
+  });
+
+  it('applies named provisional event and harsh-event route-risk weights', () => {
+    expect(ROUTE_RISK_CONSTANTS).toMatchObject({
+      ROUTE_RISK_EVENT_WEIGHT: 20,
+      ROUTE_RISK_HARSH_WEIGHT: 40,
+    });
+
+    const generalIndex = buildRouteRiskIndex([
+      trip([{ type: 'speeding', lat: 43.6537, lng: -79.3832 }]),
+    ]);
+    const harshIndex = buildRouteRiskIndex([
+      trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]),
+    ]);
+
+    expect([...generalIndex.values()][0].riskScore).toBe(20);
+    expect([...harshIndex.values()][0].riskScore).toBe(60);
   });
 
   it('graduates speed risk instead of using a binary highway-speed bonus', () => {

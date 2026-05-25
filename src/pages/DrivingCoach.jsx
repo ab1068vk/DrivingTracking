@@ -297,7 +297,7 @@ export default function DrivingCoach() {
                 </div>
                 <div className="bg-secondary/50 rounded-xl p-3">
                   <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg == null ? '-' : `${coach.baseline.baseline_avg} +/- ${coach.baseline.baseline_confidence_interval}`}</div>
-                  <div className="text-xs text-muted-foreground">baseline</div>
+                  <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
                 </div>
                 <div className="bg-secondary/50 rounded-xl p-3">
                   <div className={`font-grotesk font-bold text-xl capitalize ${

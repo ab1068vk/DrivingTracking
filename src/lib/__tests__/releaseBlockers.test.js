@@ -9,6 +9,7 @@ import { localTripRepository } from '@/lib/localTripRepository';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
+import { maskTripForPrivacy } from '@/lib/privacyZones';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
@@ -39,10 +40,14 @@ const completedTrip = (patch = {}) => ({
   ...patch,
 });
 
-const expectFiniteTripScores = (value) => {
+const expectNullGuardedTripScores = (value) => {
   for (const key of ['score_overall', 'score_safety', 'score_smoothness', 'score_eco']) {
-    expect(Number.isFinite(value[key])).toBe(true);
+    expect(value[key] == null || Number.isFinite(value[key])).toBe(true);
   }
+  expect(value.component_scores?.overall).toMatchObject({
+    value: value.score_overall ?? null,
+    evidence: expect.any(String),
+  });
 };
 
 describe('release blocker regressions', () => {
@@ -191,23 +196,48 @@ describe('release blocker regressions', () => {
     expect(sources).not.toMatch(/const\s+\w*Detection?\s*=\s*detectDrivingEvents/);
   });
 
-  it('keeps trip scoring call sites finite with the stable detection object', async () => {
+  it('keeps trip scoring call sites null-guarded with the stable detection object', async () => {
     const summary = calculateRouteSummary(
       routePoints,
       routePoints[0].timestamp,
       routePoints[routePoints.length - 1].timestamp
     );
-    expectFiniteTripScores(summary.scores);
+    expectNullGuardedTripScores(summary.scores);
 
     const [rescoredTrip] = await localTripRepository.upsertMany([completedTrip()]);
-    expectFiniteTripScores(rescoredTrip);
+    expectNullGuardedTripScores(rescoredTrip);
 
     const patch = await buildOpenSourceTripContextPatch(completedTrip(), {
       map_matching_enabled: false,
       speed_limit_lookup_enabled: false,
       weather_context_enabled: false,
     });
-    expectFiniteTripScores(patch);
+    expectNullGuardedTripScores(patch);
+  });
+
+  it('does not report close-proximity evidence when a privacy zone removes the entire trip', () => {
+    const masked = maskTripForPrivacy(completedTrip({
+      driving_events: [{
+        type: 'close_proximity',
+        severity: 'medium',
+        lat: routePoints[1].lat,
+        lng: routePoints[1].lng,
+      }],
+    }), {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: routePoints[0].lat, lng: routePoints[0].lng, radius_m: 1000 }],
+    });
+    const scores = calculateTripScores(
+      masked.driving_events,
+      { distance_km: 0, duration_seconds: 0, fatigue_risk_score: 0 },
+      masked.route_points,
+      DEFAULT_THRESHOLDS,
+      0
+    );
+
+    expect(masked.route_points).toEqual([]);
+    expect(masked.driving_events).toEqual([]);
+    expect(scores.close_proximity_count).toBe(0);
+    expect(scores.close_proximity_score).toBeNull();
   });
 
   it('keeps anomaly scores finite when model stddev is zero', () => {
