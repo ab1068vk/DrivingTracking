@@ -68,4 +68,95 @@ describe('mapMatching', () => {
     expect(result.confidence).toBe(1);
     expect(Number.isFinite(result.confidence)).toBe(true);
   });
+
+  it('marks route matches that use the public OSRM demo endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        matchings: [{
+          confidence: 0.8,
+          geometry: {
+            coordinates: [
+              [-79.38, 43.65],
+              [-79.38, 43.651],
+              [-79.38, 43.652],
+            ],
+          },
+        }],
+      }),
+    })));
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'https://router.project-osrm.org',
+    });
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      isOsrmDemoUrl: true,
+    });
+  });
+
+  it('splits OSRM requests at privacy gaps instead of sending teleporting waypoints', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = new URL(String(url)).pathname;
+      const coords = decodeURIComponent(path.split('/').pop() || '')
+        .split(';')
+        .map((pair) => pair.split(',').map(Number));
+      return {
+        ok: true,
+        json: async () => ({
+          matchings: [{
+            confidence: 0.9,
+            geometry: {
+              coordinates: coords,
+            },
+          }],
+        }),
+      };
+    }));
+
+    const route = [
+      point(100),
+      point(101),
+      point(102),
+      { lat: null, lng: null, masked_for_privacy: true, privacy_zone_id: 'home' },
+      point(400),
+      point(401),
+      point(402),
+    ];
+
+    const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://example.test' });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const requestedCoords = fetch.mock.calls.map(([url]) => (
+      decodeURIComponent(new URL(String(url)).pathname)
+        .split('/')
+        .pop()
+        .split(';')
+        .map((pair) => pair.split(',').map(Number))
+    ));
+    expect(requestedCoords[0]).toHaveLength(3);
+    expect(requestedCoords[1]).toHaveLength(3);
+    expect(requestedCoords[0][0]).toEqual([-79.38, 43.75]);
+    expect(requestedCoords[0][2][1]).toBeCloseTo(43.752);
+    expect(requestedCoords[0].some((coord) => coord[1] > 44)).toBe(false);
+    expect(requestedCoords[1][0]).toEqual([-79.38, 44.05]);
+    expect(requestedCoords[1][2][1]).toBeCloseTo(44.052);
+    expect(result).toMatchObject({
+      status: 'matched',
+      segment_count: 2,
+      privacy_gap_count: 1,
+      snapped_coverage: 100,
+    });
+    expect(result.routePoints).toHaveLength(7);
+    expect(result.routePoints[3]).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_gap: true,
+      masked_for_privacy: true,
+      privacy_zone_id: 'home',
+    });
+    expect(result.routePoints[0].map_matched).toBe(true);
+    expect(result.routePoints[4].map_matched).toBe(true);
+  });
 });

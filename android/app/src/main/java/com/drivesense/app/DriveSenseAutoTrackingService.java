@@ -72,6 +72,7 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final long AUTO_STOP_IN_VEHICLE_ABSOLUTE_MS = 420_000L;
     private static final long AUTO_STOP_NO_ACTIVITY_MS = 180_000L;
     private static final long STALE_LOCATION_STOP_MS = 30_000L;
+    private static final long ACTIVITY_STATE_MAX_AGE_MS = 30_000L;
     private static final double GPS_STILL_DRIFT_M = 8.0d;
     private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
     private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
@@ -146,9 +147,11 @@ public class DriveSenseAutoTrackingService extends Service {
     private String lastNativeAutoStopReason = "";
     private boolean candidateTrip = false;
     private boolean candidateNearParked = false;
+    private boolean hasPermissionLoss = false;
     private long candidateConfirmedMs = 0L;
     private int lastActivityType = DetectedActivity.UNKNOWN;
     private int lastActivityConfidence = 0;
+    private long lastActivityUpdateMs = 0L;
 
     @Override
     public void onCreate() {
@@ -313,6 +316,10 @@ public class DriveSenseAutoTrackingService extends Service {
         long now = System.currentTimeMillis();
         lastActivityType = type;
         lastActivityConfidence = confidence;
+        lastActivityUpdateMs = now;
+        if (isTripActive() && !hasLocationPermission()) {
+            handleLocationPermissionLost("activity_update_permission_missing");
+        }
         double speedKmh = lastKnownSpeedKmh;
         boolean onFoot = (type == DetectedActivity.WALKING ||
             type == DetectedActivity.RUNNING ||
@@ -454,6 +461,7 @@ public class DriveSenseAutoTrackingService extends Service {
         activeStartMs = triggerMs;
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
+        hasPermissionLoss = false;
         previousLocation = null;
         armedPreviousLocation = null;
         armedMovingSinceMs = 0L;
@@ -498,8 +506,8 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private void startTripLocationUpdates() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasLocationPermission()) {
+            handleLocationPermissionLost("trip_location_permission_missing");
             return;
         }
 
@@ -509,13 +517,16 @@ public class DriveSenseAutoTrackingService extends Service {
             .setMinUpdateDistanceMeters(5f)
             .build();
 
-        locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
+        try {
+            locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
+        } catch (SecurityException exception) {
+            handleLocationPermissionLost("trip_location_permission_security_exception");
+        }
         recordDiagnostic("armed_location_watch", "Waiting for movement after a parked or ended trip.", "armed_gps_backup", lastKnownSpeedKmh, 0L, 0d);
     }
 
     private void startArmedLocationUpdates() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasLocationPermission()) {
             return;
         }
 
@@ -525,13 +536,28 @@ public class DriveSenseAutoTrackingService extends Service {
             .setMinUpdateDistanceMeters(5f)
             .build();
 
-        locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
+        try {
+            locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
+        } catch (SecurityException ignored) {}
     }
 
     private void stopLocationUpdates() {
         if (locationClient != null && locationCallback != null) {
             locationClient.removeLocationUpdates(locationCallback);
         }
+    }
+
+    private boolean hasLocationPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void handleLocationPermissionLost(String reason) {
+        if (hasPermissionLoss) return;
+        hasPermissionLoss = true;
+        recordTimeline("location_permission_lost", "Location permission lost during trip.", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
+        recordDiagnostic("location_permission_lost", "Location permission lost during trip.", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
+        updateNotification("GPS permission lost - trip data may have gaps");
     }
 
     private void recordLocation(Location location) {
@@ -587,6 +613,7 @@ public class DriveSenseAutoTrackingService extends Service {
                 double driftM = haversineKm(stoppedAnchorLat, stoppedAnchorLng, location.getLatitude(), location.getLongitude()) * 1000d;
                 maxDriftSinceStopM = Math.max(maxDriftSinceStopM, driftM);
             }
+            if (maybeFinishForStaleActivityGpsFallback()) return;
         }
 
         updateLiveTripNotification(false);
@@ -643,6 +670,7 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private boolean isStrongOnFootSignal() {
+        if (!isActivityStateFresh(System.currentTimeMillis())) return false;
         return (lastActivityType == DetectedActivity.WALKING ||
             lastActivityType == DetectedActivity.RUNNING ||
             lastActivityType == DetectedActivity.ON_BICYCLE) &&
@@ -650,7 +678,30 @@ public class DriveSenseAutoTrackingService extends Service {
     }
 
     private boolean isVehicleSignal() {
+        if (!isActivityStateFresh(System.currentTimeMillis())) return false;
         return lastActivityType == DetectedActivity.IN_VEHICLE && lastActivityConfidence >= MIN_VEHICLE_CONFIDENCE;
+    }
+
+    private boolean isActivityStateFresh(long nowMs) {
+        return lastActivityUpdateMs > 0L && nowMs - lastActivityUpdateMs <= ACTIVITY_STATE_MAX_AGE_MS;
+    }
+
+    private boolean maybeFinishForStaleActivityGpsFallback() {
+        if (!isTripActive() || candidateTrip) return false;
+        long now = System.currentTimeMillis();
+        if (isActivityStateFresh(now)) return false;
+        long stoppedElapsed = stillSinceMs == 0L ? 0L : Math.max(0L, now - stillSinceMs);
+        if (lastKnownSpeedKmh < 2.0d &&
+            stoppedElapsed >= AUTO_STOP_PARKED_GPS_RELAXED_MS &&
+            maxDriftSinceStopM < GPS_VEHICLE_DRIFT_RELAXED_M &&
+            !Double.isNaN(stoppedAnchorLat)) {
+            long stoppedSeconds = stoppedElapsed / 1000L;
+            recordTimeline("activity_recognition_stale", "Activity recognition stale; GPS-only stop fallback used.", "activity_state_stale", lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+            recordDiagnostic("activity_recognition_stale", "Activity recognition stale; GPS-only stop fallback used.", "activity_state_stale", lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+            finishTrip("activity_recognition_stale", true);
+            return true;
+        }
+        return false;
     }
 
     private boolean isInParkingCooldown(@Nullable Location triggerLocation) {
@@ -734,6 +785,7 @@ public class DriveSenseAutoTrackingService extends Service {
         recordDiagnostic("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
         activePoints = null;
         activeTimeline = null;
+        hasPermissionLoss = false;
         activeStartMs = 0L;
         previousLocation = null;
         armedPreviousLocation = null;
@@ -818,6 +870,7 @@ public class DriveSenseAutoTrackingService extends Service {
         long startMs = activeStartMs;
         boolean startedNearParked = candidateNearParked;
         long confirmedMs = candidateConfirmedMs;
+        boolean permissionLoss = hasPermissionLoss;
         long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;
         lastNativeAutoStopReason = reason;
         recordTimeline("ending_review", "Ending review started.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
@@ -832,6 +885,7 @@ public class DriveSenseAutoTrackingService extends Service {
         recordDiagnostic("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         activePoints = null;
         activeTimeline = null;
+        hasPermissionLoss = false;
         activeStartMs = 0L;
         previousLocation = null;
         armedPreviousLocation = null;
@@ -901,6 +955,12 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("native_auto_start_reason", nativeAutoStartReason);
             trip.put("native_auto_stop_reason", lastNativeAutoStopReason);
             trip.put("native_tracking_timeline", timeline);
+            if (permissionLoss) {
+                JSONArray flags = new JSONArray();
+                flags.put("location_permission_loss");
+                trip.put("data_quality_flags", flags);
+                trip.put("score_confidence_flag", "data_gap_detected");
+            }
             trip.put("native_phone_proxy_count", nativeMicroSteerCount);
             trip.put("native_phone_usage_access_granted", phoneUsage.optBoolean("usage_access_granted", false));
             trip.put("native_phone_usage_events", phoneUsage.optJSONArray("events") != null ? phoneUsage.optJSONArray("events") : new JSONArray());

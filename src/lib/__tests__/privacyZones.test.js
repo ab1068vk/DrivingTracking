@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { haversineDistance } from '@/lib/tripEngine';
-import { maskEventsForPrivacy, maskRoutePointsForPrivacy, privacyBoundaryPoint, privacyZonesForRoute } from '@/lib/privacyZones';
+import {
+  isInsidePrivacyZone,
+  maskEventCoordinatesForPrivacy,
+  maskEventsForPrivacy,
+  maskRoutePointsForPrivacy,
+  privacyBoundaryPoint,
+  privacyZonesForRoute,
+} from '@/lib/privacyZones';
 
 const zone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
 const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
@@ -53,6 +60,24 @@ describe('privacyZones', () => {
     const masked = maskEventsForPrivacy(events, { privacy_zones: [zone] });
 
     expect(masked).toEqual([events[1]]);
+  });
+
+  it('omits events inside the privacy-zone event guard', () => {
+    const nearBoundary = { type: 'harsh_brake', lat: 43.65115, lng: -79.38 };
+    const publicEvent = { type: 'sharp_turn', lat: 43.6532, lng: -79.38 };
+
+    expect(haversineDistance(nearBoundary.lat, nearBoundary.lng, zone.lat, zone.lng) * 1000).toBeGreaterThan(zone.radius_m);
+    expect(maskEventsForPrivacy([nearBoundary, publicEvent], { privacy_zones: [zone] })).toEqual([publicEvent]);
+    expect(maskEventCoordinatesForPrivacy(nearBoundary, [zone])).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+    });
+  });
+
+  it('checks raw coordinates against privacy zones for local UI suppression', () => {
+    expect(isInsidePrivacyZone(43.65, -79.38, [zone])).toBe(true);
+    expect(isInsidePrivacyZone(43.6532, -79.38, [zone])).toBe(false);
   });
 
   it('returns only privacy zones touched by a route', () => {

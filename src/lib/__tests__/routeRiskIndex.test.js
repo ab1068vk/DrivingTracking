@@ -82,6 +82,30 @@ describe('routeRiskIndex', () => {
     expect(firstSegment.riskScore).toBe(0);
   });
 
+  it('does not persist segment midpoints inside the privacy-zone guard', () => {
+    const index = buildRouteRiskIndex([trip()], [{
+      id: 'home',
+      lat: 43.6537,
+      lng: -79.3832,
+      radius_m: 40,
+    }]);
+    const midpoints = [...index.values()].map((item) => [item.lat, item.lng]);
+
+    expect(midpoints).not.toContainEqual([43.6537, -79.3832]);
+    expect(index.size).toBe(1);
+  });
+
+  it('skips privacy boundary segments even without current zone settings', () => {
+    const maskedTrip = trip();
+    maskedTrip.route_points = [
+      { ...points[0], privacy_boundary: true, masked_for_privacy: true, privacy_zone_id: 'home' },
+      { ...points[1], privacy_boundary: true, masked_for_privacy: true, privacy_zone_id: 'home' },
+      points[2],
+    ];
+
+    expect(buildRouteRiskIndex([maskedTrip]).size).toBe(0);
+  });
+
   it('graduates speed risk instead of using a binary highway-speed bonus', () => {
     expect(speedRiskBonus(99)).toBe(0);
     expect(speedRiskBonus(101)).toBeLessThan(speedRiskBonus(160));
@@ -108,6 +132,23 @@ describe('routeRiskIndex', () => {
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(1);
     expect([...loaded.values()][0].tripCount).toBe(2);
+  });
+
+  it('filters stored risk cells inside the privacy-zone guard', async () => {
+    await saveRouteRiskIndex(new Map([
+      ['private', { lat: 43.6537, lng: -79.3832, tripCount: 2, totalEvents: 1, harshCount: 1, speedSum: 40, eventTypes: { harsh_brake: 1 }, riskScore: 60, riskLevel: 'high' }],
+      ['public', { lat: 43.6567, lng: -79.3832, tripCount: 2, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
+    ]));
+
+    const loaded = await loadRouteRiskIndex([{
+      id: 'home',
+      lat: 43.6537,
+      lng: -79.3832,
+      radius_m: 50,
+    }]);
+
+    expect(loaded.has('private')).toBe(false);
+    expect(loaded.has('public')).toBe(true);
   });
 
   it('trims storage when serialized index exceeds 2 MB', async () => {

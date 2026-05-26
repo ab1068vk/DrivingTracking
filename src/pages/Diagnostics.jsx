@@ -196,7 +196,9 @@ export default function Diagnostics() {
   const seedLocalTestTrips = async () => {
     setTestDataBusy(true);
     try {
-      const seeded = await tripService.upsertMany(buildLocalFeatureTestTrips());
+      const seeded = await tripService.upsertMany(buildLocalFeatureTestTrips(new Date(), {
+        allowSyntheticTestData: import.meta.env.DEV === true,
+      }));
       await refresh();
       setTestDataNotice(`${seeded.length} synthetic trips are available in this local profile.`);
     } finally {

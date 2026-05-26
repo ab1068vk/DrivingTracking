@@ -104,12 +104,15 @@ function recentTripTrendRows(trips = []) {
     .filter((trip) => Number.isFinite(Number(trip.score_overall)))
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(-8)
-    .map((trip) => ({
-      label: formatDate(trip.start_time),
-      value: Number(trip.score_overall),
-      display: `${Math.round(Number(trip.score_overall))} estimated score`,
-      color: (trip.score_overall || 0) >= 80 ? [34, 197, 94] : (trip.score_overall || 0) >= 60 ? [234, 179, 8] : [239, 68, 68],
-    }));
+    .map((trip) => {
+      const score = Number(trip.score_overall);
+      return {
+        label: formatDate(trip.start_time),
+        value: score,
+        display: `${Math.round(score)} estimated score`,
+        color: score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68],
+      };
+    });
 }
 
 function writeMetricReferencePage(doc, title, metricKeys) {

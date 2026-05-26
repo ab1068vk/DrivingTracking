@@ -391,9 +391,10 @@ export async function notifyTripCompleted(trip, { dedupeKey = null, replaceIds =
 
   const additions = [];
   if ((trip.close_proximity_count ?? 0) > 0) additions.push(`${trip.close_proximity_count} estimated brake-turn alert(s).`);
-  if (trip.heading_drift_beta_level === 'high') additions.push('High GPS heading drift pattern detected (Beta).');
+  if (trip.heading_drift_beta_level === 'high') additions.push('High GPS heading variation pattern recorded (Beta).');
   if (trip.aggressive_grade === 'aggressive') additions.push('Aggressive driving pattern recorded.');
-  const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with a score of ${trip.score_overall || 0}.`;
+  const scoreText = Number.isFinite(Number(trip.score_overall)) ? `a score of ${Math.round(Number(trip.score_overall))}` : 'score unavailable';
+  const baseBody = `${(trip.distance_km || 0).toFixed(1)} km recorded with ${scoreText}.`;
   const body = [baseBody, ...additions].join(' ').slice(0, 160);
 
   return scheduleNotification({
@@ -439,7 +440,7 @@ export async function notifyStayAlert(opts = {}) {
   return scheduleNotification({
       id: opts.id || STAY_ALERT_ID,
       title: opts.title || 'Stay Alert',
-      body: opts.body || 'Heading drift detected - take a break if you can.',
+      body: opts.body || 'GPS heading variation pattern recorded - take a break if you feel tired.',
       channelId: opts.channelId || SAFETY_ALERTS_CHANNEL_ID,
       schedule: opts.schedule,
       extra: opts.extra,
@@ -474,8 +475,8 @@ export async function notifyPhoneUseDetected(opts = {}, settings = localSettings
     id: NOTIFICATION_IDS.PHONE_USE_WARNING,
     title: 'Eyes on the Road',
     body: confidence === 'high'
-      ? 'Distracted driving detected. Put your phone down now.'
-      : 'Possible phone use detected. Stay focused on driving.',
+      ? 'Phone activity recorded during driving. Put your phone down now.'
+      : 'Possible phone activity recorded. Stay focused on driving.',
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
     extra: { type: 'phone_use', confidence, speed: opts.speedKmh },
@@ -497,7 +498,7 @@ export async function notifyHeadingDriftBetaWarning(opts = {}, settings = localS
     title: 'Heading Drift Alert (Beta)',
     body: minutes >= 90
       ? `You've been driving for ${Math.round(minutes)} minutes. Consider taking a break.`
-      : 'GPS heading drift pattern detected. This is not a fatigue measurement; take a break if you feel tired.',
+      : 'GPS heading variation pattern recorded. This is not a fatigue measurement; take a break if you feel tired.',
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
     extra: { type: 'heading_drift_beta_warning', headingDriftBetaLevel: opts.headingDriftBetaLevel },
@@ -587,8 +588,8 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
     const minutes = Math.round(((trip.phone_use_total_seconds ?? 0) / 60) * 10) / 10;
     notification = {
       id: NOTIFICATION_IDS.TRIP_PHONE_USE_HIGH,
-      title: 'High Phone Use Detected',
-      body: `Approx. ${minutes} min of suspected phone use on your last trip. See details in Road Sage.`,
+      title: 'High Phone Activity Recorded',
+      body: `Approx. ${minutes} min of confirmed or suspected phone activity on your last trip. See details in Road Sage.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
       extra: { tripId: trip.id, type: 'phone_use_high' },
@@ -605,7 +606,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
   } else if (mergeRisk) {
     notification = {
       id: NOTIFICATION_IDS.TRIP_MERGE_SUMMARY,
-      title: 'Merge Pattern Detected',
+      title: 'Merge Pattern Recorded',
       body: `${mergeIssueCount} merge issue${mergeIssueCount === 1 ? '' : 's'} found. Aim for smoother ramp acceleration and earlier gaps.`,
       channelId: SUMMARY_CHANNEL_ID,
       schedule: later(),
@@ -656,9 +657,9 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       };
     } else if ((trip.safety_condition_bonus ?? 0) > 0) {
       notification = {
-        id: NOTIFICATION_IDS.TRIP_CONDITION_ADJUSTED,
-        title: 'Adjusted for Conditions',
-        body: `Wet road patterns detected. Your safety score includes a +${trip.safety_condition_bonus} condition adjustment.`,
+      id: NOTIFICATION_IDS.TRIP_CONDITION_ADJUSTED,
+      title: 'Adjusted for Conditions',
+      body: `Wet-road patterns estimated from the trip context. Your safety score includes a +${trip.safety_condition_bonus} condition adjustment.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },
@@ -758,7 +759,7 @@ export async function checkAndNotifyPhoneUsePattern(recentTrips = [], settings =
   const notification = {
     id: NOTIFICATION_IDS.PHONE_USE_PATTERN,
     title: 'Phone Use This Week',
-    body: `Confirmed phone use was detected in ${affected} trips this week. Try enabling Do Not Disturb while driving.`,
+    body: `Confirmed phone use was recorded in ${affected} trips this week. Try enabling Do Not Disturb while driving.`,
     channelId: COACHING_CHANNEL_ID,
     extra: { type: 'phone_use_pattern' },
   };
@@ -773,7 +774,7 @@ export async function notifyStyleShift(styleShifts = [], settings = localSetting
   if (!aggShift) return null;
   return scheduleNotification({
     id: NOTIFICATION_IDS.STYLE_SHIFT_ALERT,
-    title: 'Driving Style Change Detected',
+    title: 'Driving Style Change Recorded',
     body: 'Your driving has become more aggressive over your last 5 trips. See your Coach for details.',
     channelId: COACHING_CHANNEL_ID,
     extra: { type: 'phone_use_pattern' },

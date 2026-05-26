@@ -6,6 +6,7 @@ import {
   calculateTripStats,
   detectDrivingEvents,
   EVENT_TYPES,
+  resolveEffectiveSpeedLimitForIndex,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import {
@@ -133,6 +134,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
       const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
+      const latestSpeedLimit = resolveEffectiveSpeedLimitForIndex(
+        currentRoutePoints,
+        currentRoutePoints.length - 1,
+        thresholds
+      ).effectiveLimitKmh;
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
 
       let nextMessage = null;
@@ -143,7 +149,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           text: (
             <>
               <span className="block text-sm font-bold uppercase">Put your phone down</span>
-              <span className="block text-xs font-medium">Distracted driving detected. Keep your eyes on the road.</span>
+              <span className="block text-xs font-medium">Phone activity was recorded during this drive. Keep your eyes on the road.</span>
             </>
           ),
           tone: 'danger',
@@ -165,11 +171,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         };
       } else if (stats.heading_drift_beta_level === 'high') {
         nextMessage = {
-          text: 'Heading drift pattern detected. Take a break if you feel tired.',
+          text: 'GPS heading variation pattern recorded. Take a break if you feel tired.',
           voiceKey: 'heading_drift_beta',
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
-      } else if (settings.speed_warning_enabled !== false && latestSpeed > (thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
+      } else if (settings.speed_warning_enabled !== false && latestSpeed > (latestSpeedLimit ?? thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
         nextMessage = {
           text: `Speed warning. ${Math.round(latestSpeed)} kilometers per hour.`,
           voiceKey: 'speeding',
@@ -183,7 +189,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         };
       } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
         nextMessage = {
-          text: 'Repeated stop-start pattern detected',
+          text: 'Repeated stop-start pattern recorded',
           voiceKey: 'stop_start_pattern',
           voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
         };
@@ -201,7 +207,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         };
       } else if ((stats.idle_time_seconds || 0) > 300) {
         nextMessage = {
-          text: 'Extended idling detected',
+          text: 'Extended idling recorded',
           voiceKey: 'idle',
           voiceCooldownMs: VOICE_COOLDOWNS_MS.idle,
         };
@@ -210,7 +216,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       if (latestSpeeding && settings.notif_speeding_alert_enabled !== false) {
         notifySpeedingAlert({
           currentSpeedKmh: latestSpeeding.speed_kmh,
-          limitKmh: latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
+          limitKmh: latestSpeeding.speed_limit_kmh ?? latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
           durationS: latestSpeeding.duration_seconds ?? 0,
         }, settings).catch(() => {});
         if (!nextMessage && settings.voice_alerts_enabled !== false) {

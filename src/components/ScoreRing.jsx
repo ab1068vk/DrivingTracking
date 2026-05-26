@@ -19,7 +19,7 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
   const strokeColor = unavailable ? 'hsl(var(--muted-foreground))' : scoredColor.stroke;
   const evidenceText = {
     high: 'high evidence',
-    developing: 'developing evidence',
+    developing: 'limited evidence',
     low: 'low evidence',
     unavailable: 'unavailable evidence',
   }[evidenceLevel] || 'low evidence';
@@ -76,10 +76,10 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
         <div className="text-center">
           <div className={`text-sm font-semibold ${color}`}>{scoreLabel}</div>
           <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="text-[11px] capitalize text-muted-foreground">{evidenceText}</div>
+          {evidenceLevel !== 'high' && <div className="text-[11px] capitalize text-muted-foreground">{evidenceText}</div>}
         </div>
       )}
-      {!label && (
+      {!label && evidenceLevel !== 'high' && (
         <div className="text-center text-[11px] capitalize text-muted-foreground">{evidenceText}</div>
       )}
     </div>

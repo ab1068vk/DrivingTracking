@@ -31,7 +31,7 @@ const SIGNAL_LABELS = {
   lastTripOutcome: 'Low score on your last trip',
   weather: 'Weather may raise trip risk',
   dangerZones: 'Your repeated driving-event areas are nearby',
-  routeForecast: 'Historical context risk looks elevated',
+  routeForecast: 'Historical context estimate looks elevated',
   recentRest: 'Short recovery since your last trip',
 };
 

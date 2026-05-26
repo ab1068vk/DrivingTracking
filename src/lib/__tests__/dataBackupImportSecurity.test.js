@@ -67,6 +67,16 @@ describe('backup trip import sanitization', () => {
     expect(trip.status).toBe('completed');
   });
 
+  it('preserves estimated private distance on imported trips', () => {
+    const [trip] = parseTrips([{
+      id: 'trip-private-distance',
+      status: 'completed',
+      estimated_private_distance_km: 0.42,
+    }]);
+
+    expect(trip.estimated_private_distance_km).toBe(0.42);
+  });
+
   it('truncates oversized imported trip routes', () => {
     const [trip] = parseTrips([{
       id: 'trip-huge-route',
@@ -244,13 +254,13 @@ describe('backup trip import sanitization', () => {
       },
       score_provenance: {
         computed_at: '2026-05-24T17:23:44.000Z',
-        scoring_version: '2.1.0',
+        scoring_version: '2.2.0',
         components: { safety: 'developing' },
         constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
       },
       score_provenance_change: {
         previous_scoring_version: '2.0.0',
-        current_scoring_version: '2.1.0',
+        current_scoring_version: '2.2.0',
         reason: 'scoring_inputs_changed',
         changed_constants: ['PENALTY_SCALE_FACTOR'],
       },
@@ -264,7 +274,7 @@ describe('backup trip import sanitization', () => {
       note: 'Partial route context.',
     });
     expect(trip.score_provenance).toMatchObject({
-      scoring_version: '2.1.0',
+      scoring_version: '2.2.0',
       constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
     });
     expect(trip.score_provenance_change.changed_constants).toEqual(['PENALTY_SCALE_FACTOR']);

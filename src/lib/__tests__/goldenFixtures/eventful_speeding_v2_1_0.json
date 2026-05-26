@@ -1,7 +1,7 @@
 {
-  "id": "eventful_speeding_v2_1_0",
-  "description": "Human-verified eventful daytime route with inferred speed-limit speeding events; validates penalties, developing evidence, and provenance component labels independently of the test-runner timezone.",
-  "scoring_version": "2.1.0",
+  "id": "eventful_speeding_v2_2_0",
+  "description": "Human-verified eventful daytime route with inferred speed-limit speeding events; validates penalties, limited evidence, and provenance component labels independently of the test-runner timezone.",
+  "scoring_version": "2.2.0",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -42,7 +42,7 @@
       "sharp_turns_count": 0,
       "speeding_events_count": 2,
       "speed_creep_score": 76,
-      "aggressive_driving_score": 61,
+      "aggressive_driving_score": 0,
       "defensive_driving_score": 74
     },
     "component_scores": {
@@ -52,12 +52,12 @@
       "eco": { "value": 20, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
       "speed_creep": { "value": 76, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
-      "aggressive_driving": { "value": 61, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "aggressive_driving": { "value": 0, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "defensive_driving": { "value": 74, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "2.1.0",
+      "scoring_version": "2.2.0",
       "components": {
         "overall": "developing",
         "safety": "developing",

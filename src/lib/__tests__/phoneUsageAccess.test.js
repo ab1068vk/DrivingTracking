@@ -3,6 +3,7 @@ import {
   PHONE_USE_PENALTY_POINTS,
   PHONE_USE_SEVERITY_THRESHOLDS,
   buildPhoneUseFromAndroidUsage,
+  buildPhoneUsageAccessProvenance,
   buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
   mergePhoneUseSignals,
@@ -179,5 +180,18 @@ describe('Android phone usage access merge', () => {
     expect(phoneUse.phone_use_window_count).toBe(1);
     expect(phoneUse.phone_use_events[0].source).toBe('android_usage_access');
     expect(events.some((event) => event.type === 'phone_use')).toBe(true);
+  });
+
+  it('reports provenance when current Usage Access no longer matches the recorded trip state', () => {
+    const provenance = buildPhoneUsageAccessProvenance({
+      native_phone_usage_access_granted: true,
+    }, false);
+
+    expect(provenance).toMatchObject({
+      recordedUsageAccessGranted: true,
+      currentUsageAccessGranted: false,
+      changed: true,
+    });
+    expect(provenance.note).toBe('Phone use score was recorded when Usage Access was granted. Current permission status has changed.');
   });
 });

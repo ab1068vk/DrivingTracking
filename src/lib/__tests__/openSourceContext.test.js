@@ -6,8 +6,10 @@ import {
   describeOsmSpeedLimitStatus,
   isExternalContextAutoFetchEnabled,
   isOsrmMapMatchingConfigured,
+  PUBLIC_OSRM_DEMO_URL,
 } from '@/lib/openSourceTripContext';
-import { applyWeatherRiskToScores } from '@/lib/weatherContext';
+import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 
 describe('open-source trip context', () => {
@@ -26,8 +28,10 @@ describe('open-source trip context', () => {
 
   it('uses configured country defaults when OSM maxspeed tags are missing', () => {
     expect(defaultSpeedLimitKmhForOsmHighway('residential', { configurable_country_defaults: 'gb' })).toBe(48);
-    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'gb' })).toBe(113);
-    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'us' })).toBe(113);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'gb' })).toBe(112);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'us' })).toBe(105);
+    expect(defaultSpeedLimitKmhForOsmHighway('primary', {}, 'GB')).toBe(96);
+    expect(defaultSpeedLimitKmhForOsmHighway('motorway', { country_code: 'DE' })).toBeNull();
     expect(defaultSpeedLimitKmhForOsmHighway('motorway', { configurable_country_defaults: 'unknown' })).toBe(100);
   });
 
@@ -42,6 +46,7 @@ describe('open-source trip context', () => {
   });
 
   it('describes external road-context data before manual fetch', () => {
+    expect(isExternalContextAutoFetchEnabled({})).toBe(true);
     expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: false })).toBe(false);
     expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: true })).toBe(true);
     const message = buildRoadContextPrivacyMessage({
@@ -53,6 +58,21 @@ describe('open-source trip context', () => {
     expect(message).toContain('OpenStreetMap Overpass');
     expect(message).toContain('Open-Meteo');
     expect(message).toContain('Snap route to roads');
+  });
+
+  it('identifies the public OSRM demo endpoint and discloses it in road-context consent', () => {
+    expect(PUBLIC_OSRM_DEMO_URL).toBe('https://router.project-osrm.org');
+    expect(isPublicOsrmDemoUrl(PUBLIC_OSRM_DEMO_URL)).toBe(true);
+    expect(isPublicOsrmDemoUrl('http://router.project-osrm.org')).toBe(true);
+
+    const message = buildRoadContextPrivacyMessage({
+      map_matching_enabled: true,
+      osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL,
+    });
+
+    expect(message).toContain('router.project-osrm.org');
+    expect(message).toContain('public third-party OSRM demo server');
+    expect(describeMapMatchingStatus({ status: 'matched', snapped_coverage: 100, isOsrmDemoUrl: true })).toContain('public OSRM demo');
   });
 
   it('penalizes harsh events more during risky weather', () => {
@@ -98,6 +118,22 @@ describe('open-source trip context', () => {
     expect(adjusted.score_safety).toBe(scores.score_safety);
     expect(adjusted.score_overall).toBe(scores.score_overall);
     expect(adjusted.weather_score_adjustment).toBe(0);
+  });
+
+  it('does not label unavailable weather as low risk', async () => {
+    const disabled = await fetchWeatherContextForTrip([], null, null, {
+      weather_context_enabled: false,
+    });
+
+    expect(disabled).toMatchObject({
+      status: 'disabled',
+      riskLevel: null,
+      riskScore: null,
+    });
+    expect(applyWeatherRiskToScores({ score_safety: 90 }, disabled)).toMatchObject({
+      weather_risk_score: null,
+      weather_score_adjustment: 0,
+    });
   });
 
   it('clips route coordinates to privacy-zone boundaries and hides private events', () => {

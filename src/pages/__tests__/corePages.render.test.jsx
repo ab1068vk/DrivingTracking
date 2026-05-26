@@ -39,13 +39,13 @@ const sampleTrip = {
   score_eco_confidence: 'high',
   score_provenance: {
     computed_at: '2026-05-24T17:23:44.000Z',
-    scoring_version: '2.1.0',
+    scoring_version: '2.2.0',
     components: { overall: 'developing', safety: 'developing' },
     constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
   },
   score_provenance_change: {
     previous_scoring_version: '2.0.0',
-    current_scoring_version: '2.1.0',
+    current_scoring_version: '2.2.0',
     reason: 'scoring_inputs_changed',
     changed_constants: ['PENALTY_SCALE_FACTOR'],
   },
@@ -161,8 +161,13 @@ vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }) => <div>{children}</div>,
   DialogContent: ({ children }) => <div>{children}</div>,
   DialogDescription: ({ children }) => <p>{children}</p>,
+  DialogFooter: ({ children }) => <div>{children}</div>,
   DialogHeader: ({ children }) => <div>{children}</div>,
   DialogTitle: ({ children }) => <h2>{children}</h2>,
+}));
+
+vi.mock('@/components/ui/checkbox', () => ({
+  Checkbox: ({ checked }) => <input readOnly type="checkbox" checked={checked} />,
 }));
 
 vi.mock('@/components/ui/use-toast', () => ({
@@ -195,6 +200,7 @@ vi.mock('@/lib/activityRecognition', () => ({
   computeGpsPositionDrift: vi.fn(() => null),
   getAndroidBatteryOptimizationStatus: vi.fn(async () => ({ batteryOptimizationIgnored: true })),
   getAndroidPhoneUsageSummary: vi.fn(async () => ({})),
+  getAndroidUsageAccessStatus: vi.fn(async () => ({ usageAccessGranted: false })),
   getNativeAutoTrackingStatus: vi.fn(async () => ({ enabled: false })),
   openAndroidBatteryOptimizationSettings: vi.fn(),
   openAndroidUsageAccessSettings: vi.fn(),
@@ -248,7 +254,7 @@ describe('core page component renders', () => {
     expect(html).toContain('approximate');
   }, 10_000);
 
-  it('labels historical context risk as estimated and shows its signal breakdown', async () => {
+  it('labels historical context as estimated and shows its signal breakdown', async () => {
     queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
       id: `trip-${index + 1}`,
@@ -257,13 +263,13 @@ describe('core page component renders', () => {
     const { default: Dashboard } = await import('@/pages/Dashboard');
     const html = renderToStaticMarkup(<Dashboard />);
 
-    expect(html).toContain('Estimated historical context risk');
+    expect(html).toContain('Estimated historical context');
     expect(html).toContain('Signal contributions');
     expect(html).toContain('Driving-event density');
     expect(html).toContain('not validated against collision or casualty outcomes');
   });
 
-  it('withholds historical context risk when completed history has no recorded distance', async () => {
+  it('withholds historical context when completed history has no recorded distance', async () => {
     queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
       id: `zero-trip-${index + 1}`,
@@ -273,9 +279,9 @@ describe('core page component renders', () => {
     const { default: Dashboard } = await import('@/pages/Dashboard');
     const html = renderToStaticMarkup(<Dashboard />);
 
-    expect(html).toContain('Historical context risk');
+    expect(html).toContain('Historical context');
     expect(html).toContain('Not enough driving history');
-    expect(html).not.toContain('Estimated historical context risk');
+    expect(html).not.toContain('Estimated historical context');
     expect(html).not.toContain('Signal contributions');
   });
 
@@ -287,6 +293,7 @@ describe('core page component renders', () => {
       distraction_score_confidence: 'low',
       climb_distance_km: 0.7,
       descent_distance_km: 0.4,
+      estimated_private_distance_km: 0.4,
     });
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const html = renderToStaticMarkup(<TripDetail />);
@@ -296,17 +303,34 @@ describe('core page component renders', () => {
     expect(html).toContain('OpenStreetMap');
     expect(html).toContain('Open-Meteo');
     expect(html).toContain('Safety');
-    expect(html).toContain('developing evidence');
+    expect(html).not.toContain('developing evidence');
     expect(html).toContain('low evidence');
-    expect(html).toContain('high evidence');
+    expect(html).not.toContain('high evidence');
     expect(html).toContain('Scoring provenance');
     expect(html).toContain('approximate');
-    expect(html).toContain('Version 2.1.0');
+    expect(html).not.toContain('Version 2.2.0');
     expect(html).toContain('Updated constants: PENALTY_SCALE_FACTOR.');
     expect(html).toContain('GPS and altitude-derived estimate only');
+    expect(html).toContain('traveled within privacy zones (estimated)');
     expect(html).toContain('legitimate uphill manoeuvre');
     expect(html).toContain('attention-pattern estimate');
     expect(html).not.toContain('Focus Score');
+  });
+
+  it('shows public OSRM demo provenance on TripDetail', async () => {
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      map_matching_context: {
+        provider: 'osrm',
+        status: 'matched',
+        snapped_coverage: 100,
+        isOsrmDemoUrl: true,
+      },
+    });
+    const { default: TripDetail } = await import('@/pages/TripDetail');
+    const html = renderToStaticMarkup(<TripDetail />);
+
+    expect(html).toContain('Road-matched via public OSRM demo');
   });
 
   it('renders unavailable parking score instead of a fabricated perfect score', async () => {
@@ -333,8 +357,13 @@ describe('core page component renders', () => {
     expect(html).toContain('Tracking Mode');
     expect(html).toContain('Android Permissions');
     expect(html).toContain('Snap route to roads');
-    expect(html).toContain('Automatically get speed limits');
+    expect(html).toContain('Use public OSRM demo?');
+    expect(html).toContain('Fetch real speed limits after trips');
     expect(html).toContain('Calibration registry');
+    expect(html).toContain('Trip penalty scale factor');
+    expect(html).toContain('Uncalibrated - scores are self-consistent');
+    expect(html).toContain('Status: Provisional');
+    expect(html).toContain('Affects score_overall, score_safety');
     expect(html).toContain('approximate');
   });
 

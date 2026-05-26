@@ -1,6 +1,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
 import { withRetry } from '@/lib/retry';
+import { getPrivacyZones } from '@/lib/privacyZones';
 
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -15,6 +16,8 @@ const DIRECT_BBOX_SPAN_DEG = 0.08;
 const MAX_CORRIDOR_QUERIES = 6;
 const MAX_CORRIDOR_SAMPLE_POINTS = 180;
 const CORRIDOR_PAD_DEG = 0.006;
+const ZONE_GUARD_M = 50;
+const ALL_POINTS_PRIVATE_REASON = 'all_points_private';
 export const DEFAULT_SPEED_LIMIT_COUNTRY = 'global';
 export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
   global: Object.freeze({
@@ -35,22 +38,28 @@ export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
     motorway: 100,
   }),
   gb: Object.freeze({
+    primary: 96,
+    primary_link: 96,
     residential: 48,
     unclassified: 48,
     road: 48,
-    trunk: 113,
-    motorway: 113,
+    trunk: 112,
+    motorway: 112,
   }),
   uk: Object.freeze({
+    primary: 96,
+    primary_link: 96,
     residential: 48,
     unclassified: 48,
     road: 48,
-    trunk: 113,
-    motorway: 113,
+    trunk: 112,
+    motorway: 112,
   }),
   us: Object.freeze({
-    motorway: 113,
-    trunk: 105,
+    motorway: 105,
+    trunk: 89,
+    primary: 72,
+    primary_link: 72,
     motorway_link: 89,
     trunk_link: 89,
     residential: 40,
@@ -59,6 +68,25 @@ export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
     motorway: 100,
     trunk: 90,
     residential: 40,
+  }),
+  de: Object.freeze({
+    motorway: null,
+    trunk: 100,
+    primary: 100,
+    primary_link: 100,
+    residential: 50,
+  }),
+  au: Object.freeze({
+    motorway: 100,
+    trunk: 100,
+    primary: 80,
+    residential: 50,
+  }),
+  fr: Object.freeze({
+    motorway: 130,
+    trunk: 110,
+    primary: 80,
+    residential: 50,
   }),
 });
 
@@ -76,17 +104,52 @@ export function parseMaxspeedKmh(value) {
   return Math.round(mph ? parsed * 1.60934 : parsed);
 }
 
+function isInsidePrivacyGuard(point, zones = []) {
+  return zones.some((zone) => {
+    const lat = Number(zone?.lat);
+    const lng = Number(zone?.lng);
+    const radiusM = Number(zone?.radius_m);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM) || radiusM <= 0) return false;
+    return haversineDistance(point.lat, point.lng, lat, lng) * 1000 <= radiusM + ZONE_GUARD_M;
+  });
+}
+
+function finiteRoutePoints(points = []) {
+  return points.filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
+}
+
+function privacySafeRoutePoints(points = [], privacyZones = []) {
+  const valid = finiteRoutePoints(points);
+  return privacyZones.length
+    ? valid.filter((point) => !isInsidePrivacyGuard(point, privacyZones))
+    : valid;
+}
+
+function hasFiniteBounds(bounds) {
+  return Number.isFinite(bounds?.south) &&
+    Number.isFinite(bounds?.west) &&
+    Number.isFinite(bounds?.north) &&
+    Number.isFinite(bounds?.east);
+}
+
 function routeBounds(points = [], pad = 0.01) {
-  const valid = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  const valid = finiteRoutePoints(points);
   if (!valid.length) return null;
   const lats = valid.map((point) => point.lat);
   const lngs = valid.map((point) => point.lng);
-  return {
+  const bounds = {
     south: Math.min(...lats) - pad,
     west: Math.min(...lngs) - pad,
     north: Math.max(...lats) + pad,
     east: Math.max(...lngs) + pad,
   };
+  return hasFiniteBounds(bounds) ? bounds : null;
+}
+
+function skippedReasonForMissingBounds(routePoints = [], privacyZones = [], safePoints = []) {
+  const inputPoints = Array.isArray(routePoints) ? routePoints : [];
+  if (privacyZones.length && inputPoints.length && !safePoints.length) return ALL_POINTS_PRIVATE_REASON;
+  return null;
 }
 
 function cacheKeyForBounds(bounds) {
@@ -99,13 +162,20 @@ function cacheKeyForBounds(bounds) {
 }
 
 export function speedLimitDefaultCountryKey(settings = {}) {
-  const raw = typeof settings === 'string'
-    ? settings
-    : settings?.configurable_country_defaults ?? settings?.speed_limit_default_country ?? DEFAULT_SPEED_LIMIT_COUNTRY;
-  const value = String(raw || DEFAULT_SPEED_LIMIT_COUNTRY).toLowerCase().trim();
-  return Object.prototype.hasOwnProperty.call(OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH, value)
-    ? value
-    : DEFAULT_SPEED_LIMIT_COUNTRY;
+  const candidates = typeof settings === 'string'
+    ? [settings]
+    : [
+      settings?.country_code,
+      settings?.configurable_country_defaults,
+      settings?.speed_limit_default_country,
+      DEFAULT_SPEED_LIMIT_COUNTRY,
+    ];
+  for (const raw of candidates) {
+    if (raw == null || raw === '') continue;
+    const value = String(raw).toLowerCase().trim();
+    if (Object.prototype.hasOwnProperty.call(OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH, value)) return value;
+  }
+  return DEFAULT_SPEED_LIMIT_COUNTRY;
 }
 
 export function speedLimitDefaultsForCountry(settings = {}) {
@@ -219,10 +289,11 @@ async function loadCachedWaysForBounds(bounds, settings, cache, nextCache) {
   }
 }
 
-export function defaultSpeedLimitKmhForOsmHighway(highway, settings = {}) {
+export function defaultSpeedLimitKmhForOsmHighway(highway, settings = {}, countryCode = null) {
   const value = String(highway || '').toLowerCase().trim();
   if (!value) return null;
-  return speedLimitDefaultsForCountry(settings)[value] ?? null;
+  const profileSettings = countryCode ? { ...settings, country_code: countryCode } : settings;
+  return speedLimitDefaultsForCountry(profileSettings)[value] ?? null;
 }
 
 function normalizeWays(elements = [], settings = {}) {
@@ -292,8 +363,17 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   if (settings.speed_limit_lookup_enabled === false) {
     return { ways: [], status: 'disabled', source: 'openstreetmap_overpass' };
   }
-  const bounds = routeBounds(routePoints);
-  if (!bounds) return { ways: [], status: 'empty_route', source: 'openstreetmap_overpass' };
+  const privacyZones = getPrivacyZones(settings);
+  const safeRoutePoints = privacySafeRoutePoints(routePoints, privacyZones);
+  const bounds = routeBounds(safeRoutePoints);
+  if (!bounds) {
+    return {
+      ways: [],
+      status: 'empty_route',
+      source: 'openstreetmap_overpass',
+      skipped_reason: skippedReasonForMissingBounds(routePoints, privacyZones, safeRoutePoints),
+    };
+  }
   if ((bounds.north - bounds.south) > MAX_BBOX_SPAN_DEG || (bounds.east - bounds.west) > MAX_BBOX_SPAN_DEG) {
     return { ways: [], status: 'bbox_too_large', source: 'openstreetmap_overpass' };
   }
@@ -303,10 +383,15 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   const span = bboxSpan(bounds);
   const queryBounds = span.lat <= DIRECT_BBOX_SPAN_DEG && span.lng <= DIRECT_BBOX_SPAN_DEG
     ? [bounds]
-    : corridorBounds(routePoints);
+    : corridorBounds(safeRoutePoints);
 
   if (!queryBounds.length) {
-    return { ways: [], status: 'empty_route', source: 'openstreetmap_overpass' };
+    return {
+      ways: [],
+      status: 'empty_route',
+      source: 'openstreetmap_overpass',
+      skipped_reason: skippedReasonForMissingBounds(routePoints, privacyZones, safeRoutePoints),
+    };
   }
 
   const results = await Promise.all(queryBounds.map((item) => loadCachedWaysForBounds(item, settings, cache, nextCache)));
@@ -351,6 +436,7 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
         source: result.source,
         query_count: result.query_count,
         error: result.error,
+        skipped_reason: result.skipped_reason,
       };
     }
 

@@ -81,7 +81,7 @@ function saferWindowText(currentHour, profile) {
     return GENERIC_SAFER_WINDOW_TEXT;
   }
 
-  return `Earliest lower-risk pattern detected: ${formatHour(best.hour)} (${bestHourTripCount} observations).`;
+  return `Earliest lower-risk pattern recorded: ${formatHour(best.hour)} (${bestHourTripCount} observations).`;
 }
 
 function dangerZoneRisk(zoneCount) {
@@ -103,7 +103,7 @@ function dangerZonePrimaryFactor(zoneCount) {
  * @param {object} params - Route risk inputs.
  * @param {Array<object>} [params.trips] - Completed trip history.
  * @param {Array<object>} [params.dangerZones] - Learned repeated driving-event coordinates.
- * @param {number} [params.weatherRiskScore] - Weather risk score from 0 to 100.
+ * @param {number|null} [params.weatherRiskScore] - Weather risk score from 0 to 100, or null when unavailable.
  * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
  * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
  * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
@@ -113,7 +113,7 @@ function dangerZonePrimaryFactor(zoneCount) {
 export function estimatePredictiveRouteRisk({
   trips = [],
   dangerZones = [],
-  weatherRiskScore = 0,
+  weatherRiskScore = null,
   currentLocation = null,
   habitProfile = null,
   now: nowInput = null,
@@ -187,12 +187,13 @@ export function estimatePredictiveRouteRisk({
     0,
     100
   );
-  const normalizedWeatherRisk = clamp(Number(weatherRiskScore) || 0, 0, 100);
+  const hasWeatherRisk = weatherRiskScore != null && Number.isFinite(Number(weatherRiskScore));
+  const normalizedWeatherRisk = hasWeatherRisk ? clamp(Number(weatherRiskScore), 0, 100) : null;
   const riskScore = clamp(Math.round(
     (normalizedBaselineRisk ?? 0) * ROUTE_RISK_CONSTANTS.BASELINE_SCORE_WEIGHT +
     normalizedEventDensity * ROUTE_RISK_CONSTANTS.EVENT_DENSITY_WEIGHT +
     normalizedZoneRisk * ROUTE_RISK_CONSTANTS.DANGER_ZONE_WEIGHT +
-    normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
+    (normalizedWeatherRisk ?? 0) * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT +
     timeRisk * ROUTE_RISK_CONSTANTS.TIME_WEIGHT
   ), 0, 100);
   const componentBreakdown = [
@@ -220,9 +221,9 @@ export function estimatePredictiveRouteRisk({
     {
       key: 'weather',
       label: 'Weather',
-      detail: `${Math.round(normalizedWeatherRisk)}/100 input`,
-      normalizedRisk: Math.round(normalizedWeatherRisk),
-      contribution: Math.round(normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT),
+      detail: normalizedWeatherRisk == null ? 'Unavailable' : `${Math.round(normalizedWeatherRisk)}/100 input`,
+      normalizedRisk: normalizedWeatherRisk == null ? null : Math.round(normalizedWeatherRisk),
+      contribution: normalizedWeatherRisk == null ? 0 : Math.round(normalizedWeatherRisk * ROUTE_RISK_CONSTANTS.WEATHER_WEIGHT),
     },
     {
       key: 'time',
@@ -244,8 +245,8 @@ export function estimatePredictiveRouteRisk({
     componentBreakdown,
     primaryFactor: nearbyZones.length
       ? dangerZonePrimaryFactor(nearbyZones.length)
-      : normalizedWeatherRisk >= 40
-        ? 'Weather risk'
+      : normalizedWeatherRisk != null && normalizedWeatherRisk >= 40
+        ? 'Weather context'
         : eventDensity >= 0.6
           ? 'Recent driving-event density'
           : 'Personal baseline',

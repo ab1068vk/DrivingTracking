@@ -1338,7 +1338,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
 
   const actions = [];
   if (recentPhoneRiskyTrips >= 3) {
-    actions.push(`Put your phone away before driving. Phone use patterns were detected in ${recentPhoneRiskyTrips} of your last 10 trips; use Do Not Disturb, a mount, or Android Auto before starting.`);
+    actions.push(`Put your phone away before driving. Phone use patterns were recorded in ${recentPhoneRiskyTrips} of your last 10 trips; use Do Not Disturb, a mount, or Android Auto before starting.`);
   }
   if (riskRate.worst_event === 'harsh_brakes' && riskRate.worst_event_count > 0) {
     actions.push('Brake earlier for the next five stops and leave one extra car length ahead.');

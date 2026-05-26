@@ -230,6 +230,21 @@ describe('advanced open-source features', () => {
     expect(invalidWeather.riskScore).toBe(normalWeather.riskScore);
   });
 
+  it('marks unavailable weather separately from low-risk weather', () => {
+    const risk = estimatePredictiveRouteRisk({
+      trips: [trip(90, 1)],
+      weatherRiskScore: null,
+      now: new Date(2026, 0, 10, 12),
+    });
+    const weather = risk.componentBreakdown.find((component) => component.key === 'weather');
+
+    expect(weather).toMatchObject({
+      detail: 'Unavailable',
+      normalizedRisk: null,
+      contribution: 0,
+    });
+  });
+
   it('does not describe late-night route timing as acceptable', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 0, 45));
     const risk = estimatePredictiveRouteRisk({

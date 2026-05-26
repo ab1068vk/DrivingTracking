@@ -9,6 +9,8 @@ import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
+import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -19,7 +21,7 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
   promise.then(resolve, reject).finally(() => clearTimeout(id));
 });
 
-export const PUBLIC_OSRM_DEMO_URL = 'https://router.project-osrm.org';
+export { PUBLIC_OSRM_DEMO_URL };
 
 export const isOsrmMapMatchingConfigured = (settings = {}) => (
   settings.map_matching_enabled !== false && Boolean(settings.osrm_map_matching_url)
@@ -30,7 +32,7 @@ export const isOsrmMapMatchingEnabled = (settings = {}) => (
 );
 
 export const isExternalContextAutoFetchEnabled = (settings = {}) => (
-  settings.external_context_auto_fetch_enabled === true
+  settings.external_context_auto_fetch_enabled !== false
 );
 
 export function buildRoadContextPrivacyMessage(settings = {}) {
@@ -42,10 +44,12 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: sends the trip midpoint latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo.');
+    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push('- Snap route to roads: sends sampled GPS points to the OSRM endpoint.');
+    lines.push(isPublicOsrmDemoUrl(settings.osrm_map_matching_url)
+      ? '- Snap route to roads: sends sampled GPS points to router.project-osrm.org, a public third-party OSRM demo server not operated by Road Sage.'
+      : '- Snap route to roads: sends sampled GPS points to the configured OSRM endpoint.');
   } else if (isOsrmMapMatchingEnabled(settings)) {
     lines.push('- Snap route to roads is on but has no endpoint, so OSRM will be skipped until a link is added.');
   } else {
@@ -77,6 +81,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }
 
   const thresholds = buildDrivingThresholds(settings);
+  const privacyZones = getPrivacyZones(settings);
   stage(onProgress, 'Getting weather');
   const weatherPromise = timeout(
     fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
@@ -85,8 +90,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   ).catch((error) => ({
     provider: 'open-meteo',
     status: 'unavailable',
-    riskLevel: 'low',
-    riskScore: 0,
+    riskLevel: null,
+    riskScore: null,
     riskMultiplier: 1,
     error: error?.message || 'Weather lookup unavailable',
   }));
@@ -120,8 +125,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }));
   routePoints = speedLimitContext.routePoints || routePoints;
   stage(onProgress, 'Recalculating trip scores');
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
+  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, trip);
+  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
   const phoneUse = buildPhoneUseFromTripEvidence(
     trip,
     routePoints,
@@ -129,9 +134,12 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     detectedPhoneUse
   );
   const weatherContext = await weatherPromise;
-  let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
+  let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time, privacyZones });
   scores = applyWeatherRiskToScores(scores, weatherContext);
-  const events = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse);
+  const events = maskEventsForPrivacy(
+    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
+    { privacy_zones: privacyZones }
+  );
 
   return {
     ...stats,
@@ -154,8 +162,10 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       confidence: mapMatchingContext.confidence ?? null,
       snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
       error: mapMatchingContext.error,
+      isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl === true || isPublicOsrmDemoUrl(settings.osrm_map_matching_url),
     },
-    weather_context: weatherContext,
+    weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
+    weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
     needs_rescore: false,
   };
 }
@@ -189,8 +199,12 @@ export function describeMapMatchingStatus(context = {}) {
   if (context.status === 'needs_endpoint') {
     return context.error || 'Route snapping is on, but no OSRM endpoint is set. Add a link in Settings or use the public OSRM demo.';
   }
-  if (context.status === 'matched') {
-    return `OSRM snapped ${context.snapped_coverage ?? 0}% of route points to roads.`;
+  if (context.status === 'matched' || context.status === 'partial_matched') {
+    const prefix = context.status === 'partial_matched' ? 'OSRM partially snapped' : 'OSRM snapped';
+    if (context.isOsrmDemoUrl) {
+      return `${prefix} ${context.snapped_coverage ?? 0}% of route points to roads using the public OSRM demo.`;
+    }
+    return `${prefix} ${context.snapped_coverage ?? 0}% of route points to roads.`;
   }
   if (context.status === 'not_enough_points') {
     return 'OSRM road matching needs at least three GPS points.';

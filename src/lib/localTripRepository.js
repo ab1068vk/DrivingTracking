@@ -12,9 +12,11 @@ import {
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
+  buildPhoneUsageAccessProvenance,
   buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
 } from '@/lib/phoneUsageAccess';
@@ -304,14 +306,22 @@ const rescoreTrip = (trip, vehicles = []) => {
   const routePoints = restoreOriginalRouteGeometry(trip.route_points || []);
   const settings = localSettings.get();
   const thresholds = buildDrivingThresholds(settings);
+  const privacyZones = getPrivacyZones(settings);
+  const currentPhoneUsageAccessGranted = typeof settings.phone_usage_access_granted === 'boolean'
+    ? settings.phone_usage_access_granted
+    : null;
+  const phoneUsageAccessProvenance = buildPhoneUsageAccessProvenance(trip, currentPhoneUsageAccessGranted);
   const provenanceStatus = getScoreProvenanceStatus(trip, thresholds);
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-  const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
+  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, trip);
+  const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
   const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
-  const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
+  const scores = calculateTripScores(feedbackAdjusted.events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time, privacyZones });
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
-  const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse);
+  const drivingEvents = maskEventsForPrivacy(
+    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse),
+    { privacy_zones: privacyZones }
+  );
   const scoreProvenanceChange = provenanceStatus.needsRescore || trip.needs_rescore
     ? {
       previous_scoring_version: trip.score_provenance?.scoring_version ?? null,
@@ -334,6 +344,7 @@ const rescoreTrip = (trip, vehicles = []) => {
     co2_saved_kg: economics.co2_saved_kg,
     route_points: routePoints,
     driving_events: drivingEvents,
+    phone_usage_access_provenance: phoneUsageAccessProvenance.changed ? phoneUsageAccessProvenance : null,
     ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
     feedback_adjusted_events_count: feedbackAdjusted.removed,
     needs_rescore: false,
@@ -401,12 +412,16 @@ const importNativeCompletedTrips = async () => {
       const routePoints = trip.route_points || [];
       const settings = localSettings.get();
       const thresholds = buildDrivingThresholds(settings);
-      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds);
-      const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time);
+      const privacyZones = getPrivacyZones(settings);
+      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, trip);
+      const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
       const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
-      const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time });
+      const scores = calculateTripScores(events, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time, privacyZones });
       const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
-      const drivingEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
+      const drivingEvents = maskEventsForPrivacy(
+        mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
+        { privacy_zones: privacyZones }
+      );
 
       const importedTrip = {
         ...trip,

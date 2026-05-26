@@ -6,6 +6,7 @@ import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
 const VERY_STABLE_PARKED_DRIFT_M = 5;
+export const ACTIVITY_STATE_MAX_AGE_MS = 30_000;
 export const ACTIVITY_POLL_INTERVAL_MS = 5000;
 export const AUTO_START_IN_VEHICLE_CONFIDENCE = 65;
 export const AUTO_START_SPEED_KMH = 5;
@@ -165,13 +166,22 @@ export function shouldAutoStopTracking({
   stillSeconds = 0,
   gpsPositionDriftM = Number.POSITIVE_INFINITY,
   lastMovingSpeedKmh = 0,
+  nowMs = Date.now(),
+  returnReason = false,
 }) {
   const speed = Number(currentSpeedKmh) || 0;
   const lastMovingSpeed = Number(lastMovingSpeedKmh) || 0;
   const secondsStopped = Number(stillSeconds) || 0;
   const driftM = Number.isFinite(Number(gpsPositionDriftM)) ? Number(gpsPositionDriftM) : Number.POSITIVE_INFINITY;
-  const confidence = activity?.confidence || 0;
-  const type = activity?.type;
+  const activityTimestamp = activity?.timestamp || activity?.updatedAt || activity?.time;
+  const activityTimestampMs = activityTimestamp ? new Date(activityTimestamp).getTime() : NaN;
+  const activityStale = Boolean(activity) && Number.isFinite(activityTimestampMs) && (Number(nowMs) - activityTimestampMs) > ACTIVITY_STATE_MAX_AGE_MS;
+  const effectiveActivity = activityStale ? null : activity;
+  const confidence = effectiveActivity?.confidence || 0;
+  const type = effectiveActivity?.type;
+  const finish = (shouldStop, reason = null) => (
+    returnReason ? { shouldStop, reason, activityStale } : shouldStop
+  );
 
   const onFoot = [
     ACTIVITY_TYPES.WALKING,
@@ -179,30 +189,32 @@ export function shouldAutoStopTracking({
     ACTIVITY_TYPES.ON_BICYCLE,
     ACTIVITY_TYPES.CYCLING,
   ].includes(type) && confidence >= 75;
-  if (onFoot && speed <= WALKING_SPEED_CUTOFF_KMH && secondsStopped >= 10) return true;
+  if (onFoot && speed <= WALKING_SPEED_CUTOFF_KMH && secondsStopped >= 10) return finish(true, 'on_foot');
 
   const isStill = type === ACTIVITY_TYPES.STILL && confidence >= 70;
-  if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return true;
+  if (isStill && speed < 5 && driftM < 8 && secondsStopped >= 90) return finish(true, 'still_stable_gps');
   // FIX: Match the JS STILL+stable auto-stop timer to the native 90-second threshold.
-  if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return true;
+  if (isStill && speed < 5 && driftM >= 8 && secondsStopped >= 150) return finish(true, 'still_timeout');
 
   const inVehicle = type === ACTIVITY_TYPES.IN_VEHICLE;
-  if (inVehicle && speed < 2 && secondsStopped >= 90 && driftM < VERY_STABLE_PARKED_DRIFT_M) return true;
-  if (inVehicle && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return true;
+  if (inVehicle && speed < 2 && secondsStopped >= 90 && driftM < VERY_STABLE_PARKED_DRIFT_M) return finish(true, 'in_vehicle_very_stable_gps');
+  if (inVehicle && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return finish(true, 'in_vehicle_gps_fallback');
   if (inVehicle && speed < 5 && secondsStopped >= 120) {
-    if (driftM < 5) return true;
+    if (driftM < 5) return finish(true, 'in_vehicle_very_stable_gps');
     // FIX: Preserve the fast in-vehicle parked path for very stable GPS drift.
-    if (secondsStopped >= 300 && driftM < 20) return true;
+    if (secondsStopped >= 300 && driftM < 20) return finish(true, 'in_vehicle_gps_fallback');
     // FIX: Add the in_vehicle_extended_stop fallback for realistic urban parked GPS drift.
-    if (secondsStopped >= 300 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return true;
-    if (secondsStopped >= 420 && speed < 2 && lastMovingSpeed < 5) return true;
+    if (secondsStopped >= 300 && speed < 2 && driftM < PARKED_GPS_DRIFT_M) return finish(true, 'in_vehicle_extended_stop');
+    if (secondsStopped >= 420 && speed < 2 && lastMovingSpeed < 5) return finish(true, 'prolonged_zero_speed');
     // FIX: Add the prolonged_zero_speed safety net so trips cannot run forever on GPS drift alone.
   }
 
-  const activityUnknown = !activity || type === ACTIVITY_TYPES.UNKNOWN;
+  const activityUnknown = !effectiveActivity || type === ACTIVITY_TYPES.UNKNOWN;
   if (activityUnknown && speed < 5 && secondsStopped >= 180) {
-    return driftM < UNKNOWN_GPS_STABLE_M;
+    if (driftM < UNKNOWN_GPS_STABLE_M) return finish(true, activityStale ? 'activity_recognition_stale' : 'unknown_activity_stable_gps');
+    if (activityStale && speed < 2 && secondsStopped >= 300 && driftM < PARKED_GPS_DRIFT_M) return finish(true, 'activity_recognition_stale');
+    return finish(false);
   }
 
-  return false;
+  return finish(false);
 }

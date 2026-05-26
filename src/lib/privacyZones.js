@@ -1,6 +1,7 @@
 import { localSettings } from '@/lib/trackingStore';
 
 const EARTH_RADIUS_M = 6371000;
+export const ZONE_EVENT_GUARD_M = 50;
 
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
@@ -62,9 +63,27 @@ export function getPrivacyZones(settings = localSettings.get()) {
     : [];
 }
 
-export function isPointInPrivacyZone(point, zones = getPrivacyZones()) {
+export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 0) {
   if (finiteNumber(point?.lat) == null || finiteNumber(point?.lng) == null) return null;
-  return zones.find((zone) => distanceM(point, zone) <= Number(zone.radius_m || 150)) || null;
+  return zones.find((zone) => distanceM(point, zone) <= Number(zone.radius_m || 150) + guardM) || null;
+}
+
+export function isInsidePrivacyZone(lat, lng, zones = getPrivacyZones()) {
+  return Boolean(isPointInPrivacyZone({ lat, lng }, zones));
+}
+
+export function shouldMaskEventForPrivacy(event, zones = getPrivacyZones(), guardM = ZONE_EVENT_GUARD_M) {
+  return Boolean(isPointInPrivacyZone(event, zones, guardM));
+}
+
+export function maskEventCoordinatesForPrivacy(event, zones = getPrivacyZones(), guardM = ZONE_EVENT_GUARD_M) {
+  if (!shouldMaskEventForPrivacy(event, zones, guardM)) return event;
+  return {
+    ...event,
+    lat: null,
+    lng: null,
+    masked_for_privacy: true,
+  };
 }
 
 export function privacyZonesForRoute(routePoints = [], settings = localSettings.get()) {
@@ -156,7 +175,7 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
 export function maskEventsForPrivacy(events = [], settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   if (!zones.length) return events;
-  return events.filter((event) => !isPointInPrivacyZone(event, zones));
+  return events.filter((event) => !shouldMaskEventForPrivacy(event, zones));
 }
 
 export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {

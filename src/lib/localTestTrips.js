@@ -18,6 +18,12 @@ const TEST_TRIP_ROUTES = [
 const TEST_POINT_COUNT = 38;
 const POINT_INTERVAL_MS = 10 * 1000;
 
+export function assertLocalFeatureTestTripsAllowed(env = import.meta.env) {
+  if (env?.DEV !== true) {
+    throw new Error('Synthetic local feature-test trips are only available in development builds.');
+  }
+}
+
 function tripStartTime(now, route) {
   const timestamp = new Date(now);
   timestamp.setDate(timestamp.getDate() - route.daysAgo);
@@ -42,7 +48,11 @@ function buildRoutePoints(route, startTime) {
   });
 }
 
-export function buildLocalFeatureTestTrips(now = new Date()) {
+export function buildLocalFeatureTestTrips(now = new Date(), options = {}) {
+  if (options.allowSyntheticTestData !== true) {
+    assertLocalFeatureTestTripsAllowed();
+  }
+
   return TEST_TRIP_ROUTES.map((route, index) => {
     const startTime = tripStartTime(now, route);
     const routePoints = buildRoutePoints(route, startTime);

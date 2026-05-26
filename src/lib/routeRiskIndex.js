@@ -5,6 +5,7 @@ import { scoringValue } from '@/lib/scoringConstants';
 export const GRID_PRECISION = 3;
 export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
 export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
+export const ROUTE_RISK_PRIVACY_ZONE_GUARD_M = 50;
 /**
  * Internal segment-risk weighting policy. These weights identify repeated
  * driving-event patterns; they are not calibrated to collision or casualty data.
@@ -22,6 +23,18 @@ const SPEED_RISK_FULL_KMH = scoringValue('ROUTE_RISK_SPEED_FULL_KMH');
 const SPEED_RISK_MAX_POINTS = scoringValue('ROUTE_RISK_SPEED_MAX_POINTS');
 const SNAP_BUCKET_DEGREES = ROUTE_RISK_SNAP_DISTANCE_M / 80000;
 
+const finiteCoord = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+const pointMetadataKey = (point) => {
+  const lat = finiteCoord(point?.lat ?? point?.coords?.latitude);
+  const lng = finiteCoord(point?.lng ?? point?.coords?.longitude);
+  const timestampValue = point?.timestamp ?? point?.time;
+  const timestamp = timestampValue ? new Date(timestampValue).getTime() : NaN;
+  return `${lat ?? ''},${lng ?? ''},${Number.isFinite(timestamp) ? timestamp : ''}`;
+};
 const roundCoord = (value) => Number(value).toFixed(GRID_PRECISION);
 const snapBucketKey = (lat, lng) => `${Math.floor(Number(lat) / SNAP_BUCKET_DEGREES)},${Math.floor(Number(lng) / SNAP_BUCKET_DEGREES)}`;
 
@@ -55,6 +68,47 @@ const nearestSegmentKey = (lat, lng, midpoints = []) => {
   return best?.key || null;
 };
 
+const isPrivacyMaskedPoint = (point) => (
+  point?.masked_for_privacy === true ||
+  point?.privacy_masked === true ||
+  point?.privacy_boundary === true ||
+  point?.is_privacy_boundary === true ||
+  point?.privacy_zone_id != null
+);
+
+const isNearPrivacyZone = (lat, lng, privacyZones = [], guardM = ROUTE_RISK_PRIVACY_ZONE_GUARD_M) => {
+  const pointLat = finiteCoord(lat);
+  const pointLng = finiteCoord(lng);
+  if (pointLat == null || pointLng == null) return true;
+  return (privacyZones || []).some((zone) => {
+    const zoneLat = finiteCoord(zone?.lat);
+    const zoneLng = finiteCoord(zone?.lng);
+    const radiusM = Number(zone?.radius_m);
+    if (zoneLat == null || zoneLng == null || !Number.isFinite(radiusM) || radiusM <= 0) return false;
+    return haversineDistance(pointLat, pointLng, zoneLat, zoneLng) * 1000 <= radiusM + guardM;
+  });
+};
+
+const cleanRoutePointsWithPrivacyMetadata = (routePoints = []) => {
+  const metadataByKey = new Map();
+  for (const rawPoint of routePoints || []) {
+    if (finiteCoord(rawPoint?.lat ?? rawPoint?.coords?.latitude) == null ||
+      finiteCoord(rawPoint?.lng ?? rawPoint?.coords?.longitude) == null) {
+      continue;
+    }
+    const key = pointMetadataKey(rawPoint);
+    const bucket = metadataByKey.get(key) || [];
+    bucket.push(rawPoint);
+    metadataByKey.set(key, bucket);
+  }
+
+  return cleanRoutePoints(routePoints).map((point) => {
+    const bucket = metadataByKey.get(pointMetadataKey(point));
+    const rawPoint = bucket?.shift();
+    return rawPoint ? { ...point, ...rawPoint } : point;
+  });
+};
+
 export const speedRiskBonus = (avgSpeedKmh = 0) => {
   const speed = Number(avgSpeedKmh) || 0;
   if (speed <= SPEED_RISK_START_KMH) return 0;
@@ -62,18 +116,29 @@ export const speedRiskBonus = (avgSpeedKmh = 0) => {
   return Math.round(ratio * SPEED_RISK_MAX_POINTS);
 };
 
-export function buildRouteRiskIndex(trips = []) {
+export function buildRouteRiskIndex(trips = [], privacyZones = []) {
   const index = new Map();
 
   for (const trip of trips || []) {
     if (trip?.status !== 'completed') continue;
-    const points = cleanRoutePoints(trip.route_points || []);
+    const points = cleanRoutePointsWithPrivacyMetadata(trip.route_points || []);
     if (points.length < 2) continue;
     const midpoints = [];
 
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
       const curr = points[i];
+      const prevLat = finiteCoord(prev?.lat);
+      const prevLng = finiteCoord(prev?.lng);
+      const currLat = finiteCoord(curr?.lat);
+      const currLng = finiteCoord(curr?.lng);
+      if (prevLat == null || prevLng == null || currLat == null || currLng == null) continue;
+      if (isPrivacyMaskedPoint(prev) || isPrivacyMaskedPoint(curr)) continue;
+      const midpoint = {
+        lat: (prevLat + currLat) / 2,
+        lng: (prevLng + currLng) / 2,
+      };
+      if (isNearPrivacyZone(midpoint.lat, midpoint.lng, privacyZones)) continue;
       const key = segmentKey(prev.lat, prev.lng, curr.lat, curr.lng);
       const segment = calculateSegmentMetrics(prev, curr);
       const item = index.get(key) || {
@@ -85,8 +150,8 @@ export function buildRouteRiskIndex(trips = []) {
         harshCount: 0,
         riskScore: 0,
         riskLevel: 'low',
-        lat: (Number(prev.lat) + Number(curr.lat)) / 2,
-        lng: (Number(prev.lng) + Number(curr.lng)) / 2,
+        lat: midpoint.lat,
+        lng: midpoint.lng,
       };
       item.tripCount += 1;
       item.speedSum += Number(segment.reliableSpeedKmh) || 0;
@@ -169,12 +234,13 @@ export async function saveRouteRiskIndex(index = new Map()) {
   await setJson(ROUTE_RISK_INDEX_KEY, entries);
 }
 
-export async function loadRouteRiskIndex() {
+export async function loadRouteRiskIndex(privacyZones = []) {
   const entries = await getJson(ROUTE_RISK_INDEX_KEY, []);
   const merged = new Map();
   const bucketIndex = new Map();
   for (const [key, item] of Array.isArray(entries) ? entries : []) {
     const hasMidpoint = Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lng));
+    if (hasMidpoint && isNearPrivacyZone(item.lat, item.lng, privacyZones)) continue;
     const nearby = hasMidpoint
       ? neighboringBucketKeys(item.lat, item.lng)
         .flatMap((bucketKey) => bucketIndex.get(bucketKey) || [])

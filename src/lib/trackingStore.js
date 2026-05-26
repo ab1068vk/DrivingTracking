@@ -3,7 +3,7 @@
  * Manages active trip state in memory and persists to sessionStorage for crash recovery.
  * This is a singleton store used by the tracking service.
  */
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
@@ -18,8 +18,51 @@ import {
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 5;
+let memorySettings = null;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 6;
+
+const settingsStorage = () => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+};
+
+const finiteNumber = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const distanceMeters = (a, b) => {
+  const aLat = finiteNumber(a?.lat);
+  const aLng = finiteNumber(a?.lng);
+  const bLat = finiteNumber(b?.lat);
+  const bLng = finiteNumber(b?.lng);
+  if (aLat == null || aLng == null || bLat == null || bLng == null) return Number.POSITIVE_INFINITY;
+
+  const toRad = (value) => value * Math.PI / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371000 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+};
+
+const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
+  if (finiteNumber(location?.lat) == null || finiteNumber(location?.lng) == null) return false;
+  return (Array.isArray(settings?.privacy_zones) ? settings.privacy_zones : []).some((zone) => {
+    const radiusM = Number(zone?.radius_m);
+    return Number.isFinite(radiusM) &&
+      radiusM > 0 &&
+      distanceMeters(location, zone) <= radiusM + PARKED_LOCATION_PRIVACY_GUARD_M;
+  });
+};
 
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;
@@ -82,6 +125,7 @@ export const DEFAULT_SETTINGS = {
   threshold_heading_drift_std_degs: scoringValue('HEADING_DRIFT_STD_DEG'),
   threshold_phone_proxy_oscillations: scoringValue('PHONE_MICRO_STEER_COUNT'),
   phone_use_detection_enabled: true,
+  phone_usage_access_granted: false,
   phone_use_live_alert_enabled: true,
   phone_use_show_on_map: true,
   phone_use_affects_score: true,
@@ -99,9 +143,10 @@ export const DEFAULT_SETTINGS = {
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
   speed_limit_lookup_enabled: true,
+  country_code: '',
   configurable_country_defaults: 'global',
   weather_context_enabled: true,
-  external_context_auto_fetch_enabled: false,
+  external_context_auto_fetch_enabled: true,
   min_speed_rapid_accel_kmh: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
   min_speed_harsh_brake_kmh: scoringValue('MIN_SPEED_HARSH_BRAKE_KMH'),
   weekly_goal_harsh_brakes: 5,
@@ -122,6 +167,7 @@ export const DEFAULT_SETTINGS = {
   emergency_workflow_enabled: false,
   map_matching_enabled: false,
   osrm_map_matching_url: '',
+  osrm_public_demo_consent_at: '',
   predictive_route_risk_enabled: true,
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
@@ -150,6 +196,7 @@ export const DEFAULT_SETTINGS = {
   grid_co2_kg_per_kwh: DEFAULT_GRID_CO2_KG_PER_KWH,
   tree_co2_kg_per_year: DEFAULT_TREE_CO2_KG_PER_YEAR,
   privacy_zones: [],
+  calibration_sharing_enabled: false,
 };
 
 /**
@@ -269,7 +316,7 @@ const SETTINGS_ENUMS = {
   dark_mode: ['system', 'light', 'dark'],
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
-  configurable_country_defaults: ['global', 'ca', 'us', 'gb', 'uk'],
+  configurable_country_defaults: ['global', 'ca', 'us', 'gb', 'uk', 'de', 'au', 'fr'],
 };
 
 const IMPORT_ENUMS = {
@@ -279,6 +326,7 @@ const IMPORT_ENUMS = {
 
 const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_map_matching_url',
+  'osrm_public_demo_consent_at',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -398,13 +446,22 @@ export function validateSettingsPatch(patch = {}) {
 }
 
 export async function getLastParkedLocation() {
-  return getJson(LAST_PARKED_KEY, null);
+  const parkedLocation = await getJson(LAST_PARKED_KEY, null);
+  if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
+    await removeJson(LAST_PARKED_KEY);
+    return null;
+  }
+  return parkedLocation;
 }
 
 export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
+  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
+    await removeJson(LAST_PARKED_KEY);
+    return null;
+  }
 
   const parkedLocation = {
     lat: parsedLat,
@@ -442,20 +499,27 @@ export const localSettings = {
   },
   get() {
     try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
+      const storage = settingsStorage();
+      const raw = storage?.getItem(SETTINGS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         const { settings: merged, changed } = migrateDefaultSettings(parsed);
         if (changed) {
-          localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+          storage.setItem(SETTINGS_KEY, JSON.stringify(merged));
           syncSettingsForNative(merged);
         }
         syncSettingsForNative(merged);
         return merged;
       }
+      if (!storage && memorySettings) {
+        const { settings: merged } = migrateDefaultSettings(memorySettings);
+        memorySettings = merged;
+        return merged;
+      }
       // New user: save defaults immediately so we can detect returning users
       const defaults = { ...DEFAULT_SETTINGS };
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
+      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
+      else memorySettings = defaults;
       syncSettingsForNative(defaults);
       return defaults;
     } catch {
@@ -464,7 +528,9 @@ export const localSettings = {
   },
   set(data) {
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
+      const storage = settingsStorage();
+      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(data));
+      else memorySettings = data;
       syncSettingsForNative(data);
     } catch {}
   },

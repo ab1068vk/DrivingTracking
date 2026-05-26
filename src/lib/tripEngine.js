@@ -1,7 +1,7 @@
 import { saveExportToDownloads } from './nativeDownloads';
 import { clamp } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
-import { maskTripForPrivacy } from './privacyZones';
+import { maskEventCoordinatesForPrivacy, maskTripForPrivacy } from './privacyZones';
 import {
   COMPONENT_METRIC_KEYS,
   CSV_METRIC_COLUMNS,
@@ -18,8 +18,8 @@ import {
 } from './appConstants';
 import {
   SCORING_CONSTANTS,
+  calibrationStatusForMetrics,
   getProvisionalScoringConstants,
-  hasProvisionalCalibration,
   scoringValue,
 } from './scoringConstants';
 
@@ -71,7 +71,7 @@ export const CONFIDENCE_LEVELS = Object.freeze({
  * Stored-trip scoring contract version. Bump this whenever score algorithms,
  * calibration constants, or evidence classification rules change.
  */
-export const SCORING_VERSION = '2.1.0';
+export const SCORING_VERSION = '2.2.0';
 /**
  * @typedef {'high'|'developing'|'low'|'unavailable'} EvidenceLevel
  * @typedef {{
@@ -172,8 +172,10 @@ export const DEFAULT_THRESHOLDS = {
   HILL_GRADE_THRESHOLD_PCT: scoringValue('HILL_GRADE_THRESHOLD_PCT'),
   // GPS/altitude-derived proxy only: this provisional uphill acceleration threshold is not outcome-calibrated.
   HILL_ACCEL_THRESHOLD_MS2: scoringValue('HILL_ACCEL_THRESHOLD_MS2'),
-  // Provisional deduction per inferred hill infraction; recalibrate before changing the scoring curve.
+  // Legacy absolute-count hill deduction retained in provenance; current scoring uses the per-km rate below.
   HILL_INFRACTION_PENALTY_POINTS: scoringValue('HILL_INFRACTION_PENALTY_POINTS'),
+  // Provisional rate-based deduction per inferred hill infraction per hill-driving km.
+  HILL_INFRACTION_PENALTY_POINTS_PER_KM: scoringValue('HILL_INFRACTION_PENALTY_POINTS_PER_KM'),
   MIN_SPEED_RAPID_ACCEL_KMH: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
   MIN_SPEED_HARSH_BRAKE_KMH: scoringValue('MIN_SPEED_HARSH_BRAKE_KMH'),
   STOP_START_DECEL_MS2: scoringValue('STOP_START_DECEL_MS2'),
@@ -504,6 +506,7 @@ const PROVENANCE_THRESHOLD_KEYS = Object.freeze([
   'HILL_GRADE_THRESHOLD_PCT',
   'HILL_ACCEL_THRESHOLD_MS2',
   'HILL_INFRACTION_PENALTY_POINTS',
+  'HILL_INFRACTION_PENALTY_POINTS_PER_KM',
   'MIN_SPEED_RAPID_ACCEL_KMH',
   'MIN_SPEED_HARSH_BRAKE_KMH',
   'STOP_START_DECEL_MS2',
@@ -561,7 +564,7 @@ export function buildScoreProvenance(componentScores = {}, thresholds = DEFAULT_
   return {
     computed_at: computedAt,
     scoring_version: SCORING_VERSION,
-    calibration_status: hasProvisionalCalibration(['score_overall']) ? 'approximate' : 'calibrated',
+    calibration_status: calibrationStatusForMetrics(['score_overall']),
     provisional_constants: provisionalConstants,
     components: Object.fromEntries(
       Object.entries(componentScores).map(([key, component]) => [
@@ -1376,13 +1379,62 @@ function percentileValue(values, p) {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 }
 
+function isPrivacyBoundaryPoint(point) {
+  return point?.privacy_boundary === true || point?.is_privacy_boundary === true;
+}
+
+function privacyZoneKey(point) {
+  return point?.privacy_zone_id ?? point?.privacy_zone_label ?? point?.privacy_zone_name ?? point?.zone_id ?? null;
+}
+
+function samePrivacyZoneBoundary(a, b) {
+  const zoneA = privacyZoneKey(a);
+  const zoneB = privacyZoneKey(b);
+  return zoneA == null || zoneB == null || String(zoneA) === String(zoneB);
+}
+
+function calculateEstimatedPrivateDistanceKm(points = [], { includeAdjacentBoundaries = true } = {}) {
+  let distance = 0;
+  let pendingBoundary = null;
+  let crossedMaskedGap = false;
+
+  for (const point of points || []) {
+    const validBoundary = isPrivacyBoundaryPoint(point) && hasValidCoordinates(point);
+    if (validBoundary) {
+      if (
+        pendingBoundary &&
+        samePrivacyZoneBoundary(pendingBoundary, point) &&
+        (crossedMaskedGap || includeAdjacentBoundaries)
+      ) {
+        distance += haversineDistance(pendingBoundary.lat, pendingBoundary.lng, point.lat, point.lng);
+        pendingBoundary = null;
+        crossedMaskedGap = false;
+      } else {
+        pendingBoundary = point;
+        crossedMaskedGap = false;
+      }
+      continue;
+    }
+
+    if (!hasValidCoordinates(point)) {
+      if (pendingBoundary) crossedMaskedGap = true;
+      continue;
+    }
+
+    pendingBoundary = null;
+    crossedMaskedGap = false;
+  }
+
+  return distance;
+}
+
 function calculateRouteDistanceKm(points = [], thresholds = DEFAULT_THRESHOLDS) {
   let distance = 0;
   for (let i = 1; i < points.length; i++) {
     const segment = calculateSegmentMetrics(points[i - 1], points[i], thresholds);
     if (segment.dt > 0 && segment.dt <= 120 && !segment.isNoise) distance += segment.distanceKm;
   }
-  return distance;
+  return distance + calculateEstimatedPrivateDistanceKm(points, { includeAdjacentBoundaries: false });
 }
 
 function calculateTerminalStoppedSeconds(points = [], endTime = null, thresholds = DEFAULT_THRESHOLDS) {
@@ -1634,11 +1686,13 @@ export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLD
     const deviation = speedStdDevFromSummary(speedCount, speedSum, speedSumSq);
     const { road_type: roadType, highway_fraction: highwayFraction } = roadTypeFromWindowSummary(roadSummary);
     const zone = zoneFromP85(p85Speed);
+    const inferredLimitKmh = Math.min(zone.inferredZoneKmh, complianceFallbackLimit(roadType, thresholds));
     zones.push({
       startIndex: points[start].index,
       endIndex: points[end].index,
       inferredZone: zone.inferredZone,
       inferredZoneKmh: zone.inferredZoneKmh,
+      inferredLimitKmh,
       confidence: deviation < 8 ? 'high' : deviation < 18 ? 'medium' : 'low',
       median_speed_kmh: round1(medianSpeed),
       p85_speed_kmh: round1(p85Speed),
@@ -1743,6 +1797,7 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
       climb_distance_km: null,
       descent_distance_km: null,
       hill_infraction_count: 0,
+      hill_infraction_rate_per_km: 0,
       hill_driving_score: null,
       hill_route: false,
     };
@@ -1761,9 +1816,12 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
     0,
     settingNumber(thresholds.HILL_ACCEL_THRESHOLD_MS2, DEFAULT_THRESHOLDS.HILL_ACCEL_THRESHOLD_MS2)
   );
-  const hillInfractionPenaltyPoints = Math.max(
+  const hillInfractionPenaltyPointsPerKm = Math.max(
     0,
-    settingNumber(thresholds.HILL_INFRACTION_PENALTY_POINTS, DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS)
+    settingNumber(
+      thresholds.HILL_INFRACTION_PENALTY_POINTS_PER_KM,
+      DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM
+    )
   );
 
   for (let i = 1; i < cleanPoints.length; i++) {
@@ -1818,21 +1876,28 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
     previousReliableSpeed = speed;
   }
 
-  if (climbDistanceKm + descentDistanceKm < 0.2) {
+  const hillDistanceKm = climbDistanceKm + descentDistanceKm;
+
+  if (hillDistanceKm < 0.2) {
     return {
       climb_distance_km: null,
       descent_distance_km: null,
       hill_infraction_count: 0,
+      hill_infraction_rate_per_km: 0,
       hill_driving_score: null,
       hill_route: false,
     };
   }
 
+  const hillInfractionRatePerKm = infractionCount / Math.max(1, hillDistanceKm);
+  const hillPenalty = hillInfractionRatePerKm * hillInfractionPenaltyPointsPerKm;
+
   return {
     climb_distance_km: Math.round(climbDistanceKm * 100) / 100,
     descent_distance_km: Math.round(descentDistanceKm * 100) / 100,
     hill_infraction_count: infractionCount,
-    hill_driving_score: Math.max(0, 100 - infractionCount * hillInfractionPenaltyPoints),
+    hill_infraction_rate_per_km: Math.round(hillInfractionRatePerKm * 100) / 100,
+    hill_driving_score: Math.max(0, Math.round(100 - hillPenalty)),
     hill_route: true,
   };
 }
@@ -3550,10 +3615,56 @@ function speedLimitForIndex(points = [], index) {
       return {
         limitKmh,
         source: point?.speed_limit_source || 'openstreetmap',
+        defaultCountry: point?.speed_limit_default_country || null,
       };
     }
   }
   return null;
+}
+
+export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS, options = {}) {
+  const speedLimit = speedLimitForIndex(points, index);
+  const actualLimitKmh = speedLimit?.limitKmh ?? null;
+  const zoneForIndex = options.zoneForIndex || createZoneLookup(options.inferredZones || inferSpeedZones(points, thresholds));
+  const inferredZone = zoneForIndex(index);
+  const roadTypesByPoint = options.roadTypesByPoint || classifyRoadTypesByPoint(points);
+  const fallbackLimitKmh = contextualFallbackLimitKmh(points, index, inferredZone, thresholds, roadTypesByPoint);
+  const inferredLimitKmh = Number.isFinite(Number(inferredZone?.inferredLimitKmh))
+    ? Number(inferredZone.inferredLimitKmh)
+    : (
+      Number.isFinite(Number(inferredZone?.inferredZoneKmh))
+        ? Math.min(Number(inferredZone.inferredZoneKmh), fallbackLimitKmh)
+        : fallbackLimitKmh
+    );
+  const effectiveLimitKmh = actualLimitKmh ?? (Number.isFinite(inferredLimitKmh) && inferredLimitKmh > 0 ? inferredLimitKmh : null);
+
+  return {
+    actualLimitKmh,
+    effectiveLimitKmh,
+    fallbackLimitKmh,
+    inferredLimitKmh: Number.isFinite(inferredLimitKmh) && inferredLimitKmh > 0 ? inferredLimitKmh : null,
+    inferredZone,
+    limitSource: speedLimit?.source ?? (effectiveLimitKmh != null ? 'inferred' : null),
+    speedLimitSource: speedLimit?.source ?? null,
+    speedLimitDefaultCountry: speedLimit?.defaultCountry ?? null,
+  };
+}
+
+export function getInferredLimitForPoint(routePoints = [], point = null, thresholds = DEFAULT_THRESHOLDS, inferredZones = null) {
+  const points = Array.isArray(routePoints) ? routePoints : [];
+  if (!points.length) return null;
+
+  let index = point ? points.indexOf(point) : -1;
+  if (index < 0 && point?.timestamp) {
+    const pointMs = timestampMs(point);
+    index = points.findIndex((candidate) => timestampMs(candidate) === pointMs);
+  }
+  if (index < 0) index = points.length - 1;
+
+  const context = resolveEffectiveSpeedLimitForIndex(points, index, thresholds, {
+    inferredZones: Array.isArray(inferredZones) ? inferredZones : undefined,
+  });
+  return context.inferredLimitKmh ?? null;
 }
 
 /**
@@ -4256,7 +4367,13 @@ function attachEventResult(events = [], phoneUse = emptyPhoneUseResult()) {
   return { events: safeEvents, phoneUse: safePhoneUse };
 }
 
-export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, endTime = null) {
+function maskDetectedEventsForPrivacy(events = [], privacyZones = []) {
+  return privacyZones?.length
+    ? events.map((event) => maskEventCoordinatesForPrivacy(event, privacyZones))
+    : events;
+}
+
+export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, endTime = null, privacyZones = []) {
   const events = [];
   if (!Array.isArray(points) || points.length < 3) return attachEventResult();
 
@@ -4312,7 +4429,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   };
 
   const speedingSeverity = (speed, limit = null) => (
-    limit
+    limit != null
       ? speed > limit + 30 ? 'high' : speed > limit + 20 ? 'medium' : 'low'
       : speed > 160 ? 'high' : speed > 140 ? 'medium' : 'low'
   );
@@ -4320,16 +4437,18 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   const flushSpeedingWindow = () => {
     if (speedingAccumSeconds >= MIN_SPEEDING_SECONDS && speedingStart) {
       const eventPoint = speedingPeakPoint || speedingStart;
+      const eventLimitKmh = speedingZone?.effectiveLimitKmh ?? speedingZone?.actualLimitKmh ?? speedingZone?.inferredLimitKmh ?? null;
       pushEvent({
         type: EVENT_TYPES.SPEEDING,
-        severity: speedingSeverity(speedingPeakSpeed, speedingZone?.actualLimitKmh ?? speedingZone?.inferredZoneKmh ?? null),
+        severity: speedingSeverity(speedingPeakSpeed, eventLimitKmh),
         lat: eventPoint.lat,
         lng: eventPoint.lng,
         timestamp: speedingStart.timestamp,
         value: Math.round(speedingPeakSpeed),
         speed_kmh: Math.round(speedingPeakSpeed),
-        speed_limit_kmh: speedingZone?.actualLimitKmh ?? null,
-        speed_limit_source: speedingZone?.speedLimitSource || (speedingZone?.actualLimitKmh ? 'openstreetmap' : 'inferred'),
+        speed_limit_kmh: eventLimitKmh,
+        speed_limit_source: speedingZone?.limitSource ?? null,
+        speed_limit_default_country: speedingZone?.speedLimitDefaultCountry ?? null,
         inferred_zone_kmh: speedingZone?.inferredZoneKmh ?? null,
         zone_confidence: speedingZone?.confidence ?? null,
       });
@@ -4435,25 +4554,36 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
 
     // ── Speeding (fallback – no speed limit data)
     // Flag when speed exceeds OSM maxspeed + margin, or the fallback threshold.
-    const speedLimit = speedLimitForIndex(points, i);
-    const actualLimitKmh = speedLimit?.limitKmh ?? null;
-    const inferredZone = zoneForIndex(i);
-    const fallbackLimitKmh = contextualFallbackLimitKmh(points, i, inferredZone, thresholds, roadTypesByPoint);
+    const speedLimitContext = resolveEffectiveSpeedLimitForIndex(points, i, thresholds, {
+      zoneForIndex,
+      roadTypesByPoint,
+    });
+    const {
+      actualLimitKmh,
+      effectiveLimitKmh,
+      fallbackLimitKmh,
+      inferredLimitKmh,
+      inferredZone,
+      limitSource,
+      speedLimitSource,
+      speedLimitDefaultCountry,
+    } = speedLimitContext;
     const speedOverKmh = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
     const segmentZone = {
       ...(inferredZone || {}),
-      inferredZoneKmh: inferredZone?.inferredZoneKmh ?? fallbackLimitKmh,
+      inferredZoneKmh: inferredZone?.inferredZoneKmh ?? inferredLimitKmh ?? fallbackLimitKmh,
+      inferredLimitKmh,
       confidence: inferredZone?.confidence ?? 'fallback',
       road_type: inferredZone?.road_type ?? roadTypesByPoint[i] ?? 'urban',
       actualLimitKmh,
-      speedLimitSource: speedLimit?.source ?? null,
+      effectiveLimitKmh,
+      limitSource,
+      speedLimitSource,
+      speedLimitDefaultCountry,
     };
-    const contextualSpeedingThreshold = actualLimitKmh
-      ? actualLimitKmh + speedOverKmh
-      : Math.min(
-        configuredSpeedThreshold + speedOverKmh,
-        fallbackLimitKmh + speedOverKmh
-      );
+    const contextualSpeedingThreshold = effectiveLimitKmh != null
+      ? effectiveLimitKmh + speedOverKmh
+      : configuredSpeedThreshold + speedOverKmh;
 
     if (speed2 > contextualSpeedingThreshold) {
       if (!speedingStart) speedingStart = curr;
@@ -4527,8 +4657,11 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     );
   }
   const phoneUse = advancedSafetyEnabled ? detectPhoneUseWindows(points, thresholds) : emptyPhoneUseResult();
-  const combined = events.concat(...alwaysOnEvents, phoneUse.phone_use_events || []);
-  return attachEventResult(combined, phoneUse);
+  const privacySafePhoneUse = privacyZones?.length && Array.isArray(phoneUse.phone_use_events)
+    ? { ...phoneUse, phone_use_events: maskDetectedEventsForPrivacy(phoneUse.phone_use_events, privacyZones) }
+    : phoneUse;
+  const combined = events.concat(...alwaysOnEvents, privacySafePhoneUse.phone_use_events || []);
+  return attachEventResult(maskDetectedEventsForPrivacy(combined, privacyZones), privacySafePhoneUse);
 }
 
 export function detectCloseProximityManeuverAlerts(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
@@ -4803,16 +4936,39 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
  * @param {string} endTime - ISO timestamp
  * @returns {Object} Trip statistics
  */
-export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
+function permissionLossEventTimesMs(context = {}) {
+  const timeline = Array.isArray(context?.native_tracking_timeline)
+    ? context.native_tracking_timeline
+    : Array.isArray(context?.timeline)
+      ? context.timeline
+      : [];
+  return timeline
+    .filter((event) => event?.type === 'location_permission_lost')
+    .map((event) => timestampMs(event))
+    .filter(Number.isFinite);
+}
+
+function gapContainsPermissionLoss(startPoint, endPoint, permissionLossTimes = []) {
+  if (!permissionLossTimes.length) return false;
+  const startMs = timestampMs(startPoint);
+  const endMs = timestampMs(endPoint);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+  return permissionLossTimes.some((eventMs) => eventMs >= startMs && eventMs <= endMs);
+}
+
+export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS, context = {}) {
   const routePoints = (points || []).filter(hasValidCoordinates);
+  const estimatedPrivateDistanceKm = calculateEstimatedPrivateDistanceKm(points || []);
   const start = new Date(startTime);
   const end = endTime ? new Date(endTime) : new Date();
   const wallClockDurationSeconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
+  const permissionLossTimes = permissionLossEventTimesMs(context);
 
   if (!routePoints || routePoints.length < 2) {
     const roadStats = classifyRoadType(routePoints || []);
     return {
-      distance_km: 0,
+      distance_km: Math.round(estimatedPrivateDistanceKm * 1000) / 1000,
+      estimated_private_distance_km: Math.round(estimatedPrivateDistanceKm * 1000) / 1000,
       avg_speed_kmh: 0,
       avg_running_speed_kmh: 0,
       max_speed_kmh: 0,
@@ -4865,6 +5021,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   // FIX: Track sustained sub-5 km/h idle for eco scoring instead of penalizing all idle.
   let gapSeconds = 0;
   // FIX: Track noise-filtered time excluded from moving and idle buckets.
+  let permissionLossGapDetected = false;
   let idleRunStart = null;
   let idleRunDuration = 0;
 
@@ -4895,10 +5052,18 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       flushIdleRun();
       continue;
     }
+    if (segment.dt > 60 && gapContainsPermissionLoss(p, c, permissionLossTimes)) {
+      permissionLossGapDetected = true;
+    }
     if (segment.dt > 120) {
-      gapSeconds += segment.dt;
-      flushIdleRun();
-      continue;
+      const privateBoundarySegment = isPrivacyBoundaryPoint(p) &&
+        isPrivacyBoundaryPoint(c) &&
+        samePrivacyZoneBoundary(p, c);
+      if (!privateBoundarySegment) {
+        gapSeconds += segment.dt;
+        flushIdleRun();
+        continue;
+      }
     }
     if (segment.isNoise) {
       flushIdleRun();
@@ -4927,11 +5092,13 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
 
   flushIdleRun();
 
+  totalDistance = Math.max(totalDistance, calculateRouteDistanceKm(points || [], thresholds));
   const idleTime = trafficIdleSeconds + sustainedIdleSeconds;
   // FIX: Keep legacy idle_time_seconds as the sum of traffic and sustained idle buckets.
   const effectiveMovingSeconds = movingSeconds;
   const durationSeconds = Math.max(0, wallClockDurationSeconds - gapSeconds);
   // Exclude background/noise-filtered tracking gaps from driving time and duration-based scoring.
+  const dataGapDetected = permissionLossGapDetected && gapSeconds > 60;
   const isNightForTrip = createTripNightChecker(routePoints, thresholds);
   const nightDriving = routePoints.some(p => isNightForTrip(p));
   const avgSpeed = durationSeconds > 0 && totalDistance > 0
@@ -4960,6 +5127,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
 
   return {
     distance_km: Math.round(totalDistance * 1000) / 1000,
+    estimated_private_distance_km: Math.round(estimatedPrivateDistanceKm * 1000) / 1000,
     avg_speed_kmh: Math.round(avgSpeed * 10) / 10,
     avg_running_speed_kmh: Math.round(avgRunningSpeed * 10) / 10,
     max_speed_kmh: Math.round(maxSpeed * 10) / 10,
@@ -4971,6 +5139,7 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
     gap_seconds: Math.round(gapSeconds),
     wall_clock_duration_seconds: Math.round(wallClockDurationSeconds),
     duration_seconds: Math.round(durationSeconds),
+    ...(dataGapDetected ? { score_confidence_flag: 'data_gap_detected' } : {}),
     night_driving: nightDriving,
     fatigue_risk_score: calculateFatigueScore(durationSeconds, routePoints),
     fatigue_risk_score_confidence: componentConfidence(
@@ -5127,7 +5296,15 @@ export function calculateTripScores(
   phoneUseOrOptions = {},
   maybeOptions = {}
 ) {
-  const eventsList = Array.isArray(events) ? events : events?.events || [];
+  const phoneUseFromEvents = events?.phoneUse || {};
+  const options = phoneUseOrOptions?.includeRoadTypeSegments != null
+    ? phoneUseOrOptions
+    : maybeOptions;
+  const privacyZones = Array.isArray(options?.privacyZones) ? options.privacyZones : [];
+  const eventsListRaw = Array.isArray(events) ? events : events?.events || [];
+  const eventsList = privacyZones.length
+    ? eventsListRaw.map((event) => maskEventCoordinatesForPrivacy(event, privacyZones))
+    : eventsListRaw;
   const serializableEventList = eventsList.filter((event) => event?.masked_for_privacy !== true);
   const scoringEvents = serializableEventList.filter((event) => (
     event?.type !== EVENT_TYPES.AGGRESSIVE_OVERTAKE &&
@@ -5136,10 +5313,6 @@ export function calculateTripScores(
   const serializableEvents = serializableEventList
     .filter((event) => !(event?.type === EVENT_TYPES.PHONE_USE && (event.source === 'gps_proxy' || event.diagnostic_only === true)))
     .map((event) => ({ ...event }));
-  const phoneUseFromEvents = events?.phoneUse || {};
-  const options = phoneUseOrOptions?.includeRoadTypeSegments != null
-    ? phoneUseOrOptions
-    : maybeOptions;
   const phoneUse = phoneUseOrOptions?.includeRoadTypeSegments != null
     ? phoneUseFromEvents
     : { ...phoneUseFromEvents, ...(phoneUseOrOptions || {}) };

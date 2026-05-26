@@ -4,9 +4,25 @@ export const CALIBRATION_STATUSES = Object.freeze({
   CITED: 'cited',
 });
 
+export const SCORE_OUTPUT_CALIBRATION_STATUSES = Object.freeze({
+  APPROXIMATE: 'approximate',
+  CALIBRATED: 'calibrated',
+});
+
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness', 'score_eco'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];
 const ubiMetrics = ['ubi_score'];
+const pendingCalibrationMetadata = Object.freeze({
+  scoring_model_version: null,
+  dataset_id: null,
+  eligible_labeled_trip_count: 0,
+  validation_mae: null,
+  validation_rmse: null,
+  calibration_date: null,
+  minimum_labeled_trips: 2000,
+  warning: 'Calibration pending: not enough labeled trips yet.',
+  calibration_status: 'heuristic_beta',
+});
 
 /**
  * @typedef {'provisional'|'calibrated'|'cited'} CalibrationStatus
@@ -17,6 +33,7 @@ const ubiMetrics = ['ubi_score'];
  *   calibration_note: string,
  *   affected_metrics?: string[],
  *   setting_key?: string|null,
+ *   calibration_metadata?: object|null,
  * }} ScoringConstantMetadata
  */
 
@@ -31,6 +48,7 @@ const constant = (value, {
   calibration_note,
   affected_metrics = [],
   setting_key = null,
+  calibration_metadata = null,
 }) => Object.freeze({
   value,
   label,
@@ -39,6 +57,7 @@ const constant = (value, {
   calibration_note,
   affected_metrics: Object.freeze(affected_metrics),
   setting_key,
+  ...(calibration_metadata ? { calibration_metadata: Object.freeze(calibration_metadata) } : {}),
 });
 
 /**
@@ -49,8 +68,22 @@ const constant = (value, {
 export const SCORING_CONSTANTS = Object.freeze({
   NIGHT_START_HOUR: constant(22, { label: 'Fallback night start hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
   NIGHT_END_HOUR: constant(5, { label: 'Fallback night end hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
-  PENALTY_SCALE_FACTOR: constant(40, { label: 'Trip penalty scale factor', domain: 'trip_score', calibration_note: '2.5 penalty points/km reaches the zero-score floor; not outcome-calibrated.', affected_metrics: scoreMetrics }),
-  FATIGUE_SAFETY_PENALTY_SCALE: constant(0.12, { label: 'Fatigue to Safety penalty scale', domain: 'trip_score', calibration_note: 'A maximum fatigue proxy adds 12 raw Safety penalty points.', affected_metrics: ['score_safety', 'score_overall'] }),
+  PENALTY_SCALE_FACTOR: constant(40, {
+    label: 'Trip penalty scale factor',
+    domain: 'trip_score',
+    calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
+    calibration_note: 'Uncalibrated - scores are self-consistent but not validated against crash or insurer data. Replace after fleet labeling study.',
+    affected_metrics: scoreMetrics,
+    calibration_metadata: pendingCalibrationMetadata,
+  }),
+  FATIGUE_SAFETY_PENALTY_SCALE: constant(0.15, {
+    label: 'Fatigue to Safety penalty scale',
+    domain: 'trip_score',
+    calibration_status: CALIBRATION_STATUSES.CITED,
+    calibration_note: 'Williamson & Feyer (Occup Environ Med, 2000) found 17-19 hours awake can match or exceed 0.05% BAC-equivalent impairment; max fatigue proxy maps conservatively to 15 raw Safety penalty points.',
+    affected_metrics: ['score_safety', 'score_overall'],
+    calibration_metadata: pendingCalibrationMetadata,
+  }),
   ECO_SPEED_STABILITY_CV_MULTIPLIER: constant(150, { label: 'Eco speed stability multiplier', domain: 'trip_score', calibration_note: 'Converts moving-speed variation to a diagnostic eco score.', affected_metrics: ['score_eco', 'score_overall'] }),
   FUEL_BAND_FULL_SCORE_MULTIPLIER: constant(1.1, { label: 'Fuel band score multiplier', domain: 'trip_score', calibration_note: 'Rewards sustained efficient cruising.', affected_metrics: ['score_eco', 'score_overall'] }),
   STOP_START_MIN_HIGHWAY_DISTANCE_KM: constant(5, { label: 'Stop-start highway evidence distance', domain: 'trip_score', calibration_note: 'Minimum route evidence before the GPS-only pattern score is exposed.', affected_metrics: ['score_safety', 'score_overall'] }),
@@ -120,7 +153,14 @@ export const SCORING_CONSTANTS = Object.freeze({
   MIN_HILL_SEGMENT_DISTANCE_M: constant(5, { label: 'Hill minimum segment distance', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring proxy.', affected_metrics: ['hill_driving_score'] }),
   HILL_GRADE_THRESHOLD_PCT: constant(5, { label: 'Hill grade threshold', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring proxy.', affected_metrics: ['hill_driving_score'] }),
   HILL_ACCEL_THRESHOLD_MS2: constant(2.5, { label: 'Hill acceleration threshold', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring proxy.', affected_metrics: ['hill_driving_score'] }),
-  HILL_INFRACTION_PENALTY_POINTS: constant(10, { label: 'Hill infraction deduction', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring deduction.', affected_metrics: ['hill_driving_score'] }),
+  HILL_INFRACTION_PENALTY_POINTS: constant(10, { label: 'Legacy hill infraction deduction', domain: 'trip_threshold', calibration_note: 'Legacy absolute-count hill scoring deduction retained for provenance comparison only.', affected_metrics: ['hill_driving_score'] }),
+  HILL_INFRACTION_PENALTY_POINTS_PER_KM: constant(8, {
+    label: 'Hill driving penalty per infraction per km',
+    domain: 'trip_score',
+    calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
+    calibration_note: 'Provisional rate; replaces HILL_INFRACTION_PENALTY_POINTS after per-km normalization redesign.',
+    affected_metrics: ['hill_driving_score', 'score_safety'],
+  }),
   MIN_SPEED_RAPID_ACCEL_KMH: constant(5, { label: 'Rapid acceleration minimum speed', domain: 'trip_threshold', calibration_note: 'GPS event quality gate.', affected_metrics: scoreMetrics, setting_key: 'min_speed_rapid_accel_kmh' }),
   MIN_SPEED_HARSH_BRAKE_KMH: constant(25, { label: 'Harsh brake minimum speed', domain: 'trip_threshold', calibration_note: 'GPS event quality gate.', affected_metrics: scoreMetrics, setting_key: 'min_speed_harsh_brake_kmh' }),
   STOP_START_DECEL_MS2: constant(2.5, { label: 'Stop-start deceleration threshold', domain: 'trip_threshold', calibration_note: 'GPS-only speed pattern detector.', affected_metrics: ['defensive_driving_score'], setting_key: 'threshold_stop_start_decel_ms2' }),
@@ -174,8 +214,8 @@ export const SCORING_CONSTANTS = Object.freeze({
   DAILY_FULL_RECOVERY_BREAK_MINUTES: constant(180, { label: 'Daily full-recovery cap', domain: 'fatigue', calibration_note: 'Product interpolation cap, not a recovery guarantee.', affected_metrics: ['fatigue_risk_score'] }),
   DAILY_FATIGUE_SCORE_AT_ONSET: constant(5, { label: 'Daily fatigue onset score', domain: 'fatigue', calibration_note: 'Heuristic score step.', affected_metrics: ['fatigue_risk_score'] }),
 
-  ROUTE_RISK_EVENT_WEIGHT: constant(20, { label: 'Route event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics }),
-  ROUTE_RISK_HARSH_WEIGHT: constant(40, { label: 'Route harsh-event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics }),
+  ROUTE_RISK_EVENT_WEIGHT: constant(20, { label: 'Route event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics, calibration_metadata: pendingCalibrationMetadata }),
+  ROUTE_RISK_HARSH_WEIGHT: constant(40, { label: 'Route harsh-event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics, calibration_metadata: pendingCalibrationMetadata }),
   ROUTE_RISK_SPEED_START_KMH: constant(100, { label: 'Route speed-risk start', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
   ROUTE_RISK_SPEED_FULL_KMH: constant(160, { label: 'Route speed-risk saturation speed', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
   ROUTE_RISK_SPEED_MAX_POINTS: constant(15, { label: 'Route speed-risk maximum points', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
@@ -253,7 +293,7 @@ const thresholdKeys = [
   'MAX_GPS_ACCURACY_M', 'MIN_POINT_DISTANCE_M', 'MIN_TRUSTED_SPEED_KMH', 'STATIONARY_SPEED_KMH',
   'TRAFFIC_STOP_SPEED_KMH', 'TRAFFIC_STOP_MIN_SECONDS', 'TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS', 'INTERSECTION_MIN_DISTANCE_KM',
   'MAX_SPEED_SPIKE_DELTA_KMH', 'MAX_SPEED_SPIKE_RATIO', 'MAX_ALTITUDE_ACCURACY_M', 'MIN_HILL_SEGMENT_DISTANCE_M',
-  'HILL_GRADE_THRESHOLD_PCT', 'HILL_ACCEL_THRESHOLD_MS2', 'HILL_INFRACTION_PENALTY_POINTS',
+  'HILL_GRADE_THRESHOLD_PCT', 'HILL_ACCEL_THRESHOLD_MS2', 'HILL_INFRACTION_PENALTY_POINTS', 'HILL_INFRACTION_PENALTY_POINTS_PER_KM',
   'MIN_SPEED_RAPID_ACCEL_KMH', 'MIN_SPEED_HARSH_BRAKE_KMH', 'STOP_START_DECEL_MS2', 'STOP_START_MIN_SPEED_KMH',
   'STOP_START_CRUISE_SECONDS', 'STOP_START_SPEED_DROP_KMH', 'HEADING_DEVIATION_MIN_SPEED_KMH',
   'HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH', 'HEADING_DEVIATION_MIN_TURN_RATE_DEG_S', 'HEADING_DEVIATION_MAX_TURN_RATE_DEG_S',
@@ -274,9 +314,9 @@ export const TRIP_THRESHOLD_DEFAULTS = Object.freeze({
   OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG: scoringValue('OVERTAKE_STRAIGHT_STD_MAX_DEG'),
 });
 
-export function getProvisionalScoringConstants() {
-  return Object.entries(SCORING_CONSTANTS)
-    .filter(([, entry]) => entry.calibration_status === CALIBRATION_STATUSES.PROVISIONAL)
+export function getProvisionalScoringConstants(constants = SCORING_CONSTANTS) {
+  return Object.entries(constants || {})
+    .filter(([, entry]) => entry?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL)
     .map(([key, entry]) => ({ key, ...entry }));
 }
 
@@ -290,9 +330,16 @@ export function calibrationEntryForSetting(settingKey) {
   return match ? { key: match[0], ...match[1] } : null;
 }
 
-export function hasProvisionalCalibration(metricKeys = []) {
+export function hasProvisionalCalibration(metricKeys = [], constants = SCORING_CONSTANTS) {
   const metrics = new Set(Array.isArray(metricKeys) ? metricKeys : [metricKeys]);
-  return getProvisionalScoringConstants().some((entry) => (
-    entry.affected_metrics.some((metric) => metrics.has(metric))
+  if (metrics.size === 0) return false;
+  return getProvisionalScoringConstants(constants).some((entry) => (
+    Array.isArray(entry.affected_metrics) && entry.affected_metrics.some((metric) => metrics.has(metric))
   ));
+}
+
+export function calibrationStatusForMetrics(metricKeys = [], constants = SCORING_CONSTANTS) {
+  return hasProvisionalCalibration(metricKeys, constants)
+    ? SCORE_OUTPUT_CALIBRATION_STATUSES.APPROXIMATE
+    : SCORE_OUTPUT_CALIBRATION_STATUSES.CALIBRATED;
 }

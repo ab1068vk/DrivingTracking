@@ -134,8 +134,8 @@ export function buildCommuteDetections(trips = []) {
       trend: route.trend,
       last_trip_id: route.last_trip_id,
       explanation: route.label === 'Gym route'
-        ? 'Repeated short evening route detected from timing and distance.'
-        : 'Repeated weekday route detected from similar start and end areas.',
+        ? 'Repeated short evening route inferred from timing and distance.'
+        : 'Repeated weekday route inferred from similar start and end areas.',
     }));
 }
 

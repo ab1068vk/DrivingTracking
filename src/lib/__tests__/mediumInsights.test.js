@@ -52,7 +52,7 @@ describe('mediumInsights', () => {
     expect(commutes[0]).toMatchObject({
       label: 'Morning commute',
       trip_count: 3,
-      explanation: 'Repeated weekday route detected from similar start and end areas.',
+      explanation: 'Repeated weekday route inferred from similar start and end areas.',
     });
   });
 

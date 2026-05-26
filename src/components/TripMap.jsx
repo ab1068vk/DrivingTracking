@@ -226,18 +226,23 @@ const clusterPopupHtml = (events = []) => `
 
 const eventPopupHtml = (event) => {
   const label = titleCase(event.type || 'event');
+  const speedLimitValue = event.speed_limit_kmh ?? event.inferred_zone_kmh;
+  const speedLimitSource = event.speed_limit_source || event.source || null;
+  const speedLimitLabel = Number.isFinite(Number(speedLimitValue))
+    ? `${Math.round(Number(speedLimitValue))} km/h${speedLimitSource === 'inferred' ? ' inferred estimate' : ''}`
+    : null;
   const rows = [
     ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
     ['Time', formatEventTime(event.timestamp)],
     ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],
-    ['Limit', Number.isFinite(Number(event.speed_limit_kmh ?? event.inferred_zone_kmh)) ? `${Math.round(Number(event.speed_limit_kmh ?? event.inferred_zone_kmh))} km/h` : null],
-    ['Over by', Number.isFinite(Number(event.speed_kmh)) && Number.isFinite(Number(event.speed_limit_kmh ?? event.inferred_zone_kmh))
-      ? `${Math.max(0, Math.round(Number(event.speed_kmh) - Number(event.speed_limit_kmh ?? event.inferred_zone_kmh)))} km/h`
+    ['Limit', speedLimitLabel],
+    ['Over by', Number.isFinite(Number(event.speed_kmh)) && Number.isFinite(Number(speedLimitValue))
+      ? `${Math.max(0, Math.round(Number(event.speed_kmh) - Number(speedLimitValue)))} km/h`
       : null],
     ['Duration', Number.isFinite(Number(event.durationS ?? event.duration_seconds ?? event.value)) && (event.type === 'phone_use' || event.type === 'idle' || event.duration_seconds != null)
       ? `${Math.round(Number(event.durationS ?? event.duration_seconds ?? event.value))}s`
       : null],
-    ['Source', event.speed_limit_source || event.source || null],
+    ['Source', speedLimitSource === 'inferred' ? 'GPS-inferred estimate' : speedLimitSource],
     ['Confidence', event.zone_confidence || event.confidence_level || null],
     ['Signals', Array.isArray(event.signals_triggered) && event.signals_triggered.length ? event.signals_triggered.join(', ') : null],
   ].filter(([, value]) => value != null && value !== '');
@@ -866,7 +871,7 @@ function TripMapContent({
           aria-label="Hide map trip summary"
         >
           <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Route intelligence</div>
+            <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Route diagnostics</div>
             <div className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{TILE_STYLES[tileStyle].label}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 text-center">
@@ -903,7 +908,7 @@ function TripMapContent({
           onClick={() => setShowInsights(true)}
           className="absolute bottom-3 left-3 z-10 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-muted-foreground shadow backdrop-blur"
         >
-          Route intelligence
+          Route diagnostics
         </button>
       )}
     </div>

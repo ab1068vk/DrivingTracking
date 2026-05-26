@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACTIVITY_STATE_MAX_AGE_MS,
   ACTIVITY_TYPES,
   computeGpsPositionDrift,
   shouldAutoStartTracking,
@@ -137,6 +138,36 @@ describe('activityRecognition auto-stop logic', () => {
       gpsPositionDriftM: 12,
       lastMovingSpeedKmh: 0,
     })).toBe(true);
+  });
+
+  it('treats stale in-vehicle activity as missing before GPS-only parked fallback', () => {
+    const nowMs = Date.UTC(2026, 0, 1, 12, 1, 0);
+    const staleActivity = {
+      type: ACTIVITY_TYPES.IN_VEHICLE,
+      confidence: 90,
+      timestamp: new Date(nowMs - ACTIVITY_STATE_MAX_AGE_MS - 1).toISOString(),
+    };
+
+    expect(shouldAutoStopTracking({
+      activity: staleActivity,
+      currentSpeedKmh: 0,
+      stillSeconds: 250,
+      gpsPositionDriftM: 12,
+      nowMs,
+    })).toBe(false);
+
+    expect(shouldAutoStopTracking({
+      activity: staleActivity,
+      currentSpeedKmh: 0,
+      stillSeconds: 300,
+      gpsPositionDriftM: 12,
+      nowMs,
+      returnReason: true,
+    })).toMatchObject({
+      shouldStop: true,
+      reason: 'activity_recognition_stale',
+      activityStale: true,
+    });
   });
 
   it('falls back to GPS-only stop when activity is missing and GPS is stable', () => {

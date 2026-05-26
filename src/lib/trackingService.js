@@ -17,6 +17,15 @@ const watchOptions = {
   interval: 2000,
 };
 
+const GEOLOCATION_PERMISSION_DENIED = 1;
+
+function isPermissionDeniedError(error) {
+  const browserPermissionDenied = typeof GeolocationPositionError !== 'undefined'
+    ? GeolocationPositionError.PERMISSION_DENIED
+    : GEOLOCATION_PERMISSION_DENIED;
+  return Number(error?.code) === browserPermissionDenied;
+}
+
 export async function getCurrentLocation() {
   const granted = await requestForegroundLocationPermission();
   if (!granted) throw new Error('Location permission denied.');
@@ -64,6 +73,29 @@ export function createDrivingTrackingService({ background = false } = {}) {
     }
   };
 
+  const stopTracking = async () => {
+    if (background && watcherId) {
+      await BackgroundGeolocation.removeWatcher({ id: watcherId });
+    } else if (isNativePlatform() && watcherId) {
+      await Geolocation.clearWatch({ id: watcherId });
+    } else if (webWatcherId !== null) {
+      navigator.geolocation.clearWatch(webWatcherId);
+    }
+
+    watcherId = null;
+    webWatcherId = null;
+    previousPoint = null;
+  };
+
+  const emitPermissionDenied = async (onError) => {
+    await stopTracking();
+    onError?.({
+      type: 'permission_denied',
+      message: 'Location permission was denied.',
+      code: GEOLOCATION_PERMISSION_DENIED,
+    });
+  };
+
   return {
     async start(onPoint, onError) {
       try {
@@ -72,7 +104,11 @@ export function createDrivingTrackingService({ background = false } = {}) {
           : await requestForegroundLocationPermission();
 
         if (!allowed) {
-          onError?.({ message: 'Location permission is required to track a trip.' });
+          onError?.({
+            type: 'permission_denied',
+            message: 'Location permission is required to track a trip.',
+            code: GEOLOCATION_PERMISSION_DENIED,
+          });
           return;
         }
 
@@ -116,7 +152,13 @@ export function createDrivingTrackingService({ background = false } = {}) {
 
         webWatcherId = navigator.geolocation.watchPosition(
           (position) => emitPoint(position, onPoint),
-          (error) => onError?.({ message: error.message, code: error.code }),
+          async (error) => {
+            if (isPermissionDeniedError(error)) {
+              await emitPermissionDenied(onError);
+              return;
+            }
+            onError?.({ message: error.message, code: error.code });
+          },
           watchOptions
         );
       } catch (error) {
@@ -125,17 +167,7 @@ export function createDrivingTrackingService({ background = false } = {}) {
     },
 
     async stop() {
-      if (background && watcherId) {
-        await BackgroundGeolocation.removeWatcher({ id: watcherId });
-      } else if (isNativePlatform() && watcherId) {
-        await Geolocation.clearWatch({ id: watcherId });
-      } else if (webWatcherId !== null) {
-        navigator.geolocation.clearWatch(webWatcherId);
-      }
-
-      watcherId = null;
-      webWatcherId = null;
-      previousPoint = null;
+      await stopTracking();
     },
 
     isActive() {

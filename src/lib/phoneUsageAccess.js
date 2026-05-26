@@ -403,6 +403,31 @@ export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripD
   return mergeManyPhoneUseSignals([detectionPhoneUse, nativeUsage, storedEvents, summaryOnly], tripDurationSeconds);
 }
 
+export function buildPhoneUsageAccessProvenance(trip = {}, currentUsageAccessGranted = null) {
+  const recordedUsageAccessGranted = typeof trip.native_phone_usage_access_granted === 'boolean'
+    ? trip.native_phone_usage_access_granted
+    : null;
+  const currentGranted = typeof currentUsageAccessGranted === 'boolean'
+    ? currentUsageAccessGranted
+    : null;
+  const changed = recordedUsageAccessGranted !== null &&
+    currentGranted !== null &&
+    recordedUsageAccessGranted !== currentGranted;
+  let note = null;
+  if (changed && recordedUsageAccessGranted) {
+    note = 'Phone use score was recorded when Usage Access was granted. Current permission status has changed.';
+  } else if (changed) {
+    note = 'Usage Access was not available when this trip was recorded. Current permission status has changed.';
+  }
+
+  return {
+    recordedUsageAccessGranted,
+    currentUsageAccessGranted: currentGranted,
+    changed,
+    note,
+  };
+}
+
 export function mergePhoneUseEventsIntoDrivingEvents(drivingEvents = [], phoneUse = {}) {
   const retained = (drivingEvents || []).filter((event) => event?.type !== 'phone_use');
   const stored = buildPhoneUseFromEvents((drivingEvents || []).filter((event) => event?.type === 'phone_use'));

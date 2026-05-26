@@ -10,9 +10,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
@@ -53,14 +55,16 @@ import {
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
+import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
-import { PUBLIC_OSRM_DEMO_URL } from '@/lib/openSourceTripContext';
+import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import {
   CALIBRATION_STATUSES,
+  SCORING_CONSTANTS,
   calibrationEntryForSetting,
   getProvisionalScoringConstants,
   scoringValue,
@@ -186,6 +190,14 @@ const PRIVACY_RADIUS_MIN_M = 50;
 const PRIVACY_RADIUS_MAX_M = 1000;
 const PRIVACY_RADIUS_DEFAULT_M = 180;
 const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
+const PENALTY_SCALE_CALIBRATION = Object.freeze({
+  key: 'PENALTY_SCALE_FACTOR',
+  ...SCORING_CONSTANTS.PENALTY_SCALE_FACTOR,
+});
+
+function calibrationStatusLabel(status) {
+  return status === CALIBRATION_STATUSES.PROVISIONAL ? 'Provisional' : status;
+}
 
 function validatePrivacyRadius(value) {
   const raw = String(value ?? '').trim();
@@ -222,6 +234,8 @@ export default function Settings() {
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [rescoreStatus, setRescoreStatus] = useState('');
+  const [osrmDemoConsentOpen, setOsrmDemoConsentOpen] = useState(false);
+  const [osrmDemoConsentChecked, setOsrmDemoConsentChecked] = useState(false);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -267,24 +281,47 @@ export default function Settings() {
     return updated;
   };
 
+  const openOsrmDemoConsent = () => {
+    setOsrmDemoConsentChecked(false);
+    setOsrmDemoConsentOpen(true);
+  };
+
+  const acceptOsrmDemoConsent = () => {
+    if (!osrmDemoConsentChecked) return;
+    updateCfg({
+      map_matching_enabled: true,
+      osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL,
+      osrm_public_demo_consent_at: new Date().toISOString(),
+    });
+    setOsrmDemoConsentOpen(false);
+    setOsrmDemoConsentChecked(false);
+  };
+
   const enableOsrmMapMatching = (enabled) => {
     if (!enabled) {
-      updateCfg({ map_matching_enabled: false, osrm_map_matching_url: '' });
+      updateCfg({ map_matching_enabled: false, osrm_map_matching_url: '', osrm_public_demo_consent_at: '' });
       return;
     }
-    const ok = typeof window === 'undefined' || window.confirm(
-      'Snap route to roads needs an OSRM link. Road Sage can use the public OSRM demo now. Sampled GPS points are sent there only when you tap Get Road Data on a trip. Continue?'
-    );
-    if (!ok) return;
-    updateCfg({ map_matching_enabled: true, osrm_map_matching_url: cfg.osrm_map_matching_url || PUBLIC_OSRM_DEMO_URL });
+    if (isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)) {
+      openOsrmDemoConsent();
+      return;
+    }
+    updateCfg({ map_matching_enabled: true });
   };
 
   const usePublicOsrmDemo = () => {
-    const ok = typeof window === 'undefined' || window.confirm(
-      'The public OSRM demo server has no app privacy contract or uptime guarantee. If you use it, sampled route GPS points are sent to router.project-osrm.org only when you tap Get Road Data on a trip. Continue?'
-    );
-    if (!ok) return;
-    updateCfg({ map_matching_enabled: true, osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL });
+    openOsrmDemoConsent();
+  };
+
+  const updateOsrmEndpoint = (value) => {
+    if (isPublicOsrmDemoUrl(value)) {
+      openOsrmDemoConsent();
+      return;
+    }
+    updateCfg({
+      osrm_map_matching_url: value,
+      ...(cfg.osrm_public_demo_consent_at ? { osrm_public_demo_consent_at: '' } : {}),
+    });
   };
 
   const updateExternalContextAutoFetch = (enabled) => {
@@ -293,7 +330,7 @@ export default function Settings() {
       return;
     }
     const ok = typeof window === 'undefined' || window.confirm(
-      'Automatic road data sends route-area boxes to OpenStreetMap and the trip midpoint/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
+      'Automatic road data sends route-area boxes to OpenStreetMap and a privacy-safe route point/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
     );
     if (!ok) return;
     updateCfg({ external_context_auto_fetch_enabled: true });
@@ -347,6 +384,7 @@ export default function Settings() {
   };
 
   const rescoreTrips = async () => {
+    await getPermissionStatus().catch(() => null);
     const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
     const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
     await qc.invalidateQueries();
@@ -391,7 +429,7 @@ export default function Settings() {
   const showPrivacyPolicy = () => {
     toast({
       title: 'Privacy and local data',
-      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally on this device. It does not upload trips, sell data, or use ads or analytics.',
+      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points to your configured OSRM endpoint or the public OSRM demo if you explicitly enable it.',
       duration: 9000,
     });
   };
@@ -605,6 +643,7 @@ export default function Settings() {
       lat,
       lng,
     }, cfg);
+    void invalidateRouteRiskIndex();
     setCfg(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -625,6 +664,7 @@ export default function Settings() {
 
   const deletePrivacyZone = (id) => {
     const updated = removePrivacyZone(id, cfg);
+    void invalidateRouteRiskIndex();
     setCfg(updated);
     setPrivacyRadiusDrafts((drafts) => {
       const next = { ...drafts };
@@ -654,6 +694,7 @@ export default function Settings() {
 
     const radius = validation.radius;
     const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
+    void invalidateRouteRiskIndex();
     setCfg(updated);
     setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
     setPrivacyZoneRadiusErrors((errors) => {
@@ -1068,7 +1109,7 @@ export default function Settings() {
               value: 'none',
             },
             {
-              label: 'Live voice alerts and local driving coach summaries',
+              label: 'Live voice alerts and rule-based driving coach summaries',
               sub: 'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.',
               value: 'none',
             },
@@ -1534,6 +1575,22 @@ export default function Settings() {
               {calibLoading ? 'Analysing...' : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
             </button>
           </div>
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-semibold">{PENALTY_SCALE_CALIBRATION.label}</div>
+              <div className="flex items-center gap-2">
+                {PENALTY_SCALE_CALIBRATION.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
+                <span className="font-mono">{PENALTY_SCALE_CALIBRATION.value}</span>
+              </div>
+            </div>
+            <div className="mt-1">{PENALTY_SCALE_CALIBRATION.calibration_note}</div>
+            <div className="mt-2 text-amber-800 dark:text-amber-200">
+              Status: {calibrationStatusLabel(PENALTY_SCALE_CALIBRATION.calibration_status)}
+              {PENALTY_SCALE_CALIBRATION.affected_metrics.length > 0 && (
+                <> - Affects {PENALTY_SCALE_CALIBRATION.affected_metrics.join(', ')}</>
+              )}
+            </div>
+          </div>
           {calibProfile?.insufficient && (
             <div className="mt-3 rounded-xl bg-card p-3 text-xs text-muted-foreground">
               Needs {calibProfile.tripsNeeded} more trips or {calibProfile.kmNeeded} more km before calibration is reliable.
@@ -1627,9 +1684,17 @@ export default function Settings() {
                 <div key={entry.key} className="rounded-lg bg-secondary/60 p-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold">{entry.label}</span>
-                    <span className="font-mono text-primary">{typeof entry.value === 'object' ? 'policy' : String(entry.value)}</span>
+                    <span className="flex items-center gap-2">
+                      {entry.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
+                      <span className="font-mono text-primary">{typeof entry.value === 'object' ? 'policy' : String(entry.value)}</span>
+                    </span>
                   </div>
                   <div className="mt-1 text-muted-foreground">{entry.calibration_note}</div>
+                  {entry.affected_metrics.length > 0 && (
+                    <div className="mt-1 text-muted-foreground">
+                      Affects {entry.affected_metrics.join(', ')}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1792,7 +1857,7 @@ export default function Settings() {
             <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
               <input
                 value={cfg.osrm_map_matching_url || ''}
-                onChange={event => updateCfg({ osrm_map_matching_url: event.target.value })}
+                onChange={event => updateOsrmEndpoint(event.target.value)}
                 disabled={cfg.map_matching_enabled === false}
                 placeholder="https://your-osrm.example"
                 className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
@@ -1827,13 +1892,15 @@ export default function Settings() {
               {cfg.map_matching_enabled === false
                 ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
                 : cfg.osrm_map_matching_url
-                  ? 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
+                  ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
+                    ? 'Public demo on: Get Road Data sends sampled GPS points to router.project-osrm.org, a public third-party server not operated by Road Sage.'
+                    : 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
                   : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
             </div>
           </div>
           <SettingRow
             icon={Target}
-            label="Historical context risk"
+            label="Historical context estimate"
             sublabel="Estimate current context from your history, repeated event areas, and time"
           >
             <Toggle
@@ -2045,19 +2112,28 @@ export default function Settings() {
         >
           <select
             className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
-            value={cfg.configurable_country_defaults || 'global'}
-            onChange={event => updateCfg({ configurable_country_defaults: event.target.value })}
+            value={String(cfg.country_code || cfg.configurable_country_defaults || 'global').toLowerCase()}
+            onChange={event => {
+              const value = event.target.value;
+              updateCfg({
+                country_code: value === 'global' ? '' : value.toUpperCase(),
+                configurable_country_defaults: value,
+              });
+            }}
           >
             <option value="global">Global</option>
             <option value="ca">Canada</option>
             <option value="us">United States</option>
             <option value="gb">United Kingdom</option>
+            <option value="de">Germany</option>
+            <option value="au">Australia</option>
+            <option value="fr">France</option>
           </select>
         </SettingRow>
         <SettingRow
           icon={Droplets}
           label="Get trip weather"
-          sublabel="When you tap Get Road Data, sends trip midpoint coordinates and date to Open-Meteo"
+          sublabel="When you tap Get Road Data, sends a privacy-safe route point and date to Open-Meteo"
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
@@ -2066,11 +2142,11 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Info}
-          label="Automatically get speed limits + weather"
-          sublabel="Off by default. When on, each saved trip fetches OpenStreetMap speed limits and Open-Meteo weather. OSRM snapping still stays manual."
+          label="Fetch real speed limits after trips"
+          sublabel="On by default. Saved trips fetch OpenStreetMap speed limits and Open-Meteo weather when internet is available. OSRM snapping still stays manual."
         >
           <Toggle
-            value={cfg.external_context_auto_fetch_enabled === true}
+            value={cfg.external_context_auto_fetch_enabled !== false}
             onChange={updateExternalContextAutoFetch}
           />
         </SettingRow>
@@ -2081,25 +2157,27 @@ export default function Settings() {
               <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.speed_limit_lookup_enabled === false
                 ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
-                : `sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
+                : `sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
             </div>
             <div>
               <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.weather_context_enabled === false
                 ? 'skips Open-Meteo; scores do not get weather adjustment.'
-                : 'sends trip midpoint and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
+                : 'sends a privacy-safe route point and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
             </div>
             <div>
               <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}:</span>{' '}
               {cfg.map_matching_enabled === false
                 ? 'skips OSRM; map/playback keep the original GPS line.'
                 : cfg.osrm_map_matching_url
-                  ? 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'
+                  ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
+                    ? 'sends sampled GPS points to router.project-osrm.org, a public third-party server not operated by Road Sage.'
+                    : 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'
                   : 'will be skipped until an OSRM endpoint is added.'}
             </div>
             <div>
-              <span className="font-semibold text-foreground">Automatically get speed limits + weather {cfg.external_context_auto_fetch_enabled === true ? 'ON' : 'OFF'}:</span>{' '}
-              {cfg.external_context_auto_fetch_enabled === true
+              <span className="font-semibold text-foreground">Fetch real speed limits after trips {cfg.external_context_auto_fetch_enabled !== false ? 'ON' : 'OFF'}:</span>{' '}
+              {cfg.external_context_auto_fetch_enabled !== false
                 ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
                 : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
             </div>
@@ -2133,6 +2211,16 @@ export default function Settings() {
             onClick={showPrivacyPolicy}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </SettingRow>
+          <SettingRow
+            icon={Target}
+            label="Share anonymized calibration labels"
+            sublabel="Uploads only summary features and survey labels. Raw GPS, addresses, trip notes, and route geometry stay local."
+          >
+            <Checkbox
+              checked={cfg.calibration_sharing_enabled === true}
+              onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
+            />
           </SettingRow>
           <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
             <div className="mb-3 flex items-start justify-between gap-3">
@@ -2320,6 +2408,45 @@ export default function Settings() {
         onChange={handleImportBackup}
       />
 
+      <Dialog open={osrmDemoConsentOpen} onOpenChange={(open) => {
+        setOsrmDemoConsentOpen(open);
+        if (!open) setOsrmDemoConsentChecked(false);
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Use public OSRM demo?</DialogTitle>
+            <DialogDescription>
+              Your GPS route coordinates (excluding privacy zones) will be sent to router.project-osrm.org, a public third-party server. This is not operated by Road Sage. Enable only if you accept this data sharing.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+            <Checkbox
+              checked={osrmDemoConsentChecked}
+              onCheckedChange={(checked) => setOsrmDemoConsentChecked(checked === true)}
+              className="mt-0.5"
+            />
+            <span>I understand and accept that sampled route GPS coordinates will be sent to the public OSRM demo when I tap Get Road Data.</span>
+          </label>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setOsrmDemoConsentOpen(false)}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={acceptOsrmDemoConsent}
+              disabled={!osrmDemoConsentChecked}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              Enable public demo
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={patternGuideOpen} onOpenChange={setPatternGuideOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl">
           <DialogHeader>
@@ -2344,7 +2471,7 @@ export default function Settings() {
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
         <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
-        <div>Data: Stored locally · No cloud sync · No ads · No analytics</div>
+        <div>Data: Stored locally by default · No ads · Calibration sharing is opt-in</div>
       </div>
     </div>
   );

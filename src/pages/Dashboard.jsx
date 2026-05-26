@@ -15,6 +15,9 @@ import {
   calculateAngularStdDev,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
+  getInferredLimitForPoint,
+  inferSpeedZones,
+  resolveEffectiveSpeedLimitForIndex,
   getTripComponentScore,
   getScoreProvenanceStatus,
   formatDistance, formatDuration, formatSpeed,
@@ -46,6 +49,7 @@ import {
   computeGpsPositionDrift,
   shouldAutoStartTracking,
   shouldAutoStopTracking,
+  getAndroidUsageAccessStatus,
   getAndroidPhoneUsageSummary,
 } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
@@ -98,6 +102,8 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
+import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { getPrivacyZones, isInsidePrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 const AUTO_START_TRIGGER_SECONDS = 2;
@@ -122,6 +128,7 @@ export default function Dashboard() {
   const stoppedAnchorRef = useRef(null);
   const lastMovingSpeedRef = useRef(0);
   const autoEndingTripRef = useRef(false);
+  const locationPermissionEndingRef = useRef(false);
   const endTripRef = useRef(null);
   const timerRef = useRef(null);
   const sensorFusionRef = useRef(null);
@@ -129,6 +136,7 @@ export default function Dashboard() {
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
   const lastProximityAlertRef = useRef(0);
+  const inferredSpeedZonesRef = useRef([]);
   const [settings, setSettings] = useState(() => localSettings.get());
   const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
   const [pendingStartOptions, setPendingStartOptions] = useState(null);
@@ -142,6 +150,11 @@ export default function Dashboard() {
     batteryStatus: null,
     diagnostics: getTrackingDiagnostics(),
   });
+  const privacyZones = getPrivacyZones(settings);
+  const currentLocationInPrivacyZone = currentLocation
+    ? isInsidePrivacyZone(currentLocation.lat, currentLocation.lng, privacyZones)
+    : false;
+  const dangerZoneCurrentLocation = currentLocationInPrivacyZone ? null : currentLocation;
 
   const refreshTrackingStatusContext = useCallback(async () => {
     const latestSettings = await localSettings.hydrateFromNative();
@@ -195,6 +208,7 @@ export default function Dashboard() {
       lastMovingSpeedRef.current = 0;
       autoEndingTripRef.current = false;
       incidentAlertRef.current = 0;
+      inferredSpeedZonesRef.current = [];
       setHazardMessage(null);
       sensorFusionRef.current?.stop();
     }
@@ -217,7 +231,7 @@ export default function Dashboard() {
       stayAlertSentRef.current = true;
       lastStayAlertAtRef.current = Date.now();
       notifyStayAlert().catch(() => {});
-      speakSafetyAlert('Heading drift detected. Take a break when it is safe.', cfg).catch(() => {});
+      speakSafetyAlert('GPS heading variation pattern recorded. Take a break when it is safe if you feel tired.', cfg).catch(() => {});
     }
   }, [activeTrip, tracking]);
 
@@ -328,6 +342,52 @@ export default function Dashboard() {
     setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
   }, [refreshTrackingStatusContext]);
 
+  const markActiveTripLocationPermissionLoss = useCallback((reason = 'web_geolocation_permission_denied') => {
+    const current = activeTripRef.current;
+    if (!current) return null;
+    const flags = new Set(Array.isArray(current.data_quality_flags) ? current.data_quality_flags : []);
+    flags.add('location_permission_loss');
+    const timeline = Array.isArray(current.timeline) ? current.timeline : [];
+    const updated = {
+      ...current,
+      data_quality_flags: Array.from(flags),
+      score_confidence_flag: 'data_gap_detected',
+      timeline: [
+        ...timeline,
+        {
+          type: 'location_permission_lost',
+          timestamp: new Date().toISOString(),
+          reason,
+        },
+      ],
+    };
+    activeTripStore.set(updated);
+    activeTripRef.current = updated;
+    setActiveTrip(updated);
+    return updated;
+  }, []);
+
+  const handleLocationTrackingError = useCallback(async (err) => {
+    if (err?.type !== 'permission_denied') {
+      setLocationError(err?.message || 'Location tracking failed.');
+      return;
+    }
+
+    setLocationError(err.message || 'Location permission was denied.');
+    if (!trackingRef.current || !activeTripRef.current || locationPermissionEndingRef.current) return;
+
+    const updated = markActiveTripLocationPermissionLoss('web_geolocation_permission_denied');
+    recordTrackingDiagnostic({
+      type: 'location_permission_lost',
+      title: 'Location permission lost during trip',
+      reason: 'web_geolocation_permission_denied',
+      trip_state: updated?.trip_state || null,
+      speed_kmh: Math.round(currentLocation?.speed_kmh || 0),
+    });
+    locationPermissionEndingRef.current = true;
+    await endTripRef.current?.();
+  }, [currentLocation?.speed_kmh, markActiveTripLocationPermissionLoss]);
+
   const promoteCandidateTrip = useCallback((trip, decision) => {
     const promoted = {
       ...trip,
@@ -374,26 +434,48 @@ export default function Dashboard() {
         const latestSettings = localSettings.get();
         const tripBeforePoint = activeTripRef.current;
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
-        if (!isCandidateTrip && latestSettings.danger_zone_alerts_enabled !== false) {
+        const latestPrivacyZones = getPrivacyZones(latestSettings);
+        const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
+        if (!isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
           const zones = await loadDangerZones();
           const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
           if (nearby.length > 0 && Date.now() - lastProximityAlertRef.current > 60 * 1000) {
             const zone = nearby[0];
             lastProximityAlertRef.current = Date.now();
             const typeLabel = String(zone.dominantType || 'risk event').replace(/_/g, ' ');
-            const body = `${typeLabel} reported ${Math.round(zone.distanceM || 0)} m ahead`;
+            const body = `${typeLabel} repeated-event area ${Math.round(zone.distanceM || 0)} m ahead`;
             setHazardMessage({ body, at: Date.now() });
             notifyStayAlert({
               id: 4007,
-              title: 'Danger zone ahead',
+              title: 'Repeated event area ahead',
               body,
-              extra: { type: 'danger_zone', zoneId: zone.id },
+              extra: { type: 'repeated_event_area', zoneId: zone.id },
             }).catch(() => {});
-            speakSafetyAlert(`Danger zone ahead. ${typeLabel} reported nearby.`, latestSettings).catch(() => {});
+            speakSafetyAlert(`Repeated event area ahead. ${typeLabel} was recorded nearby in your history.`, latestSettings).catch(() => {});
           }
         }
+        const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), point];
         const speed = Number(point.speed_kmh) || 0;
-        const speedLimitKmh = Number(point.speed_limit_kmh) || Number(latestSettings.threshold_speeding_kmh) || 100;
+        const thresholds = buildDrivingThresholds(latestSettings);
+        inferredSpeedZonesRef.current = inferSpeedZones(routePointsWithLatest, thresholds);
+        const postedLimitKmh = Number(point.speed_limit_kmh);
+        const currentPointLimitKmh = Number.isFinite(postedLimitKmh) && postedLimitKmh > 0 ? postedLimitKmh : null;
+        const currentInferredLimit = currentPointLimitKmh
+          ?? getInferredLimitForPoint(routePointsWithLatest, point, thresholds, inferredSpeedZonesRef.current);
+        const speedLimitContext = resolveEffectiveSpeedLimitForIndex(
+          routePointsWithLatest,
+          routePointsWithLatest.length - 1,
+          thresholds,
+          { inferredZones: inferredSpeedZonesRef.current }
+        );
+        const fallbackSpeedLimitKmh = Number(latestSettings.threshold_speeding_kmh);
+        const speedLimitKmh = currentInferredLimit ?? speedLimitContext.effectiveLimitKmh ?? (Number.isFinite(fallbackSpeedLimitKmh) ? fallbackSpeedLimitKmh : 100);
+        const speedLimitSource = currentPointLimitKmh != null
+          ? point.speed_limit_source || 'openstreetmap'
+          : currentInferredLimit != null
+            ? 'inferred'
+            : speedLimitContext.limitSource;
+        const speedLimitLabel = speedLimitSource === 'inferred' ? 'estimated limit' : 'limit';
         const speedMarginKmh = Number(latestSettings.threshold_speed_over_kmh ?? 5);
         if (
           !isCandidateTrip &&
@@ -401,15 +483,19 @@ export default function Dashboard() {
           latestSettings.voice_alerts_enabled !== false &&
           speed > speedLimitKmh + speedMarginKmh
         ) {
+          setHazardMessage({
+            body: `Speed warning: ${Math.round(speed)} km/h over ${speedLimitLabel} ${Math.round(speedLimitKmh)} km/h`,
+            at: Date.now(),
+          });
           speakSafetyAlertOnce(
             'speeding',
-            `Speed warning. ${Math.round(speed)} kilometers per hour.`,
+            `Speed warning. ${Math.round(speed)} kilometers per hour. ${speedLimitLabel} ${Math.round(speedLimitKmh)}.`,
             latestSettings,
             60 * 1000
           ).catch(() => {});
         }
         if (tripBeforePoint) {
-          const updated = { ...tripBeforePoint, route_points: [...(tripBeforePoint.route_points || []), point] };
+          const updated = { ...tripBeforePoint, route_points: routePointsWithLatest };
           activeTripStore.set(updated);
           activeTripRef.current = updated;
           setActiveTrip(updated);
@@ -442,8 +528,8 @@ export default function Dashboard() {
           incidentAlertRef.current = Date.now();
           const emergencyWorkflow = latestSettings.emergency_workflow_enabled === true;
           const workflowBody = emergencyWorkflow
-            ? 'Possible crash detected. Emergency check-in is active until you end or review the trip.'
-            : 'Possible crash or incident detected. Check in now.';
+            ? 'Possible incident signal recorded. Emergency check-in is active until you end or review the trip.'
+            : 'Possible incident signal recorded. Check in now.';
           const incidentEvent = {
             ...incident,
             emergency_workflow_pending: emergencyWorkflow,
@@ -451,10 +537,10 @@ export default function Dashboard() {
           setHazardMessage({ body: workflowBody, at: Date.now(), persistent: emergencyWorkflow });
           notifyStayAlert({
             id: 4011,
-            title: 'Possible Incident Detected',
+            title: 'Possible Incident Signal',
             body: emergencyWorkflow
-              ? 'Impact-like motion and little movement detected. Open Road Sage to check in.'
-              : 'Road Sage detected impact-like motion followed by little movement.',
+              ? 'Impact-like motion and little movement were recorded. Open Road Sage to check in.'
+              : 'Road Sage recorded impact-like motion followed by little movement.',
             extra: { type: 'possible_crash', severity: incident.severity, emergencyWorkflow },
           }).catch(() => {});
           speakSafetyAlert(workflowBody, latestSettings).catch(() => {});
@@ -494,13 +580,16 @@ export default function Dashboard() {
           recentPoints
         );
         const activity = latestActivityRef.current;
-        const activityParked = shouldAutoStopTracking({
+        const activityStopDecision = shouldAutoStopTracking({
           activity,
           currentSpeedKmh: speed,
           stillSeconds,
           gpsPositionDriftM,
           lastMovingSpeedKmh: lastMovingSpeedRef.current,
+          nowMs,
+          returnReason: true,
         });
+        const activityParked = activityStopDecision.shouldStop;
         const gpsParked = speed < 2 && (
           (stillSeconds >= 90 && gpsPositionDriftM < 5) ||
           (stillSeconds >= 180 && gpsPositionDriftM < 20) ||
@@ -508,10 +597,20 @@ export default function Dashboard() {
         );
 
         if (activityParked || gpsParked) {
+          if (activityStopDecision.reason === 'activity_recognition_stale') {
+            recordTrackingDiagnostic({
+              type: 'activity_recognition_stale',
+              title: 'Activity recognition stale; GPS-only stop fallback used',
+              reason: 'activity_state_stale',
+              speed_kmh: Math.round(speed),
+              stopped_seconds: Math.round(stillSeconds),
+              drift_m: Math.round(gpsPositionDriftM),
+            });
+          }
           recordTrackingDiagnostic({
             type: 'auto_stop',
             title: 'In-app trip auto-ended',
-            reason: activityParked ? 'activity_parked' : 'gps_parked',
+            reason: activityParked ? activityStopDecision.reason || 'activity_parked' : 'gps_parked',
             speed_kmh: Math.round(speed),
             stopped_seconds: Math.round(stillSeconds),
             drift_m: Math.round(gpsPositionDriftM),
@@ -520,9 +619,9 @@ export default function Dashboard() {
           endTripRef.current?.();
         }
       },
-      (err) => setLocationError(err.message)
+      handleLocationTrackingError
     );
-  }, [discardCandidateTrip, promoteCandidateTrip]);
+  }, [discardCandidateTrip, handleLocationTrackingError, promoteCandidateTrip]);
 
   const handleStartTrip = useCallback(async ({
     autoStarted = false,
@@ -534,6 +633,7 @@ export default function Dashboard() {
   } = {}) => {
     if (trackingRef.current) return;
     autoEndingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
 
     const cfg = localSettings.get();
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
@@ -593,6 +693,10 @@ export default function Dashboard() {
     }
 
     const startTime = initialPoint?.timestamp || new Date().toISOString();
+    const phoneUsageAccessStatus = isAndroid()
+      ? await getAndroidUsageAccessStatus().catch(() => null)
+      : null;
+    const phoneUsageAccessGrantedAtStart = phoneUsageAccessStatus?.usageAccessGranted === true;
     const tripData = {
       start_time: startTime,
       status: 'active',
@@ -606,6 +710,8 @@ export default function Dashboard() {
       candidate_first_point: candidate && initialPoint ? initialPoint : null,
       candidate_near_parked: candidate ? nearParkedLocation === true : false,
       candidate_trigger_reason: triggerReason,
+      native_phone_usage_access_granted: phoneUsageAccessGrantedAtStart,
+      native_phone_usage_access_checked_at: phoneUsageAccessStatus ? new Date().toISOString() : null,
     };
 
     activeTripStore.set(tripData);
@@ -695,6 +801,7 @@ export default function Dashboard() {
   const handleEndTrip = async () => {
     let tripToEnd = activeTripRef.current || activeTrip;
     if (!tripToEnd) return;
+    const endingForLocationPermissionLoss = locationPermissionEndingRef.current;
 
     locationService.current?.stop();
     locationService.current = null;
@@ -737,6 +844,7 @@ export default function Dashboard() {
         activeTripRef.current = null;
         trackingRef.current = false;
         autoEndingTripRef.current = false;
+        locationPermissionEndingRef.current = false;
         setActiveTrip(null);
         setTracking(false);
         setElapsed(0);
@@ -770,7 +878,7 @@ export default function Dashboard() {
     recordTrackingDiagnostic({
       type: 'ending_review',
       title: 'Ending review started',
-      reason: autoEndingTripRef.current ? 'auto_stop_review' : 'manual_end_review',
+      reason: endingForLocationPermissionLoss ? 'location_permission_lost_review' : autoEndingTripRef.current ? 'auto_stop_review' : 'manual_end_review',
       trip_state: TRIP_STATES.ENDING_REVIEW,
       route_points_raw_count: rawPoints.length,
       route_points_clean_count: cleanedPoints.length,
@@ -778,7 +886,7 @@ export default function Dashboard() {
 
     const tailTrim = trimParkedTail(cleanedPoints, {
       endTime,
-      reason: autoEndingTripRef.current ? 'auto_stop_parked_review' : 'manual_end_review',
+      reason: endingForLocationPermissionLoss ? 'location_permission_lost_review' : autoEndingTripRef.current ? 'auto_stop_parked_review' : 'manual_end_review',
       activity: latestActivityRef.current,
       thresholds,
     });
@@ -820,6 +928,7 @@ export default function Dashboard() {
       activeTripRef.current = null;
       trackingRef.current = false;
       autoEndingTripRef.current = false;
+      locationPermissionEndingRef.current = false;
       setActiveTrip(null);
       setTracking(false);
       setElapsed(0);
@@ -839,9 +948,17 @@ export default function Dashboard() {
       status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url ? 'manual_required' : 'disabled',
       confidence: null,
       snapped_coverage: 0,
+      isOsrmDemoUrl: isPublicOsrmDemoUrl(cfg.osrm_map_matching_url),
     };
     const speedLimitContext = shouldAutoFetchExternalContext
-      ? await annotateRouteSpeedLimits(pts, cfg)
+      ? await annotateRouteSpeedLimits(pts, cfg).catch((error) => ({
+          routePoints: pts,
+          coverage: 0,
+          status: 'unavailable',
+          source: 'openstreetmap_overpass',
+          query_count: 0,
+          error: error?.message || 'Speed limit lookup unavailable',
+        }))
       : {
           routePoints: pts,
           coverage: 0,
@@ -851,25 +968,26 @@ export default function Dashboard() {
           error: null,
         };
     pts = speedLimitContext.routePoints || pts;
-    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds);
+    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds, tripToEnd);
     const weatherContext = shouldAutoFetchExternalContext
       ? await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
           provider: 'open-meteo',
           status: 'unavailable',
-          riskLevel: 'low',
-          riskScore: 0,
+          riskLevel: null,
+          riskScore: null,
           riskMultiplier: 1,
           error: error?.message || 'Weather lookup unavailable',
         }))
       : {
           provider: 'open-meteo',
           status: 'manual_required',
-          riskLevel: 'low',
-          riskScore: 0,
+          riskLevel: null,
+          riskScore: null,
           riskMultiplier: 1,
         };
 
-    const { events: detectedEvents, phoneUse: gpsPhoneUse } = detectDrivingEvents(pts, thresholds, endTime);
+    const tripPrivacyZones = getPrivacyZones(cfg);
+    const { events: detectedEvents, phoneUse: gpsPhoneUse } = detectDrivingEvents(pts, thresholds, endTime, tripPrivacyZones);
     const activeIncidentEvents = (tripToEnd.driving_events || []).filter((event) => event.type === 'possible_crash');
     const events = enrichEventsWithSensorContext([...detectedEvents, ...activeIncidentEvents], sensorFusionRef.current?.getSamples?.() || []);
     const startMs = new Date(tripToEnd.start_time).getTime();
@@ -878,16 +996,25 @@ export default function Dashboard() {
     if (isAndroid() && Number.isFinite(startMs) && Number.isFinite(endMs)) {
       nativePhoneUsageSummary = await getAndroidPhoneUsageSummary(startMs, endMs).catch(() => null);
     }
+    const nativePhoneUsageAccessGranted = nativePhoneUsageSummary?.usage_access_granted === true ||
+      tripToEnd.native_phone_usage_access_granted === true;
     const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativePhoneUsageSummary || {}, pts, stats.duration_seconds);
     const phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
-    let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime });
+    let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime, privacyZones: tripPrivacyZones });
     scores = applyWeatherRiskToScores(scores, weatherContext);
-    const tripEvents = mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse);
+    const tripEvents = maskEventsForPrivacy(
+      mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
+      { privacy_zones: tripPrivacyZones }
+    );
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
     const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
     const sensorFusionSummary = buildSensorFusionSummary(sensorFusionRef.current?.getSamples?.() || [], pts, latestActivityRef.current);
     const driverModel = buildOnDeviceDriverModel(completedTrips);
     const anomaly = scoreTripAnomaly({ ...stats, ...scores }, driverModel);
+    const dataQualityFlags = Array.from(new Set(Array.isArray(tripToEnd.data_quality_flags) ? tripToEnd.data_quality_flags : []));
+    const scoreConfidenceFlag = tripToEnd.score_confidence_flag ||
+      stats.score_confidence_flag ||
+      (dataQualityFlags.includes('location_permission_loss') ? 'data_gap_detected' : null);
 
     const completedTrip = {
       ...stats,
@@ -911,8 +1038,10 @@ export default function Dashboard() {
         status: mapMatchingContext.status,
         confidence: mapMatchingContext.confidence ?? null,
         snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
+        isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl,
       },
-      weather_context: weatherContext,
+      weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
+      weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
       sensor_fusion_summary: sensorFusionSummary,
       driver_anomaly: anomaly,
       anomaly_score: anomaly.anomaly_score,
@@ -937,10 +1066,14 @@ export default function Dashboard() {
       emergency_workflow_pending: tripToEnd.emergency_workflow_pending === true,
       emergency_workflow_acknowledged_at: tripToEnd.emergency_workflow_acknowledged_at || null,
       emergency_workflow_acknowledged_action: tripToEnd.emergency_workflow_acknowledged_action || null,
-      native_phone_usage_access_granted: nativePhoneUsageSummary?.usage_access_granted === true,
+      native_phone_usage_access_granted: nativePhoneUsageAccessGranted,
+      native_phone_usage_access_checked_at: tripToEnd.native_phone_usage_access_checked_at || null,
       native_phone_usage_events: nativePhoneUsageSummary?.events || [],
       native_phone_usage_event_count: nativePhoneUsageSummary?.event_count || 0,
       native_phone_usage_total_seconds: nativePhoneUsageSummary?.total_seconds || 0,
+      data_quality_flags: dataQualityFlags,
+      score_confidence_flag: scoreConfidenceFlag,
+      tracking_timeline: Array.isArray(tripToEnd.timeline) ? tripToEnd.timeline : [],
     };
 
     const savedTrip = await tripService.create(completedTrip);
@@ -1007,6 +1140,7 @@ export default function Dashboard() {
     activeTripRef.current = null;
     trackingRef.current = false;
     autoEndingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
     setActiveTrip(null);
     setTracking(false);
     setElapsed(0);
@@ -1140,7 +1274,18 @@ export default function Dashboard() {
           setLocationError(null);
           maybeAutoStart(point);
         },
-        (err) => setLocationError(err.message)
+        (err) => {
+          if (err?.type === 'permission_denied') {
+            autoLocationService.current = null;
+            recordTrackingDiagnostic({
+              type: 'auto_blocked',
+              title: 'Auto tracking blocked',
+              reason: 'web_geolocation_permission_denied',
+            });
+            refreshTrackingStatusContext();
+          }
+          setLocationError(err?.message || 'Location tracking failed.');
+        }
       );
     };
 
@@ -1668,7 +1813,7 @@ export default function Dashboard() {
         >
           <DashboardRiskPanel
             completedTrips={completedTrips}
-            currentLocation={currentLocation}
+            currentLocation={dangerZoneCurrentLocation}
             dailyFatigue={dailyFatigue}
             dangerZones={dangerZones}
             habitProfile={habitProfile}
@@ -1799,7 +1944,7 @@ export default function Dashboard() {
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="font-semibold text-base capitalize">Daily fatigue exposure · {dailyFatigue.fatigueLevel}</h2>
+              <h2 className="font-semibold text-base capitalize">Driving-time exposure estimate · {dailyFatigue.fatigueLevel}</h2>
               <p className="mt-1 text-xs text-muted-foreground">
                 {dailyFatigue.totalDrivingMinutes} min driven today across {dailyFatigue.tripCount} trips
               </p>
@@ -1807,7 +1952,7 @@ export default function Dashboard() {
                 <p className="mt-1 text-xs text-muted-foreground">Resting {dailyFatigue.minutesSinceLastTrip} min</p>
               )}
             </div>
-            <div className="font-grotesk text-2xl font-bold">{dailyFatigue.cumulativeFatigueScore}/10</div>
+            <div className="font-grotesk text-2xl font-bold">~{dailyFatigue.cumulativeFatigueScore}/10</div>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary">
             <div
@@ -1826,7 +1971,7 @@ export default function Dashboard() {
           </div>
           {dailyFatigue.recommendedBreakMinutes > 0 && (
             <div className="mt-3 text-xs font-semibold text-orange-500">
-              Take a {dailyFatigue.recommendedBreakMinutes}-min break before your next trip
+              Consider a {dailyFatigue.recommendedBreakMinutes}-min break before your next trip
             </div>
           )}
         </div>
@@ -1963,7 +2108,7 @@ function DashboardRiskPanel({
   const predictiveRouteRisk = useMemo(() => estimatePredictiveRouteRisk({
     trips: completedTrips,
     dangerZones,
-    weatherRiskScore: 0,
+    weatherRiskScore: null,
     currentLocation,
     habitProfile,
   }), [completedTrips, currentLocation, dangerZones, habitProfile]);
@@ -1973,7 +2118,12 @@ function DashboardRiskPanel({
     predictiveRouteRisk,
   }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
-  const showReadinessNumber = ['developing', 'high'].includes(readinessEvidence) && preTripRisk.readinessScore != null;
+  const showReadinessNumber = readinessEvidence === 'high' && preTripRisk.readinessScore != null;
+  const readinessSummary = preTripRisk.readinessScore == null
+    ? 'Readiness estimate unavailable'
+    : showReadinessNumber
+      ? `Estimated ${preTripRisk.readinessScore}/100 - ${preTripRisk.riskLevel} risk`
+      : 'Limited-data readiness estimate';
 
   return (
     <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
@@ -1995,7 +2145,7 @@ function DashboardRiskPanel({
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <span className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="min-w-0 break-words font-semibold">Trip readiness</h2>
+              <h2 className="min-w-0 break-words font-semibold">Trip readiness estimate</h2>
               {READINESS_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
             </span>
             <button
@@ -2007,14 +2157,14 @@ function DashboardRiskPanel({
             </button>
           </div>
           <div className="break-words text-sm font-medium capitalize">
-            {!showReadinessNumber ? 'Estimated readiness unavailable' : `Estimated ${preTripRisk.readinessScore}/100 - ${preTripRisk.riskLevel} risk`}
+            {readinessSummary}
           </div>
           <div className="mt-0.5 break-words text-xs capitalize text-muted-foreground">
             {readinessEvidence} evidence
           </div>
           {preTripRisk.dataQuality?.personalised === false && (
             <div className="mt-1 break-words text-xs text-muted-foreground">
-              Learning your habits - readiness will personalise after a few more trips.
+              Learning your habits - a precise readiness number stays hidden until enough signals are available.
             </div>
           )}
           {preTripRisk.dataQuality?.personalised && preTripRisk.dataQuality.confidence < 1 && (
@@ -2050,7 +2200,7 @@ function DashboardRiskPanel({
           {settings.predictive_route_risk_enabled !== false && (
             predictiveRouteRisk.insufficientHistory ? (
               <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
-                <div className="font-semibold">Historical context risk</div>
+                <div className="font-semibold">Historical context</div>
                 <div className="mt-1 font-medium text-muted-foreground">Not enough driving history</div>
                 <p className="mt-1 text-muted-foreground">
                   Complete a scored trip with recorded distance before a historical-context estimate is shown.
@@ -2060,7 +2210,7 @@ function DashboardRiskPanel({
               <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex min-w-0 flex-wrap items-center gap-2 break-words font-semibold">
-                    Estimated historical context risk
+                    Estimated historical context
                     {ROUTE_RISK_IS_APPROXIMATE && <CalibrationStatusTag />}
                   </span>
                   <span className={`flex-shrink-0 font-bold capitalize ${
@@ -2076,7 +2226,7 @@ function DashboardRiskPanel({
                     {predictiveRouteRisk.nearbyDangerZoneCount} repeated event area{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history nearby
                   </div>
                 )}
-                <div className="mt-3 border-t border-border pt-2" aria-label="Estimated historical context risk component breakdown">
+                <div className="mt-3 border-t border-border pt-2" aria-label="Estimated historical context component breakdown">
                   <div className="mb-2 font-semibold text-muted-foreground">Signal contributions</div>
                   {predictiveRouteRisk.componentBreakdown.map((component) => (
                     <div key={component.key} className="mb-1.5 flex items-start justify-between gap-3 last:mb-0">

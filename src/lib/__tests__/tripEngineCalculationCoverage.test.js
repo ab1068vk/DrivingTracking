@@ -90,6 +90,39 @@ describe('trip engine calculation coverage', () => {
     }).discarded).toBe(true);
   });
 
+  it('estimates distance traveled through privacy-zone masked gaps', () => {
+    const route = [
+      point(0, {
+        lat: 43.65,
+        lng: -79.38,
+        privacy_boundary: true,
+        privacy_zone_id: 'home',
+        timestamp: at(0),
+      }),
+      point(1, {
+        lat: null,
+        lng: null,
+        masked_for_privacy: true,
+        privacy_zone_id: 'home',
+        timestamp: at(150),
+      }),
+      point(2, {
+        lat: 43.652,
+        lng: -79.38,
+        privacy_boundary: true,
+        privacy_zone_id: 'home',
+        timestamp: at(300),
+      }),
+    ];
+
+    const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp);
+
+    expect(stats.estimated_private_distance_km).toBeGreaterThan(0.2);
+    expect(stats.estimated_private_distance_km).toBeLessThan(0.25);
+    expect(stats.distance_km).toBeGreaterThanOrEqual(stats.estimated_private_distance_km);
+    expect(stats.duration_seconds).toBe(300);
+  });
+
   it('detects braking sequences and harsher event scores on abrupt speed drops', () => {
     const route = [
       point(0, { speed_kmh: 100, timestamp: at(0) }),
@@ -123,6 +156,31 @@ describe('trip engine calculation coverage', () => {
 
   it('does not invent an eco score when a trip has no route points', () => {
     expect(calculateEcoDrivingScore([], {}, DEFAULT_THRESHOLDS).eco_driving_score).toBeNull();
+  });
+
+  it('excludes driving events inside the privacy-zone event guard from scores and storage', () => {
+    const privacyZones = [{ id: 'home', lat: 43.65, lng: -79.38, radius_m: 100 }];
+    const nearBoundaryEvent = {
+      type: EVENT_TYPES.HARSH_BRAKE,
+      severity: 'medium',
+      lat: 43.65115,
+      lng: -79.38,
+      timestamp: at(10),
+      value: 5.2,
+    };
+
+    const scores = calculateTripScores(
+      [nearBoundaryEvent],
+      { distance_km: 5, duration_seconds: 300, fatigue_risk_score: 0, intersection_score: 100 },
+      [],
+      DEFAULT_THRESHOLDS,
+      300,
+      {},
+      { privacyZones }
+    );
+
+    expect(scores.harsh_brakes_count).toBe(0);
+    expect(scores.driving_events).toEqual([]);
   });
 
   it('maps speed coefficient of variation to stable eco speed-stability scores', () => {
@@ -245,7 +303,7 @@ describe('trip engine calculation coverage', () => {
     const fatiguePenalty = FATIGUE_SAFETY_PENALTY_SCALE * stats.fatigue_risk_score;
     const expectedSafety = 100 - Math.round((fatiguePenalty / stats.distance_km) * PENALTY_SCALE_FACTOR);
 
-    expect(fatiguePenalty).toBe(12);
+    expect(fatiguePenalty).toBe(15);
     expect(scores.score_safety).toBe(expectedSafety);
   });
 

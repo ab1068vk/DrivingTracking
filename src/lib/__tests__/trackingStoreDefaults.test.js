@@ -2,14 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, migrateDefaultSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 
 describe('tracking store default settings', () => {
-  it('keeps external context auto-fetch disabled by default', () => {
-    expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(false);
+  it('keeps external context auto-fetch enabled by default', () => {
+    expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(true);
+  });
+
+  it('keeps calibration sharing opt-in by default', () => {
+    expect(DEFAULT_SETTINGS.calibration_sharing_enabled).toBe(false);
+    expect(sanitizeImportedSettings({ calibration_sharing_enabled: true })).toMatchObject({
+      calibration_sharing_enabled: true,
+    });
   });
 
   it('keeps inferred speed-limit country defaults configurable', () => {
+    expect(DEFAULT_SETTINGS.country_code).toBe('');
     expect(DEFAULT_SETTINGS.configurable_country_defaults).toBe('global');
     expect(sanitizeImportedSettings({ configurable_country_defaults: 'gb' })).toMatchObject({
       configurable_country_defaults: 'gb',
+    });
+    expect(sanitizeImportedSettings({ country_code: 'GB' })).toMatchObject({
+      country_code: 'GB',
     });
     expect(sanitizeImportedSettings({ configurable_country_defaults: 'mars' }).configurable_country_defaults).toBeUndefined();
   });
@@ -55,7 +66,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(5);
+    expect(legacySunset.settings_defaults_version).toBe(6);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 

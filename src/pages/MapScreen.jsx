@@ -70,6 +70,12 @@ export default function MapScreen() {
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const privacyZones = getPrivacyZones(settings);
+  const privacyZonesKey = JSON.stringify(privacyZones.map((zone) => [
+    zone.id,
+    Number(zone.lat),
+    Number(zone.lng),
+    Number(zone.radius_m),
+  ]));
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
   const { data: trips = [] } = useQuery({
@@ -215,9 +221,11 @@ export default function MapScreen() {
 
       const zones = buildRiskHotspots(allCompleted);
       await saveDangerZones(zones);
-      let index = await loadRouteRiskIndex();
+      let index = await loadRouteRiskIndex(privacyZones);
       if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted);
+        index = buildRouteRiskIndex(allCompleted, privacyZones);
+        await saveRouteRiskIndex(index);
+      } else if (privacyZones.length) {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {
@@ -230,7 +238,7 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [allCompleted.length, trips]);
+  }, [allCompleted.length, trips, privacyZonesKey]);
 
   const handleWhereParked = async () => {
     const stored = await getLastParkedLocation();
@@ -445,7 +453,7 @@ export default function MapScreen() {
               <div className="mt-1">For this selected trip only:</div>
               <div className="mt-2 grid gap-1">
                 <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'asks OpenStreetMap for road names and posted/default limits near the route.'}</div>
-                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'asks Open-Meteo for trip midpoint/date weather.'}</div>
+                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'asks Open-Meteo for privacy-safe route point/date weather.'}</div>
                 <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url ? 'sends sampled GPS points to OSRM to clean up the route line.' : 'skipped until an OSRM endpoint is set in Settings.'}</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
@@ -512,7 +520,7 @@ export default function MapScreen() {
                       ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
                       : 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
                   }`}>
-                    {zone.riskLevel}
+                    {zone.riskLevel} event level
                   </span>
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">

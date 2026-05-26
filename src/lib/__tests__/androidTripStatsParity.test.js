@@ -86,4 +86,22 @@ describe('Android auto-tracking stats parity', () => {
     expect(source).toContain('trip.put("score_status", "pending_javascript_scoring");');
     expect(source).not.toContain('trip.put("score_overall", 100');
   });
+
+  it('records native location permission loss as a trip data quality flag', () => {
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+
+    expect(source).toContain('catch (SecurityException exception)');
+    expect(source).toContain('recordTimeline("location_permission_lost"');
+    expect(source).toContain('flags.put("location_permission_loss");');
+    expect(source).toContain('trip.put("data_quality_flags", flags);');
+  });
+
+  it('treats stale native activity state as missing for GPS-only parked fallback', () => {
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+
+    expect(source).toContain('ACTIVITY_STATE_MAX_AGE_MS');
+    expect(source).toContain('lastActivityUpdateMs');
+    expect(source).toContain('recordTimeline("activity_recognition_stale"');
+    expect(source).toContain('finishTrip("activity_recognition_stale", true);');
+  });
 });

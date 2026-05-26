@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { calibrationLabelService } from '@/api/calibrationLabels';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
@@ -33,6 +34,7 @@ import { formatCurrencyAmount } from '@/lib/currency';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { DAILY_FATIGUE_THRESHOLDS } from '@/lib/dailyFatigueEngine';
 import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics, suggestTripTag } from '@/lib/tripInsights';
+import { getPrivacyZones } from '@/lib/privacyZones';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
   buildOpenSourceTripContextPatch,
@@ -40,7 +42,7 @@ import {
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
 } from '@/lib/openSourceTripContext';
-import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
+import { buildPhoneUsageAccessProvenance, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import {
   TRIP_TAG_OPTIONS,
   buildScoreExplanation,
@@ -61,6 +63,15 @@ import {
 } from '@/components/ui/alert-dialog';
 import { DISMISSED_TAG_SUGGESTIONS_KEY, MAX_ROUTE_RISK_SEGMENTS_SHOWN } from '@/lib/appConstants';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
+import { getAndroidUsageAccessStatus } from '@/lib/activityRecognition';
+import { isAndroid } from '@/lib/nativePlatform';
+import {
+  CALIBRATION_LABEL_TARGET_COUNT,
+  SCORE_ACCURACY_OPTIONS,
+  SURVEY_RATING_OPTIONS,
+  TRIP_CONTEXT_TAG_OPTIONS,
+  WAS_DRIVER_OPTIONS,
+} from '@/lib/calibrationLabeling';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -85,6 +96,7 @@ export default function TripDetail() {
   const qc = useQueryClient();
   const settings = localSettings.get();
   const units = settings.units || 'metric';
+  const privacyZones = getPrivacyZones(settings);
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
   const [showSpeedLimitsOnMap, setShowSpeedLimitsOnMap] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
@@ -94,6 +106,9 @@ export default function TripDetail() {
   const [feedbackStatus, setFeedbackStatus] = useState('');
   const [showAllRouteRiskSegments, setShowAllRouteRiskSegments] = useState(false);
   const [dismissedTagsLoaded, setDismissedTagsLoaded] = useState(false);
+  const [currentUsageAccessGranted, setCurrentUsageAccessGranted] = useState(null);
+  const [calibrationSurveyStatus, setCalibrationSurveyStatus] = useState(null);
+  const [calibrationLabelCount, setCalibrationLabelCount] = useState(null);
   const metadataSectionRef = useRef(null);
 
   const { data: trip, isLoading } = useQuery({
@@ -211,6 +226,24 @@ export default function TripDetail() {
       setTimeout(() => setOsmFetchStatus(''), 2500);
     },
   });
+  const calibrationSurveyMutation = useMutation({
+    mutationFn: (surveyInput) => calibrationLabelService.submitTripSurveyLabel(trip, surveyInput),
+    onSuccess: async (record) => {
+      const [marker, count] = await Promise.all([
+        calibrationLabelService.getTripSurveyStatus(trip.id),
+        calibrationLabelService.countLocalLabels(),
+      ]);
+      setCalibrationSurveyStatus(marker || {
+        rating: record?.surveyLabel?.overallDriveRating ?? null,
+        submitted_at: record?.createdAt ?? new Date().toISOString(),
+      });
+      setCalibrationLabelCount(count);
+    },
+  });
+  const skipCalibrationSurveyMutation = useMutation({
+    mutationFn: () => calibrationLabelService.skipTripSurvey(trip.id),
+    onSuccess: (marker) => setCalibrationSurveyStatus(marker || { skipped: true }),
+  });
   const [dismissedTags, setDismissedTags] = useState([]);
 
   const confirmAndFetchRoadContext = () => {
@@ -269,7 +302,7 @@ export default function TripDetail() {
   const hiddenRouteRiskSegmentCount = routeRiskSegments.length - displayedRouteRiskSegments.length;
 
   useEffect(() => {
-    loadRouteRiskIndex().then(setRouteRiskIndex);
+    loadRouteRiskIndex(privacyZones).then(setRouteRiskIndex);
   }, []);
 
   useEffect(() => {
@@ -293,6 +326,49 @@ export default function TripDetail() {
       tags: normalizeTripTags(trip),
     });
   }, [trip]);
+
+  useEffect(() => {
+    if (!trip?.id) {
+      setCalibrationSurveyStatus(null);
+      setCalibrationLabelCount(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    Promise.all([
+      calibrationLabelService.getTripSurveyStatus(trip.id),
+      calibrationLabelService.countLocalLabels(),
+    ]).then(([marker, count]) => {
+      if (cancelled) return;
+      setCalibrationSurveyStatus(marker);
+      setCalibrationLabelCount(count);
+    }).catch(() => {
+      if (!cancelled) setCalibrationSurveyStatus(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [trip?.id]);
+
+  useEffect(() => {
+    if (!trip || !isAndroid()) {
+      setCurrentUsageAccessGranted(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    getAndroidUsageAccessStatus()
+      .then((status) => {
+        if (!cancelled) setCurrentUsageAccessGranted(status?.usageAccessGranted === true);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUsageAccessGranted(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trip?.id]);
 
   if (isLoading) {
     return (
@@ -381,6 +457,8 @@ export default function TripDetail() {
   const weatherContext = trip.weather_context || null;
   const speedLimitContext = trip.speed_limit_context || null;
   const mapMatchingContext = trip.map_matching_context || null;
+  const mapMatchedViaPublicOsrmDemo = mapMatchingContext?.isOsrmDemoUrl === true &&
+    ['matched', 'partial_matched', 'cache_hit'].includes(mapMatchingContext?.status);
   const osmSpeedLimitPoints = (trip.route_points || []).filter((point) => (
     ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source) &&
     Number.isFinite(Number(point.speed_limit_kmh))
@@ -395,10 +473,32 @@ export default function TripDetail() {
     const pct = (count) => points.length ? Math.round((count / points.length) * 100) : 0;
     return { mapDerivedPct: pct(mapDerived), inferredPct: pct(inferred), sampleCount: points.length };
   })();
+  const osmCoveragePct = Number.isFinite(Number(speedLimitContext?.coverage))
+    ? Number(speedLimitContext.coverage)
+    : speedLimitCoverage.mapDerivedPct;
+  const showLowSpeedLimitCoverageBanner = speedLimitCoverage.sampleCount > 0 && osmCoveragePct < 20;
+  const speedLimitDefaultCountries = [...new Set([
+    ...(trip.route_points || []).map((point) => point.speed_limit_default_country),
+    ...(trip.driving_events || []).map((event) => event.speed_limit_default_country),
+  ].filter(Boolean))].map((country) => String(country).toUpperCase());
+  const speedLimitDefaultCountryText = speedLimitDefaultCountries.length
+    ? ` Country assumption for OSM road-type defaults: ${speedLimitDefaultCountries.join(', ')}.`
+    : '';
+  const dataQualityFlags = Array.isArray(trip.data_quality_flags) ? trip.data_quality_flags : [];
+  const hasLocationPermissionLoss = dataQualityFlags.includes('location_permission_loss') ||
+    trip.score_confidence_flag === 'data_gap_detected' ||
+    (trip.native_tracking_timeline || []).some((event) => event?.type === 'location_permission_lost');
   const sensorFusionSummary = trip.sensor_fusion_summary || null;
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
   const displayPhoneUse = buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
+  const livePhoneUsageAccessProvenance = buildPhoneUsageAccessProvenance(trip, currentUsageAccessGranted);
+  const storedPhoneUsageAccessProvenance = trip.phone_usage_access_provenance?.changed
+    ? trip.phone_usage_access_provenance
+    : null;
+  const phoneUsageAccessProvenance = livePhoneUsageAccessProvenance.changed
+    ? livePhoneUsageAccessProvenance
+    : storedPhoneUsageAccessProvenance;
   const componentScore = (key) => getTripComponentScore(trip, key);
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
@@ -450,6 +550,7 @@ export default function TripDetail() {
       : '#22c55e';
   const primaryAvgSpeedKmh = trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0;
   // FIX: Use moving average speed as the primary Avg Speed metric.
+  const estimatedPrivateDistanceKm = Math.max(0, Number(trip.estimated_private_distance_km) || 0);
   const showOverallAvgSpeed = (trip.idle_time_seconds || 0) > 60;
   // FIX: Show overall average only when there was meaningful stopped time.
   const trafficIdleSeconds = trip.traffic_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - (trip.sustained_idle_seconds || 0));
@@ -595,10 +696,10 @@ export default function TripDetail() {
         <div className="rounded-2xl border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-200">
           <div className="flex items-center gap-2 font-semibold">
             <AlertTriangle className="h-4 w-4" />
-            Possible crash / incident detected
+            Possible incident signal recorded
           </div>
           <div className="mt-1 text-xs">
-            Impact-like motion and low movement were recorded. {trip.emergency_workflow_acknowledged_at ? `Emergency check-in was acknowledged (${trip.emergency_workflow_acknowledged_action || 'ok'}).` : possibleIncidentEvents.some((event) => event.emergency_workflow_pending) ? 'Emergency check-in was active for this trip.' : 'Review the trip timeline and notes while the details are fresh.'}
+            Impact-like motion and low movement were recorded. Road Sage cannot confirm that a crash occurred. {trip.emergency_workflow_acknowledged_at ? `Emergency check-in was acknowledged (${trip.emergency_workflow_acknowledged_action || 'ok'}).` : possibleIncidentEvents.some((event) => event.emergency_workflow_pending) ? 'Emergency check-in was active for this trip.' : 'Review the trip timeline and notes while the details are fresh.'}
           </div>
         </div>
       )}
@@ -606,6 +707,13 @@ export default function TripDetail() {
       {['possible', 'likely'].includes(trip.phone_proxy_risk) && (
         <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3 text-sm font-medium text-yellow-700 dark:border-yellow-800/50 dark:bg-yellow-950/30 dark:text-yellow-300">
           GPS phone-use proxy diagnostic: {trip.phone_proxy_count || 0} micro-steering pattern{(trip.phone_proxy_count || 0) === 1 ? '' : 's'} recorded. This is not phone-use evidence and does not affect scores.
+        </div>
+      )}
+
+      {mapMatchedViaPublicOsrmDemo && (
+        <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <Route className="h-4 w-4" />
+          <span>Road-matched via public OSRM demo</span>
         </div>
       )}
 
@@ -618,6 +726,12 @@ export default function TripDetail() {
       {!hasPhoneUsageAccess && (
         <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
           Usage Access needed for accurate phone detection. No phone-use score is available for this trip.
+        </div>
+      )}
+
+      {phoneUsageAccessProvenance?.changed && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
+          {phoneUsageAccessProvenance.note}
         </div>
       )}
 
@@ -646,7 +760,7 @@ export default function TripDetail() {
                   Weather context
                 </div>
                 <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
-                  {weatherContext.riskLevel || 'low'} risk
+                  {weatherContext.riskLevel ? `${weatherContext.riskLevel} risk` : 'risk unavailable'}
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground capitalize">
@@ -673,7 +787,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Detected/default limits: ${osmSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
+                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Matched/default limits: ${osmSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
               </div>
               {speedLimitContext.error && (
                 <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
@@ -691,6 +805,11 @@ export default function TripDetail() {
                   {mapMatchingContext.status?.replace(/_/g, ' ') || 'unknown'}
                 </span>
               </div>
+              {mapMatchedViaPublicOsrmDemo && (
+                <div className="mt-2 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                  Road-matched via public OSRM demo
+                </div>
+              )}
               <div className="mt-2 text-xs text-muted-foreground">
                 {describeMapMatchingStatus(mapMatchingContext)}
               </div>
@@ -752,7 +871,7 @@ export default function TripDetail() {
 
           {phoneUseRisk === 'none' ? (
             <div className="mt-4 rounded-2xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
-              No confirmed phone-use events detected this trip.
+              No confirmed phone-use events recorded this trip.
             </div>
           ) : (
             <div className="mt-4 space-y-3">
@@ -760,7 +879,7 @@ export default function TripDetail() {
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Smartphone className="mb-2 h-4 w-4 text-red-500" />
                   <div className="font-grotesk text-2xl font-bold">{displayPhoneUse.phone_use_window_count || trip.phone_use_window_count || phoneUseWindows.length}</div>
-                  <div className="text-xs text-muted-foreground">windows detected</div>
+                  <div className="text-xs text-muted-foreground">windows recorded</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Clock className="mb-2 h-4 w-4 text-orange-500" />
@@ -823,6 +942,41 @@ export default function TripDetail() {
 
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+        {hasLocationPermissionLoss && (
+          <div className="mb-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 shadow-sm dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-200">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div>
+                <div className="font-semibold">GPS data was unavailable for part of this trip.</div>
+                <div className="mt-0.5 text-xs">Distance and scores may be underreported.</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {showLowSpeedLimitCoverageBanner && (
+          <div className="mb-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 shadow-sm dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-200">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <div>
+                  <div className="font-semibold">Speed limit data unavailable</div>
+                  <div className="mt-0.5 text-xs">
+                    {osmCoveragePct}% speed-limit coverage - tap to fetch road context for accurate speeding detection.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={confirmAndFetchRoadContext}
+                disabled={contextMutation.isPending || !trip.route_points?.length}
+                className="inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-orange-700 disabled:opacity-60"
+              >
+                <Route className="h-3.5 w-3.5" />
+                {contextMutation.isPending ? osmFetchStatus || 'Fetching...' : 'Fetch Road Context'}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="mb-2 flex flex-wrap justify-end gap-2">
           <button
             onClick={confirmAndFetchRoadContext}
@@ -865,7 +1019,7 @@ export default function TripDetail() {
           <div className="mt-2 grid gap-1">
             <div>Get Road Data: checks the enabled options below for this trip.</div>
             <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.'}</div>
-            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends trip midpoint and date to Open-Meteo.'}</div>
+            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends a privacy-safe route point and date to Open-Meteo.'}</div>
             <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url ? 'sends sampled GPS points to OSRM to clean up the route line.' : 'skips OSRM until an endpoint is set in Settings.'}</div>
             <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
@@ -1004,9 +1158,9 @@ export default function TripDetail() {
                 <div key={`${segment.from.lat}-${segment.to.lat}-${index}`} className="flex gap-3 rounded-2xl bg-secondary/50 p-3">
                   <span className={`mt-1 h-3 w-3 rounded-full ${segment.riskLevel === 'high' ? 'bg-red-500' : 'bg-orange-500'}`} />
                   <div className="text-sm">
-                    <div className="font-semibold capitalize">{segment.riskLevel}-risk stretch</div>
+                    <div className="font-semibold capitalize">{segment.riskLevel} event-density stretch</div>
                     <div className="text-xs text-muted-foreground">
-                      You've driven through this area {segment.tripCount} times. Average {perPass.toFixed(1)} events per pass · mostly {(segment.dominantEventType || 'risk events').replace(/_/g, ' ')}
+                      You've driven through this area {segment.tripCount} times. Average {perPass.toFixed(1)} recorded events per pass · mostly {(segment.dominantEventType || 'driving events').replace(/_/g, ' ')}
                     </div>
                   </div>
                 </div>
@@ -1034,6 +1188,16 @@ export default function TripDetail() {
       >
         <TripScoreOverview trip={trip} />
       </SectionErrorBoundary>
+      <PostTripCalibrationSurvey
+        status={calibrationSurveyStatus}
+        labelCount={calibrationLabelCount}
+        sharingEnabled={settings.calibration_sharing_enabled === true}
+        isPending={calibrationSurveyMutation.isPending}
+        isSkipping={skipCalibrationSurveyMutation.isPending}
+        error={calibrationSurveyMutation.error}
+        onSubmit={(surveyInput) => calibrationSurveyMutation.mutate(surveyInput)}
+        onSkip={() => skipCalibrationSurveyMutation.mutate()}
+      />
       {roadTypeScores.length > 0 && (
         <motion.details
           initial={{ opacity: 0, y: 16 }}
@@ -1079,7 +1243,14 @@ export default function TripDetail() {
 
         <div className="grid grid-cols-2 gap-4">
           {[
-            { icon: Navigation, label: 'Distance', value: formatDistance(trip.distance_km || 0, units) },
+            {
+              icon: Navigation,
+              label: 'Distance',
+              value: formatDistance(trip.distance_km || 0, units),
+              subValue: estimatedPrivateDistanceKm > 0
+                ? `~${formatDistance(estimatedPrivateDistanceKm, units)} traveled within privacy zones (estimated)`
+                : null,
+            },
             { icon: Clock, label: 'Duration', value: formatDuration(trip.duration_seconds) },
             {
               icon: Gauge,
@@ -1125,7 +1296,7 @@ export default function TripDetail() {
           {trip.night_driving && (
             <div className="flex items-center gap-2 text-sm text-purple-600 dark:text-purple-400">
               <Moon className="w-4 h-4" />
-              <span>Night driving detected</span>
+              <span>Night driving recorded</span>
             </div>
           )}
           {roadCfg && (
@@ -1159,7 +1330,7 @@ export default function TripDetail() {
         >
           <h2 className="font-semibold mb-3">Speed Zones</h2>
           <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-            Speed-limit coverage: {speedLimitCoverage.mapDerivedPct}% map-derived/default OSM, {speedLimitCoverage.inferredPct}% inferred from GPS speed bands ({speedLimitCoverage.sampleCount} samples).
+            Speed-limit coverage: {speedLimitCoverage.mapDerivedPct}% map-derived/default OSM, {speedLimitCoverage.inferredPct}% inferred from GPS speed bands ({speedLimitCoverage.sampleCount} samples).{speedLimitDefaultCountryText}
           </div>
           <div className="space-y-2">
             {speedZoneSummary.map((zone) => (
@@ -1184,7 +1355,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? 'OSM road-type default' : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type default${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} assumption)` : ''}` : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
                 </div>
               </div>
             ))}
@@ -1225,7 +1396,7 @@ export default function TripDetail() {
               <Icon className={`w-4 h-4 mb-2 ${color}`} />
               <div className={`font-grotesk font-bold text-xl ${capitalize ? 'capitalize' : ''}`}>{value}</div>
               <div className="text-xs text-muted-foreground">{label}</div>
-              {evidenceScore && evidenceScore.evidence !== 'high' && (
+              {evidenceScore && shouldShowComponentEvidenceBadge(evidenceScore.evidence) && (
                 <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(evidenceScore.evidence)}</div>
               )}
             </div>
@@ -1383,11 +1554,11 @@ export default function TripDetail() {
           </div>
         ) : (trip.traffic_stop_count ?? trip.stop_count ?? 0) > 0 ? (
           <div className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
-            {trip.traffic_stop_count ?? trip.stop_count} traffic stops detected. No extended stopped periods were recorded.
+            {trip.traffic_stop_count ?? trip.stop_count} estimated traffic stops recorded. No extended stopped periods were recorded.
           </div>
         ) : (
           <div className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
-            No traffic stops or extended stopped periods detected on this trip.
+            No estimated traffic stops or extended stopped periods were recorded on this trip.
           </div>
         )}
       </motion.div>
@@ -1403,7 +1574,7 @@ export default function TripDetail() {
           <h2 className="font-semibold mb-4">
             Driving Events
             <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {displayEvents.length} detected
+              {displayEvents.length} recorded
             </span>
           </h2>
           {(feedbackCounts.accurate > 0 || feedbackCounts.wrong > 0) && (
@@ -1479,6 +1650,8 @@ export default function TripDetail() {
                 : evt.type === 'speeding' && evt.speed_limit_source
                   ? evt.speed_limit_source === 'inferred'
                     ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
+                    : evt.speed_limit_source === 'osm_highway_default'
+                      ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
                     : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
                   : inferredTypes.includes(evt.type)
                     ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
@@ -1540,15 +1713,250 @@ export default function TripDetail() {
 }
 
 function componentEvidenceText(evidence) {
-  if (typeof evidence === 'string' && ['high', 'developing', 'low', 'unavailable'].includes(evidence)) {
+  if (evidence === 'developing') return 'limited evidence';
+  if (typeof evidence === 'string' && ['high', 'low', 'unavailable'].includes(evidence)) {
     return `${evidence} evidence`;
   }
   const numeric = Number(evidence);
   if (!Number.isFinite(numeric)) return null;
   if (numeric <= 0) return 'unavailable evidence';
   if (numeric < 0.5) return 'low evidence';
-  if (numeric < 0.8) return 'developing evidence';
+  if (numeric < 0.8) return 'limited evidence';
   return 'high evidence';
+}
+
+function shouldShowComponentEvidenceBadge(evidence) {
+  return evidence === 'low' || evidence === 'unavailable';
+}
+
+const SCORE_ACCURACY_LABELS = {
+  accurate: 'Accurate',
+  too_high: 'Too high',
+  too_low: 'Too low',
+};
+
+const WAS_DRIVER_LABELS = {
+  yes: 'Yes',
+  no: 'No',
+  unsure: 'Unsure',
+};
+
+const CONTEXT_TAG_LABELS = {
+  traffic: 'Traffic',
+  weather: 'Weather',
+  construction: 'Construction',
+  fatigue: 'Fatigue',
+  aggressive_drivers: 'Aggressive drivers',
+  bad_road: 'Bad road',
+  gps_issue: 'GPS issue',
+  passenger: 'Passenger',
+  other: 'Other',
+};
+
+function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPending, isSkipping, error, onSubmit, onSkip }) {
+  const [draft, setDraft] = useState({
+    overallDriveRating: null,
+    scoreAccuracy: '',
+    wasDriver: 'yes',
+    tripDifficulty: '',
+    contextTags: [],
+    freeTextNote: '',
+  });
+  const submittedRating = Number(status?.rating);
+  const submitted = Number.isInteger(submittedRating) && submittedRating >= 1 && submittedRating <= 5;
+  const skipped = status?.skipped === true;
+  const progressText = Number.isFinite(Number(labelCount))
+    ? `${Math.min(Number(labelCount), CALIBRATION_LABEL_TARGET_COUNT).toLocaleString()} / ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`
+    : `Target: ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`;
+  const disabled = isPending || isSkipping || submitted || skipped;
+  const canSubmit = Number.isInteger(Number(draft.overallDriveRating)) &&
+    Number(draft.overallDriveRating) >= 1 &&
+    Number(draft.overallDriveRating) <= 5 &&
+    WAS_DRIVER_OPTIONS.includes(draft.wasDriver) &&
+    !disabled;
+  const toggleContextTag = (tag) => {
+    setDraft((current) => ({
+      ...current,
+      contextTags: current.contextTags.includes(tag)
+        ? current.contextTags.filter((item) => item !== tag)
+        : [...current.contextTags, tag],
+    }));
+  };
+  const submit = () => {
+    if (!canSubmit) return;
+    onSubmit({
+      overallDriveRating: Number(draft.overallDriveRating),
+      scoreAccuracy: draft.scoreAccuracy || null,
+      wasDriver: draft.wasDriver,
+      tripDifficulty: draft.tripDifficulty ? Number(draft.tripDifficulty) : null,
+      contextTags: draft.contextTags,
+      freeTextNote: draft.freeTextNote,
+    });
+  };
+
+  if (skipped) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.16 }}
+      className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-semibold">How did this drive feel?</h2>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Optional calibration label. It never blocks your trip results.
+          </div>
+        </div>
+        <div className="text-xs font-medium text-muted-foreground">{progressText}</div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-5 gap-2">
+        {SURVEY_RATING_OPTIONS.map((option) => {
+          const selected = submitted ? submittedRating === option.value : Number(draft.overallDriveRating) === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => setDraft((current) => ({ ...current, overallDriveRating: option.value }))}
+              title={`${option.value} - ${option.label}`}
+              className={`min-h-16 rounded-xl border px-2 py-2 text-center transition-colors ${
+                selected
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
+              }`}
+            >
+              <div className="text-lg font-bold leading-none">{option.value}</div>
+              <div className="mt-1 text-[11px] font-medium leading-tight">{option.label}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {!submitted && (
+        <div className="mt-4 space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-xs font-medium text-muted-foreground">
+              Score accuracy
+              <select
+                value={draft.scoreAccuracy}
+                disabled={disabled}
+                onChange={(event) => setDraft((current) => ({ ...current, scoreAccuracy: event.target.value }))}
+                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+              >
+                <option value="">Optional</option>
+                {SCORE_ACCURACY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{SCORE_ACCURACY_LABELS[option]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Was driver
+              <select
+                value={draft.wasDriver}
+                disabled={disabled}
+                onChange={(event) => setDraft((current) => ({ ...current, wasDriver: event.target.value }))}
+                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+              >
+                {WAS_DRIVER_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{WAS_DRIVER_LABELS[option]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Trip difficulty
+              <select
+                value={draft.tripDifficulty}
+                disabled={disabled}
+                onChange={(event) => setDraft((current) => ({ ...current, tripDifficulty: event.target.value }))}
+                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+              >
+                <option value="">Optional</option>
+                {SURVEY_RATING_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.value}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <div className="text-xs font-medium text-muted-foreground">Context tags</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {TRIP_CONTEXT_TAG_OPTIONS.map((tag) => {
+                const selected = draft.contextTags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => toggleContextTag(tag)}
+                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                      selected
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    {CONTEXT_TAG_LABELS[tag]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <label className="block text-xs font-medium text-muted-foreground">
+            Note
+            <textarea
+              value={draft.freeTextNote}
+              disabled={disabled}
+              onChange={(event) => setDraft((current) => ({ ...current, freeTextNote: event.target.value }))}
+              className="mt-1 min-h-20 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+              placeholder="Optional. Stored locally only."
+            />
+          </label>
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs text-muted-foreground">
+          {submitted
+            ? 'Rating saved for the calibration dataset.'
+            : isPending
+              ? 'Saving rating...'
+              : sharingEnabled
+                ? 'Sharing is on. Only anonymized summary features are uploaded when quality checks pass.'
+                : 'Sharing is off. This label stays local unless you opt in from Settings.'}
+        </div>
+        {!submitted && (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={onSkip}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
+            >
+              {isSkipping ? 'Skipping...' : 'Skip'}
+            </button>
+            <button
+              type="button"
+              disabled={!canSubmit}
+              onClick={submit}
+              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              Save feedback
+            </button>
+          </div>
+        )}
+      </div>
+      {error && (
+        <div className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
+          {error.message || 'Could not save this rating.'}
+        </div>
+      )}
+    </motion.div>
+  );
 }
 
 function TripScoreOverview({ trip }) {
@@ -1594,7 +2002,9 @@ function TripScoreOverview({ trip }) {
               <div key={label} className="text-center" title={component.note || buildScoreExplanation(trip, `score_${key}`)}>
                 <div className={`font-grotesk font-bold text-xl ${c}`}>{component.value}</div>
                 <div className="text-xs text-muted-foreground">{label}</div>
-                <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
+                {shouldShowComponentEvidenceBadge(component.evidence) && (
+                  <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
+                )}
               </div>
             );
           })}
@@ -1607,7 +2017,7 @@ function TripScoreOverview({ trip }) {
       )}
       {lowScoreConfidence && (
         <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-          Score based on limited available evidence. One or more contributing signals may be unavailable or still developing.
+          Score based on limited available evidence. Short city trips often have enough GPS data to score, but not enough distance or supporting signals to call the score high confidence yet.
         </p>
       )}
       {scoreProvenance && (
@@ -1617,7 +2027,6 @@ function TripScoreOverview({ trip }) {
               Scoring provenance
               {OVERALL_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
             </span>
-            <span>Version {scoreProvenance.scoring_version}</span>
           </div>
           <div className="mt-1">Calculated {formatDateTime(scoreProvenance.computed_at)}</div>
           {provenanceChange && (
@@ -1654,7 +2063,9 @@ function TripScoreOverview({ trip }) {
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold leading-tight">{label}</div>
               {qualifier && <div className="text-[11px] text-muted-foreground">{qualifier}</div>}
-              <div className="text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
+              {shouldShowComponentEvidenceBadge(component.evidence) && (
+                <div className="text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
+              )}
               <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
                 ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
                   grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :

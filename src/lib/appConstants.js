@@ -9,12 +9,16 @@ export const EVENING_RUSH_END_HOUR = 19;
 export const NIGHT_START_TIME = `${String(NIGHT_START_HOUR).padStart(2, '0')}:00`;
 export const NIGHT_END_TIME = `${String(NIGHT_END_HOUR).padStart(2, '0')}:00`;
 
+// Provisional: no labeled fleet/crash/insurer dataset has calibrated this yet.
+// Replace after the fleet labeling study records fitted value and provenance.
 export const PENALTY_SCALE_FACTOR = scoringValue('PENALTY_SCALE_FACTOR');
 
 /**
- * Provisional Safety penalty applied to the normalized 0-100 fatigue proxy.
- * A maximum fatigue proxy currently adds 12 raw penalty points; this has not
- * been calibrated against collision or impairment outcome data.
+ * Source: Williamson & Feyer, Occupational and Environmental Medicine (2000):
+ * 17-19 hours awake can produce performance impairment equivalent or worse
+ * than 0.05% BAC. Conservative mapping: max fatigue proxy (100) to about
+ * 0.05% BAC-equivalent impairment and 15 raw Safety penalty points before
+ * distance normalization.
  */
 export const FATIGUE_SAFETY_PENALTY_SCALE = scoringValue('FATIGUE_SAFETY_PENALTY_SCALE');
 

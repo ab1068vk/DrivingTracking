@@ -64,6 +64,7 @@ export async function getPermissionStatus() {
     notification_permission_granted: status.notifications === 'granted',
     activity_permission_granted: status.activityRecognition === 'granted',
     background_location_granted: status.backgroundLocation === 'granted',
+    phone_usage_access_granted: status.phoneUsageAccess === 'granted',
   });
 
   return status;

@@ -23,6 +23,8 @@ import {
   detectSpeedCreepWithThresholds,
   detectHighwayMergeBehavior,
   inferSpeedZones,
+  getInferredLimitForPoint,
+  resolveEffectiveSpeedLimitForIndex,
   detectHeadingDeviationEvents,
   detectErraticSpeedWindows,
   detectStopStartPatterns,
@@ -52,7 +54,12 @@ import {
   tripsToCSV,
 } from '@/lib/tripEngine';
 import { FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
-import { getLastParkedLocation, saveLastParkedLocation } from '@/lib/trackingStore';
+import {
+  getLastParkedLocation,
+  localSettings,
+  PARKED_LOCATION_PRIVACY_GUARD_M,
+  saveLastParkedLocation,
+} from '@/lib/trackingStore';
 import {
   shouldAutoStartTracking,
   shouldAutoStopTracking,
@@ -89,6 +96,11 @@ const point = (lat, lng, seconds, speedKmh = 40, accuracy = 8) => ({
   speed_kmh: speedKmh,
   accuracy,
   timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, seconds)).toISOString(),
+});
+
+const pointNorthOf = ({ lat, lng }, meters) => ({
+  lat: Number(lat) + (meters / 6371000) * (180 / Math.PI),
+  lng: Number(lng),
 });
 
 describe('tripEngine', () => {
@@ -203,6 +215,24 @@ describe('tripEngine', () => {
 
     expect(stats.max_speed_kmh).toBe(180);
     expect(events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+  });
+
+  it('flags score confidence when a long route gap overlaps native location permission loss', () => {
+    const points = [
+      point(43.6532, -79.3832, 0, 50),
+      point(43.6538, -79.3832, 30, 50),
+      point(43.6570, -79.3832, 210, 50),
+      point(43.6576, -79.3832, 240, 50),
+    ];
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp, DEFAULT_THRESHOLDS, {
+      native_tracking_timeline: [{
+        type: 'location_permission_lost',
+        timestamp: new Date(Date.UTC(2026, 0, 1, 12, 1, 30)).toISOString(),
+      }],
+    });
+
+    expect(stats.gap_seconds).toBe(180);
+    expect(stats.score_confidence_flag).toBe('data_gap_detected');
   });
 
   it('scores steady 105 km/h cruising inside the default eco cruise band', () => {
@@ -362,23 +392,34 @@ describe('tripEngine', () => {
     expect(result.descent_distance_km).toBeGreaterThanOrEqual(0.08);
   });
 
-  it('uses named provisional hill acceleration and infraction penalty thresholds', () => {
-    const uphill = Array.from({ length: 30 }, (_, index) => ({
-      ...point(43.6532 + index * 0.0001, -79.3832, index * 2, index % 2 === 0 ? 20 : 45, 6),
-      altitude: 100 + index,
+  it('uses named provisional hill acceleration and per-km infraction penalty thresholds', () => {
+    const routeWithOneHillInfraction = (spacingDegrees) => Array.from({ length: 30 }, (_, index) => ({
+      ...point(43.6532 + index * spacingDegrees, -79.3832, index * 2, index < 2 ? 20 : 45, 6),
+      altitude: 100 + index * spacingDegrees * 12000,
       altitude_accuracy: 8,
     }));
+    const uphill = routeWithOneHillInfraction(0.0001);
+    const longerUphill = routeWithOneHillInfraction(0.001);
 
     expect(DEFAULT_THRESHOLDS.HILL_ACCEL_THRESHOLD_MS2).toBe(2.5);
     expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS).toBe(10);
+    expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM).toBe(8);
 
     const result = calculateHillDrivingScore(uphill);
+    const longerResult = calculateHillDrivingScore(longerUphill);
+    const expectedRate = result.hill_infraction_count / Math.max(1, result.climb_distance_km + result.descent_distance_km);
+    const expectedScore = Math.max(
+      0,
+      Math.round(100 - expectedRate * DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM)
+    );
 
     expect(result.hill_route).toBe(true);
     expect(result.hill_infraction_count).toBeGreaterThan(0);
-    expect(result.hill_driving_score).toBe(
-      Math.max(0, 100 - result.hill_infraction_count * DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS)
-    );
+    expect(result.hill_infraction_rate_per_km).toBeCloseTo(expectedRate, 2);
+    expect(result.hill_driving_score).toBe(expectedScore);
+    expect(longerResult.hill_infraction_count).toBe(result.hill_infraction_count);
+    expect(longerResult.climb_distance_km).toBeGreaterThan(result.climb_distance_km);
+    expect(longerResult.hill_driving_score).toBeGreaterThan(result.hill_driving_score);
   });
 
   it('flags tire-wear events whose speed factor cannot be measured', () => {
@@ -488,7 +529,7 @@ describe('tripEngine', () => {
   });
 
   it('applies the named provisional fatigue-to-safety penalty scale', () => {
-    expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(0.12);
+    expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(0.15);
 
     const rested = calculateTripScores([], { distance_km: 40, fatigue_risk_score: 0 }, []);
     const maximumFatigue = calculateTripScores([], { distance_km: 40, fatigue_risk_score: 100 }, []);
@@ -1228,6 +1269,30 @@ describe('tripEngine', () => {
     expect(detectDrivingEvents(osmTaggedUrbanRoad).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
+  it('emits inferred-limit speeding events when OSM speed limits are missing', () => {
+    const points = Array.from({ length: 40 }, (_, index) => {
+      const speed = index >= 20 && index <= 24 ? 60 : 45;
+      return {
+        ...point(43.6532 + index * 0.00008, -79.3832, index, speed),
+        heading: 0,
+      };
+    });
+
+    const speeding = detectDrivingEvents(points).events.find((event) => event.type === EVENT_TYPES.SPEEDING);
+    const liveLimit = resolveEffectiveSpeedLimitForIndex(points, 22).effectiveLimitKmh;
+    const inferredLimit = getInferredLimitForPoint(points, points[22]);
+
+    expect(speeding).toMatchObject({
+      severity: 'low',
+      speed_kmh: 60,
+      speed_limit_kmh: 50,
+      speed_limit_source: 'inferred',
+      inferred_zone_kmh: 50,
+    });
+    expect(liveLimit).toBe(50);
+    expect(inferredLimit).toBe(50);
+  });
+
   it('keeps OSM highway-default speed sources separate from posted maxspeed', () => {
     const defaultTaggedUrbanRoad = Array.from({ length: 6 }, (_, index) => ({
       ...point(43.6532 + index * 0.0002, -79.3832, index * 2, 70),
@@ -1463,6 +1528,7 @@ describe('tripEngine', () => {
     expect(zones.length).toBeGreaterThan(0);
     expect(zones[0].inferredZone).toBe('zone_50');
     expect(zones[0].inferredZoneKmh).toBe(50);
+    expect(zones[0].inferredLimitKmh).toBe(50);
     expect(zones[0].confidence).toBe('high');
   });
 
@@ -1480,6 +1546,36 @@ describe('tripEngine', () => {
     expect(loaded.lat).toBe(43.6532);
     expect(loaded.lng).toBe(-79.3832);
     expect(loaded.address).toBe('Toronto City Hall');
+  });
+
+  it('does not store the last parked location inside a privacy zone guard', async () => {
+    const previousZones = localSettings.get().privacy_zones;
+    const privacyZone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
+    const guardBoundaryM = privacyZone.radius_m + PARKED_LOCATION_PRIVACY_GUARD_M;
+    const publicParkedLocation = pointNorthOf(privacyZone, guardBoundaryM + 25);
+    const privateParkedLocation = pointNorthOf(privacyZone, guardBoundaryM - 1);
+
+    localSettings.update({
+      privacy_zones: [privacyZone],
+    });
+
+    try {
+      await saveLastParkedLocation({
+        ...publicParkedLocation,
+        timestamp: '2026-01-01T12:00:00.000Z',
+        tripId: 'public-park',
+      });
+      const savedPrivate = await saveLastParkedLocation({
+        ...privateParkedLocation,
+        timestamp: '2026-01-01T12:05:00.000Z',
+        tripId: 'private-park',
+      });
+
+      expect(savedPrivate).toBeNull();
+      expect(await getLastParkedLocation()).toBeNull();
+    } finally {
+      localSettings.update({ privacy_zones: previousZones || [] });
+    }
   });
 
   it('keeps auto-start responsive while requiring vehicle-like proof before confirmation', () => {
