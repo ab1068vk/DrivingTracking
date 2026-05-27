@@ -17,6 +17,7 @@ const trip = (score, offsetDays = 0) => {
     status: 'completed',
     start_time: date.toISOString(),
     end_time: new Date(date.getTime() + 30 * 60000).toISOString(),
+    distance_km: 10,
     score_overall: score,
   };
 };
@@ -43,7 +44,7 @@ const profile = (patch = {}) => ({
 });
 
 describe('preTripRisk', () => {
-  it('uses the shared evening-rush boundary at hour 18 across risk modules', () => {
+  it('does not use shared clock-risk fallback for pre-trip readiness', () => {
     const atSixPm = new Date(2026, 0, 10, 18);
     const atSevenPm = new Date(2026, 0, 10, 19);
     const preTripAtSix = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: atSixPm });
@@ -54,7 +55,8 @@ describe('preTripRisk', () => {
     expect(isEveningRushHour(18)).toBe(true);
     expect(isEveningRushHour(19)).toBe(false);
     expect(getFallbackTimeRisk(18)).toBe(40);
-    expect(preTripAtSix.signals.timeOfDay).toBe(40);
+    expect(preTripAtSix.signals.timeOfDay).toBeNull();
+    expect(preTripAtSix.readinessScore).toBeNull();
     expect(routeAtSix.riskScore).toBeGreaterThan(routeAtSeven.riskScore);
   });
 
@@ -66,14 +68,14 @@ describe('preTripRisk', () => {
 
   it('returns low risk with all-good signals', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 12));
-    const state = computePreTripRisk(Array.from({ length: 6 }, (_, i) => trip(95, i)), {}, { fatigueLevel: 'low' });
+    const state = computePreTripRisk(Array.from({ length: 6 }, (_, i) => trip(95, i)), {}, { fatigueLevel: 'low' }, {}, profile());
     expect(state.riskLevel).toBe('low');
     vi.useRealTimers();
   });
 
   it('dailyFatigueState critical drives high composite risk', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 23));
-    const state = computePreTripRisk([trip(20)], {}, { fatigueLevel: 'critical' });
+    const state = computePreTripRisk([trip(20)], {}, { fatigueLevel: 'critical' }, {}, profile({ allTimeAvgScore: 70 }));
     expect(state.riskLevel).toBe('high');
     vi.useRealTimers();
   });
@@ -84,8 +86,36 @@ describe('preTripRisk', () => {
   });
 
   it('readinessScore is 100 minus compositeRisk', () => {
-    const state = computePreTripRisk([]);
+    const state = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 12) }, profile());
     expect(state.readinessScore).toBe(100 - state.compositeRisk);
+  });
+
+  it('suppresses readiness score when core personal signals are unavailable', () => {
+    const state = computePreTripRisk([], {}, { fatigueLevel: 'critical' }, { now: new Date(2026, 0, 10, 2) });
+
+    expect(state.compositeRisk).toBeNull();
+    expect(state.readinessScore).toBeNull();
+    expect(state.dataQuality.readinessEvidence).toBe('unavailable');
+    expect(state.dataQuality.missingCoreSignals).toEqual(['timeOfDay', 'recentTrend']);
+    expect(state.dataQuality.fallbackSignalCount).toBeGreaterThan(1);
+    expect(state.dataQuality.fallbackGateTriggered).toBe(true);
+  });
+
+  it('returns unavailable when more than one personal readiness signal would be fallback data', () => {
+    const state = computePreTripRisk(
+      Array.from({ length: 3 }, (_, i) => trip(88, i + 1)),
+      {},
+      { fatigueLevel: 'low' },
+      { now: new Date(2026, 0, 10, 12) }
+    );
+
+    expect(state.dataQuality.fallbackSignalKeys).toEqual(expect.arrayContaining(['dayOfWeek', 'recentTrend']));
+    expect(state.dataQuality.fallbackSignalKeys).not.toContain('timeOfDay');
+    expect(state.dataQuality.fallbackSignalCount).toBeGreaterThan(1);
+    expect(state.dataQuality.fallbackGateTriggered).toBe(true);
+    expect(state.compositeRisk).toBeNull();
+    expect(state.readinessScore).toBeNull();
+    expect(state.riskLevel).toBe('unavailable');
   });
 
   it('handles empty trips gracefully', () => {
@@ -129,7 +159,7 @@ describe('preTripRisk', () => {
     expect(state.signals.routeForecast).toBeNull();
   });
 
-  it('does not downgrade late-night readiness to low risk', () => {
+  it('suppresses late-night readiness when only generic clock risk would be available', () => {
     vi.setSystemTime(new Date(2026, 0, 10, 0, 45));
     const state = computePreTripRisk(
       Array.from({ length: 6 }, (_, i) => trip(92, i + 1)),
@@ -138,11 +168,11 @@ describe('preTripRisk', () => {
       { predictiveRouteRisk: { riskScore: 42, riskLevel: 'moderate' } }
     );
 
-    expect(state.signals.timeOfDay).toBe(60);
+    expect(state.signals.timeOfDay).toBeNull();
     expect(state.signals.routeForecast).toBe(42);
-    expect(state.compositeRisk).toBeGreaterThanOrEqual(40);
-    expect(state.riskLevel).toBe('moderate');
-    expect(state.readinessScore).toBeLessThanOrEqual(60);
+    expect(state.compositeRisk).toBeNull();
+    expect(state.riskLevel).toBe('unavailable');
+    expect(state.readinessScore).toBeNull();
     vi.useRealTimers();
   });
 
@@ -167,7 +197,7 @@ describe('computePreTripRisk - with habitProfile', () => {
     expect(state.dataQuality.sufficientTimeData).toBe(true);
   });
 
-  it('falls back to clock risk when bucket is insufficient', () => {
+  it('suppresses time-of-day risk when the personal bucket is insufficient', () => {
     const habitProfile = profile({
       confidence: 0.2,
       timeBuckets: {
@@ -177,7 +207,8 @@ describe('computePreTripRisk - with habitProfile', () => {
     });
     const state = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 23) }, habitProfile);
 
-    expect(state.signals.timeOfDay).toBe(60);
+    expect(state.signals.timeOfDay).toBeNull();
+    expect(state.readinessScore).toBeNull();
     expect(state.dataQuality.sufficientTimeData).toBe(false);
   });
 

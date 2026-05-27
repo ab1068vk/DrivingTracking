@@ -12,11 +12,14 @@ import { logError } from '@/lib/errorReporting';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { getTripComponentScore } from '@/lib/tripEngine';
+import { METRIC_REGISTRY } from '@/lib/metricRegistry';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 let odometerSyncFailureCount = 0;
 let odometerSyncFailureToastShown = false;
 export const MAX_FUEL_PRICE_PER_UNIT = 100;
+const TIRE_WEAR_CALIBRATION_NOTE = METRIC_REGISTRY.trip_tire_wear_units.calibrationNote;
 
 const FUEL_TYPES = [
   { value: 'gasoline', label: 'Gasoline' },
@@ -463,7 +466,7 @@ export default function Vehicles() {
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                         <span>{count} trip{count !== 1 ? 's' : ''}</span>
                         {score !== null && (
-                          <span className="font-semibold text-primary">Avg score: {score} <span className="font-normal capitalize text-muted-foreground">aggregate evidence</span></span>
+                          <span className="font-semibold text-primary">Avg score: {formatEstimatedScore(score)} <span className="font-normal capitalize text-muted-foreground">aggregate evidence</span></span>
                         )}
                         <span>{odometerKm.toLocaleString()} km</span>
                       </div>
@@ -542,9 +545,15 @@ export default function Vehicles() {
                           ['elevated', 'accelerated'].includes(healthImpact.tire_wear_grade) ? 'text-yellow-500' : ''
                         }`} />
                         Tire wear impact
+                        <span className="ml-auto rounded-full border border-yellow-300 bg-yellow-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-yellow-700 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-300">
+                          Provisional
+                        </span>
                       </div>
                       <div className="font-semibold text-sm mt-1 capitalize">{healthImpact.tire_wear_grade}</div>
                       <div className="text-xs text-muted-foreground">{healthImpact.tire_life_impact_km.toLocaleString()} km estimated tire life reduction</div>
+                      <div role="alert" className="mt-2 rounded-lg border border-yellow-300 bg-yellow-50 px-2 py-1.5 text-[11px] font-semibold text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-200">
+                        Provisional tire estimate: {TIRE_WEAR_CALIBRATION_NOTE}
+                      </div>
                       {healthImpact.tire_wear_has_missing_speed_data && (
                         <div className="mt-1 text-[11px] text-yellow-600 dark:text-yellow-400">
                           {healthImpact.tire_wear_missing_speed_event_count > 0

@@ -24,16 +24,27 @@ describe('ScoreRing evidence styles', () => {
     const developing = renderToStaticMarkup(<ScoreRing score={74} evidence="developing" animated={false} />);
 
     expect(low).toContain('stroke-dasharray="5 4"');
+    expect(low).toContain('>~74</span>');
     expect(developing).toContain('stroke-dasharray="5 4"');
     expect(developing).toContain('limited evidence');
     expect(developing).not.toContain('developing evidence');
   });
 
-  it('renders high-confidence scores with a solid score ring', () => {
+  it('renders high-confidence scores as provisional estimates', () => {
     const html = renderToStaticMarkup(<ScoreRing score={74} evidence="high" animated={false} />);
 
     expect(html).toContain('data-evidence="high"');
-    expect(html).not.toContain('stroke-dasharray="5 4"');
+    expect(html).toContain('stroke-dasharray="5 4"');
+    expect(html).toContain('>~74</span>');
     expect(html).not.toContain('high evidence');
+  });
+
+  it('uses score provenance to remove provisional marking after calibration', () => {
+    const html = renderToStaticMarkup(
+      <ScoreRing score={74} evidence="high" animated={false} scoreProvenance={{ calibration_status: 'calibrated' }} />
+    );
+
+    expect(html).toContain('>74</span>');
+    expect(html).not.toContain('>~74</span>');
   });
 });

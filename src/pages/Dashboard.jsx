@@ -89,7 +89,7 @@ import {
 } from '@/lib/trackingDiagnostics';
 import { logError } from '@/lib/errorReporting';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
-import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
+import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 import {
@@ -102,6 +102,7 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, isInsidePrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
 
@@ -957,6 +958,7 @@ export default function Dashboard() {
           status: 'unavailable',
           source: 'openstreetmap_overpass',
           query_count: 0,
+          fallback_country: speedLimitDefaultCountryKey(cfg),
           error: error?.message || 'Speed limit lookup unavailable',
         }))
       : {
@@ -965,6 +967,7 @@ export default function Dashboard() {
           status: 'manual_required',
           source: 'openstreetmap_overpass',
           query_count: 0,
+          fallback_country: speedLimitDefaultCountryKey(cfg),
           error: null,
         };
     pts = speedLimitContext.routePoints || pts;
@@ -1031,6 +1034,7 @@ export default function Dashboard() {
         status: speedLimitContext.status,
         coverage: speedLimitContext.coverage,
         source: speedLimitContext.source,
+        fallback_country: speedLimitContext.fallback_country,
         error: speedLimitContext.error,
       },
       map_matching_context: {
@@ -1588,7 +1592,7 @@ export default function Dashboard() {
               <TrendingDown className="h-5 w-5" />
               <div>
                 <div className="text-sm font-semibold">{brakingImprovement.message}</div>
-                <div className="text-xs opacity-80">Braking score {brakingImprovement.previous} to {brakingImprovement.current}</div>
+                <div className="text-xs opacity-80">Braking score {formatEstimatedScore(brakingImprovement.previous)} to {formatEstimatedScore(brakingImprovement.current)}</div>
               </div>
             </div>
           )}
@@ -2004,7 +2008,7 @@ export default function Dashboard() {
               />
               <Tooltip
                 contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                formatter={(v) => [v, 'Score']}
+                formatter={(v) => [formatEstimatedScore(v), 'Score']}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -2120,9 +2124,9 @@ function DashboardRiskPanel({
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
   const showReadinessNumber = readinessEvidence === 'high' && preTripRisk.readinessScore != null;
   const readinessSummary = preTripRisk.readinessScore == null
-    ? 'Readiness estimate unavailable'
+    ? 'Not enough data yet'
     : showReadinessNumber
-      ? `Estimated ${preTripRisk.readinessScore}/100 - ${preTripRisk.riskLevel} risk`
+      ? `Estimated ${formatEstimatedScore(preTripRisk.readinessScore)}/100 - ${preTripRisk.riskLevel} risk`
       : 'Limited-data readiness estimate';
 
   return (
@@ -2140,7 +2144,7 @@ function DashboardRiskPanel({
                   : 'hsl(var(--muted-foreground))',
           }}
         >
-          {showReadinessNumber ? preTripRisk.readinessScore : '-'}
+          {showReadinessNumber ? formatEstimatedScore(preTripRisk.readinessScore) : '-'}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">

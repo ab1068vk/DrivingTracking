@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CALIBRATION_STATUSES,
+  PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS,
   SCORE_OUTPUT_CALIBRATION_STATUSES,
   SCORING_CONSTANTS,
   calibrationStatusForMetrics,
@@ -43,6 +44,7 @@ describe('scoring constants registry', () => {
       calibration_note: expect.stringContaining('Uncalibrated'),
       affected_metrics: expect.arrayContaining(['score_overall', 'score_safety']),
       calibration_metadata: {
+        calibration_process_id: PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS.process_id,
         eligible_labeled_trip_count: 0,
         minimum_labeled_trips: 2000,
         warning: 'Calibration pending: not enough labeled trips yet.',
@@ -69,6 +71,24 @@ describe('scoring constants registry', () => {
     expect(hasProvisionalCalibration(['score_overall'])).toBe(true);
     expect(hasProvisionalCalibration(['ubi_score'])).toBe(true);
     expect(calibrationStatusForMetrics(['score_overall'])).toBe(SCORE_OUTPUT_CALIBRATION_STATUSES.APPROXIMATE);
+  });
+
+  it('documents the repeatable penalty scale calibration process beside the constant', () => {
+    const { calibration_metadata: metadata } = SCORING_CONSTANTS.PENALTY_SCALE_FACTOR;
+    const process = metadata.calibration_process;
+
+    expect(process).toBe(PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS);
+    expect(process.current_runtime_policy).toContain('downstream score outputs approximate');
+    expect(process.dataset_requirements.minimum_eligible_labeled_trips).toBe(2000);
+    expect(process.dataset_requirements.accepted_label_sources).toEqual(expect.arrayContaining([
+      expect.stringContaining('licensed fleet or insurer telematics dataset'),
+    ]));
+    expect(process.fitting_method.command).toBe('npm run calibration:fit -- <labels.json> --target=2000');
+    expect(process.fitting_method.model).toContain('penalty_rate_per_km * PENALTY_SCALE_FACTOR');
+    expect(process.promotion_criteria.commit_requirements).toEqual(expect.arrayContaining([
+      expect.stringContaining('change SCORING_CONSTANTS.PENALTY_SCALE_FACTOR.calibration_status to calibrated'),
+      expect.stringContaining('increment SCORING_VERSION'),
+    ]));
   });
 
   it('auto-flips score output status when affected constants are no longer provisional', () => {

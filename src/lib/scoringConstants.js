@@ -12,6 +12,62 @@ export const SCORE_OUTPUT_CALIBRATION_STATUSES = Object.freeze({
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness', 'score_eco'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];
 const ubiMetrics = ['ubi_score'];
+
+export const PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS = Object.freeze({
+  process_id: 'penalty-scale-factor-outcome-calibration-v1',
+  owner: 'scoring',
+  objective: 'Fit the 0-100 trip-score deduction applied to severity-weighted penalty points per km.',
+  current_runtime_policy: 'Keep PENALTY_SCALE_FACTOR provisional and all downstream score outputs approximate until this process is completed with a labeled driving dataset.',
+  dataset_requirements: Object.freeze({
+    minimum_eligible_labeled_trips: 2000,
+    accepted_label_sources: Object.freeze([
+      'licensed fleet or insurer telematics dataset with known risk/outcome labels',
+      'internal opted-in calibration labels, used only as a beta proxy until externally validated',
+    ]),
+    required_trip_fields: Object.freeze([
+      'scoring_model_version',
+      'distance_km',
+      'duration_seconds',
+      'quality_flags',
+      'penalty_rate_per_km or event counts needed to derive it',
+      'target_score or mapped outcome/risk label',
+    ]),
+    excluded_records: Object.freeze([
+      'passenger trips',
+      'short trips below trip-quality gates',
+      'low-GPS-quality trips',
+      'privacy-masked trips where summary features are materially incomplete',
+      'test/debug trips',
+      'incomplete or crash-recovered app sessions',
+    ]),
+  }),
+  fitting_method: Object.freeze({
+    command: 'npm run calibration:fit -- <labels.json> --target=2000',
+    implementation: 'scripts/fit-calibration-labels.mjs -> src/lib/calibrationFitting.js',
+    train_validation_split: 'Deterministic 80/20 split after eligibility filtering.',
+    model: 'Least-squares fit of target score = clamp(100 - penalty_rate_per_km * PENALTY_SCALE_FACTOR, 0, 100).',
+    companion_outputs: Object.freeze([
+      'FATIGUE_SAFETY_PENALTY_SCALE candidate',
+      'route-risk weight candidate',
+      'city/highway penalty modifiers',
+      'validation MAE/RMSE',
+    ]),
+  }),
+  promotion_criteria: Object.freeze({
+    calibration_status_to_commit: 'calibrated',
+    minimum_eligible_labeled_trips: 2000,
+    required_validation_fields: Object.freeze(['validation_mae', 'validation_rmse', 'dataset_id', 'calibration_date']),
+    human_review: 'Review dataset provenance, subgroup errors, feature drift, and validation error before changing calibration_status from provisional to calibrated.',
+    commit_requirements: Object.freeze([
+      'replace PENALTY_SCALE_FACTOR value with the fitted candidate',
+      'record dataset_id, eligible_labeled_trip_count, validation_mae, validation_rmse, and calibration_date',
+      'change SCORING_CONSTANTS.PENALTY_SCALE_FACTOR.calibration_status to calibrated',
+      'increment SCORING_VERSION so older approximate scores can be distinguished from calibrated rescored trips',
+      'keep score displays approximate for any legacy/unrescored trips whose score_provenance is still approximate',
+    ]),
+  }),
+});
+
 const pendingCalibrationMetadata = Object.freeze({
   scoring_model_version: null,
   dataset_id: null,
@@ -22,6 +78,7 @@ const pendingCalibrationMetadata = Object.freeze({
   minimum_labeled_trips: 2000,
   warning: 'Calibration pending: not enough labeled trips yet.',
   calibration_status: 'heuristic_beta',
+  calibration_process_id: PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS.process_id,
 });
 
 /**
@@ -72,9 +129,12 @@ export const SCORING_CONSTANTS = Object.freeze({
     label: 'Trip penalty scale factor',
     domain: 'trip_score',
     calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
-    calibration_note: 'Uncalibrated - scores are self-consistent but not validated against crash or insurer data. Replace after fleet labeling study.',
+    calibration_note: 'Uncalibrated - scores are self-consistent estimates, not validated against crash, claim, or insurer data. Follow PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS before treating downstream scores as calibrated.',
     affected_metrics: scoreMetrics,
-    calibration_metadata: pendingCalibrationMetadata,
+    calibration_metadata: Object.freeze({
+      ...pendingCalibrationMetadata,
+      calibration_process: PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS,
+    }),
   }),
   FATIGUE_SAFETY_PENALTY_SCALE: constant(0.15, {
     label: 'Fatigue to Safety penalty scale',
@@ -87,9 +147,12 @@ export const SCORING_CONSTANTS = Object.freeze({
   ECO_SPEED_STABILITY_CV_MULTIPLIER: constant(150, { label: 'Eco speed stability multiplier', domain: 'trip_score', calibration_note: 'Converts moving-speed variation to a diagnostic eco score.', affected_metrics: ['score_eco', 'score_overall'] }),
   FUEL_BAND_FULL_SCORE_MULTIPLIER: constant(1.1, { label: 'Fuel band score multiplier', domain: 'trip_score', calibration_note: 'Rewards sustained efficient cruising.', affected_metrics: ['score_eco', 'score_overall'] }),
   STOP_START_MIN_HIGHWAY_DISTANCE_KM: constant(5, { label: 'Stop-start highway evidence distance', domain: 'trip_score', calibration_note: 'Minimum route evidence before the GPS-only pattern score is exposed.', affected_metrics: ['score_safety', 'score_overall'] }),
+  STOP_START_MIN_URBAN_DISTANCE_KM: constant(2, { label: 'Stop-start urban evidence distance', domain: 'trip_score', calibration_note: 'Minimum city-speed route evidence before the urban GPS-only pattern score is exposed.', affected_metrics: ['score_safety', 'score_overall', 'defensive_driving_score'] }),
   STOP_START_NORMALISATION_WINDOW_KM: constant(5, { label: 'Stop-start normalization window', domain: 'trip_score', calibration_note: 'Distance normalization for repeated speed-change patterns.', affected_metrics: ['score_safety', 'score_overall'] }),
   STOP_START_MAX_CYCLES_PER_WINDOW: constant(5, { label: 'Stop-start cycle saturation', domain: 'trip_score', calibration_note: 'Maximum cycles within one normalization window.', affected_metrics: ['score_safety', 'score_overall'] }),
   STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT: constant(3, { label: 'Stop-start defensive sample minimum', domain: 'trip_score', calibration_note: 'Minimum events before the GPS-only score participates in a blend.', affected_metrics: ['defensive_driving_score'] }),
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY: constant(3, { label: 'Stop-start highway defensive sample minimum', domain: 'trip_score', calibration_note: 'Minimum highway events before the highway GPS-only score participates in a defensive blend.', affected_metrics: ['defensive_driving_score'] }),
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN: constant(1, { label: 'Stop-start urban defensive sample minimum', domain: 'trip_score', calibration_note: 'Minimum city-speed events before the urban GPS-only score participates in a defensive blend.', affected_metrics: ['defensive_driving_score'] }),
   PHONE_USE_SAFETY_WEIGHT: constant(0.05, { label: 'Phone-use Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional share of confirmed phone-use evidence in Safety.', affected_metrics: ['score_safety', 'score_overall'] }),
   CLOSE_PROXIMITY_DECAY_BASE: constant(0.60, { label: 'Brake-turn alert score decay', domain: 'trip_score', calibration_note: 'GPS maneuver diagnostic only; object proximity is not measured.', affected_metrics: ['close_proximity_score'] }),
   TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH: constant(50, { label: 'Tire wear harsh-brake reference speed', domain: 'maintenance', calibration_note: 'Diagnostic wear reference speed.', affected_metrics: ['trip_tire_wear_units'] }),
@@ -102,7 +165,6 @@ export const SCORING_CONSTANTS = Object.freeze({
     speeding: { low: 5, medium: 10, high: 20 },
     idle: { low: 1, medium: 3, high: 5 },
     heading_deviation: { low: 0, medium: 0, high: 0 },
-    lane_change: { low: 1, medium: 3, high: 6 },
     stop_start_pattern: { low: 3, medium: 8, high: 15 },
     tailgate_cycle: { low: 3, medium: 8, high: 15 },
     erratic_speed: { low: 2, medium: 5, high: 10 },
@@ -167,6 +229,10 @@ export const SCORING_CONSTANTS = Object.freeze({
   STOP_START_MIN_SPEED_KMH: constant(40, { label: 'Stop-start minimum speed', domain: 'trip_threshold', calibration_note: 'GPS-only speed pattern detector.', affected_metrics: ['defensive_driving_score'] }),
   STOP_START_CRUISE_SECONDS: constant(4, { label: 'Stop-start cruise period', domain: 'trip_threshold', calibration_note: 'GPS-only speed pattern detector.', affected_metrics: ['defensive_driving_score'] }),
   STOP_START_SPEED_DROP_KMH: constant(10, { label: 'Stop-start speed drop', domain: 'trip_threshold', calibration_note: 'GPS-only speed pattern detector.', affected_metrics: ['defensive_driving_score'] }),
+  STOP_START_URBAN_DECEL_MS2: constant(1.4, { label: 'Urban stop-start deceleration threshold', domain: 'trip_threshold', calibration_note: 'Lower GPS-only speed pattern threshold for city-speed trips.', affected_metrics: ['defensive_driving_score'] }),
+  STOP_START_URBAN_MIN_SPEED_KMH: constant(25, { label: 'Urban stop-start minimum speed', domain: 'trip_threshold', calibration_note: 'City-speed GPS-only pattern detector minimum.', affected_metrics: ['defensive_driving_score'] }),
+  STOP_START_URBAN_CRUISE_SECONDS: constant(2, { label: 'Urban stop-start cruise period', domain: 'trip_threshold', calibration_note: 'Shorter city-speed cruise period before a stop-start pattern can be detected.', affected_metrics: ['defensive_driving_score'] }),
+  STOP_START_URBAN_SPEED_DROP_KMH: constant(6, { label: 'Urban stop-start speed drop', domain: 'trip_threshold', calibration_note: 'Smaller city-speed drop needed for a GPS-only stop-start pattern.', affected_metrics: ['defensive_driving_score'] }),
   HEADING_DEVIATION_MIN_SPEED_KMH: constant(50, { label: 'Heading event minimum speed', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
   HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH: constant(80, { label: 'Heading event highway speed', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
   HEADING_DEVIATION_MIN_TURN_RATE_DEG_S: constant(3, { label: 'Heading event minimum turn rate', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
@@ -295,7 +361,8 @@ const thresholdKeys = [
   'MAX_SPEED_SPIKE_DELTA_KMH', 'MAX_SPEED_SPIKE_RATIO', 'MAX_ALTITUDE_ACCURACY_M', 'MIN_HILL_SEGMENT_DISTANCE_M',
   'HILL_GRADE_THRESHOLD_PCT', 'HILL_ACCEL_THRESHOLD_MS2', 'HILL_INFRACTION_PENALTY_POINTS', 'HILL_INFRACTION_PENALTY_POINTS_PER_KM',
   'MIN_SPEED_RAPID_ACCEL_KMH', 'MIN_SPEED_HARSH_BRAKE_KMH', 'STOP_START_DECEL_MS2', 'STOP_START_MIN_SPEED_KMH',
-  'STOP_START_CRUISE_SECONDS', 'STOP_START_SPEED_DROP_KMH', 'HEADING_DEVIATION_MIN_SPEED_KMH',
+  'STOP_START_CRUISE_SECONDS', 'STOP_START_SPEED_DROP_KMH', 'STOP_START_URBAN_DECEL_MS2',
+  'STOP_START_URBAN_MIN_SPEED_KMH', 'STOP_START_URBAN_CRUISE_SECONDS', 'STOP_START_URBAN_SPEED_DROP_KMH', 'HEADING_DEVIATION_MIN_SPEED_KMH',
   'HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH', 'HEADING_DEVIATION_MIN_TURN_RATE_DEG_S', 'HEADING_DEVIATION_MAX_TURN_RATE_DEG_S',
   'HEADING_DEVIATION_MIN_WINDOW_SECONDS', 'HEADING_DEVIATION_STRAIGHT_STD_MAX_DEG', 'HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS',
   'CORNERING_MIN_SPEED_KMH', 'MERGE_ENTRY_SPEED_KMH', 'MERGE_EXIT_SPEED_KMH', 'PARKING_LOOKBACK_SECONDS',

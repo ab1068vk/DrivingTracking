@@ -10,6 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
+import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const evidenceLabel = (evidence) => `${evidence || 'unavailable'} evidence`;
@@ -24,6 +25,8 @@ export default function TripCard({
 }) {
   const navigate = useNavigate();
   const overallScore = getTripComponentScore(trip, 'overall');
+  const safetyScore = getTripComponentScore(trip, 'safety');
+  const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const unavailableScore = overallScore.value == null;
   const { color, label: scoreLabel, bg } = unavailableScore
     ? { color: 'text-muted-foreground', label: 'Unavailable', bg: 'bg-secondary' }
@@ -171,7 +174,7 @@ export default function TripCard({
             title={unavailableScore ? SCORE_UNAVAILABLE_MESSAGE : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
           >
             <span className={`font-grotesk font-bold text-lg ${color}`}>
-              {lowScoreConfidence && overallScore.value != null ? '~' : ''}{overallScore.value ?? '-'}
+              {formatScoreWithProvenance(overallScore.value, trip.score_provenance)}
             </span>
           </div>
           {scoreDelta && (
@@ -188,6 +191,15 @@ export default function TripCard({
             </span>
           )}
           <span className={`text-xs font-medium ${color}`}>{scoreLabel}</span>
+          {phoneUsePermissionRequired && (
+            <div
+              className="inline-flex max-w-[7rem] items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300"
+              title="Phone use could not be measured for this trip. Safety does not include a phone-use signal."
+            >
+              <span className="truncate">Safety {formatScoreWithProvenance(safetyScore.value, trip.score_provenance)}</span>
+              <ShieldAlert className="h-3 w-3 flex-shrink-0" />
+            </div>
+          )}
           <span className="text-[10px] capitalize text-muted-foreground">{evidenceLabel(overallScore.evidence)}</span>
           {OVERALL_SCORE_IS_APPROXIMATE && overallScore.value != null && <CalibrationStatusTag />}
         </div>

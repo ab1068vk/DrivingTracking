@@ -91,7 +91,9 @@ describe('external service contracts', () => {
       speed_limit_kmh: 48,
       speed_limit_source: 'osm_highway_default',
       speed_limit_default_country: 'gb',
+      fallback_country: 'gb',
     });
+    expect(result.fallback_country).toBe('gb');
   });
 
   it('excludes privacy-zone boundary points from Overpass bounding boxes', async () => {
@@ -190,6 +192,7 @@ describe('external service contracts', () => {
     expect(url.searchParams.get('hourly')).toContain('weather_code');
     expect(result).toMatchObject({
       provider: 'open-meteo',
+      source: 'open_meteo',
       status: 'fetched',
       condition: 'rain',
       sample_count: 1,
@@ -242,6 +245,7 @@ describe('external service contracts', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       provider: 'open-meteo',
+      source: 'unavailable',
       status: 'skipped_privacy',
       riskLevel: null,
       riskScore: null,

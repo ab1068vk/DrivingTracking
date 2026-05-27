@@ -99,6 +99,28 @@ describe('open-source trip context', () => {
     expect(adjusted.component_scores.safety.value).toBe(adjusted.score_safety);
     expect(adjusted.component_scores.overall.value).toBe(adjusted.score_overall);
     expect(adjusted.component_scores.overall.dataSource).toContain('open_meteo_weather');
+    expect(adjusted.weather_context.source).toBe('open_meteo');
+  });
+
+  it('passes GPS weather inference through when Open-Meteo is unavailable', () => {
+    const adjusted = applyWeatherRiskToScores({
+      score_safety: 90,
+      slippery_proxy: 'likely_wet',
+      wet_signal_count: 3,
+      wet_ratio: 0.6,
+    }, {
+      provider: 'open-meteo',
+      status: 'unavailable',
+      riskScore: null,
+      riskMultiplier: 1,
+    });
+
+    expect(adjusted.weather_context).toMatchObject({
+      source: 'gps_inference',
+      condition: 'likely_wet',
+      wet_signal_count: 3,
+    });
+    expect(adjusted.weather_score_adjustment).toBe(0);
   });
 
   it('keeps estimated brake-turn alerts advisory-only during risky weather', () => {
@@ -126,6 +148,7 @@ describe('open-source trip context', () => {
     });
 
     expect(disabled).toMatchObject({
+      source: 'unavailable',
       status: 'disabled',
       riskLevel: null,
       riskScore: null,

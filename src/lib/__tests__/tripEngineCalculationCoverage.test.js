@@ -6,6 +6,7 @@ import {
   EVENT_TYPES,
   HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
   STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT,
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN,
   STOP_START_NORMALISATION_WINDOW_KM,
   SVI_DEFAULTS,
   calculateAcceleration,
@@ -366,9 +367,16 @@ describe('trip engine calculation coverage', () => {
       ...sharedScores,
       stop_start_pattern_sample_count: STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT,
     });
+    const urban = calculateDefensiveDrivingScore({
+      ...sharedScores,
+      stop_start_pattern_score: 0,
+      stop_start_pattern_sample_count: STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN,
+      stop_start_pattern_urban_count: STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN,
+    });
 
     expect(sparse.defensive_driving_score).toBe(100);
     expect(sufficient.defensive_driving_score).toBe(70);
+    expect(urban.defensive_driving_score).toBe(70);
   });
 
   it('omits close-proximity score when no proximity events are detected', () => {

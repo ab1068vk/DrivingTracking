@@ -18,19 +18,20 @@ const harshBrakeEvents = (points) => points
   .map((point) => ({ type: EVENT_TYPES.HARSH_BRAKE, timestamp: point.timestamp, speed_kmh: 60 }));
 
 describe('brake onset smoothness', () => {
-  it('stays unavailable until five braking sequences are observed', () => {
-    const points = brakingSequences(4);
+  it('stays unavailable until two braking sequences are observed', () => {
+    const points = brakingSequences(1);
     expect(calculateBrakeOnsetSmoothness(points, harshBrakeEvents(points))).toMatchObject({
       brake_onset_smoothness_score: null,
       brake_onset_smoothness_confidence: 'low',
+      brake_onset_sequence_count: 1,
     });
   });
 
-  it('reports a low-confidence braking smoothness proxy after five sequences', () => {
-    const points = brakingSequences();
+  it('reports a low-confidence braking smoothness proxy after two sequences', () => {
+    const points = brakingSequences(2);
     const result = calculateBrakeOnsetSmoothness(points, harshBrakeEvents(points));
 
-    expect(result.brake_onset_sequence_count).toBe(5);
+    expect(result.brake_onset_sequence_count).toBe(2);
     expect(result.avg_brake_onset_ramp_seconds).toBe(2);
     expect(result.brake_onset_smoothness_score).toBeGreaterThan(0);
     expect(result.brake_onset_disclaimer).toContain('not human neurological reaction time');

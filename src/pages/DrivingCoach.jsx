@@ -16,6 +16,7 @@ import { setJson } from '@/lib/mobileStorage';
 import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -224,7 +225,7 @@ export default function DrivingCoach() {
                 </span>
               </div>
               <div className="mt-3 text-sm text-muted-foreground">
-                Anomaly score {latestAnomaly.anomaly_score}/100
+                Anomaly score {formatEstimatedScore(latestAnomaly.anomaly_score)}/100
                 {latestAnomaly.reasons.length ? ` · unusual: ${latestAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
@@ -262,7 +263,7 @@ export default function DrivingCoach() {
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <ShieldCheck className="w-5 h-5 text-emerald-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.consistency.consistency_score ?? '-'}</div>
+              <div className="font-grotesk font-bold text-2xl">{formatEstimatedScore(coach.consistency.consistency_score)}</div>
               <div className="text-xs text-muted-foreground">consistency score</div>
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
@@ -282,7 +283,7 @@ export default function DrivingCoach() {
             </div>
             <div className="bg-card border border-border rounded-2xl p-4">
               <Gauge className="w-5 h-5 text-slate-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.heading_deviations || coach.risk_rate.totals.lane_changes || 0}</div>
+              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.heading_deviations || 0}</div>
               <div className="text-xs text-muted-foreground">heading events (beta)</div>
             </div>
           </div>
@@ -349,7 +350,7 @@ export default function DrivingCoach() {
               <div className="bg-secondary/50 rounded-xl p-3">
                 <div className={`font-grotesk font-bold text-xl ${
                   avgMergeScore == null ? 'text-muted-foreground' : avgMergeScore >= 80 ? 'text-emerald-500' : avgMergeScore >= 60 ? 'text-yellow-500' : 'text-red-500'
-                }`}>{avgMergeScore ?? '-'}</div>
+                }`}>{formatEstimatedScore(avgMergeScore)}</div>
                 <div className="text-xs text-muted-foreground">merge score</div>
                 {avgMergeScore == null && <div className="text-[11px] text-muted-foreground">No merge evidence</div>}
               </div>
@@ -376,7 +377,10 @@ export default function DrivingCoach() {
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
                 <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                />
                 <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
                 <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
               </BarChart>
@@ -391,7 +395,10 @@ export default function DrivingCoach() {
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
                 <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
                 <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                />
                 <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
                 <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
               </BarChart>

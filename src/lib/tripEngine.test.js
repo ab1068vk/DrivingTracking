@@ -553,8 +553,26 @@ describe('tripEngine', () => {
 
     expect(noEvents.stop_start_pattern_score).toBe(100);
     expect(highway.stop_start_pattern_score).toBeLessThan(100);
-    expect(highway.stop_start_pattern_score_confidence).toBe('low');
+    expect(highway.stop_start_pattern_score_confidence).not.toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
     expect(noHighwayEvidence.stop_start_pattern_score).toBeNull();
+  });
+
+  it('detects and scores stop-start patterns on city-speed trips after urban evidence', () => {
+    const urbanRoute = Array.from({ length: 24 }, (_, index) => {
+      const pattern = [35, 35, 35, 24, 18, 32];
+      return point(43.6532 + index * 0.0009, -79.3832, index * 2, pattern[index % pattern.length]);
+    });
+    const urbanEvents = detectStopStartPatterns(urbanRoute, DEFAULT_THRESHOLDS);
+    const stats = calculateTripStats(urbanRoute, urbanRoute[0].timestamp, urbanRoute.at(-1).timestamp);
+    const scores = calculateTripScores(urbanEvents, stats, urbanRoute, DEFAULT_THRESHOLDS, stats.duration_seconds);
+
+    expect(stats.distance_km).toBeGreaterThanOrEqual(2);
+    expect(urbanEvents.some((event) => event.stop_start_context === 'urban')).toBe(true);
+    expect(scores.stop_start_pattern_urban_count).toBeGreaterThan(0);
+    expect(scores.stop_start_pattern_highway_count).toBe(0);
+    expect(scores.stop_start_pattern_urban_distance_km).toBeGreaterThanOrEqual(2);
+    expect(scores.stop_start_pattern_score).not.toBeNull();
+    expect(scores.stop_start_pattern_score_confidence).not.toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
   });
 
   it('does not score stop-start patterns without highway evidence or from masked events', () => {
@@ -576,6 +594,31 @@ describe('tripEngine', () => {
     expect(shortTrip.score_safety).toBeNull();
     expect(masked.stop_start_pattern_score).toBe(100);
     expect(masked.stop_start_pattern_count).toBe(0);
+  });
+
+  it('keeps short-trip stop-start patterns out of Safety scoring', () => {
+    const event = {
+      type: EVENT_TYPES.STOP_START_PATTERN,
+      severity: 'high',
+      speed_kmh: 120,
+    };
+    const shortHighwayRoute = Array.from({ length: 40 }, (_, index) => (
+      point(43.6532 + index * 0.001, -79.3832, index * 5, 100)
+    ));
+    const stats = calculateTripStats(
+      shortHighwayRoute,
+      shortHighwayRoute[0].timestamp,
+      shortHighwayRoute.at(-1).timestamp
+    );
+    const baseline = calculateTripScores([], stats, shortHighwayRoute);
+    const withStopStart = calculateTripScores([event], stats, shortHighwayRoute);
+
+    expect(stats.distance_km).toBeLessThan(5);
+    expect(baseline.score_safety).not.toBeNull();
+    expect(withStopStart.stop_start_pattern_score).toBeNull();
+    expect(withStopStart.stop_start_pattern_score_confidence).toBe(CONFIDENCE_LEVELS.UNAVAILABLE);
+    expect(withStopStart.score_safety).toBe(baseline.score_safety);
+    expect(withStopStart.component_scores.safety.value).toBe(baseline.component_scores.safety.value);
   });
 
   it('penalizes high-risk phone use in the distraction score', () => {
@@ -1281,6 +1324,8 @@ describe('tripEngine', () => {
     const speeding = detectDrivingEvents(points).events.find((event) => event.type === EVENT_TYPES.SPEEDING);
     const liveLimit = resolveEffectiveSpeedLimitForIndex(points, 22).effectiveLimitKmh;
     const inferredLimit = getInferredLimitForPoint(points, points[22]);
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
+    const scores = calculateTripScores(detectDrivingEvents(points), stats, points);
 
     expect(speeding).toMatchObject({
       severity: 'low',
@@ -1291,6 +1336,9 @@ describe('tripEngine', () => {
     });
     expect(liveLimit).toBe(50);
     expect(inferredLimit).toBe(50);
+    expect(scores.component_scores.speed_limit_compliance.dataSource).toContain('gps_inferred_speed_limit');
+    expect(scores.component_scores.speed_limit_compliance.note).toContain('inferred road-type limits');
+    expect(scores.component_scores.safety.note).toContain('speeding penalties are half-weighted');
   });
 
   it('keeps OSM highway-default speed sources separate from posted maxspeed', () => {
@@ -1414,6 +1462,18 @@ describe('tripEngine', () => {
       { type: EVENT_TYPES.HEADING_DEVIATION, severity: 'high' },
     ], { distance_km: 8, fatigue_risk_score: 0, intersection_score: 100 }, []);
     expect(withHeadingEvent.score_safety).toBe(base.score_safety);
+  });
+
+  it('keeps aggressive overtake diagnostics out of the safety score', () => {
+    const stats = { distance_km: 8, fatigue_risk_score: 0, intersection_score: 100 };
+    const base = calculateTripScores([], stats, []);
+    const withOvertake = calculateTripScores([
+      { type: EVENT_TYPES.AGGRESSIVE_OVERTAKE, severity: 'high', diagnostic_only: true },
+    ], stats, []);
+
+    expect(withOvertake.score_safety).toBe(base.score_safety);
+    expect(withOvertake.overtake_event_count).toBe(1);
+    expect(withOvertake.overtake_affects_score).toBe(false);
   });
 
   it('requires sustained brake-turn evidence before emitting an estimated alert', () => {

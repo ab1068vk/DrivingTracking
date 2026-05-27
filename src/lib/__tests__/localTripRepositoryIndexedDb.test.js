@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createIndexedDbMigrationRunner, localTripRepository, TRIP_SCHEMA_VERSION } from '@/lib/localTripRepository';
+import {
+  createIndexedDbMigrationRunner,
+  localTripRepository,
+  normalizeRetiredTripEventTypes,
+  TRIP_EVENT_MIGRATION_KEY,
+  TRIP_EVENT_MIGRATION_VERSION,
+  TRIP_SCHEMA_VERSION,
+} from '@/lib/localTripRepository';
 
 const makeDomStringList = (items) => ({
   contains: (item) => items.has(item),
@@ -252,6 +259,64 @@ describe('localTripRepository IndexedDB migrations', () => {
     expect(trip.score_provenance_change).toMatchObject({
       reason: 'legacy_tagged_without_rescore',
       current_scoring_version: null,
+    });
+  });
+
+  it('renames retired lane-change events once before listing stored trips', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    values.set('drivesense_trips', JSON.stringify([{
+      id: 'legacy-heading',
+      status: 'completed',
+      distance_km: 10,
+      driving_events: [{ type: 'lane_change', severity: 'medium', timestamp: '2026-01-01T12:00:00.000Z', value: 3 }],
+      event_feedback: {
+        'lane_change|2026-01-01T12:00:00.000Z|3.00': { verdict: 'accurate' },
+      },
+      lane_changes_count: 1,
+      heading_deviation_count: 1,
+      defensive_driving_score: 80,
+      brake_onset_sequence_count: 0,
+      heading_deviation_available: true,
+      heading_drift_beta_available: true,
+      braking_efficiency_grade: 'unknown',
+      overall_compliance_score: 100,
+      dominant_road_type: 'urban',
+      co2_saved_kg: 0,
+      phone_use_score: 100,
+      phone_use_risk: 'none',
+      schema_version: TRIP_SCHEMA_VERSION,
+      score_provenance: { scoring_version: '2.2.0' },
+    }]));
+
+    const [trip] = await localTripRepository.listAll();
+
+    expect(JSON.parse(values.get(TRIP_EVENT_MIGRATION_KEY))).toBe(TRIP_EVENT_MIGRATION_VERSION);
+    expect(trip.driving_events[0]).toMatchObject({
+      type: 'heading_deviation_legacy',
+      legacy_renamed: true,
+    });
+    expect(trip.event_feedback['heading_deviation_legacy|2026-01-01T12:00:00.000Z|3.00']).toMatchObject({ verdict: 'accurate' });
+    expect(trip.lane_changes_count).toBeUndefined();
+    expect(trip.heading_deviation_count).toBe(0);
+    expect(trip.heading_deviation_legacy_count).toBe(1);
+  });
+
+  it('normalizes retired lane-change events before writing new local trips', () => {
+    expect(normalizeRetiredTripEventTypes({
+      id: 'new-import',
+      distance_km: 5,
+      driving_events: [{ type: 'lane_change' }],
+    })).toMatchObject({
+      driving_events: [{ type: 'heading_deviation_legacy', legacy_renamed: true }],
+      heading_deviation_count: 0,
+      heading_deviation_legacy_count: 1,
     });
   });
 });

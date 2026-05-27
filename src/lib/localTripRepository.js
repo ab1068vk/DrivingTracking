@@ -27,6 +27,9 @@ const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 const DB_NAME = 'drivesense_mobile';
 const TRIP_STORE = 'trips';
 export const TRIP_SCHEMA_VERSION = 22;
+export const TRIP_EVENT_MIGRATION_VERSION = 1;
+export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
+export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 /*
  * Completed trip record schema additions in version 3:
@@ -287,6 +290,91 @@ const eventFeedbackKey = (event, index) => [
   Number.isFinite(Number(event?.value)) ? Number(event.value).toFixed(2) : '',
 ].join('|');
 
+const retiredEventTypeMap = Object.freeze({
+  lane_change: 'heading_deviation_legacy',
+});
+
+const normalizeRetiredEventType = (event) => {
+  if (!event || typeof event !== 'object') return event;
+  const nextType = retiredEventTypeMap[event.type];
+  return nextType
+    ? { ...event, type: nextType, legacy_renamed: true }
+    : event;
+};
+
+const normalizeEventFeedbackKeys = (feedback = {}, eventsBefore = [], eventsAfter = []) => {
+  if (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)) return feedback;
+  const remapped = { ...feedback };
+  eventsBefore.forEach((event, index) => {
+    if (event?.type !== 'lane_change') return;
+    const oldKey = eventFeedbackKey(event, index);
+    const newKey = eventFeedbackKey(eventsAfter[index], index);
+    if (oldKey === newKey || remapped[oldKey] == null) return;
+    remapped[newKey] = remapped[newKey] || remapped[oldKey];
+    delete remapped[oldKey];
+  });
+  return remapped;
+};
+
+export const normalizeRetiredTripEventTypes = (trip = {}) => {
+  if (!trip || typeof trip !== 'object') return trip;
+  const eventFields = ['driving_events', 'phone_proxy_events', 'phone_use_events'];
+  let changed = false;
+  const next = { ...trip };
+
+  eventFields.forEach((field) => {
+    if (!Array.isArray(trip[field])) return;
+    const normalized = trip[field].map(normalizeRetiredEventType);
+    if (normalized.some((event, index) => event !== trip[field][index])) {
+      next[field] = normalized;
+      changed = true;
+      if (field === 'driving_events') {
+        next.event_feedback = normalizeEventFeedbackKeys(trip.event_feedback, trip[field], normalized);
+      }
+    }
+  });
+
+  const drivingEvents = Array.isArray(next.driving_events) ? next.driving_events : [];
+  const modernHeadingCount = drivingEvents.length
+    ? drivingEvents.filter((event) => event?.type === 'heading_deviation').length
+    : Number(next.heading_deviation_count) || 0;
+  const legacyHeadingCount = drivingEvents.length
+    ? drivingEvents.filter((event) => event?.type === 'heading_deviation_legacy').length
+    : Number(next.heading_deviation_legacy_count ?? next.lane_changes_count) || 0;
+  const distanceKm = Math.max(1, Number(next.distance_km) || 1);
+  const needsCountRefresh = drivingEvents.length > 0 && (
+    next.heading_deviation_count !== modernHeadingCount ||
+    next.heading_deviation_legacy_count !== legacyHeadingCount
+  );
+
+  if (changed || needsCountRefresh || trip.lane_changes_count != null || trip.lane_changes_per_10km != null) {
+    delete next.lane_changes_count;
+    delete next.lane_changes_per_10km;
+    next.heading_deviation_count = modernHeadingCount;
+    next.heading_deviations_per_10km = Math.round((modernHeadingCount / distanceKm) * 100) / 10;
+    next.heading_deviation_legacy_count = legacyHeadingCount;
+    next.heading_deviation_legacy_per_10km = Math.round((legacyHeadingCount / distanceKm) * 100) / 10;
+    changed = true;
+  }
+
+  return changed ? { ...next, updated_at: new Date().toISOString() } : trip;
+};
+
+const migrateRetiredTripEventTypesOnce = async () => {
+  const version = Number(await getJson(TRIP_EVENT_MIGRATION_KEY, 0)) || 0;
+  if (version >= TRIP_EVENT_MIGRATION_VERSION) return { changed: 0, alreadyRan: true };
+
+  const trips = await getAllTrips();
+  const migratedTrips = trips.map(normalizeRetiredTripEventTypes);
+  const changedTrips = migratedTrips.filter((trip, index) => trip !== trips[index]);
+  if (changedTrips.length) {
+    await putTrips(changedTrips);
+    await invalidateTripDerivedCaches();
+  }
+  await setJson(TRIP_EVENT_MIGRATION_KEY, TRIP_EVENT_MIGRATION_VERSION);
+  return { changed: changedTrips.length, alreadyRan: false };
+};
+
 export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
   const reviewed = feedback && typeof feedback === 'object' ? feedback : {};
   let removed = 0;
@@ -503,16 +591,19 @@ const sortTrips = (trips, sort) => {
 };
 
 const withId = (trip) => ({
-  id: trip.id || `trip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-  ...trip,
-  schema_version: trip.schema_version || TRIP_SCHEMA_VERSION,
-  updated_at: new Date().toISOString(),
+  ...normalizeRetiredTripEventTypes({
+    id: trip.id || `trip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    ...trip,
+    schema_version: trip.schema_version || TRIP_SCHEMA_VERSION,
+    updated_at: new Date().toISOString(),
+  }),
 });
 
 export const localTripRepository = {
   async list({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
+    await migrateRetiredTripEventTypesOnce();
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
     return sortTrips(trips, sort).slice(0, limit);
@@ -521,6 +612,7 @@ export const localTripRepository = {
   async listAll({ sort = '-start_time' } = {}) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
+    await migrateRetiredTripEventTypesOnce();
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
     return sortTrips(trips, sort);
@@ -529,6 +621,7 @@ export const localTripRepository = {
   async getById(id) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
+    await migrateRetiredTripEventTypesOnce();
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
     const trip = trips.find((item) => String(item.id) === String(id));
@@ -594,6 +687,7 @@ export const localTripRepository = {
   async getScoreMigrationSummary() {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
+    await migrateRetiredTripEventTypesOnce();
     const thresholds = buildDrivingThresholds(localSettings.get());
     const trips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const completed = trips.filter((trip) => trip.status === 'completed');
@@ -605,6 +699,7 @@ export const localTripRepository = {
       completed_count: completed.length,
       mismatch_count: mismatched.length,
       unavailable_score_count: completed.filter((trip) => trip.score_overall == null).length,
+      event_migration_version: Number(await getJson(TRIP_EVENT_MIGRATION_KEY, 0)) || 0,
       trips: mismatched.map(({ trip, provenance }) => ({
         id: trip.id,
         start_time: trip.start_time,

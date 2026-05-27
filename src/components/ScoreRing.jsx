@@ -1,14 +1,15 @@
 import { getScoreColor } from '@/lib/tripEngine';
 import { motion } from 'framer-motion';
+import { isApproximateScoreOutput } from '@/lib/scoreDisplay';
 
 /**
  * Circular score display with animated ring.
  * Uses SVG for the ring and color-codes based on score.
  */
-export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '', approximate = false }) {
+export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '', approximate = true, scoreProvenance = null }) {
   const evidenceLevel = evidence || (score == null ? 'unavailable' : 'low');
   const unavailable = evidenceLevel === 'unavailable' || score == null;
-  const provisional = evidenceLevel === 'low' || evidenceLevel === 'developing' || approximate;
+  const provisional = !unavailable && (scoreProvenance ? isApproximateScoreOutput(scoreProvenance) : approximate !== false);
   const radius = (size - strokeWidth * 2) / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = unavailable ? 100 : Math.max(0, Math.min(100, Number(score) || 0));

@@ -85,6 +85,7 @@ function classifyWeather(samples = []) {
 
   return {
     provider: 'open-meteo',
+    source: 'open_meteo',
     condition,
     riskLevel: riskScore >= 60 ? 'high' : riskScore >= 30 ? 'moderate' : 'low',
     riskScore,
@@ -97,6 +98,56 @@ function classifyWeather(samples = []) {
     weather_code: dominantCode,
   };
 }
+
+const unavailableWeatherContext = (status, extra = {}) => ({
+  provider: 'open-meteo',
+  source: 'unavailable',
+  status,
+  riskLevel: null,
+  riskScore: null,
+  riskMultiplier: 1,
+  ...extra,
+});
+
+const sourceForWeatherContext = (weatherContext = null) => {
+  if (['open_meteo', 'gps_inference', 'unavailable'].includes(weatherContext?.source)) {
+    return weatherContext.source;
+  }
+  const unavailableStatuses = new Set([
+    'disabled',
+    'empty_route',
+    'manual_required',
+    'no_hourly_match',
+    'skipped_privacy',
+    'unavailable',
+  ]);
+  if (unavailableStatuses.has(weatherContext?.status)) {
+    return 'unavailable';
+  }
+  const hasFiniteRiskScore = weatherContext?.riskScore != null &&
+    weatherContext.riskScore !== '' &&
+    Number.isFinite(Number(weatherContext.riskScore));
+  if (weatherContext?.provider === 'open-meteo' || hasFiniteRiskScore) {
+    return 'open_meteo';
+  }
+  return 'unavailable';
+};
+
+const gpsWeatherContextFromScores = (scores = {}) => {
+  const proxy = scores.slippery_proxy;
+  if (!proxy || proxy === 'insufficient_data') return unavailableWeatherContext('unavailable');
+  return {
+    provider: 'gps-stopping-distance',
+    source: 'gps_inference',
+    status: 'gps_inference',
+    condition: proxy,
+    riskLevel: proxy === 'likely_wet' ? 'moderate' : proxy === 'possible_wet' ? 'low' : 'none',
+    riskScore: null,
+    riskMultiplier: 1,
+    wet_signal_count: scores.wet_signal_count ?? 0,
+    wet_ratio: scores.wet_ratio ?? 0,
+  };
+};
 
 function insidePrivacyWeatherBuffer(point, zones = []) {
   return zones.some((zone) => {
@@ -210,22 +261,17 @@ function samplesForTrip(data, startTime, endTime) {
 
 export async function fetchWeatherContextForTrip(routePoints = [], startTime, endTime, settings = {}) {
   if (settings.weather_context_enabled === false) {
-    return { provider: 'open-meteo', status: 'disabled', riskLevel: null, riskScore: null, riskMultiplier: 1 };
+    return unavailableWeatherContext('disabled');
   }
   const privacyZones = getPrivacyZones(settings);
   const center = privacyZones.length ? safeWeatherPoint(routePoints, privacyZones) : midpoint(routePoints);
   if (!center) {
     const hasRoutePoints = Array.isArray(routePoints) && routePoints.length > 0;
-    return {
-      provider: 'open-meteo',
-      status: privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route',
-      riskLevel: null,
-      riskScore: null,
-      riskMultiplier: 1,
+    return unavailableWeatherContext(privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route', {
       ...(privacyZones.length && hasRoutePoints
         ? { weather_context: null, weather_skipped_reason: WEATHER_SKIPPED_ALL_POINTS_PRIVATE }
         : {}),
-    };
+    });
   }
 
   const key = `${center.lat.toFixed(2)},${center.lng.toFixed(2)},${dayKey(startTime)}`;
@@ -247,7 +293,7 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
   }
 
   const samples = samplesForTrip(data, startTime, endTime);
-  if (!samples.length) return { provider: 'open-meteo', status: 'no_hourly_match', riskLevel: null, riskScore: null, riskMultiplier: 1 };
+  if (!samples.length) return unavailableWeatherContext('no_hourly_match');
   return {
     ...classifyWeather(samples),
     status,
@@ -258,18 +304,26 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
 }
 
 export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
+  const sourcedWeatherContext = weatherContext
+    ? { ...weatherContext, source: sourceForWeatherContext(weatherContext) }
+    : null;
+  const displayWeatherContext = sourcedWeatherContext?.source === 'open_meteo'
+    ? sourcedWeatherContext
+    : (
+      scores.slippery_proxy && scores.slippery_proxy !== 'insufficient_data'
+        ? gpsWeatherContextFromScores(scores)
+        : sourcedWeatherContext || unavailableWeatherContext('unavailable')
+    );
   const hasWeatherRiskScore = weatherContext?.riskScore != null &&
     weatherContext.riskScore !== '' &&
     Number.isFinite(Number(weatherContext.riskScore));
   if (!weatherContext || !hasWeatherRiskScore || Number(weatherContext.riskScore) <= 0) {
-    return weatherContext
-      ? {
-          ...scores,
-          weather_context: weatherContext,
-          weather_risk_score: hasWeatherRiskScore ? Number(weatherContext.riskScore) : null,
-          weather_score_adjustment: 0,
-        }
-      : scores;
+    return {
+      ...scores,
+      weather_context: displayWeatherContext,
+      weather_risk_score: hasWeatherRiskScore ? Number(weatherContext.riskScore) : null,
+      weather_score_adjustment: 0,
+    };
   }
   // Brake-turn alerts are GPS-only advisories, not scored Safety evidence.
   const eventCount =
@@ -283,7 +337,7 @@ export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
   if (weatherPenalty <= 0) {
     return {
       ...scores,
-      weather_context: weatherContext,
+      weather_context: sourcedWeatherContext,
       weather_risk_score: weatherContext.riskScore,
       weather_score_adjustment: 0,
     };
@@ -320,7 +374,7 @@ export function applyWeatherRiskToScores(scores = {}, weatherContext = null) {
     score_safety: scoreSafety,
     score_overall: scoreOverall,
     ...(componentScores ? { component_scores: componentScores } : {}),
-    weather_context: weatherContext,
+    weather_context: sourcedWeatherContext,
     weather_risk_score: weatherContext.riskScore,
     weather_score_adjustment: -weatherPenalty,
   };

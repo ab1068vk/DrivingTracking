@@ -6,6 +6,7 @@ import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
 import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
@@ -162,7 +163,7 @@ export default function MapScreen() {
     ))[0];
     const recentRuns = routeRuns.slice(0, 5);
     return [
-      ...(bestRun ? [{ ...bestRun, compareLabel: `Best run - score ${getTripComponentScore(bestRun, 'overall').value ?? '-'}` }] : []),
+      ...(bestRun ? [{ ...bestRun, compareLabel: `Best run - score ${formatScoreWithProvenance(getTripComponentScore(bestRun, 'overall').value, bestRun.score_provenance)}` }] : []),
       ...recentRuns
         .filter((trip) => String(trip.id) !== String(bestRun?.id))
         .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
@@ -637,7 +638,7 @@ export default function MapScreen() {
                       </div>
                     </div>
                     <div className={`font-grotesk font-bold text-xl ${color}`}>
-                      {overallScore.value ?? '-'}
+                      {formatScoreWithProvenance(overallScore.value, trip.score_provenance)}
                       <div className="text-[10px] font-medium capitalize text-muted-foreground">{overallScore.evidence} evidence</div>
                     </div>
                   </div>

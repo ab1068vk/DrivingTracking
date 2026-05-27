@@ -54,6 +54,13 @@ describe('metric registry', () => {
     expect(reportMetricKeys.filter((key) => !METRIC_REGISTRY[key])).toEqual([]);
   });
 
+  it('exposes phone-use permission requirements for UI unavailable states', () => {
+    expect(METRIC_REGISTRY.phone_use_score).toMatchObject({
+      permission_required: 'android_usage_access',
+    });
+    expect(METRIC_REGISTRY.phone_use_score.permissionRequiredNote).toContain('Android Usage Access');
+  });
+
   it('adds registry metadata below CSV metric headers', () => {
     const lines = tripsToCSV([]).split('\n');
     const headers = lines[0].slice(1, -1).split('","');
@@ -66,5 +73,22 @@ describe('metric registry', () => {
     expect(lines[1]).toContain('"Metric Metadata"');
     expect(lines[1]).toContain('Safety Pattern Estimate: Penalises harsh braking');
     expect(lines[1]).toContain('gps_events; speed_limit_osm; phone_use_usage_access');
+  });
+
+  it('prefixes exported score values as estimates', () => {
+    const csv = tripsToCSV([{
+      id: 'trip-1',
+      status: 'completed',
+      start_time: '2026-05-01T08:00:00.000Z',
+      end_time: '2026-05-01T08:15:00.000Z',
+      duration_seconds: 900,
+      distance_km: 10,
+      score_overall: 82,
+      score_safety: 80,
+      score_smoothness: 84,
+      score_eco: 83,
+    }]);
+
+    expect(csv).toContain('"~82","~80","~84","~83"');
   });
 });

@@ -6,7 +6,7 @@ import {
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
-import { annotateRouteSpeedLimits } from '@/lib/speedLimitSource';
+import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
@@ -121,6 +121,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     coverage: 0,
     status: 'unavailable',
     source: 'openstreetmap_overpass',
+    fallback_country: speedLimitDefaultCountryKey(settings),
     error: error?.message || 'Speed limit lookup unavailable',
   }));
   routePoints = speedLimitContext.routePoints || routePoints;
@@ -153,6 +154,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       status: speedLimitContext.status,
       coverage: speedLimitContext.coverage,
       source: speedLimitContext.source,
+      fallback_country: speedLimitContext.fallback_country,
       query_count: speedLimitContext.query_count,
       error: speedLimitContext.error,
     },

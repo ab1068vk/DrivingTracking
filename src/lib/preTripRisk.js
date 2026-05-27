@@ -1,8 +1,7 @@
 import { analyzeDayOfWeek, analyzeTimeOfDay, computePersonalBaseline } from '@/lib/tripInsights';
 import { weightedBlend } from '@/lib/tripEngine';
-import { getFallbackTimeRisk, getTimeBucket } from '@/lib/habitProfile';
+import { getTimeBucket } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
-import { isEveningRushHour, isMorningRushHour, isNightRiskHour } from '@/lib/appConstants';
 import { scoringValue } from '@/lib/scoringConstants';
 
 const RISK_CONSTANTS = scoringValue('PRE_TRIP_READINESS_POLICY');
@@ -50,13 +49,6 @@ const SIGNAL_TIPS = {
 const last90Days = (trips = [], now = new Date()) => {
   const cutoff = now.getTime() - RISK_CONSTANTS.RECENT_TRIP_DAYS * 24 * 60 * 60 * 1000;
   return trips.filter((trip) => new Date(trip.start_time || trip.startedAt || 0).getTime() >= cutoff);
-};
-
-const fallbackTimeRisk = (hour) => {
-  if (isNightRiskHour(hour)) return RISK_CONSTANTS.FALLBACK_NIGHT_RISK;
-  if (isMorningRushHour(hour)) return RISK_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
-  if (isEveningRushHour(hour)) return RISK_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
-  return RISK_CONSTANTS.FALLBACK_DEFAULT_RISK;
 };
 
 const routeRiskFromContext = (context = {}) => {
@@ -187,6 +179,27 @@ const nullableRisk = (value) => {
   return Number.isFinite(parsed) ? clamp(parsed, 0, 100) : null;
 };
 
+const declineRiskFromDelta = (delta) => {
+  if (delta == null || delta === '') return null;
+  const parsed = Number(delta);
+  if (!Number.isFinite(parsed)) return null;
+  return clamp(Math.round(Math.max(0, -parsed)), 0, 100);
+};
+
+const finiteRisk = (value) => Number.isFinite(Number(value));
+
+const signalSource = (source, { actualUserData = false, fallback = false } = {}) => ({
+  source,
+  actualUserData,
+  fallback,
+});
+
+const profileBucketHasTrips = (bucket, minimumTrips) => (
+  bucket?.insufficient === false &&
+  Number(bucket.tripCount) >= minimumTrips &&
+  finiteRisk(bucket.riskScore)
+);
+
 /**
  * Compute trip readiness risk from historical trips, current fatigue, and route context.
  * @param {Array<object>} trips - Completed and recent trip records.
@@ -221,6 +234,18 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const lastTrip = sorted[0] || null;
   const profileTimeBucket = habitProfile?.timeBuckets?.[currentBucket];
   const profileDayEntry = habitProfile?.dayOfWeek?.[currentDow];
+  const hasProfileTimeRisk = habitProfile && profileBucketHasTrips(profileTimeBucket, RISK_CONSTANTS.MIN_TRIPS_FOR_BUCKET);
+  const hasProfileDayRisk = habitProfile && profileBucketHasTrips(profileDayEntry, RISK_CONSTANTS.MIN_TRIPS_FOR_DAY);
+  const hasProfileTrendRisk = habitProfile && Number(habitProfile.confidence) > 0 && finiteRisk(habitProfile.trendDelta);
+  const hasLegacyTimeRisk = legacyTimeBucket?.avgScore != null && legacyTimeBucket.trips >= RISK_CONSTANTS.MIN_TRIPS_FOR_BUCKET;
+  const hasLegacyDayRisk = legacyDayEntry?.avgScore != null && legacyDayEntry.trips >= RISK_CONSTANTS.MIN_TRIPS_FOR_DAY;
+  const legacyTimeRisk = hasLegacyTimeRisk
+    ? 100 - legacyTimeBucket.avgScore
+    : null;
+  const legacyDayRisk = hasLegacyDayRisk
+    ? 100 - legacyDayEntry.avgScore
+    : null;
+  const baselineTrendRisk = declineRiskFromDelta(baseline.delta);
   const lastTripScore = lastTrip
     ? nullableRisk(lastTrip.score_overall ?? lastTrip.overall_score ?? lastTrip.score)
     : null;
@@ -228,44 +253,88 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const dangerZoneRisk = context.nearbyDangerZoneCount == null
     ? null
     : clamp((Number(context.nearbyDangerZoneCount) || 0) * 35, 0, 100);
+  const routeForecastRisk = routeRiskFromContext(context);
+  const restRisk = recentRestRisk(lastTrip, nowMs);
+  const fatigueRisk = dailyFatigueRisk(dailyFatigueState);
+  const timeOfDayRisk = hasProfileTimeRisk
+    ? profileTimeBucket.riskScore
+    : hasLegacyTimeRisk
+      ? legacyTimeRisk
+      : null;
+  const dayOfWeekRisk = hasProfileDayRisk
+    ? profileDayEntry.riskScore
+    : hasLegacyDayRisk
+      ? legacyDayRisk
+      : null;
+  const recentTrendRisk = hasProfileTrendRisk
+    ? declineRiskFromDelta(habitProfile.trendDelta)
+    : baselineTrendRisk;
 
   const signals = {
-    timeOfDay: habitProfile && profileTimeBucket?.insufficient === false
-      ? profileTimeBucket.riskScore
-      : habitProfile
-        ? getFallbackTimeRisk(now.getHours(), habitProfile)
-        : legacyTimeBucket?.avgScore != null
-          ? 100 - legacyTimeBucket.avgScore
-          : fallbackTimeRisk(now.getHours()),
-    dayOfWeek: habitProfile && profileDayEntry?.insufficient === false
-      ? profileDayEntry.riskScore
-      : habitProfile
-        ? null
-        : legacyDayEntry?.avgScore != null
-          ? 100 - legacyDayEntry.avgScore
-          : null,
-    recentTrend: habitProfile
-      ? habitProfile.trendRisk
-      : baseline.trend === 'declining'
-        ? 65
-        : baseline.trend === 'improving'
-          ? 10
-          : 30,
-    dailyFatigue: dailyFatigueRisk(dailyFatigueState),
+    timeOfDay: timeOfDayRisk,
+    dayOfWeek: dayOfWeekRisk,
+    recentTrend: recentTrendRisk,
+    dailyFatigue: fatigueRisk,
     lastTripOutcome: lastTripScore == null ? null : 100 - lastTripScore,
     weather: weatherRisk,
     dangerZones: dangerZoneRisk,
-    routeForecast: routeRiskFromContext(context),
-    recentRest: recentRestRisk(lastTrip, nowMs),
+    routeForecast: routeForecastRisk,
+    recentRest: restRisk,
+  };
+  const signalProvenance = {
+    timeOfDay: hasProfileTimeRisk
+      ? signalSource('habit_profile_time_bucket', { actualUserData: true })
+      : hasLegacyTimeRisk
+        ? signalSource('legacy_time_bucket_history', { actualUserData: true })
+        : signalSource('unavailable_personal_time_history', { fallback: true }),
+    dayOfWeek: hasProfileDayRisk
+      ? signalSource('habit_profile_day_bucket', { actualUserData: true })
+      : hasLegacyDayRisk
+        ? signalSource('legacy_day_history', { actualUserData: true })
+        : signalSource('unavailable_personal_day_history', { fallback: true }),
+    recentTrend: recentTrendRisk != null
+      ? signalSource(hasProfileTrendRisk ? 'habit_profile_trend_delta' : 'personal_baseline_delta', { actualUserData: true })
+      : signalSource('unavailable_personal_trend', { fallback: true }),
+    dailyFatigue: fatigueRisk != null
+      ? signalSource('daily_fatigue_state', { actualUserData: true })
+      : signalSource('unavailable_daily_fatigue'),
+    lastTripOutcome: lastTripScore != null
+      ? signalSource('last_completed_trip_score', { actualUserData: true })
+      : signalSource('unavailable_last_trip'),
+    weather: weatherRisk != null
+      ? signalSource('weather_context')
+      : signalSource('unavailable_weather'),
+    dangerZones: dangerZoneRisk != null
+      ? signalSource('personal_repeated_event_areas', { actualUserData: true })
+      : signalSource('unavailable_danger_zones'),
+    routeForecast: routeForecastRisk != null
+      ? signalSource('personal_route_history', { actualUserData: true })
+      : signalSource('unavailable_route_history'),
+    recentRest: restRisk != null
+      ? signalSource('recent_trip_timing', { actualUserData: true })
+      : signalSource('unavailable_recent_rest'),
   };
 
   const clampedSignals = Object.fromEntries(Object.entries(signals).map(([key, value]) => [
     key,
     value == null || value === '' || !Number.isFinite(Number(value)) ? null : clamp(Number(value), 0, 100),
   ]));
+  const availableSignalKeys = Object.entries(clampedSignals)
+    .filter(([, value]) => value != null)
+    .map(([key]) => key);
+  const actualUserSignalKeys = availableSignalKeys.filter((key) => signalProvenance[key]?.actualUserData === true);
+  const fallbackSignalKeys = Object.entries(signalProvenance)
+    .filter(([, provenance]) => provenance.fallback === true)
+    .map(([key]) => key);
   const weights = deriveWeights(habitProfile, now);
-  const weightedCompositeRisk = weightedRisk(clampedSignals, weights);
-  const gateFloor = riskFloorFromSignalGates(clampedSignals, habitProfile);
+  const missingCoreSignals = [
+    clampedSignals.timeOfDay == null ? 'timeOfDay' : null,
+    clampedSignals.recentTrend == null ? 'recentTrend' : null,
+  ].filter(Boolean);
+  const fallbackGateTriggered = fallbackSignalKeys.length > 1;
+  const hasCoreReadinessEvidence = missingCoreSignals.length === 0 && !fallbackGateTriggered;
+  const weightedCompositeRisk = hasCoreReadinessEvidence ? weightedRisk(clampedSignals, weights) : null;
+  const gateFloor = hasCoreReadinessEvidence ? riskFloorFromSignalGates(clampedSignals, habitProfile) : 0;
   const compositeRisk = weightedCompositeRisk == null && gateFloor <= 0
     ? null
     : clamp(Math.round(Math.max(weightedCompositeRisk ?? 0, gateFloor)), 0, 100);
@@ -277,7 +346,7 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
         ? 'moderate'
         : 'low';
   const availableSignals = Object.entries(clampedSignals).filter(([, value]) => value != null);
-  const primaryKey = availableSignals.sort((a, b) => b[1] - a[1])[0]?.[0] || 'timeOfDay';
+  const primaryKey = availableSignals.sort((a, b) => b[1] - a[1])[0]?.[0] || null;
   const topSignals = Object.entries(clampedSignals)
     .filter(([, value]) => value != null)
     .map(([key, value]) => ({
@@ -303,8 +372,16 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
       confidence: habitProfile?.confidence ?? 0,
       readinessEvidence: compositeRisk == null ? 'unavailable' : availableSignals.length >= 6 ? 'high' : availableSignals.length >= 3 ? 'developing' : 'low',
       availableSignalCount: availableSignals.length,
-      sufficientTimeData: habitProfile ? profileTimeBucket?.insufficient === false : false,
-      sufficientDayData: habitProfile ? profileDayEntry?.insufficient === false : false,
+      actualUserSignalCount: actualUserSignalKeys.length,
+      actualUserSignalKeys,
+      fallbackSignalCount: fallbackSignalKeys.length,
+      fallbackSignalKeys,
+      fallbackGateTriggered,
+      missingCoreSignals,
+      signalProvenance,
+      sufficientTimeData: clampedSignals.timeOfDay != null,
+      sufficientDayData: clampedSignals.dayOfWeek != null,
+      sufficientTrendData: clampedSignals.recentTrend != null,
       personalised: (habitProfile?.confidence ?? 0) >= 0.3,
     },
   };

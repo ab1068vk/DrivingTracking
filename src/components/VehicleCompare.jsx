@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Gauge, Navigation, Activity } from 'lucide-react';
 import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 
 function ScoreBar({ label, value, max, color, evidence = null }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
@@ -80,7 +81,7 @@ export default function VehicleCompare({ vehicles, trips }) {
             <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
             <Tooltip
-              formatter={(v) => [v, 'Avg Score']}
+              formatter={(v) => [formatEstimatedScore(v), 'Avg Score']}
               contentStyle={{ borderRadius: 12, border: '1px solid hsl(var(--border))', fontSize: 12 }}
             />
             <Bar dataKey="avgScore" radius={[6, 6, 0, 0]}>
@@ -118,7 +119,7 @@ export default function VehicleCompare({ vehicles, trips }) {
                 <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: s.color }} />
                 <span className="flex-1 text-sm font-medium truncate">{s.name}</span>
                 <span className="text-xs text-muted-foreground">{s.scoredCount}/{s.count} scored</span>
-                <span className={`text-sm font-bold ${color}`}>{s.avgScore ?? '-'}</span>
+                <span className={`text-sm font-bold ${color}`}>{formatEstimatedScore(s.avgScore)}</span>
                 <span className="text-[10px] capitalize text-muted-foreground">aggregate evidence</span>
               </div>
             );

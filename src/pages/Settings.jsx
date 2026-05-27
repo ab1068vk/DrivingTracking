@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone
 } from 'lucide-react';
 import {
   Dialog,
@@ -20,6 +20,12 @@ import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsP
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
+import {
+  TRIP_EVENT_MIGRATION_KEY,
+  TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
+  TRIP_EVENT_MIGRATION_VERSION,
+} from '@/lib/localTripRepository';
+import { getJson, setJson } from '@/lib/mobileStorage';
 import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
@@ -61,6 +67,10 @@ import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sen
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
+import {
+  SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
+  speedLimitDefaultCountryKey,
+} from '@/lib/speedLimitSource';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import {
   CALIBRATION_STATUSES,
@@ -69,6 +79,7 @@ import {
   getProvisionalScoringConstants,
   scoringValue,
 } from '@/lib/scoringConstants';
+import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -158,7 +169,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Stop-start pattern score',
-    definition: 'Looks for repeated acceleration and deceleration patterns in GPS speed data. It cannot measure actual following distance and is shown only with at least 5 km of highway evidence.',
+    definition: 'Looks for repeated acceleration and deceleration patterns in GPS speed data. It cannot measure actual following distance and is shown only with enough contextual evidence: 2 km for city-speed trips or 5 km for highway trips.',
   },
   {
     term: 'Focus score',
@@ -234,6 +245,7 @@ export default function Settings() {
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [rescoreStatus, setRescoreStatus] = useState('');
+  const [headingEventMigrationNoteVisible, setHeadingEventMigrationNoteVisible] = useState(false);
   const [osrmDemoConsentOpen, setOsrmDemoConsentOpen] = useState(false);
   const [osrmDemoConsentChecked, setOsrmDemoConsentChecked] = useState(false);
   const importInputRef = useRef(null);
@@ -253,6 +265,7 @@ export default function Settings() {
     completed_count: 0,
     mismatch_count: 0,
     unavailable_score_count: 0,
+    event_migration_version: 0,
     trips: [],
   } } = useQuery({
     queryKey: ['score-migration-summary'],
@@ -284,6 +297,28 @@ export default function Settings() {
   const openOsrmDemoConsent = () => {
     setOsrmDemoConsentChecked(false);
     setOsrmDemoConsentOpen(true);
+  };
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      getJson(TRIP_EVENT_MIGRATION_KEY, 0),
+      getJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, false),
+    ]).then(([version, dismissed]) => {
+      if (!active) return;
+      setHeadingEventMigrationNoteVisible(
+        Number(version || scoreMigrationSummary.event_migration_version || 0) >= TRIP_EVENT_MIGRATION_VERSION &&
+        dismissed !== true
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [scoreMigrationSummary.event_migration_version]);
+
+  const dismissHeadingEventMigrationNote = async () => {
+    await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
+    setHeadingEventMigrationNoteVisible(false);
   };
 
   const acceptOsrmDemoConsent = () => {
@@ -945,6 +980,37 @@ export default function Settings() {
           </div>
         )}
       </div>
+
+      <div role="note" className="flex gap-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        <div>
+          <div className="font-semibold text-foreground">{SCORE_ESTIMATE_NOTICE}</div>
+          <p className="mt-1 text-muted-foreground">
+            Trip Safety, Eco, Smoothness, Overall, fatigue, and score-card outputs are coaching estimates until calibrated against labeled outcome data.
+          </p>
+        </div>
+      </div>
+
+      {headingEventMigrationNoteVisible && (
+        <div role="note" className="flex items-start justify-between gap-3 rounded-2xl border border-sky-400/40 bg-sky-500/10 p-3 text-sm">
+          <div className="flex gap-3">
+            <Info className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />
+            <div>
+              <div className="font-semibold text-foreground">Lane change events have been relabelled as heading events.</div>
+              <p className="mt-1 text-muted-foreground">
+                Road Sage does not measure lane-boundary crossings, so legacy records now appear as heading events.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={dismissHeadingEventMigrationNote}
+            className="shrink-0 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-secondary"
+          >
+            Got it
+          </button>
+        </div>
+      )}
 
       <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
 
@@ -1969,6 +2035,31 @@ export default function Settings() {
         <SectionTitle id="settings-phone-use">Phone Use Detection</SectionTitle>
         <div className="rounded-2xl bg-secondary/40 p-3">
           <SettingRow
+            icon={Smartphone}
+            label="Usage Access status"
+            sublabel={
+              permissionStatus?.phoneUsageAccess === 'granted'
+                ? 'Phone-use scoring can use confirmed Android Usage Access evidence'
+                : 'Phone-use scoring is unavailable until Android Usage Access is enabled'
+            }
+          >
+            <div className="flex items-center gap-2">
+              <PermissionBadge value={isAndroid() ? permissionStatus?.phoneUsageAccess : 'unavailable'} />
+              {isAndroid() && permissionStatus?.phoneUsageAccess !== 'granted' && (
+                <button
+                  className="text-xs font-semibold text-primary"
+                  onClick={async e => {
+                    e.stopPropagation();
+                    await openAndroidUsageAccessSettings();
+                    await refreshPermissions();
+                  }}
+                >
+                  Enable
+                </button>
+              )}
+            </div>
+          </SettingRow>
+          <SettingRow
             icon={Focus}
             label="Detect phone use while driving"
             sublabel="Use Android Usage Access for scoring; retain GPS proxy counts for diagnostics only"
@@ -2108,7 +2199,7 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="Fallback limit country"
-          sublabel="Used only when OpenStreetMap has no maxspeed tag; inferred limits are approximate and may not match local law"
+          sublabel={`Used when OpenStreetMap has no maxspeed tag; Trip Detail shows the ${SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[speedLimitDefaultCountryKey(cfg)] || 'Global'} fallback profile in compliance provenance`}
         >
           <select
             className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
@@ -2142,7 +2233,7 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Info}
-          label="Fetch real speed limits after trips"
+          label="Automatic road-data fetching"
           sublabel="On by default. Saved trips fetch OpenStreetMap speed limits and Open-Meteo weather when internet is available. OSRM snapping still stays manual."
         >
           <Toggle
@@ -2176,7 +2267,7 @@ export default function Settings() {
                   : 'will be skipped until an OSRM endpoint is added.'}
             </div>
             <div>
-              <span className="font-semibold text-foreground">Fetch real speed limits after trips {cfg.external_context_auto_fetch_enabled !== false ? 'ON' : 'OFF'}:</span>{' '}
+              <span className="font-semibold text-foreground">Automatic road-data fetching {cfg.external_context_auto_fetch_enabled !== false ? 'ON' : 'OFF'}:</span>{' '}
               {cfg.external_context_auto_fetch_enabled !== false
                 ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
                 : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}

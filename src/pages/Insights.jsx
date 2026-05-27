@@ -6,6 +6,7 @@ import { Award, CalendarDays, CheckCircle2, Clock, Flag, MapPinned, Route, Shiel
 import { tripService } from '@/api/trips';
 import { localSettings } from '@/lib/trackingStore';
 import { formatDistance, getScoreColor } from '@/lib/tripEngine';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import {
   buildCommuteDetections,
   buildGoalStatus,
@@ -131,7 +132,7 @@ export default function Insights() {
                 return (
                   <div
                     key={day.key}
-                    title={day.trip_count ? `${day.trip_count} trips, ${day.distance_km} km, avg score ${day.avg_score}` : 'No trips'}
+                    title={day.trip_count ? `${day.trip_count} trips, ${day.distance_km} km, avg score ${formatEstimatedScore(day.avg_score)}` : 'No trips'}
                     className={`min-h-16 rounded-xl border p-1.5 text-left ${day.inMonth ? 'border-border bg-secondary/40' : 'border-transparent bg-transparent opacity-40'}`}
                   >
                     <div className="text-[11px] font-semibold">{day.date.getDate()}</div>
@@ -148,8 +149,8 @@ export default function Insights() {
             </div>
             {(calendar.best_day || calendar.worst_day) && (
               <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
-                {calendar.best_day && <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">Best day: {calendar.best_day.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })} ({calendar.best_day.avg_score})</div>}
-                {calendar.worst_day && <div className="rounded-xl bg-red-50 p-3 text-red-700 dark:bg-red-950/30 dark:text-red-300">Worst day: {calendar.worst_day.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })} ({calendar.worst_day.avg_score})</div>}
+                {calendar.best_day && <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">Best day: {calendar.best_day.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })} ({formatEstimatedScore(calendar.best_day.avg_score)})</div>}
+                {calendar.worst_day && <div className="rounded-xl bg-red-50 p-3 text-red-700 dark:bg-red-950/30 dark:text-red-300">Worst day: {calendar.worst_day.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })} ({formatEstimatedScore(calendar.worst_day.avg_score)})</div>}
               </div>
             )}
           </section>
@@ -184,7 +185,7 @@ export default function Insights() {
                             {commute.trip_count} trips, {formatDistance(commute.avg_distance_km, units)} average, safest near {commute.usual_time}
                           </div>
                         </div>
-                        <div className={`font-grotesk text-2xl font-bold ${color}`}>{commute.avg_score}</div>
+                        <div className={`font-grotesk text-2xl font-bold ${color}`}>{formatEstimatedScore(commute.avg_score)}</div>
                       </div>
                     </button>
                   );
@@ -223,11 +224,11 @@ export default function Insights() {
                           </div>
                           <div className="mt-2 text-sm">
                             This route is usually safest at <span className="font-semibold">{route.safest_time}</span>
-                            {route.safest_time_score != null ? ` (${route.safest_time_score})` : ''}.
+                            {route.safest_time_score != null ? ` (${formatEstimatedScore(route.safest_time_score)})` : ''}.
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className={`font-grotesk text-3xl font-bold ${color}`}>{route.avg_score}</div>
+                          <div className={`font-grotesk text-3xl font-bold ${color}`}>{formatEstimatedScore(route.avg_score)}</div>
                           <div className="text-xs text-muted-foreground">average score</div>
                         </div>
                       </div>
@@ -278,7 +279,7 @@ export default function Insights() {
                       <div key={road.id} className="rounded-2xl bg-secondary/50 p-3">
                         <div className="mb-1 flex items-center justify-between text-sm">
                           <span className="font-semibold">{road.label}</span>
-                          <span className={`font-bold ${color}`}>{road.avg_score}</span>
+                          <span className={`font-bold ${color}`}>{formatEstimatedScore(road.avg_score)}</span>
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {road.trip_count} trip{road.trip_count === 1 ? '' : 's'}, {formatDistance(road.distance_km, units)}, {road.risk_events} risk events

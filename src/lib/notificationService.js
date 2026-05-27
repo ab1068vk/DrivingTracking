@@ -4,6 +4,7 @@ import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
 import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
 import { formatCurrencyAmount } from '@/lib/currency';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 
 export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
 export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
@@ -631,7 +632,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       notification = {
         id: NOTIFICATION_IDS.TRIP_SCORE_PERSONAL_BEST,
         title: 'Personal Best!',
-        body: `Score: ${currentScore}/100 - your best trip yet. Keep it up!`,
+        body: `Score: ${formatEstimatedScore(currentScore)}/100 - your best trip yet. Keep it up!`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id, score: currentScore },
@@ -640,7 +641,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       notification = {
         id: NOTIFICATION_IDS.TRIP_SCORE_IMPROVEMENT,
         title: 'Great Improvement',
-        body: `Score ${currentScore} - ${currentScore - recentAvg} points above your recent average.`,
+        body: `Score ${formatEstimatedScore(currentScore)} - ${currentScore - recentAvg} points above your recent average.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },
@@ -650,7 +651,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       notification = {
         id: NOTIFICATION_IDS.TRIP_FUEL_SAVING,
         title: 'Eco Drive',
-        body: `Smooth driving saved ~${formatCurrencyAmount(saved, settings)} in fuel on this trip. Eco score: ${trip.score_eco ?? trip.eco_score}.`,
+        body: `Smooth driving saved ~${formatCurrencyAmount(saved, settings)} in fuel on this trip. Eco score: ${formatEstimatedScore(trip.score_eco ?? trip.eco_score)}.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },
@@ -659,7 +660,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       notification = {
       id: NOTIFICATION_IDS.TRIP_CONDITION_ADJUSTED,
       title: 'Adjusted for Conditions',
-      body: `Wet-road patterns estimated from the trip context. Your safety score includes a +${trip.safety_condition_bonus} condition adjustment.`,
+      body: `Wet-road patterns estimated from the trip context. Your safety score estimate includes a +${trip.safety_condition_bonus} condition adjustment.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },
@@ -668,7 +669,7 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
       notification = {
         id: NOTIFICATION_IDS.TRIP_SCORE_DECLINE,
         title: 'Score Dip',
-        body: `Score ${currentScore} - below your recent average. Open Road Sage to see what happened.`,
+        body: `Score ${formatEstimatedScore(currentScore)} - below your recent average. Open Road Sage to see what happened.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },

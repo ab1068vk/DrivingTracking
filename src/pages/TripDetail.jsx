@@ -17,6 +17,7 @@ import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
 import {
   calculateSegmentMetrics,
   formatDistance,
@@ -42,6 +43,10 @@ import {
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
 } from '@/lib/openSourceTripContext';
+import {
+  SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
+  speedLimitDefaultCountryKey,
+} from '@/lib/speedLimitSource';
 import { buildPhoneUsageAccessProvenance, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import {
   TRIP_TAG_OPTIONS,
@@ -72,6 +77,7 @@ import {
   TRIP_CONTEXT_TAG_OPTIONS,
   WAS_DRIVER_OPTIONS,
 } from '@/lib/calibrationLabeling';
+import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -87,6 +93,25 @@ const fatigueText = {
   slight: 'Fairly consistent',
 };
 const CRITICAL_FATIGUE_CHART_LEVEL = DAILY_FATIGUE_THRESHOLDS.CRITICAL * 10;
+const DIAGNOSTIC_EVENT_EXPLANATIONS = {
+  aggressive_overtake: 'Diagnostic only because GPS can suggest an overtake pattern but cannot verify surrounding traffic, lane position, or safe re-entry.',
+  heading_deviation: 'Diagnostic only because GPS heading changes cannot confirm a lane boundary crossing or driver intent.',
+  heading_deviation_legacy: 'Diagnostic only because this is a migrated legacy GPS heading event, not measured lane-boundary evidence.',
+  close_proximity: 'Diagnostic only because GPS brake-turn movement cannot measure object proximity, another road user, or an avoided collision.',
+  phone_use_gps_proxy: 'Diagnostic only because GPS motion patterns are not confirmed phone interaction; Android Usage Access is required for scored phone-use evidence.',
+};
+
+const isGpsPhoneUseProxyEvent = (event = {}) => (
+  event.type === 'phone_use' && (event.source === 'gps_proxy' || event.diagnostic_only === true)
+);
+
+const diagnosticExplanationForEvent = (event = {}) => (
+  isGpsPhoneUseProxyEvent(event)
+    ? DIAGNOSTIC_EVENT_EXPLANATIONS.phone_use_gps_proxy
+    : DIAGNOSTIC_EVENT_EXPLANATIONS[event.type] || null
+);
+
+const isDiagnosticOnlyTripEvent = (event = {}) => Boolean(diagnosticExplanationForEvent(event));
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
 
@@ -448,13 +473,25 @@ export default function TripDetail() {
     { key: 'urban', label: 'Urban', data: trip.urban_compliance },
     { key: 'residential', label: 'Residential', data: trip.residential_compliance },
   ].filter((item) => item.data);
-  const roadConditionLabel = {
-    likely_wet: 'Likely Wet',
-    possible_wet: 'Possibly Wet',
-    appears_dry: 'Dry',
-    insufficient_data: 'Not Enough Data',
-  }[trip.slippery_proxy] || null;
   const weatherContext = trip.weather_context || null;
+  const weatherContextSource = weatherContext?.source || (
+    !weatherContext && trip.slippery_proxy && trip.slippery_proxy !== 'insufficient_data'
+      ? 'gps_inference'
+      : 'unavailable'
+  );
+  const weatherCondition = String(weatherContext?.condition || trip.slippery_proxy || '').replace(/_/g, ' ');
+  const openMeteoWetCondition = ['rain', 'snow', 'storm', 'fog', 'freezing_precipitation'].includes(weatherContext?.condition);
+  const weatherContextDisplayValue = weatherContextSource === 'open_meteo'
+    ? openMeteoWetCondition
+      ? 'Wet conditions likely (Open-Meteo API)'
+      : `${weatherCondition || 'Weather checked'} (Open-Meteo API)`
+    : weatherContextSource === 'gps_inference'
+      ? ['likely_wet', 'possible_wet'].includes(trip.slippery_proxy || weatherContext?.condition)
+        ? 'Wet patterns inferred (GPS stopping distance)'
+        : trip.slippery_proxy === 'appears_dry' || weatherContext?.condition === 'appears_dry'
+          ? 'Dry patterns inferred (GPS stopping distance)'
+          : 'Weather unavailable'
+      : 'Weather unavailable';
   const speedLimitContext = trip.speed_limit_context || null;
   const mapMatchingContext = trip.map_matching_context || null;
   const mapMatchedViaPublicOsrmDemo = mapMatchingContext?.isOsrmDemoUrl === true &&
@@ -468,22 +505,49 @@ export default function TripDetail() {
   const speedLimitCoverage = (() => {
     const points = trip.route_points || [];
     const limitPoints = points.filter((point) => Number.isFinite(Number(point.speed_limit_kmh)));
-    const mapDerived = limitPoints.filter((point) => ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source)).length;
+    const posted = limitPoints.filter((point) => point.speed_limit_source === 'openstreetmap').length;
+    const fallbackDefault = limitPoints.filter((point) => point.speed_limit_source === 'osm_highway_default').length;
+    const mapDerived = posted + fallbackDefault;
     const inferred = limitPoints.filter((point) => point.speed_limit_source === 'inferred').length;
     const pct = (count) => points.length ? Math.round((count / points.length) * 100) : 0;
-    return { mapDerivedPct: pct(mapDerived), inferredPct: pct(inferred), sampleCount: points.length };
+    return {
+      postedPct: pct(posted),
+      fallbackDefaultPct: pct(fallbackDefault),
+      mapDerivedPct: pct(mapDerived),
+      inferredPct: pct(inferred),
+      sampleCount: points.length,
+    };
   })();
   const osmCoveragePct = Number.isFinite(Number(speedLimitContext?.coverage))
     ? Number(speedLimitContext.coverage)
     : speedLimitCoverage.mapDerivedPct;
   const showLowSpeedLimitCoverageBanner = speedLimitCoverage.sampleCount > 0 && osmCoveragePct < 20;
   const speedLimitDefaultCountries = [...new Set([
+    speedLimitContext?.fallback_country,
+    ...(trip.route_points || []).map((point) => point.fallback_country),
     ...(trip.route_points || []).map((point) => point.speed_limit_default_country),
+    ...(trip.driving_events || []).map((event) => event.fallback_country),
     ...(trip.driving_events || []).map((event) => event.speed_limit_default_country),
   ].filter(Boolean))].map((country) => String(country).toUpperCase());
+  const currentSpeedLimitFallbackCountry = speedLimitDefaultCountryKey(settings);
+  const speedLimitDefaultCountryLabels = speedLimitDefaultCountries.map((country) => (
+    SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[String(country).toLowerCase()] || country
+  ));
+  const speedLimitDefaultCountryLabel = speedLimitDefaultCountryLabels.length
+    ? speedLimitDefaultCountryLabels.join(', ')
+    : SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[currentSpeedLimitFallbackCountry] || 'Global';
   const speedLimitDefaultCountryText = speedLimitDefaultCountries.length
     ? ` Country assumption for OSM road-type defaults: ${speedLimitDefaultCountries.join(', ')}.`
     : '';
+  const speedLimitProvenanceSummary = [
+    `${speedLimitCoverage.postedPct}% of this route used posted OpenStreetMap limits`,
+    speedLimitCoverage.fallbackDefaultPct > 0
+      ? `${speedLimitCoverage.fallbackDefaultPct}% used ${speedLimitDefaultCountryLabel} road-type defaults`
+      : null,
+    speedLimitCoverage.inferredPct > 0
+      ? `${speedLimitCoverage.inferredPct}% used GPS-inferred limits`
+      : null,
+  ].filter(Boolean).join('; ') + ` (${speedLimitCoverage.sampleCount} samples).`;
   const dataQualityFlags = Array.isArray(trip.data_quality_flags) ? trip.data_quality_flags : [];
   const hasLocationPermissionLoss = dataQualityFlags.includes('location_permission_loss') ||
     trip.score_confidence_flag === 'data_gap_detected' ||
@@ -500,9 +564,15 @@ export default function TripDetail() {
     ? livePhoneUsageAccessProvenance
     : storedPhoneUsageAccessProvenance;
   const componentScore = (key) => getTripComponentScore(trip, key);
+  const brakeOnsetSequenceCount = Math.max(0, Number(trip.brake_onset_sequence_count) || 0);
+  const brakeOnsetMinimumSequences = 2;
+  const brakeOnsetCollectingDataText = componentScore('brake_onset_smoothness').value == null && brakeOnsetSequenceCount > 0
+    ? `${brakeOnsetSequenceCount} of ${brakeOnsetMinimumSequences} qualifying brake event${brakeOnsetMinimumSequences === 1 ? '' : 's'} recorded`
+    : null;
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
   const hasPhoneUsageAccess = displayPhoneUse.phone_use_score_available === true;
+  const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const showPhoneUse = hasPhoneUsageAccess || phoneUseWindows.length > 0 || phoneUseRisk !== 'none';
   const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? null;
   const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : null;
@@ -520,8 +590,21 @@ export default function TripDetail() {
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse)
-    .filter((event) => !(event.type === 'phone_use' && event.source === 'gps_proxy'))
     .filter((event) => event.type !== 'near_miss');
+  const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
+  const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
+    .filter((event) => !displayEvents.some((candidate) => (
+      candidate?.type === event?.type &&
+      candidate?.timestamp === event?.timestamp &&
+      candidate?.startTime === event?.startTime
+    )))
+    .map((event, index) => ({ event, originalIndex: `phone-proxy-${index}` }));
+  const scoredEventRows = eventRows.filter(({ event }) => !isDiagnosticOnlyTripEvent(event));
+  const diagnosticEventRows = [
+    ...eventRows.filter(({ event }) => isDiagnosticOnlyTripEvent(event)),
+    ...phoneProxyDiagnosticRows,
+  ];
+  const eventPanelCount = scoredEventRows.length + diagnosticEventRows.length;
   const eventFeedback = trip.event_feedback || {};
   const eventFeedbackKey = (event, index) => [
     event.type || 'event',
@@ -533,9 +616,10 @@ export default function TripDetail() {
     if (item?.verdict === 'wrong') counts.wrong += 1;
     return counts;
   }, { accurate: 0, wrong: 0 });
+  const mapDisplayEvents = displayEvents.filter((event) => !isGpsPhoneUseProxyEvent(event));
   const mapEvents = settings.phone_use_show_on_map === false
-    ? displayEvents.filter((event) => event.type !== 'phone_use')
-    : displayEvents;
+    ? mapDisplayEvents.filter((event) => event.type !== 'phone_use')
+    : mapDisplayEvents;
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -584,6 +668,93 @@ export default function TripDetail() {
     : speedLimitContext
       ? 'Road data was checked, but no usable speed limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
       : 'Before getting road data, this map shows GPS speed bands and event markers only.';
+  const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false } = {}) => {
+    const key = eventFeedbackKey(evt, originalIndex);
+    const feedback = eventFeedback[key]?.verdict || null;
+    const labels = {
+      harsh_brake: { label: 'Harsh Brake', icon: '!', color: 'text-red-600' },
+      rapid_acceleration: { label: 'Rapid Acceleration', icon: '+', color: 'text-yellow-600' },
+      sharp_turn: { label: 'Sharp Turn', icon: '<', color: 'text-blue-600' },
+      speeding: { label: 'Speeding', icon: '>', color: 'text-orange-600' },
+      idle: { label: 'Excessive Idle', icon: 'P', color: 'text-slate-500' },
+      close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
+      aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
+      heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
+      heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
+      tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
+      stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
+      erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
+      possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
+      phone_use: isGpsPhoneUseProxyEvent(evt)
+        ? { label: 'GPS Phone-Use Proxy', icon: 'P', color: 'text-violet-600' }
+        : { label: 'Phone Use', icon: 'P', color: 'text-red-600' },
+    };
+    const cfg = labels[evt.type] || { label: evt.type, icon: '!', color: 'text-foreground' };
+    const timeText = evt.timestamp || evt.startTime
+      ? new Date(evt.timestamp || evt.startTime).toLocaleTimeString()
+      : 'Time unknown';
+    const eventValueText = evt.type === 'possible_crash'
+      ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
+      : evt.type === 'phone_use'
+        ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
+        : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
+    const inferredTypes = ['tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
+    const confidenceText = evt.source === 'android_usage_access'
+      ? 'Measured phone activity'
+      : evt.type === 'speeding' && evt.speed_limit_source
+        ? evt.speed_limit_source === 'inferred'
+          ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
+          : evt.speed_limit_source === 'osm_highway_default'
+            ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
+            : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
+        : diagnostic
+          ? 'Diagnostic GPS inference - not scored'
+          : inferredTypes.includes(evt.type)
+            ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
+            : 'Measured from GPS motion';
+    const diagnosticExplanation = diagnostic ? diagnosticExplanationForEvent(evt) : null;
+    const severityLabel = evt.severity || evt.confidence_level || 'diagnostic';
+    return (
+      <div key={`${evt.type}-${evt.timestamp || evt.startTime || originalIndex}`} className="flex flex-col gap-2 py-2 border-b border-border/50 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className="text-lg">{cfg.icon}</span>
+          <div>
+            <div className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</div>
+            <div className="text-xs text-muted-foreground">
+              {timeText} - {eventValueText}
+            </div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
+            {diagnosticExplanation && (
+              <div className="mt-0.5 text-[11px] text-muted-foreground">{diagnosticExplanation}</div>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0">
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize
+            ${evt.severity === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400' :
+              evt.severity === 'medium' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400' :
+              'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
+            {severityLabel}
+          </span>
+          {[
+            { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
+            { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
+          ].map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
+              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-5 pb-4">
@@ -723,11 +894,7 @@ export default function TripDetail() {
         </div>
       )}
 
-      {!hasPhoneUsageAccess && (
-        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
-          Usage Access needed for accurate phone detection. No phone-use score is available for this trip.
-        </div>
-      )}
+      {phoneUsePermissionRequired && <PhoneUsePermissionBanner />}
 
       {phoneUsageAccessProvenance?.changed && (
         <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
@@ -735,13 +902,26 @@ export default function TripDetail() {
         </div>
       )}
 
-      {roadConditionLabel && trip.slippery_proxy !== 'insufficient_data' && (
+      <div
+        title="Weather context is sourced from Open-Meteo when available, otherwise from GPS stopping-distance patterns when enough evidence exists."
+        className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3 text-sm font-medium"
+      >
+        <Droplets className={`h-4 w-4 ${weatherContextSource === 'unavailable' ? 'text-muted-foreground' : weatherContextDisplayValue.includes('Dry') ? 'text-emerald-500' : 'text-sky-500'}`} />
+        <span>Weather Context: {weatherContextDisplayValue}</span>
+        {(trip.safety_condition_bonus || 0) > 0 && weatherContextSource === 'gps_inference' && (
+          <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            +{trip.safety_condition_bonus} safety context
+          </span>
+        )}
+      </div>
+
+      {false && (
         <div
-          title="Road condition is inferred from stopping-distance patterns and is not a weather measurement."
+          title="Weather context is sourced from Open-Meteo when available, otherwise from GPS stopping-distance patterns when enough evidence exists."
           className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3 text-sm font-medium"
         >
           <Droplets className={`h-4 w-4 ${trip.slippery_proxy === 'appears_dry' ? 'text-emerald-500' : 'text-sky-500'}`} />
-          <span>Road Conditions: {roadConditionLabel}</span>
+          <span>Weather Context: {weatherContextDisplayValue}</span>
           {(trip.safety_condition_bonus || 0) > 0 && (
             <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
               +{trip.safety_condition_bonus} safety context
@@ -757,14 +937,14 @@ export default function TripDetail() {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 font-semibold">
                   <Droplets className="h-4 w-4 text-sky-500" />
-                  Weather context
+                  Weather Context
                 </div>
                 <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
                   {weatherContext.riskLevel ? `${weatherContext.riskLevel} risk` : 'risk unavailable'}
                 </span>
               </div>
-              <div className="mt-2 text-xs text-muted-foreground capitalize">
-                {String(weatherContext.condition || 'unknown').replace(/_/g, ' ')}
+              <div className="mt-2 text-xs text-muted-foreground">
+                {weatherContextDisplayValue}
                 {weatherContext.avg_temp_c != null ? ` · ${weatherContext.avg_temp_c}°C` : ''}
                 {weatherContext.precipitation_mm ? ` · ${weatherContext.precipitation_mm} mm precip` : ''}
               </div>
@@ -843,7 +1023,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                Anomaly score {driverAnomaly.anomaly_score ?? 0}/100
+                Anomaly score {formatEstimatedScore(driverAnomaly.anomaly_score ?? 0)}/100
                 {driverAnomaly.reasons?.length ? ` · ${driverAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
               </div>
             </div>
@@ -1214,7 +1394,7 @@ export default function TripDetail() {
                 <div key={key} className="space-y-1.5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">{label}</span>
-                    <span className={`font-semibold ${scoreColor}`} title={buildScoreExplanation(trip, 'score_overall')}>{data.overall}</span>
+                    <span className={`font-semibold ${scoreColor}`} title={buildScoreExplanation(trip, 'score_overall')}>{formatScoreWithProvenance(data.overall, trip.score_provenance)}</span>
                   </div>
                   <div className="h-2 rounded-full bg-secondary">
                     <div
@@ -1264,7 +1444,7 @@ export default function TripDetail() {
             { icon: Leaf, label: 'Estimated Fuel Saved', value: fuelSavedValue, subValue: economics.fuel_saved_available ? 'Assigned-vehicle baseline; eco-driving effect capped at 8%.' : 'Assign a vehicle to estimate savings.' },
             { icon: Leaf, label: 'CO2', value: `${economics.co2_kg.toFixed(1)} kg`, subValue: economics.estimate_label },
             { icon: Leaf, label: 'CO2 Saved vs Average', value: co2SavedValue, subValue: economics.co2_saved_label },
-            { icon: ParkingSquare, label: 'Parking', value: componentScore('parking_approach').value ?? 'Unavailable' },
+            { icon: ParkingSquare, label: 'Parking', value: formatScoreWithProvenance(componentScore('parking_approach').value, trip.score_provenance, { empty: 'Unavailable' }) },
             { icon: TimerReset, label: 'Traffic Stops', value: formatDuration(trafficIdleSeconds) },
             { icon: ParkingSquare, label: 'Parked Idle', value: formatDuration(parkedIdleSeconds), subValue: parkedIdleEstimated ? 'Estimated from idle and traffic-stop time' : null },
             { icon: MapPin, label: 'Trip End', value: tripEndState, subValue: terminalParkedSeconds > 0 ? `${formatDuration(terminalParkedSeconds)} at final stop` : trip.parking_stop_detected ? 'Trip ended from a stopped state' : null },
@@ -1330,7 +1510,12 @@ export default function TripDetail() {
         >
           <h2 className="font-semibold mb-3">Speed Zones</h2>
           <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-            Speed-limit coverage: {speedLimitCoverage.mapDerivedPct}% map-derived/default OSM, {speedLimitCoverage.inferredPct}% inferred from GPS speed bands ({speedLimitCoverage.sampleCount} samples).{speedLimitDefaultCountryText}
+            <div>{speedLimitProvenanceSummary}</div>
+            {speedLimitCoverage.mapDerivedPct === 0 && (
+              <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 font-medium text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                This entire compliance score is based on inferred limits. Enable Automatic road-data fetching in Settings, or tap Get / Refresh Road Data for this trip, to use posted OpenStreetMap limits when available.
+              </div>
+            )}
           </div>
           <div className="space-y-2">
             {speedZoneSummary.map((zone) => (
@@ -1355,7 +1540,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type default${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} assumption)` : ''}` : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {data.score}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type default${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} assumption)` : ''}` : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
                 </div>
               </div>
             ))}
@@ -1376,7 +1561,7 @@ export default function TripDetail() {
             { icon: MapPin, label: 'traffic stops', value: trip.traffic_stop_count ?? trip.stop_count ?? 0, color: 'text-primary' },
             { icon: AlertTriangle, label: 'estimated fatigue risk (driving-time proxy)', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'smoothness index', componentKey: 'smoothness_index', color: 'text-sky-500' },
-            { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : 'text-emerald-500' },
+            { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', value: brakeOnsetCollectingDataText, show: Boolean(brakeOnsetCollectingDataText), color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : brakeOnsetCollectingDataText ? 'text-amber-500' : 'text-emerald-500' },
             { icon: Leaf, label: 'eco driving', componentKey: 'eco_driving', color: 'text-emerald-500' },
             { icon: ShieldCheck, label: 'stop-start pattern estimate', componentKey: 'stop_start_pattern', color: 'text-blue-500' },
             { icon: Focus, label: 'attention-pattern estimate', componentKey: 'distraction', color: 'text-violet-500' },
@@ -1389,12 +1574,14 @@ export default function TripDetail() {
             { icon: Milestone, label: 'gradient driving estimate (GPS speed proxy)', componentKey: 'hill_driving', color: 'text-emerald-500' },
           ].map((item) => {
             const evidenceScore = item.componentKey ? componentScore(item.componentKey) : null;
-            const value = evidenceScore && item.useComponentValue !== false ? evidenceScore.value : item.value;
+            const value = evidenceScore && item.useComponentValue !== false && evidenceScore.value != null
+              ? evidenceScore.value
+              : item.value;
             return { ...item, evidenceScore, value, show: item.show ?? (!evidenceScore || evidenceScore.value != null) };
           }).filter(({ show = true }) => show).map(({ icon: Icon, label, value, color, capitalize, evidenceScore }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3" title={evidenceScore?.note}>
               <Icon className={`w-4 h-4 mb-2 ${color}`} />
-              <div className={`font-grotesk font-bold text-xl ${capitalize ? 'capitalize' : ''}`}>{value}</div>
+              <div className={`font-grotesk font-bold text-xl ${value === brakeOnsetCollectingDataText ? 'text-sm leading-snug' : ''} ${capitalize ? 'capitalize' : ''}`}>{evidenceScore && evidenceScore.value != null ? formatScoreWithProvenance(value, trip.score_provenance) : value}</div>
               <div className="text-xs text-muted-foreground">{label}</div>
               {evidenceScore && shouldShowComponentEvidenceBadge(evidenceScore.evidence) && (
                 <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(evidenceScore.evidence)}</div>
@@ -1405,6 +1592,9 @@ export default function TripDetail() {
 
         <div className="mb-4 rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
           <p>Brake onset smoothness measures how smoothly brakes were applied during detected braking events, not human neurological reaction time.</p>
+          {brakeOnsetCollectingDataText && (
+            <p className="mt-1 font-medium text-foreground">Brake onset smoothness: {brakeOnsetCollectingDataText}.</p>
+          )}
           <p className="mt-1">Stop-start pattern and attention-pattern values are low-confidence GPS-only estimates; they cannot measure following distance, lane position, object proximity, or drowsiness.</p>
           {componentScore('intersection').value == null && (
             <p className="mt-1">Approach-stop estimate is unavailable for this trip.</p>
@@ -1477,7 +1667,7 @@ export default function TripDetail() {
             )}
             {componentScore('braking_efficiency').value != null && (
               <div className="mb-2 flex items-baseline gap-2">
-                <span className="font-grotesk text-2xl font-bold">{componentScore('braking_efficiency').value}</span>
+                <span className="font-grotesk text-2xl font-bold">{formatScoreWithProvenance(componentScore('braking_efficiency').value, trip.score_provenance)}</span>
                 <span className="text-xs text-muted-foreground">
                   {trip.braking_sequence_count || 0} stop sequence{(trip.braking_sequence_count || 0) === 1 ? '' : 's'}, smoothness {Math.round((trip.avg_braking_smoothness || 0) * 100)}%
                 </span>
@@ -1496,19 +1686,33 @@ export default function TripDetail() {
 
         {componentScore('hill_driving').value != null ? (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3 text-sm">
-            <div className="font-medium">Hill Control</div>
+            <div className="flex items-center gap-2">
+              <div className="font-medium">Hill Control</div>
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                GPS altitude estimate
+              </span>
+            </div>
             <div className="mt-1 text-xs text-muted-foreground">
               {trip.climb_distance_km ?? 0} km climbing, {trip.descent_distance_km ?? 0} km descending. Use engine braking on descents rather than braking repeatedly.
             </div>
-            <div className="mt-2 flex gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 p-2 text-xs text-muted-foreground">
+            <div role="alert" className="mt-2 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              <span>GPS and altitude-derived estimate only. A legitimate uphill manoeuvre can trigger an inferred infraction.</span>
+              <span>Hill-driving limitation: GPS and altitude-derived estimate only. A legitimate uphill manoeuvre can trigger an inferred infraction.</span>
             </div>
           </div>
         ) : (
           <div className="mb-4 rounded-xl bg-secondary/50 p-3 text-sm">
-            <div className="font-medium">Hill Control</div>
+            <div className="flex items-center gap-2">
+              <div className="font-medium">Hill Control</div>
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                GPS altitude estimate
+              </span>
+            </div>
             <div className="mt-1 text-xs text-muted-foreground">Not applicable (flat route or insufficient altitude evidence).</div>
+            <div role="alert" className="mt-2 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <span>Hill-driving limitation: GPS altitude evidence can be noisy, so hill control is withheld unless enough route evidence is available.</span>
+            </div>
           </div>
         )}
 
@@ -1525,7 +1729,7 @@ export default function TripDetail() {
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-lg bg-card p-2">
-                <div className="font-grotesk text-lg font-bold">{componentScore('cornering_consistency').value}</div>
+                <div className="font-grotesk text-lg font-bold">{formatScoreWithProvenance(componentScore('cornering_consistency').value, trip.score_provenance)}</div>
                 <div className="text-[11px] text-muted-foreground">score</div>
               </div>
               <div className="rounded-lg bg-card p-2">
@@ -1564,7 +1768,81 @@ export default function TripDetail() {
       </motion.div>
 
       {/* Driving Events */}
-      {displayEvents.length > 0 && (
+      {eventPanelCount > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+        >
+          <h2 className="font-semibold mb-4">
+            Driving Events
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {scoredEventRows.length} scored / {diagnosticEventRows.length} diagnostic
+            </span>
+          </h2>
+          {(feedbackCounts.accurate > 0 || feedbackCounts.wrong > 0) && (
+            <div className="mb-4 rounded-2xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+              Detection feedback: <span className="font-semibold text-emerald-600 dark:text-emerald-300">{feedbackCounts.accurate} accurate</span>
+              <span className="mx-1">/</span>
+              <span className="font-semibold text-red-600 dark:text-red-300">{feedbackCounts.wrong} needs review</span>
+              {trip.feedback_adjusted_events_count > 0 && (
+                <span className="ml-1">/ {trip.feedback_adjusted_events_count} removed from scoring</span>
+              )}
+            </div>
+          )}
+          {feedbackStatus && (
+            <div className="mb-4 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
+              {feedbackStatus}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            {[
+              { label: 'Harsh Brakes', value: trip.harsh_brakes_count, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+              { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
+              { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
+              { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+              { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
+              { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
+            ].map(({ label, value, icon: Icon, color, bg }) => (
+              <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
+                <Icon className={`w-5 h-5 ${color}`} />
+                <div>
+                  <div className={`font-grotesk font-bold text-xl ${color}`}>{value || 0}</div>
+                  <div className="text-xs text-muted-foreground">{label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {scoredEventRows.length > 0 ? (
+            <div className="space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
+              {scoredEventRows.map((row) => renderEventRow(row))}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">
+              No scored driving events were recorded on this trip.
+            </div>
+          )}
+
+          {diagnosticEventRows.length > 0 && (
+            <details className="mt-4 rounded-2xl border border-border bg-secondary/30 p-3">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold">
+                <span>Diagnostic-Only Events (Not Scored)</span>
+                <span className="rounded-full bg-card px-2 py-0.5 text-xs text-muted-foreground">
+                  {diagnosticEventRows.length}
+                </span>
+              </summary>
+              <div className="mt-3 space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
+                {diagnosticEventRows.map((row) => renderEventRow(row, { diagnostic: true }))}
+              </div>
+            </details>
+          )}
+        </motion.div>
+      )}
+
+      {false && displayEvents.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1605,7 +1883,7 @@ export default function TripDetail() {
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
               { label: 'Brake-Turn Alerts', value: trip.close_proximity_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
               { label: 'Overtake Patterns (Beta)', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality (Beta)', value: trip.overtake_quality_score ?? '-', icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
+              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality (Beta)', value: formatScoreWithProvenance(trip.overtake_quality_score, trip.score_provenance), icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />
@@ -1630,8 +1908,8 @@ export default function TripDetail() {
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
                 close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
                 aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
-                lane_change: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
                 heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
+                heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
                 tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
                 stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
                 erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
@@ -1644,7 +1922,7 @@ export default function TripDetail() {
                 : evt.type === 'phone_use'
                   ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
                   : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-              const inferredTypes = ['lane_change', 'heading_deviation', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity', 'aggressive_overtake'];
+              const inferredTypes = ['heading_deviation', 'heading_deviation_legacy', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity', 'aggressive_overtake'];
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
                 : evt.type === 'speeding' && evt.speed_limit_source
@@ -1727,6 +2005,18 @@ function componentEvidenceText(evidence) {
 
 function shouldShowComponentEvidenceBadge(evidence) {
   return evidence === 'low' || evidence === 'unavailable';
+}
+
+function usesInferredSpeedLimitScoring(trip = {}) {
+  const scoreSources = ['overall', 'safety', 'speed_limit_compliance'].some((key) => (
+    Array.isArray(trip.component_scores?.[key]?.dataSource) &&
+    trip.component_scores[key].dataSource.includes('gps_inferred_speed_limit')
+  ));
+  if (scoreSources) return true;
+
+  return [trip.highway_compliance, trip.urban_compliance, trip.residential_compliance]
+    .filter(Boolean)
+    .some((bucket) => bucket.limit_source === 'inferred');
 }
 
 const SCORE_ACCURACY_LABELS = {
@@ -1974,6 +2264,8 @@ function TripScoreOverview({ trip }) {
   ].map((item) => ({ ...item, component: getTripComponentScore(trip, item.key) }))
     .filter(({ component }) => component.value != null);
   const lowScoreConfidence = !unavailableOverallScore && overallScore.evidence !== 'high';
+  const inferredSpeedLimitScoring = usesInferredSpeedLimitScoring(trip);
+  const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const confidenceTitle = lowScoreConfidence
     ? 'Score based on limited available evidence.'
     : unavailableOverallScore
@@ -1994,13 +2286,14 @@ function TripScoreOverview({ trip }) {
           sublabel="overall"
           title={confidenceTitle}
           evidence={overallScore.evidence}
+          scoreProvenance={scoreProvenance}
         />
         <div className="flex-1 grid grid-cols-3 gap-3">
           {headlineScores.map(({ label, key, component }) => {
             const { color: c } = getScoreColor(component.value || 0);
             return (
               <div key={label} className="text-center" title={component.note || buildScoreExplanation(trip, `score_${key}`)}>
-                <div className={`font-grotesk font-bold text-xl ${c}`}>{component.value}</div>
+                <div className={`font-grotesk font-bold text-xl ${c}`}>{formatScoreWithProvenance(component.value, scoreProvenance)}</div>
                 <div className="text-xs text-muted-foreground">{label}</div>
                 {shouldShowComponentEvidenceBadge(component.evidence) && (
                   <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
@@ -2019,6 +2312,14 @@ function TripScoreOverview({ trip }) {
         <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
           Score based on limited available evidence. Short city trips often have enough GPS data to score, but not enough distance or supporting signals to call the score high confidence yet.
         </p>
+      )}
+      {inferredSpeedLimitScoring && (
+        <p role="note" className="mt-3 rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+          <span className="font-semibold text-foreground">Speed-limit score uses inferred limits.</span> OpenStreetMap had no posted maxspeed for part of this trip, so road-type estimates were used and speeding penalties were half-weighted.
+        </p>
+      )}
+      {phoneUsePermissionRequired && (
+        <PhoneUsePermissionBanner className="mt-3" />
       )}
       {scoreProvenance && (
         <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
@@ -2058,6 +2359,7 @@ function TripScoreOverview({ trip }) {
                 size={56}
                 strokeWidth={5}
                 title={buildScoreExplanation(trip, label === 'Aggression' ? 'aggressive_driving_score' : 'defensive_driving_score')}
+                scoreProvenance={scoreProvenance}
               />
             </div>
             <div className="min-w-0 flex-1">

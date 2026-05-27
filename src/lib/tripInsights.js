@@ -63,7 +63,6 @@ export const STRESS_UNITS = {
   rapid_acceleration: { low: 1, medium: 3, high: 6 },
   sharp_turn: { low: 0.5, medium: 2, high: 4 },
   tailgate_cycle: { low: 1, medium: 3, high: 5 },
-  lane_change: { low: 0.5, medium: 1.5, high: 3 },
 };
 
 export const DEFAULT_MAINTENANCE_ITEMS = [
@@ -830,7 +829,7 @@ export function calculateRiskEventRate(trips = []) {
     rapid_accel: completed.reduce((sum, trip) => sum + (trip.rapid_accel_count || 0), 0),
     sharp_turns: completed.reduce((sum, trip) => sum + (trip.sharp_turns_count || 0), 0),
     speeding: completed.reduce((sum, trip) => sum + (trip.speeding_events_count || 0), 0),
-    heading_deviations: completed.reduce((sum, trip) => sum + (trip.heading_deviation_count ?? trip.lane_changes_count ?? 0), 0),
+    heading_deviations: completed.reduce((sum, trip) => sum + (trip.heading_deviation_count ?? 0), 0),
     stop_start_patterns: completed.reduce((sum, trip) => sum + (trip.stop_start_pattern_count ?? trip.tailgate_cycle_count ?? 0), 0),
     erratic_speed: completed.reduce((sum, trip) => sum + (trip.distraction_events_count || 0), 0),
     brake_turn_alerts: completed.reduce((sum, trip) => sum + (trip.close_proximity_count ?? 0), 0),

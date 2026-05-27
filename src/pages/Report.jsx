@@ -16,6 +16,12 @@ import { generateReportSummary, formatDistance, formatDuration, formatDate, form
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
+import {
+  SCORE_ESTIMATE_NOTICE,
+  UBI_INSURANCE_NOTICE,
+  UBI_INSURANCE_NOTICE_DETAIL,
+  formatEstimatedScore,
+} from '@/lib/scoreDisplay';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
@@ -185,8 +191,8 @@ export default function Reports() {
     rapid_acceleration: 'Rapid Acceleration',
     sharp_turn: 'Sharp Turns',
     speeding: 'Speeding',
-    lane_change: 'Heading Events (Legacy)',
     heading_deviation: 'Heading Events (Beta)',
+    heading_deviation_legacy: 'Heading Events (Legacy)',
     tailgate_cycle: 'Stop-Start Patterns (Legacy)',
     stop_start_pattern: 'Stop-Start Patterns',
     erratic_speed: 'Erratic Speed',
@@ -272,7 +278,7 @@ export default function Reports() {
     .sort((a, b) => b.count - a.count)[0];
   const reportTakeaways = [
     summary.total_trips > 0
-      ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${summary.avg_score ?? 'unavailable'}.`
+      ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${formatEstimatedScore(summary.avg_score, { empty: 'unavailable' })}.`
       : 'No trips were recorded in this report period.',
     previousTrips.length > 0 && summary.avg_score != null && previousSummary.avg_score != null
       ? `Compared with the previous period, score ${summary.avg_score >= previousSummary.avg_score ? 'improved' : 'dropped'} by ${Math.abs(summary.avg_score - previousSummary.avg_score)} points.`
@@ -369,7 +375,7 @@ export default function Reports() {
               { icon: Car, label: 'Total Trips', value: summary.total_trips, gradient: 'gradient-primary' },
               { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), gradient: 'gradient-success' },
               { icon: Clock, label: 'Drive Time', value: formatDuration(summary.total_duration_seconds), gradient: 'bg-gradient-to-br from-purple-500 to-purple-700' },
-              { icon: TrendingUp, label: 'Avg Score', value: summary.avg_score ?? '-', evidence: 'aggregate evidence', gradient: summary.avg_score != null && getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
+              { icon: TrendingUp, label: 'Avg Score', value: formatEstimatedScore(summary.avg_score), evidence: 'aggregate evidence', gradient: summary.avg_score != null && getScoreColor(summary.avg_score).color.includes('green') ? 'gradient-success' : 'gradient-warning' },
               { icon: Gauge, label: 'Avg Moving Speed', value: formatSpeed(avgMovingSpeedKmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
               // FIX: Display Avg Moving Speed in the report instead of an overall average including stops.
               { icon: Fuel, label: 'Estimated Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
@@ -404,30 +410,43 @@ export default function Reports() {
                   <div className="flex items-center gap-2">
                     <h2 className="font-semibold">Driver Score Card</h2>
                     {UBI_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
+                    <span className="rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+                      Not insurance
+                    </span>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">UBI-style telematics report for insurance or personal records</p>
+                  <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-300">
+                    Visible limitation: UBI-style score is an internal coaching estimate, not an insurer rating.
+                  </p>
                 </div>
                 {ubiReport.insufficientData ? (
                   <div className="text-right text-sm font-semibold text-muted-foreground">Insufficient data</div>
                 ) : (
                   <div className="text-right">
-                    <div className="font-grotesk text-3xl font-bold">{ubiReport.ubiScore}</div>
-                    <div className="text-xs font-semibold text-primary">Estimated {ubiReport.ubiGrade} / {ubiReport.ubiTier}</div>
+                    <div className="mb-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                      Not insurer validated
+                    </div>
+                    <div className="font-grotesk text-3xl font-bold">{formatEstimatedScore(ubiReport.ubiScore)}</div>
+                    <div className="text-xs font-semibold text-primary">Internal estimate: {ubiReport.ubiGrade} / {ubiReport.ubiTier}</div>
                   </div>
                 )}
               </div>
               {ubiReport.insufficientData && (
-                <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-                  Add at least {ubiReport.minimumDistanceKm ?? 50} km of trips before rate-based score-card grades are shown.
-                </p>
+                <div role="alert" className="mt-3 flex gap-2 rounded-xl border border-red-300 bg-red-50 p-3 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-bold uppercase tracking-wide">{UBI_INSURANCE_NOTICE}</p>
+                    <p className="mt-1">Add at least {ubiReport.minimumDistanceKm ?? 50} km of trips before rate-based score-card grades are shown. Even after that threshold, this remains an internal coaching estimate.</p>
+                  </div>
+                </div>
               )}
               {!ubiReport.insufficientData && (
-                <div role="note" className="mt-3 flex gap-3 rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
-                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <div role="alert" className="mt-4 flex gap-3 rounded-xl border-2 border-red-500 bg-red-50 p-4 text-sm text-red-950 dark:bg-red-950/30 dark:text-red-100">
+                  <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-red-600 dark:text-red-300" />
                   <div>
-                    <p className="font-semibold text-foreground">Estimated score, not an insurance rating</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      This UBI-style report uses internal GPS-derived approximations and is not insurer-validated for insurance eligibility or pricing.
+                    <p className="text-base font-black uppercase tracking-wide">{UBI_INSURANCE_NOTICE}</p>
+                    <p className="mt-1 font-semibold">{SCORE_ESTIMATE_NOTICE}</p>
+                    <p className="mt-1 text-sm text-red-800 dark:text-red-100/85">
+                      {UBI_INSURANCE_NOTICE_DETAIL}
                     </p>
                   </div>
                 </div>
@@ -443,7 +462,10 @@ export default function Reports() {
                     <PolarGrid />
                     <PolarAngleAxis dataKey="category" tick={{ fontSize: 10 }} />
                     <Radar dataKey="score" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.28} />
-                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v) => [formatEstimatedScore(v), 'Score']}
+                    />
                   </RadarChart>
                 </ResponsiveContainer>
               )}
@@ -453,20 +475,20 @@ export default function Reports() {
               {baseline.baseline_avg == null
                 ? `A baseline unlocks after 10 completed trips in 4 weeks (${baseline.baseline_trip_count}/10 recorded).`
                 : baseline.delta == null
-                  ? `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). No trip was recorded this week.`
-                  : `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`}
+                  ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). No trip was recorded this week.`
+                  : `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`}
             </p>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{baseline.this_week_avg ?? '-'}</div>
+                <div className="font-grotesk font-bold text-xl">{formatEstimatedScore(baseline.this_week_avg)}</div>
                 <div className="text-xs text-muted-foreground">this week</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}`}</div>
+                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${formatEstimatedScore(baseline.baseline_avg)} +/- ${baseline.baseline_confidence_interval}`}</div>
                 <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{baseline.personal_best_week_avg ?? '-'}</div>
+                <div className="font-grotesk font-bold text-xl">{formatEstimatedScore(baseline.personal_best_week_avg)}</div>
                 <div className="text-xs text-muted-foreground">best week</div>
               </div>
             </div>
@@ -663,6 +685,7 @@ export default function Reports() {
                 <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
                 />
                 <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
                 <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
@@ -707,6 +730,7 @@ export default function Reports() {
                 <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
                 />
                 <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
                 <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
@@ -759,7 +783,7 @@ export default function Reports() {
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v) => [v, 'Score']}
+                  formatter={(v, name) => [name === 'Speed Smoothness' ? formatEstimatedScore(v) : formatEstimatedScore(v), name === 'Speed Smoothness' ? name : 'Score']}
                 />
                 <Line type="monotone" dataKey="avgScore" stroke="hsl(var(--accent))" strokeWidth={2.5} dot={{ fill: 'hsl(var(--accent))', r: 3 }} />
                 <Line type="monotone" dataKey="avgSviScore" stroke="#14b8a6" strokeWidth={2} dot={false} name="Speed Smoothness" />
@@ -859,7 +883,7 @@ export default function Reports() {
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-muted-foreground">{formatDate(summary.best_trip.start_time)}</div>
                   <div className={`text-right font-grotesk font-bold text-2xl ${bestColor}`}>
-                    {bestTripScore?.value ?? '-'}
+                    {formatEstimatedScore(bestTripScore?.value)}
                     <div className="text-[10px] font-medium capitalize text-muted-foreground">{bestTripScore?.evidence ?? 'unavailable'} evidence</div>
                   </div>
                 </div>
@@ -873,7 +897,7 @@ export default function Reports() {
                   <div className="flex items-center justify-between">
                     <div className="text-sm text-muted-foreground">{formatDate(summary.worst_trip.start_time)}</div>
                     <div className={`text-right font-grotesk font-bold text-2xl ${worstColor}`}>
-                      {worstTripScore?.value ?? '-'}
+                      {formatEstimatedScore(worstTripScore?.value)}
                       <div className="text-[10px] font-medium capitalize text-muted-foreground">{worstTripScore?.evidence ?? 'unavailable'} evidence</div>
                     </div>
                   </div>

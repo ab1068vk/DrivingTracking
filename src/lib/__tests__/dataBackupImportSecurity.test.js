@@ -317,7 +317,7 @@ describe('backup trip import sanitization', () => {
 });
 
 describe('backup schema migrations', () => {
-  it('migrates a v3 trip through scoring refresh to v5', () => {
+  it('migrates a v3 trip through scoring refresh to v6', () => {
     const parsed = parseDriveSenseBackup(JSON.stringify({
       app: 'Road Sage',
       version: 3,
@@ -329,9 +329,33 @@ describe('backup schema migrations', () => {
     expect(parsed.trips[0].needs_rescore).toBe(true);
   });
 
-  it('leaves current v5 content unchanged during migration', () => {
-    const v5 = { app: 'Road Sage', version: 5, trips: [{ id: 'trip-v5', notes: 'kept' }] };
-    expect(migrateBackup(v5, 5)).toEqual(v5);
+  it('relabels legacy lane-change events when migrating v5 backups', () => {
+    const parsed = parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: 5,
+      trips: [{
+        id: 'trip-v5',
+        status: 'completed',
+        distance_km: 10,
+        lane_changes_count: 1,
+        driving_events: [{ type: 'lane_change', severity: 'medium' }],
+      }],
+    }));
+
+    expect(parsed.version).toBe(BACKUP_VERSION);
+    expect(parsed.sourceVersion).toBe(5);
+    expect(parsed.trips[0].driving_events[0]).toMatchObject({
+      type: 'heading_deviation_legacy',
+      legacy_renamed: true,
+    });
+    expect(parsed.trips[0].lane_changes_count).toBeUndefined();
+    expect(parsed.trips[0].heading_deviation_count).toBe(0);
+    expect(parsed.trips[0].heading_deviation_legacy_count).toBe(1);
+  });
+
+  it('leaves current v6 content unchanged during migration', () => {
+    const v6 = { app: 'Road Sage', version: 6, trips: [{ id: 'trip-v6', notes: 'kept' }] };
+    expect(migrateBackup(v6, 6)).toEqual(v6);
   });
 
   it('treats a versionless backup as v1', () => {

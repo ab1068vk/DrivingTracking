@@ -19,6 +19,16 @@ const CORRIDOR_PAD_DEG = 0.006;
 const ZONE_GUARD_M = 50;
 const ALL_POINTS_PRIVATE_REASON = 'all_points_private';
 export const DEFAULT_SPEED_LIMIT_COUNTRY = 'global';
+export const SPEED_LIMIT_DEFAULT_COUNTRY_LABELS = Object.freeze({
+  global: 'Global',
+  gb: 'United Kingdom',
+  uk: 'United Kingdom',
+  us: 'United States',
+  ca: 'Canada',
+  de: 'Germany',
+  au: 'Australia',
+  fr: 'France',
+});
 export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
   global: Object.freeze({
     living_street: 20,
@@ -427,6 +437,7 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
 
 export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) {
   try {
+    const fallbackCountry = speedLimitDefaultCountryKey(settings);
     const result = await loadOsmSpeedLimitWays(routePoints, settings);
     if (!result.ways.length) {
       return {
@@ -434,6 +445,7 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
         coverage: 0,
         status: result.status,
         source: result.source,
+        fallback_country: fallbackCountry,
         query_count: result.query_count,
         error: result.error,
         skipped_reason: result.skipped_reason,
@@ -451,6 +463,7 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
         speed_limit_kmh: match.limitKmh,
         speed_limit_source: match.limitSource,
         speed_limit_default_country: match.limitDefaultCountry,
+        fallback_country: match.limitDefaultCountry,
         speed_limit_way_id: match.id,
         speed_limit_road_name: match.name,
         speed_limit_highway: match.highway,
@@ -462,6 +475,7 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
       coverage: routePoints.length ? Math.round((matched / routePoints.length) * 100) : 0,
       status: result.status,
       source: result.source,
+      fallback_country: fallbackCountry,
       query_count: result.query_count,
       error: result.error,
     };
@@ -471,6 +485,7 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
       coverage: 0,
       status: 'unavailable',
       source: 'openstreetmap_overpass',
+      fallback_country: speedLimitDefaultCountryKey(settings),
       error: error?.message || 'Speed limit lookup unavailable',
     };
   }

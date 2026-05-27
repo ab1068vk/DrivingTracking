@@ -13,11 +13,12 @@ import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
  * v3: route/event metadata and reviewed event feedback persisted.
  * v4: scoring schema refresh; older imported trips require rescoring.
  * v5: privacy-safe zone metadata and hardened import sanitization.
+ * v6: legacy lane_change events are relabelled as heading_deviation_legacy.
  *
  * Every import is migrated one version at a time before it is sanitized and
  * merged. Coordinates omitted for privacy zones are intentionally not restored.
  */
-export const BACKUP_VERSION = 5;
+export const BACKUP_VERSION = 6;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
@@ -101,10 +102,10 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'rapid_accel_count',
   'sharp_turns_count',
   'speeding_events_count',
-  'lane_changes_count',
-  'lane_changes_per_10km',
   'heading_deviation_count',
   'heading_deviations_per_10km',
+  'heading_deviation_legacy_count',
+  'heading_deviation_legacy_per_10km',
   'heading_deviation_available',
   'tailgate_cycle_count',
   'following_distance_score',
@@ -280,6 +281,7 @@ const IMPORTED_ROUTE_POINT_FIELDS = new Set([
   'speed_limit_kmh',
   'speed_limit_source',
   'speed_limit_default_country',
+  'fallback_country',
   'privacy_masked',
   'privacy_boundary',
   'original_lat',
@@ -307,6 +309,7 @@ const IMPORTED_DRIVING_EVENT_FIELDS = new Set([
   'speed_limit_kmh',
   'speed_limit_source',
   'speed_limit_default_country',
+  'fallback_country',
   'start_time',
   'end_time',
   'start_index',
@@ -314,6 +317,7 @@ const IMPORTED_DRIVING_EVENT_FIELDS = new Set([
   'road_type',
   'message',
   'label',
+  'legacy_renamed',
 ]);
 
 const isPlainObject = (value) => (
@@ -415,6 +419,36 @@ export const sanitizeSavedTripFilters = (filters) => (
       }))
     : []
 );
+
+const migrateLaneChangeEventType = (event) => (
+  isPlainObject(event) && event.type === 'lane_change'
+    ? { ...event, type: 'heading_deviation_legacy', legacy_renamed: true }
+    : event
+);
+
+const migrateLegacyLaneChangeTrip = (trip) => {
+  if (!isPlainObject(trip)) return trip;
+  const events = Array.isArray(trip.driving_events)
+    ? trip.driving_events.map(migrateLaneChangeEventType)
+    : trip.driving_events;
+  const eventLegacyCount = Array.isArray(events)
+    ? events.filter((event) => event?.type === 'heading_deviation_legacy').length
+    : 0;
+  const legacyCount = eventLegacyCount || Number(trip.heading_deviation_legacy_count) || Number(trip.lane_changes_count) || 0;
+  const modernCount = Array.isArray(events)
+    ? events.filter((event) => event?.type === 'heading_deviation').length
+    : Number(trip.heading_deviation_count) || 0;
+  const distanceKm = Math.max(1, Number(trip.distance_km) || 1);
+  const { lane_changes_count: _laneChangesCount, lane_changes_per_10km: _laneChangesPer10Km, ...rest } = trip;
+  return {
+    ...rest,
+    driving_events: events,
+    heading_deviation_count: modernCount,
+    heading_deviations_per_10km: Math.round((modernCount / distanceKm) * 100) / 10,
+    heading_deviation_legacy_count: legacyCount,
+    heading_deviation_legacy_per_10km: Math.round((legacyCount / distanceKm) * 100) / 10,
+  };
+};
 
 export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = localSettings.get(), savedFilters = [] } = {}) {
   const savedTripFilters = sanitizeSavedTripFilters(savedFilters);
@@ -526,6 +560,11 @@ export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
       migrated = {
         ...migrated,
         ui: isPlainObject(migrated.ui) ? migrated.ui : { saved_trip_filters: [] },
+      };
+    } else if (version === 5) {
+      migrated = {
+        ...migrated,
+        trips: (migrated.trips || []).map(migrateLegacyLaneChangeTrip),
       };
     }
     version += 1;

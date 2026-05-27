@@ -11,6 +11,13 @@ import {
   UBI_PDF_METRIC_KEYS,
   formatMetricMetadata,
 } from '@/lib/metricRegistry';
+import {
+  SCORE_ESTIMATE_NOTICE,
+  UBI_INSURANCE_NOTICE,
+  UBI_INSURANCE_NOTICE_DETAIL,
+  formatEstimatedScore,
+  formatScoreWithProvenance,
+} from '@/lib/scoreDisplay';
 
 function periodLabel(period) {
   if (period === 'week') return 'This Week';
@@ -109,7 +116,7 @@ function recentTripTrendRows(trips = []) {
       return {
         label: formatDate(trip.start_time),
         value: score,
-        display: `${Math.round(score)} estimated score`,
+        display: `${formatEstimatedScore(score)} estimated score`,
         color: score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68],
       };
     });
@@ -158,7 +165,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   doc.text(`Exported ${now.toLocaleString()}`, 14, 46);
   doc.setFontSize(8);
   doc.text(
-    'GPS-only proxy limitation: brake onset and stop-start scores are low confidence. GPS phone and overtake patterns are diagnostics only and do not affect Safety or coaching.',
+    `${SCORE_ESTIMATE_NOTICE}. GPS-only proxy limitation: brake onset and stop-start scores are low confidence. GPS phone and overtake patterns are diagnostics only and do not affect Safety or coaching.`,
     14,
     52,
     { maxWidth: 182 }
@@ -168,7 +175,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
     ['Total trips', summary.total_trips],
     ['Total distance', formatDistance(summary.total_distance_km, settings.units)],
     ['Total drive time', formatDuration(summary.total_duration_seconds)],
-    ['Average score', summary.avg_score],
+    ['Average score', formatEstimatedScore(summary.avg_score)],
   ];
   let y = 70;
   coverRows.forEach(([label, value]) => {
@@ -205,10 +212,10 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
       formatDate(trip.start_time),
       formatDistance(trip.distance_km ?? 0, settings.units),
       formatDuration(trip.duration_seconds ?? 0),
-      trip.score_overall ?? '',
-      trip.score_safety ?? '',
-      trip.score_smoothness ?? '',
-      trip.score_eco ?? '',
+      formatScoreWithProvenance(trip.score_overall, trip.score_provenance, { empty: '' }),
+      formatScoreWithProvenance(trip.score_safety, trip.score_provenance, { empty: '' }),
+      formatScoreWithProvenance(trip.score_smoothness, trip.score_provenance, { empty: '' }),
+      formatScoreWithProvenance(trip.score_eco, trip.score_provenance, { empty: '' }),
       trip.harsh_brakes_count ?? 0,
       trip.speeding_events_count ?? 0,
     ], y, widths);
@@ -232,8 +239,8 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   }, { cost: 0, co2: 0 });
   const streak = calculateNoHarshBrakeStreak(tripList);
   const summaryRows = [
-    ['Best trip', summary.best_trip ? `${formatDate(summary.best_trip.start_time)} (${summary.best_trip.score_overall})` : 'None'],
-    ['Worst trip', summary.worst_trip ? `${formatDate(summary.worst_trip.start_time)} (${summary.worst_trip.score_overall})` : 'None'],
+    ['Best trip', summary.best_trip ? `${formatDate(summary.best_trip.start_time)} (${formatScoreWithProvenance(summary.best_trip.score_overall, summary.best_trip.score_provenance)})` : 'None'],
+    ['Worst trip', summary.worst_trip ? `${formatDate(summary.worst_trip.start_time)} (${formatScoreWithProvenance(summary.worst_trip.score_overall, summary.worst_trip.score_provenance)})` : 'None'],
     ['Longest trip', sortedByDistance[0] ? `${formatDate(sortedByDistance[0].start_time)} - ${formatDistance(sortedByDistance[0].distance_km ?? 0, settings.units)}` : 'None'],
     ['Most improved week', mostImprovedWeek(tripList)],
     ['Total estimated fuel cost', formatCurrencyAmount(economics.cost, settings)],
@@ -289,19 +296,31 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.text(`Generated: ${now.toLocaleDateString()}`, 14, 32);
   doc.text(`Period: ${period}`, 14, 39);
 
+  doc.setDrawColor(220, 38, 38);
+  doc.setFillColor(254, 242, 242);
+  doc.roundedRect(14, 47, 182, 26, 2, 2, 'FD');
+  doc.setTextColor(127, 29, 29);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(UBI_INSURANCE_NOTICE, 18, 56);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text(`${SCORE_ESTIMATE_NOTICE}. ${UBI_INSURANCE_NOTICE_DETAIL}`, 18, 63, { maxWidth: 174 });
+  doc.setTextColor(0);
+
   doc.setFont('helvetica', 'bold');
   if (insufficientData) {
     doc.setFontSize(18);
-    doc.text('Insufficient data', 92, 70, { align: 'center' });
+    doc.text('Insufficient data', 92, 92, { align: 'center' });
     doc.setFontSize(10);
-    doc.text(`Complete at least ${ubiReport.minimumDistanceKm ?? 50} km before a score card can be generated.`, 92, 82, { align: 'center' });
+    doc.text(`Complete at least ${ubiReport.minimumDistanceKm ?? 50} km before a score card can be generated.`, 92, 104, { align: 'center' });
   } else {
     doc.setFontSize(42);
-    doc.text(`${ubiReport.ubiScore}`, 92, 70, { align: 'center' });
+    doc.text(formatEstimatedScore(ubiReport.ubiScore), 92, 94, { align: 'center' });
     doc.setFontSize(12);
-    doc.text('/ 100', 111, 70);
+    doc.text('/ 100', 111, 94);
     doc.setFontSize(14);
-    doc.text(`${ubiReport.ubiGrade} - ${ubiReport.ubiTier}`, 92, 82, { align: 'center' });
+    doc.text(`Internal estimate: ${ubiReport.ubiGrade} - ${ubiReport.ubiTier}`, 92, 106, { align: 'center' });
   }
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
@@ -310,14 +329,14 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.text(
     `Trips: ${ubiReport.tripCount || 0}  |  Distance: ${(ubiReport.totalKm || 0).toFixed(1)} km  |  Drive time: ${hours}h ${minutes}m`,
     92,
-    92,
+    116,
     { align: 'center' }
   );
 
   const rows = insufficientData
     ? []
     : Object.entries(ubiReport.categories || {}).map(([key, row]) => ({ ...row, key }));
-  let y = 114;
+  let y = 134;
   doc.setFont('helvetica', 'bold');
   writeRow(doc, ['Category', 'Score', 'Grade', 'Detail'], y, [58, 28, 24, 60]);
   y += 8;
@@ -327,7 +346,7 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
     const label = metricKey ? METRIC_REGISTRY[metricKey].label : row.label;
     const score = Number(row.score) || 0;
     const color = score >= 80 ? [34, 197, 94] : score >= 60 ? [234, 179, 8] : [239, 68, 68];
-    writeRow(doc, [label, score, row.grade, row.value], y, [58, 28, 24, 60]);
+    writeRow(doc, [label, formatEstimatedScore(score), row.grade, row.value], y, [58, 28, 24, 60]);
     doc.setFillColor(color[0], color[1], color[2]);
     doc.rect(72, y + 2, Math.max(1, score / 5), 2, 'F');
     y += 11;

@@ -310,11 +310,54 @@ describe('core page component renders', () => {
     expect(html).toContain('approximate');
     expect(html).not.toContain('Version 2.2.0');
     expect(html).toContain('Updated constants: PENALTY_SCALE_FACTOR.');
+    expect(html).toContain('GPS altitude estimate');
+    expect(html).toContain('Hill-driving limitation');
     expect(html).toContain('GPS and altitude-derived estimate only');
     expect(html).toContain('traveled within privacy zones (estimated)');
     expect(html).toContain('legitimate uphill manoeuvre');
     expect(html).toContain('attention-pattern estimate');
     expect(html).not.toContain('Focus Score');
+  });
+
+  it('labels inferred speed-limit scoring at score level on TripDetail', async () => {
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      route_points: sampleTrip.route_points.map((point) => ({
+        ...point,
+        speed_limit_source: 'inferred',
+      })),
+      urban_compliance: {
+        score: 88,
+        limit_source: 'inferred',
+        penalty_weight: 0.5,
+        inferred_limit_kmh: 50,
+        max_excess_kmh: 12,
+        rate: 0.9,
+      },
+      component_scores: {
+        overall: { value: 88, evidence: 'developing', dataSource: ['gps', 'gps_inferred_speed_limit'], sampleCount: 3 },
+        safety: { value: 91, evidence: 'developing', dataSource: ['gps', 'gps_inferred_speed_limit'], sampleCount: 3 },
+        speed_limit_compliance: { value: 88, evidence: 'developing', dataSource: ['gps_inferred_speed_limit'], sampleCount: 3 },
+      },
+    });
+    const { default: TripDetail } = await import('@/pages/TripDetail');
+    const html = renderToStaticMarkup(<TripDetail />);
+
+    expect(html).toContain('Speed-limit score uses inferred limits');
+    expect(html).toContain('half-weighted');
+  });
+
+  it('shows brake onset smoothness data collection state on TripDetail', async () => {
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      brake_onset_smoothness_score: null,
+      brake_onset_smoothness_confidence: 'low',
+      brake_onset_sequence_count: 1,
+    });
+    const { default: TripDetail } = await import('@/pages/TripDetail');
+    const html = renderToStaticMarkup(<TripDetail />);
+
+    expect(html).toContain('Brake onset smoothness: 1 of 2 qualifying brake events recorded.');
   });
 
   it('shows public OSRM demo provenance on TripDetail', async () => {
@@ -358,13 +401,36 @@ describe('core page component renders', () => {
     expect(html).toContain('Android Permissions');
     expect(html).toContain('Snap route to roads');
     expect(html).toContain('Use public OSRM demo?');
-    expect(html).toContain('Fetch real speed limits after trips');
+    expect(html).toContain('Automatic road-data fetching');
     expect(html).toContain('Calibration registry');
     expect(html).toContain('Trip penalty scale factor');
     expect(html).toContain('Uncalibrated - scores are self-consistent');
     expect(html).toContain('Status: Provisional');
     expect(html).toContain('Affects score_overall, score_safety');
     expect(html).toContain('approximate');
+  });
+
+  it('shows tire-life estimate calibration warning on Vehicles', async () => {
+    queryData.set(JSON.stringify(['vehicles']), [{
+      id: 'vehicle-1',
+      name: 'Commuter',
+      fuel_type: 'gasoline',
+      fuel_efficiency_l_per_100km: 8.5,
+      tire_rotation_interval_km: 10000,
+    }]);
+    queryData.set(JSON.stringify(['all-trips-vehicles']), [{
+      ...sampleTrip,
+      vehicle_id: 'vehicle-1',
+      trip_tire_wear_units: 220,
+      trip_tire_wear_has_missing_speed_data: false,
+    }]);
+    const { default: Vehicles } = await import('@/pages/Vehicles');
+    const html = renderToStaticMarkup(<Vehicles />);
+
+    expect(html).toContain('Tire wear impact');
+    expect(html).toContain('Provisional tire estimate');
+    expect(html).toContain('estimated tire life reduction');
+    expect(html).toContain('Reference-speed model is provisional; not physical tread wear.');
   });
 
   it('renders only insufficient-data UBI status below the score-card evidence threshold', async () => {
@@ -380,6 +446,8 @@ describe('core page component renders', () => {
     expect(html).toContain('Driver Score Card');
     expect(html).toContain('Insufficient data');
     expect(html).toContain('Complete at least 50 km');
+    expect(html).toContain('NOT AN INSURANCE RATING');
+    expect(html).toContain('internal coaching estimate');
     expect(html).not.toContain('Non-preferred');
     expect(html).not.toContain('N/A');
   });
@@ -394,9 +462,15 @@ describe('core page component renders', () => {
     const { default: Reports } = await import('@/pages/Report');
     const html = renderToStaticMarkup(<Reports />);
 
-    expect(html).toContain('Estimated score, not an insurance rating');
+    expect(html).toContain('Scores are estimates');
+    expect(html).toContain('not validated against real-world crash data');
+    expect(html).toContain('NOT AN INSURANCE RATING');
+    expect(html).toContain('Not insurance');
+    expect(html).toContain('Visible limitation');
+    expect(html).toContain('Not insurer validated');
+    expect(html).toContain('must not be used for insurance eligibility');
+    expect(html).toContain('Internal estimate:');
     expect(html).toContain('approximate');
-    expect(html).toContain('not insurer-validated for insurance eligibility or pricing');
     expect(html).not.toContain('Insufficient data');
   });
 
