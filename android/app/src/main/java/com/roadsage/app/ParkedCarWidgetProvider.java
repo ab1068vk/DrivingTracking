@@ -92,6 +92,38 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
     }
 
     @Override
+    public void onAppWidgetOptionsChanged(
+        Context context,
+        AppWidgetManager manager,
+        int widgetId,
+        Bundle newOptions
+    ) {
+        File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
+        if (cacheFile.exists()) cacheFile.delete();
+
+        JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(context);
+        if (parked == null) {
+            updateWidget(context, manager, widgetId);
+            return;
+        }
+
+        double lat = parked.optDouble("lat", Double.NaN);
+        double lng = parked.optDouble("lng", Double.NaN);
+        if (!Double.isFinite(lat) || !Double.isFinite(lng)) {
+            updateWidget(context, manager, widgetId);
+            return;
+        }
+
+        if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) {
+            updateWidget(context, manager, widgetId);
+            return;
+        }
+
+        String address = parked.optString("address", "").trim();
+        scheduleMapFetch(context, widgetId, lat, lng, false, address, newOptions);
+    }
+
+    @Override
     public void onDisabled(Context context) {
         WorkManager.getInstance(context).cancelAllWorkByTag("parked_map");
         cancelAgeAlarms(context);
@@ -357,6 +389,18 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
     }
 
     private static void scheduleMapFetch(Context context, int widgetId, double lat, double lng, boolean isPrivate, String existingAddress) {
+        scheduleMapFetch(context, widgetId, lat, lng, isPrivate, existingAddress, null);
+    }
+
+    private static void scheduleMapFetch(
+        Context context,
+        int widgetId,
+        double lat,
+        double lng,
+        boolean isPrivate,
+        String existingAddress,
+        Bundle widgetOptions
+    ) {
         if (isPrivate) return;
 
         if (isBatteryLow(context)) {
@@ -364,7 +408,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             return;
         }
 
-        int[] size = computeTileSize(context, widgetId);
+        int[] size = computeTileSize(context, widgetId, widgetOptions);
 
         Data input = new Data.Builder()
             .putInt(MapTileFetchWorker.KEY_WIDGET_ID, widgetId)
@@ -395,8 +439,15 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
     }
 
     private static int[] computeTileSize(Context context, int widgetId) {
-        AppWidgetManager mgr = AppWidgetManager.getInstance(context);
-        Bundle opts = mgr.getAppWidgetOptions(widgetId);
+        return computeTileSize(context, widgetId, null);
+    }
+
+    private static int[] computeTileSize(Context context, int widgetId, Bundle widgetOptions) {
+        Bundle opts = widgetOptions;
+        if (opts == null) {
+            AppWidgetManager mgr = AppWidgetManager.getInstance(context);
+            opts = mgr.getAppWidgetOptions(widgetId);
+        }
         int maxDp = opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 300);
         float density = context.getResources().getDisplayMetrics().density;
         int tileW = Math.min((int) (maxDp * density * 0.9f), 600);
