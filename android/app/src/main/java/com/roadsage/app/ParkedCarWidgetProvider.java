@@ -206,7 +206,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         }
 
         setClearParkingIntent(context, views, widgetId);
-        setNavigateIntent(context, views, widgetId, lat, lng);
+        setNavigateIntent(context, views, widgetId, lat, lng, hasPublicAddress ? address : "", timestampMs);
         setDashboardTapIntent(context, views, widgetId + 10_000);
         manager.updateAppWidget(widgetId, views);
     }
@@ -356,7 +356,15 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         views.setOnClickPendingIntent(R.id.btn_clear_parking, pendingIntent);
     }
 
-    private static void setNavigateIntent(Context context, RemoteViews views, int widgetId, double lat, double lng) {
+    private static void setNavigateIntent(
+        Context context,
+        RemoteViews views,
+        int widgetId,
+        double lat,
+        double lng,
+        String address,
+        long parkedMs
+    ) {
         Uri geoUri = Uri.parse(String.format(
             Locale.US,
             "geo:%.6f,%.6f?q=%.6f,%.6f(Your%%20Car)",
@@ -374,6 +382,15 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         views.setOnClickPendingIntent(R.id.btn_navigate, pendingIntent);
+        views.setContentDescription(R.id.btn_navigate, navigateDescription(address, parkedMs));
+    }
+
+    private static String navigateDescription(String address, long parkedMs) {
+        String trimmed = address == null ? "" : address.trim();
+        if (!trimmed.isEmpty()) {
+            return "Navigate to car parked at " + trimmed;
+        }
+        return "Navigate to parked car, parked " + formatAge(System.currentTimeMillis() - parkedMs);
     }
 
     private static void setDashboardTapIntent(Context context, RemoteViews views, int requestCode) {

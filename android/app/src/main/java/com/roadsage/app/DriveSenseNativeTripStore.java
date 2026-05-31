@@ -13,13 +13,10 @@ import java.util.UUID;
 class DriveSenseNativeTripStore {
     private static final String PREFS_OLD = "drivesense_native_tracking";
     private static final String PREFS = "road_sage_native_tracking";
-    private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
     private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
     private static final String KEY_LAST_PARKED = "last_parked_location";
-    private static final String SHARED_LAST_PARKED_KEY_OLD = "drivesense_last_parked";
-    private static final String SHARED_LAST_PARKED_KEY = "road_sage_last_parked";
     private static final String KEY_MIGRATED_FROM_V1 = "migrated_from_drivesense_v1";
     private static final int MAX_DIAGNOSTIC_EVENTS = 120;
 
@@ -31,6 +28,7 @@ class DriveSenseNativeTripStore {
             for (Map.Entry<String, ?> entry : oldPrefs.getAll().entrySet()) {
                 Object value = entry.getValue();
                 String key = entry.getKey();
+                if (KEY_LAST_PARKED.equals(key) && currentPrefs.contains(KEY_LAST_PARKED)) continue;
                 if (value instanceof String) editor.putString(key, (String) value);
                 else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
                 else if (value instanceof Integer) editor.putInt(key, (Integer) value);
@@ -95,19 +93,8 @@ class DriveSenseNativeTripStore {
     }
 
     static JSONObject getLastParkedLocation(Context context) {
-        String raw = prefs(context).getString(KEY_LAST_PARKED, null);
-        if (raw == null || raw.trim().isEmpty()) {
-            raw = context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SHARED_LAST_PARKED_KEY, null);
-        }
-        if (raw == null || raw.trim().isEmpty()) {
-            raw = context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SHARED_LAST_PARKED_KEY_OLD, null);
-        }
-        if (raw == null || raw.trim().isEmpty()) return null;
-        try {
-            return new JSONObject(raw);
-        } catch (JSONException e) {
-            return null;
-        }
+        prefs(context);
+        return ParkedLocationPreferenceReconciler.readLatest(context);
     }
 
     static void saveLastParkedLocation(Context context, double lat, double lng, long timestampMs, String tripId, String source) {
@@ -119,7 +106,7 @@ class DriveSenseNativeTripStore {
             parked.put("timestamp_ms", timestampMs);
             parked.put("tripId", tripId);
             parked.put("source", source);
-            prefs(context).edit().putString(KEY_LAST_PARKED, parked.toString()).apply();
+            ParkedLocationPreferenceReconciler.writeCurrent(context, parked);
         } catch (JSONException ignored) {}
     }
 

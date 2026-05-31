@@ -13,6 +13,7 @@ import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
 import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -34,8 +35,6 @@ const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
-const PARKED_GEOCODE_TIMEOUT_MS = 4000;
-const parkedGeocodeRequests = new Map();
 
 const settingsStorage = () => {
   try {
@@ -106,7 +105,7 @@ const normalizePreferencePrivacyZones = (zones) => (
 
 const preferencesModule = async () => {
   const { Preferences } = await import('@capacitor/preferences');
-  return Preferences;
+  return { Preferences };
 };
 
 const distanceMetersBetweenLatLng = (lat, lng, zone) => {
@@ -194,7 +193,7 @@ const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
 
 export async function getPrivacyZones() {
   try {
-    const Preferences = await preferencesModule();
+    const { Preferences } = await preferencesModule();
     const { value } = await Preferences.get({ key: PRIVACY_ZONES_KEY });
     return normalizePreferencePrivacyZones(value ? JSON.parse(value) : []);
   } catch {
@@ -203,7 +202,7 @@ export async function getPrivacyZones() {
 }
 
 export async function savePrivacyZones(zones) {
-  const Preferences = await preferencesModule();
+  const { Preferences } = await preferencesModule();
   await Preferences.set({
     key: PRIVACY_ZONES_KEY,
     value: JSON.stringify(normalizePreferencePrivacyZones(zones)),
@@ -669,65 +668,12 @@ export async function getLastParkedLocation() {
   return parkedLocation;
 }
 
-const parkedGeocodeKey = (lat, lng) => `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
-
-const shortenParkedAddress = (address) => {
-  const trimmed = String(address || '').trim();
-  if (!trimmed) return null;
-
-  const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2) return `${parts[0]}, ${parts[1]}`;
-  return trimmed;
-};
-
-async function reverseGeocodeParkedLocation(lat, lng) {
-  if (typeof fetch !== 'function') return null;
-
-  const key = parkedGeocodeKey(lat, lng);
-  if (parkedGeocodeRequests.has(key)) return parkedGeocodeRequests.get(key);
-
-  const request = (async () => {
-    const controller = typeof AbortController === 'function' ? new AbortController() : null;
-    const timeoutId = controller
-      ? setTimeout(() => controller.abort(), PARKED_GEOCODE_TIMEOUT_MS)
-      : null;
-
-    try {
-      const params = new URLSearchParams({
-        format: 'jsonv2',
-        lat: String(lat),
-        lon: String(lng),
-        zoom: '17',
-        addressdetails: '0',
-      });
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`, {
-        headers: { Accept: 'application/json' },
-        signal: controller?.signal,
-      });
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      return shortenParkedAddress(data?.display_name);
-    } catch {
-      return null;
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  })();
-
-  parkedGeocodeRequests.set(key, request);
-  try {
-    return await request;
-  } finally {
-    parkedGeocodeRequests.delete(key);
-  }
-}
-
 export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
-  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
+  const preferenceZoneMatch = await isInPrivacyZone(parsedLat, parsedLng);
+  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng }) || preferenceZoneMatch.inZone) {
     await removeJson(LAST_PARKED_KEY);
     return null;
   }

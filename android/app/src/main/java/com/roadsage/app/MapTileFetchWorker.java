@@ -170,6 +170,7 @@ public class MapTileFetchWorker extends Worker {
         String existing = getInputData().getString(KEY_EXISTING_ADDRESS);
         boolean priv = getInputData().getBoolean(KEY_PRIVACY_ZONE, false);
         if (priv || (existing != null && !existing.trim().isEmpty())) return;
+        if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) return;
 
         synchronized (GEOCODE_LOCK) {
             if (hasStoredAddress(context)) return;
@@ -194,6 +195,7 @@ public class MapTileFetchWorker extends Worker {
                     RemoteViews rv = new RemoteViews(context.getPackageName(), R.layout.widget_parked_car);
                     rv.setTextViewText(R.id.tv_parked_address, shortAddr);
                     rv.setViewVisibility(R.id.tv_parked_address, android.view.View.VISIBLE);
+                    rv.setContentDescription(R.id.btn_navigate, "Navigate to car parked at " + shortAddr);
                     mgr.partiallyUpdateAppWidget(widgetId, rv);
                 }
             } catch (Exception e) {

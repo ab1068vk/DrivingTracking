@@ -33,14 +33,12 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     @Before
     public void setUp() {
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
-        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
+        clearTrackingPrefs();
     }
 
     @After
     public void tearDown() {
-        DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
-        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
+        clearTrackingPrefs();
     }
 
     @Test
@@ -101,6 +99,57 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         assertNotNull(restored);
         assertEquals(43.65, restored.getDouble("lat"), 0.0001);
         assertEquals(-79.38, restored.getDouble("lng"), 0.0001);
+    }
+
+    @Test
+    public void newestParkedLocationWinsLegacyNativeRace() throws Exception {
+        JSONObject older = parkedLocation(43.65, -79.38, 1_000L);
+        JSONObject newer = parkedLocation(43.66, -79.39, 2_000L);
+
+        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_parked_location", older.toString())
+            .commit();
+        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_parked_location", newer.toString())
+            .commit();
+
+        JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
+
+        assertNotNull(restored);
+        assertEquals(43.66, restored.getDouble("lat"), 0.0001);
+        assertEquals(2_000L, restored.getLong("timestamp_ms"));
+        assertFalse(context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
+            .contains("last_parked_location"));
+        assertEquals(
+            2_000L,
+            new JSONObject(context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
+                .getString("last_parked_location", "{}")).getLong("timestamp_ms")
+        );
+    }
+
+    @Test
+    public void currentParkedLocationWinsWhenNewerThanLegacyNative() throws Exception {
+        JSONObject newer = parkedLocation(43.67, -79.40, 3_000L);
+        JSONObject older = parkedLocation(43.65, -79.38, 1_000L);
+
+        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_parked_location", newer.toString())
+            .commit();
+        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_parked_location", older.toString())
+            .commit();
+
+        JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
+
+        assertNotNull(restored);
+        assertEquals(43.67, restored.getDouble("lat"), 0.0001);
+        assertEquals(3_000L, restored.getLong("timestamp_ms"));
+        assertFalse(context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
+            .contains("last_parked_location"));
     }
 
     @Test
@@ -188,6 +237,21 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             assertNotNull(stream);
             return new JSONObject(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
         }
+    }
+
+    private void clearTrackingPrefs() {
+        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE).edit().clear().commit();
+        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE).edit().clear().commit();
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
+    }
+
+    private static JSONObject parkedLocation(double lat, double lng, long timestampMs) throws Exception {
+        JSONObject parked = new JSONObject();
+        parked.put("lat", lat);
+        parked.put("lng", lng);
+        parked.put("timestamp_ms", timestampMs);
+        parked.put("timestamp", Instant.ofEpochMilli(timestampMs).toString());
+        return parked;
     }
 
     private static long longConstant(String name) throws Exception {

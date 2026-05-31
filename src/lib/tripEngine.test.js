@@ -2023,6 +2023,7 @@ describe('tripEngine', () => {
 
       expect(savedPrivate).toBeNull();
       expect(await getLastParkedLocation()).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(1);
     } finally {
       localSettings.update({ privacy_zones: previousZones || [] });
     }

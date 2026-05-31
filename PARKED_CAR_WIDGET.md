@@ -6,6 +6,8 @@ The Road Sage parked-car widget is a native Android home-screen AppWidget that s
 
 This widget is implemented in the Android layer, not in the React/Vite UI. It uses Android `RemoteViews`, `AppWidgetProvider`, `SharedPreferences`, and WorkManager.
 
+There is no iOS WidgetKit equivalent in this repository today. iOS parity requires a Swift WidgetKit extension plus an App Group storage bridge; see `docs/ios-widgetkit/README.md`.
+
 ## User Experience
 
 ### Normal State
