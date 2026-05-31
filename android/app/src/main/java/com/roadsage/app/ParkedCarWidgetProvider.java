@@ -50,6 +50,13 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        if (intent != null
+            && (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())
+                || Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction()))) {
+            refreshAll(context);
+            return;
+        }
+
         if (intent != null && ACTION_CLEAR_PARKING.equals(intent.getAction())) {
             cancelAgeAlarms(context);
             ParkingLocationClearer.clear(context);

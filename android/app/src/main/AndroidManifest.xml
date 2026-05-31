@@ -45,6 +45,8 @@
             android:label="Parked Car Locator">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="com.roadsage.app.ACTION_CLEAR_PARKING" />
                 <action android:name="com.roadsage.app.ACTION_AGE_UPDATE" />
             </intent-filter>
@@ -98,6 +100,7 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission
