@@ -1,8 +1,10 @@
 package com.roadsage.app;
 
+import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
+import android.os.Build;
 import android.os.BatteryManager;
 import android.os.Bundle;
 import android.content.ComponentName;
@@ -32,14 +34,31 @@ import java.util.Locale;
 
 public class ParkedCarWidgetProvider extends AppWidgetProvider {
     private static final String TAG = "ParkedWidget";
+    private static final String ACTION_AGE_UPDATE = "com.roadsage.app.ACTION_AGE_UPDATE";
     static final String ACTION_CLEAR_PARKING = "com.roadsage.app.ACTION_CLEAR_PARKING";
     private static final String DEEP_LINK_DASHBOARD = "drivesense://dashboard";
+    private static final long[] AGE_ALARM_OFFSETS_MS = {
+        60_000L,
+        5 * 60_000L,
+        10 * 60_000L,
+        30 * 60_000L,
+        60 * 60_000L,
+        2 * 3_600_000L,
+        6 * 3_600_000L,
+        24 * 3_600_000L,
+    };
 
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent != null && ACTION_CLEAR_PARKING.equals(intent.getAction())) {
+            cancelAgeAlarms(context);
             ParkingLocationClearer.clear(context);
             refreshAll(context);
+            return;
+        }
+
+        if (intent != null && ACTION_AGE_UPDATE.equals(intent.getAction())) {
+            updateAgeText(context);
             return;
         }
 
@@ -51,14 +70,22 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         for (int widgetId : widgetIds) {
             updateWidget(context, manager, widgetId);
         }
+        scheduleAgeAlarmsForCurrentParking(context);
     }
 
     @Override
     public void onDeleted(Context context, int[] widgetIds) {
+        cancelAgeAlarms(context);
         for (int widgetId : widgetIds) {
             File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
             if (cacheFile.exists()) cacheFile.delete();
         }
+        scheduleAgeAlarmsForCurrentParking(context);
+    }
+
+    @Override
+    public void onDisabled(Context context) {
+        cancelAgeAlarms(context);
     }
 
     static void refreshAll(Context context) {
@@ -71,6 +98,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             if (cacheFile.exists()) cacheFile.delete();
             updateWidget(context, manager, widgetId);
         }
+        scheduleAgeAlarmsForCurrentParking(context);
     }
 
     static void updateWidget(Context context, AppWidgetManager manager, int widgetId) {
@@ -94,7 +122,6 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             return;
         }
 
-        long ageMs = Math.max(0L, System.currentTimeMillis() - timestampMs);
         PrivacyZone matchedZone = PrivacyZoneStore.findMatchingZone(lat, lng, context);
         boolean isPrivate = matchedZone != null;
         String address = parked.optString("address", "").trim();
@@ -107,13 +134,13 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         views.setViewVisibility(R.id.iv_privacy_badge, isPrivate ? View.VISIBLE : View.GONE);
 
         if (isPrivate) {
-            views.setTextViewText(R.id.tv_parked_status, "Parked near " + matchedZone.name + " · " + formatAge(ageMs));
+            views.setTextViewText(R.id.tv_parked_status, buildParkedStatusText(matchedZone, timestampMs, System.currentTimeMillis()));
             views.setImageViewResource(R.id.iv_map, R.drawable.widget_map_placeholder);
             views.setContentDescription(R.id.iv_map, context.getString(R.string.widget_privacy_map_hidden_description));
             views.setViewVisibility(R.id.tv_parked_address, View.GONE);
             WorkManager.getInstance(context).cancelUniqueWork(mapWorkName(widgetId));
         } else {
-            views.setTextViewText(R.id.tv_parked_status, "Parked " + formatAge(ageMs));
+            views.setTextViewText(R.id.tv_parked_status, buildParkedStatusText(null, timestampMs, System.currentTimeMillis()));
             views.setContentDescription(R.id.iv_map, context.getString(R.string.widget_parked_map_description));
             if (hasPublicAddress) {
                 views.setTextViewText(R.id.tv_parked_address, address);
@@ -141,6 +168,103 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         setNavigateIntent(context, views, widgetId, lat, lng);
         setDashboardTapIntent(context, views, widgetId + 10_000);
         manager.updateAppWidget(widgetId, views);
+    }
+
+    private static void updateAgeText(Context context) {
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] widgetIds = manager.getAppWidgetIds(new ComponentName(context, ParkedCarWidgetProvider.class));
+        if (widgetIds == null || widgetIds.length == 0) return;
+
+        JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(context);
+        if (parked == null) {
+            cancelAgeAlarms(context);
+            return;
+        }
+
+        double lat = parked.optDouble("lat", Double.NaN);
+        double lng = parked.optDouble("lng", Double.NaN);
+        long parkedMs = parkedTimestampMs(parked, System.currentTimeMillis());
+        PrivacyZone matchedZone = Double.isFinite(lat) && Double.isFinite(lng)
+            ? PrivacyZoneStore.findMatchingZone(lat, lng, context)
+            : null;
+        String status = buildParkedStatusText(matchedZone, parkedMs, System.currentTimeMillis());
+
+        for (int widgetId : widgetIds) {
+            RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_parked_car);
+            views.setTextViewText(R.id.tv_parked_status, status);
+            manager.partiallyUpdateAppWidget(widgetId, views);
+        }
+    }
+
+    private static String buildParkedStatusText(PrivacyZone zone, long parkedMs, long nowMs) {
+        long ageMs = Math.max(0L, nowMs - parkedMs);
+        if (zone != null) {
+            return "Parked near " + zone.name + " · " + formatAge(ageMs);
+        }
+        return "Parked " + formatAge(ageMs);
+    }
+
+    private static void scheduleAgeAlarmsForCurrentParking(Context context) {
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] widgetIds = manager.getAppWidgetIds(new ComponentName(context, ParkedCarWidgetProvider.class));
+        if (widgetIds == null || widgetIds.length == 0) {
+            cancelAgeAlarms(context);
+            return;
+        }
+
+        JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(context);
+        if (parked == null) {
+            cancelAgeAlarms(context);
+            return;
+        }
+        scheduleAgeAlarms(context, parkedTimestampMs(parked, System.currentTimeMillis()));
+    }
+
+    private static void scheduleAgeAlarms(Context context, long parkedTimestampMs) {
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) return;
+        cancelAgeAlarms(context);
+
+        long now = System.currentTimeMillis();
+        for (long offsetMs : AGE_ALARM_OFFSETS_MS) {
+            long triggerMs = parkedTimestampMs + offsetMs;
+            if (triggerMs <= now) continue;
+
+            PendingIntent pendingIntent = ageUpdatePendingIntent(
+                context,
+                offsetMs,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+            if (offsetMs <= 3_600_000L) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pendingIntent);
+                } else {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pendingIntent);
+                }
+            } else {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pendingIntent);
+            }
+        }
+    }
+
+    private static void cancelAgeAlarms(Context context) {
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) return;
+
+        for (long offsetMs : AGE_ALARM_OFFSETS_MS) {
+            PendingIntent pendingIntent = ageUpdatePendingIntent(
+                context,
+                offsetMs,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+            );
+            if (pendingIntent != null) alarmManager.cancel(pendingIntent);
+        }
+    }
+
+    private static PendingIntent ageUpdatePendingIntent(Context context, long offsetMs, int flags) {
+        Intent intent = new Intent(context, ParkedCarWidgetProvider.class);
+        intent.setAction(ACTION_AGE_UPDATE);
+        return PendingIntent.getBroadcast(context, (int) (offsetMs / 1000L), intent, flags);
     }
 
     static String formatAge(long ageMs) {
