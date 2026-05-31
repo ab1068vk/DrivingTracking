@@ -3,12 +3,16 @@ package com.roadsage.app;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
+import android.os.BatteryManager;
+import android.os.Bundle;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.util.Log;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -27,6 +31,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Locale;
 
 public class ParkedCarWidgetProvider extends AppWidgetProvider {
+    private static final String TAG = "ParkedWidget";
     private static final String DEEP_LINK_DASHBOARD = "drivesense://dashboard";
 
     @Override
@@ -78,20 +83,45 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         }
 
         long ageMs = Math.max(0L, System.currentTimeMillis() - timestampMs);
+        PrivacyZone matchedZone = PrivacyZoneStore.findMatchingZone(lat, lng, context);
+        boolean isPrivate = matchedZone != null;
+        String address = parked.optString("address", "").trim();
+        boolean hasPublicAddress = !isPrivate && !address.isEmpty();
+
         views.setViewVisibility(R.id.iv_map, View.VISIBLE);
         views.setViewVisibility(R.id.tv_empty_hint, View.GONE);
         views.setViewVisibility(R.id.btn_navigate, View.VISIBLE);
-        views.setTextViewText(R.id.tv_parked_status, "Parked " + formatAge(ageMs));
+        views.setViewVisibility(R.id.iv_privacy_badge, isPrivate ? View.VISIBLE : View.GONE);
 
-        File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
-        if (cacheFile.exists() && cacheFile.lastModified() >= timestampMs) {
-            Bitmap cached = BitmapFactory.decodeFile(cacheFile.getAbsolutePath());
-            if (cached != null) {
-                views.setImageViewBitmap(R.id.iv_map, cached);
-            }
-        } else {
+        if (isPrivate) {
+            views.setTextViewText(R.id.tv_parked_status, "Parked near " + matchedZone.name + " · " + formatAge(ageMs));
             views.setImageViewResource(R.id.iv_map, R.drawable.widget_map_placeholder);
-            scheduleMapFetch(context, widgetId, lat, lng);
+            views.setContentDescription(R.id.iv_map, context.getString(R.string.widget_privacy_map_hidden_description));
+            views.setViewVisibility(R.id.tv_parked_address, View.GONE);
+            WorkManager.getInstance(context).cancelUniqueWork(mapWorkName(widgetId));
+        } else {
+            views.setTextViewText(R.id.tv_parked_status, "Parked " + formatAge(ageMs));
+            views.setContentDescription(R.id.iv_map, context.getString(R.string.widget_parked_map_description));
+            if (hasPublicAddress) {
+                views.setTextViewText(R.id.tv_parked_address, address);
+                views.setViewVisibility(R.id.tv_parked_address, View.VISIBLE);
+            } else {
+                views.setViewVisibility(R.id.tv_parked_address, View.GONE);
+            }
+
+            File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
+            if (cacheFile.exists() && cacheFile.lastModified() >= timestampMs) {
+                Bitmap cached = BitmapFactory.decodeFile(cacheFile.getAbsolutePath());
+                if (cached != null) {
+                    views.setImageViewBitmap(R.id.iv_map, cached);
+                    if (address.isEmpty()) {
+                        scheduleMapFetch(context, widgetId, lat, lng, false, address);
+                    }
+                }
+            } else {
+                views.setImageViewResource(R.id.iv_map, R.drawable.widget_map_placeholder);
+                scheduleMapFetch(context, widgetId, lat, lng, false, address);
+            }
         }
 
         setNavigateIntent(context, views, widgetId, lat, lng);
@@ -126,8 +156,10 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
 
     private static void showEmptyState(RemoteViews views) {
         views.setViewVisibility(R.id.iv_map, View.GONE);
+        views.setViewVisibility(R.id.iv_privacy_badge, View.GONE);
         views.setViewVisibility(R.id.tv_empty_hint, View.VISIBLE);
         views.setViewVisibility(R.id.btn_navigate, View.GONE);
+        views.setViewVisibility(R.id.tv_parked_address, View.GONE);
         views.setTextViewText(R.id.tv_parked_status, "No parked location saved yet");
     }
 
@@ -163,23 +195,29 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         views.setOnClickPendingIntent(R.id.widget_root, pendingIntent);
     }
 
-    private static void scheduleMapFetch(Context context, int widgetId, double lat, double lng) {
-        String tileUrl = String.format(
-            Locale.US,
-            "https://staticmap.openstreetmap.de/staticmap.php?center=%.6f,%.6f&zoom=16&size=300x150",
-            lat,
-            lng
-        );
+    private static void scheduleMapFetch(Context context, int widgetId, double lat, double lng, boolean isPrivate, String existingAddress) {
+        if (isPrivate) return;
+
+        if (isBatteryLow(context)) {
+            Log.d(TAG, "Map fetch skipped — battery low");
+            return;
+        }
+
+        int[] size = computeTileSize(context, widgetId);
 
         Data input = new Data.Builder()
-            .putString(MapTileFetchWorker.KEY_URL, tileUrl)
             .putInt(MapTileFetchWorker.KEY_WIDGET_ID, widgetId)
             .putDouble(MapTileFetchWorker.KEY_LAT, lat)
             .putDouble(MapTileFetchWorker.KEY_LNG, lng)
+            .putInt(MapTileFetchWorker.KEY_TILE_WIDTH, size[0])
+            .putInt(MapTileFetchWorker.KEY_TILE_HEIGHT, size[1])
+            .putString(MapTileFetchWorker.KEY_EXISTING_ADDRESS, existingAddress == null ? "" : existingAddress)
+            .putBoolean(MapTileFetchWorker.KEY_PRIVACY_ZONE, isPrivate)
             .build();
 
         Constraints constraints = new Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiresBatteryNotLow(true)
             .build();
 
         OneTimeWorkRequest work = new OneTimeWorkRequest.Builder(MapTileFetchWorker.class)
@@ -188,7 +226,32 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             .addTag("parked_map")
             .build();
 
-        String workName = "parked_car_map_" + widgetId;
-        WorkManager.getInstance(context).enqueueUniqueWork(workName, ExistingWorkPolicy.REPLACE, work);
+        WorkManager.getInstance(context).enqueueUniqueWork(mapWorkName(widgetId), ExistingWorkPolicy.REPLACE, work);
+    }
+
+    private static String mapWorkName(int widgetId) {
+        return "parked_car_map_" + widgetId;
+    }
+
+    private static int[] computeTileSize(Context context, int widgetId) {
+        AppWidgetManager mgr = AppWidgetManager.getInstance(context);
+        Bundle opts = mgr.getAppWidgetOptions(widgetId);
+        int maxDp = opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, 300);
+        float density = context.getResources().getDisplayMetrics().density;
+        int tileW = Math.min((int) (maxDp * density * 0.9f), 600);
+        int tileH = Math.min(tileW / 2, 300);
+        return new int[]{tileW, tileH};
+    }
+
+    private static boolean isBatteryLow(Context context) {
+        Intent b = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (b == null) return false;
+
+        int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, 100);
+        int scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+        int status = b.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+        boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+            || status == BatteryManager.BATTERY_STATUS_FULL;
+        return scale > 0 && (level * 100f / scale) < 15f && !charging;
     }
 }

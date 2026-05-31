@@ -35,6 +35,15 @@
             android:textStyle="bold"
             android:maxLines="1"
             android:ellipsize="end" />
+
+        <ImageView
+            android:id="@+id/iv_privacy_badge"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginStart="6dp"
+            android:src="@drawable/widget_privacy_icon"
+            android:contentDescription="@string/widget_privacy_map_hidden_description"
+            android:visibility="gone" />
     </LinearLayout>
 
     <ImageView
@@ -72,6 +81,17 @@
         android:textSize="10sp"
         android:maxLines="1"
         android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/tv_parked_address"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textColor="#FF78AACC"
+        android:textSize="9sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
 
     <Button
         android:id="@+id/btn_navigate"
