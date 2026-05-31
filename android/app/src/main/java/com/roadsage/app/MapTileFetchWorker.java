@@ -33,6 +33,7 @@ public class MapTileFetchWorker extends Worker {
     private static final String KEY_LAST_PARKED = "last_parked_location";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String CAPACITOR_LAST_PARKED_KEY = "road_sage_last_parked";
+    private static final Object GEOCODE_LOCK = new Object();
 
     static final String KEY_WIDGET_ID = "widget_id";
     static final String KEY_LAT = "lat";
@@ -170,30 +171,34 @@ public class MapTileFetchWorker extends Worker {
         boolean priv = getInputData().getBoolean(KEY_PRIVACY_ZONE, false);
         if (priv || (existing != null && !existing.trim().isEmpty())) return;
 
-        try {
-            String geoUrl = String.format(
-                Locale.US,
-                "https://nominatim.openstreetmap.org/reverse?format=json&lat=%.6f&lon=%.6f&zoom=17&addressdetails=0",
-                lat,
-                lng
-            );
-            String body = fetchText(geoUrl);
-            if (body == null || body.trim().isEmpty()) return;
+        synchronized (GEOCODE_LOCK) {
+            if (hasStoredAddress(context)) return;
 
-            JSONObject geo = new JSONObject(body);
-            String shortAddr = shortenAddress(geo.optString("display_name", ""));
-            if (shortAddr.isEmpty()) return;
+            try {
+                String geoUrl = String.format(
+                    Locale.US,
+                    "https://nominatim.openstreetmap.org/reverse?format=json&lat=%.6f&lon=%.6f&zoom=17&addressdetails=0",
+                    lat,
+                    lng
+                );
+                String body = fetchText(geoUrl);
+                if (body == null || body.trim().isEmpty()) return;
 
-            updateStoredAddress(context, shortAddr);
-            if (widgetId != -1) {
-                AppWidgetManager mgr = AppWidgetManager.getInstance(context);
-                RemoteViews rv = new RemoteViews(context.getPackageName(), R.layout.widget_parked_car);
-                rv.setTextViewText(R.id.tv_parked_address, shortAddr);
-                rv.setViewVisibility(R.id.tv_parked_address, android.view.View.VISIBLE);
-                mgr.partiallyUpdateAppWidget(widgetId, rv);
+                JSONObject geo = new JSONObject(body);
+                String shortAddr = shortenAddress(geo.optString("display_name", ""));
+                if (shortAddr.isEmpty()) return;
+
+                updateStoredAddress(context, shortAddr);
+                if (widgetId != -1) {
+                    AppWidgetManager mgr = AppWidgetManager.getInstance(context);
+                    RemoteViews rv = new RemoteViews(context.getPackageName(), R.layout.widget_parked_car);
+                    rv.setTextViewText(R.id.tv_parked_address, shortAddr);
+                    rv.setViewVisibility(R.id.tv_parked_address, android.view.View.VISIBLE);
+                    mgr.partiallyUpdateAppWidget(widgetId, rv);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Geocode silent fail: " + e.getMessage());
             }
-        } catch (Exception e) {
-            Log.w(TAG, "Geocode silent fail: " + e.getMessage());
         }
     }
 
@@ -245,6 +250,27 @@ public class MapTileFetchWorker extends Worker {
             addr,
             false
         );
+    }
+
+    private static boolean hasStoredAddress(Context context) {
+        return hasAddress(
+            context.getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE),
+            KEY_LAST_PARKED
+        ) || hasAddress(
+            context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE),
+            CAPACITOR_LAST_PARKED_KEY
+        );
+    }
+
+    private static boolean hasAddress(SharedPreferences prefs, String key) {
+        String raw = prefs.getString(key, null);
+        if (raw == null || raw.trim().isEmpty()) return false;
+
+        try {
+            return !new JSONObject(raw).optString("address", "").trim().isEmpty();
+        } catch (JSONException e) {
+            return false;
+        }
     }
 
     private static void updateJsonAddress(SharedPreferences prefs, String key, String addr, boolean writeWhenMissing) {
