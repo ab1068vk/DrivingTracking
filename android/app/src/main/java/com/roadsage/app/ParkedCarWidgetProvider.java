@@ -32,7 +32,19 @@ import java.util.Locale;
 
 public class ParkedCarWidgetProvider extends AppWidgetProvider {
     private static final String TAG = "ParkedWidget";
+    static final String ACTION_CLEAR_PARKING = "com.roadsage.app.ACTION_CLEAR_PARKING";
     private static final String DEEP_LINK_DASHBOARD = "drivesense://dashboard";
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        if (intent != null && ACTION_CLEAR_PARKING.equals(intent.getAction())) {
+            ParkingLocationClearer.clear(context);
+            refreshAll(context);
+            return;
+        }
+
+        super.onReceive(context, intent);
+    }
 
     @Override
     public void onUpdate(Context context, AppWidgetManager manager, int[] widgetIds) {
@@ -91,6 +103,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         views.setViewVisibility(R.id.iv_map, View.VISIBLE);
         views.setViewVisibility(R.id.tv_empty_hint, View.GONE);
         views.setViewVisibility(R.id.btn_navigate, View.VISIBLE);
+        views.setViewVisibility(R.id.btn_clear_parking, View.VISIBLE);
         views.setViewVisibility(R.id.iv_privacy_badge, isPrivate ? View.VISIBLE : View.GONE);
 
         if (isPrivate) {
@@ -124,6 +137,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             }
         }
 
+        setClearParkingIntent(context, views, widgetId);
         setNavigateIntent(context, views, widgetId, lat, lng);
         setDashboardTapIntent(context, views, widgetId + 10_000);
         manager.updateAppWidget(widgetId, views);
@@ -159,8 +173,22 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         views.setViewVisibility(R.id.iv_privacy_badge, View.GONE);
         views.setViewVisibility(R.id.tv_empty_hint, View.VISIBLE);
         views.setViewVisibility(R.id.btn_navigate, View.GONE);
+        views.setViewVisibility(R.id.btn_clear_parking, View.GONE);
         views.setViewVisibility(R.id.tv_parked_address, View.GONE);
         views.setTextViewText(R.id.tv_parked_status, "No parked location saved yet");
+    }
+
+    private static void setClearParkingIntent(Context context, RemoteViews views, int widgetId) {
+        Intent intent = new Intent(context, ParkedCarWidgetProvider.class);
+        intent.setAction(ACTION_CLEAR_PARKING);
+        intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+            context,
+            widgetId + 50_000,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        views.setOnClickPendingIntent(R.id.btn_clear_parking, pendingIntent);
     }
 
     private static void setNavigateIntent(Context context, RemoteViews views, int widgetId, double lat, double lng) {

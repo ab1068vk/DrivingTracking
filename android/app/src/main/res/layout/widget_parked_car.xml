@@ -36,6 +36,18 @@
             android:maxLines="1"
             android:ellipsize="end" />
 
+        <ImageButton
+            android:id="@+id/btn_clear_parking"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginStart="6dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/widget_clear_parking_description"
+            android:padding="2dp"
+            android:scaleType="center"
+            android:src="@drawable/widget_close_icon"
+            android:visibility="gone" />
+
         <ImageView
             android:id="@+id/iv_privacy_badge"
             android:layout_width="24dp"

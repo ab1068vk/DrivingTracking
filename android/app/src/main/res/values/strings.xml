@@ -11,4 +11,5 @@
     <string name="widget_parked_description">Shows where you last parked your car</string>
     <string name="widget_parked_map_description">Map showing parked car location</string>
     <string name="widget_privacy_map_hidden_description">Parked in privacy zone — map hidden</string>
+    <string name="widget_clear_parking_description">Clear saved parking location</string>
 </resources>
