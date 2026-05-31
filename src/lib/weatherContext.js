@@ -1,7 +1,8 @@
 import { clamp } from '@/lib/mathUtils';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
-import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
+import { haversineDistance } from '@/lib/gps/math';
+import { weightedBlend } from '@/lib/scoring/componentScores';
 import { scoringValue } from '@/lib/scoringConstants';
 import { getPrivacyZones } from '@/lib/privacyZones';
 

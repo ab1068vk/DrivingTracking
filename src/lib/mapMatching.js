@@ -1,6 +1,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { logError } from '@/lib/errorReporting';
 
 const CACHE_KEY = 'road_sage_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -232,36 +233,20 @@ async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIME
 }
 
 export async function mapMatchRoute(routePoints = [], settings = {}) {
-  const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
+  const endpoint = typeof settings?.osrm_map_matching_url === 'string'
+    ? settings.osrm_map_matching_url.trim()
+    : '';
+  const consented = settings?.osrm_data_sharing_consented === true;
+  const hasEndpoint = endpoint.length > 0;
+  const isOsrmDemoUrl = isPublicOsrmDemoUrl(endpoint);
+
   if (settings.map_matching_enabled === false) {
     return { routePoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
   }
-  if (!settings.osrm_map_matching_url) {
-    return {
-      routePoints,
-      status: 'needs_endpoint',
-      provider: 'osrm',
-      error: 'Route snapping is on, but no OSRM endpoint is set.',
-      isOsrmDemoUrl,
-    };
-  }
+  if (!consented || !hasEndpoint) return null;
   if (isOsrmDemoUrl) {
-    return {
-      routePoints,
-      status: 'public_demo_blocked',
-      provider: 'osrm',
-      error: 'The public OSRM demo is reference-only in Road Sage. Configure a private or trusted OSRM endpoint before route snapping.',
-      isOsrmDemoUrl,
-    };
-  }
-  if (settings.osrm_data_sharing_consented !== true) {
-    return {
-      routePoints,
-      status: 'needs_consent',
-      provider: 'osrm',
-      error: 'Route snapping needs OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
-      isOsrmDemoUrl,
-    };
+    logError('osrm_public_demo_blocked', new Error('Public OSRM demo blocked'), {});
+    return null;
   }
   const { segments, mergedTemplate, gapCount } = splitAtNullPoints(routePoints);
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
@@ -273,7 +258,6 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   if (cache[key]) return { ...cache[key], status: 'cache_hit', provider: 'osrm', isOsrmDemoUrl };
 
   try {
-    const endpoint = settings.osrm_map_matching_url;
     const timeoutMs = osrmTimeoutMs(settings);
     try {
       new URL(endpoint);

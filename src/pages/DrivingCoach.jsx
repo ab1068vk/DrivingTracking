@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { tripService } from '@/api/trips';
-import { formatDistance, formatSpeed } from '@/lib/tripEngine';
+import { formatDistance, formatSpeed } from '@/lib/gps/formatting';
 import { localSettings } from '@/lib/trackingStore';
 import {
   analyzeDayOfWeek,

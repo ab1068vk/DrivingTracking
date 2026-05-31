@@ -35,12 +35,13 @@ import {
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
-import { formatDateTime } from '@/lib/tripEngine';
+import { formatDateTime } from '@/lib/gps/formatting';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
+import { logError } from '@/lib/errorReporting';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -225,7 +226,9 @@ export default function Diagnostics() {
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
-    if (isAndroid()) await clearNativeDiagnostics().catch(() => {});
+    if (isAndroid()) await clearNativeDiagnostics().catch((err) => {
+      logError('native_diagnostics_clear', err);
+    });
     await refresh();
   };
 
@@ -241,7 +244,9 @@ export default function Diagnostics() {
 
   const armNative = async () => {
     if (!isAndroid()) return;
-    await startNativeAutoTracking().catch(() => {});
+    await startNativeAutoTracking().catch((err) => {
+      logError('native_auto_tracking_start_diagnostics', err);
+    });
     await refresh();
   };
 

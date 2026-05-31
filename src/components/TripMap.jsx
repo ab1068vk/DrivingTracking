@@ -12,7 +12,8 @@ import {
   titleCase,
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { formatDistance, formatDuration } from '@/lib/gps/formatting';
+import { calculateBearing, headingDiff, haversineDistance } from '@/lib/gps/math';
 import { localSettings } from '@/lib/trackingStore';
 import { getBestMapCenter, isValidLatLng } from '@/lib/mapDefaults';
 import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';

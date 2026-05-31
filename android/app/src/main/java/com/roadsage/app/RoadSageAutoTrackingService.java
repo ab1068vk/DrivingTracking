@@ -1025,6 +1025,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
                 tripId,
                 tailTrim.removedPoints > 0 ? "native_trimmed_parked_tail" : "native_parking_stop"
             );
+            ParkedCarWidgetProvider.refreshAll(this);
         }
         candidateConfirmedMs = 0L;
         candidateNearParked = false;

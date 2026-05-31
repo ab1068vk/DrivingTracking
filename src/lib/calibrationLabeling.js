@@ -1,4 +1,4 @@
-import { SCORING_VERSION } from '@/lib/tripEngine';
+import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import {
   MIN_CALIBRATION_LABEL_COUNT,
@@ -8,6 +8,13 @@ import {
 export const CALIBRATION_LABEL_SCHEMA_VERSION = 1;
 export const CALIBRATION_LABEL_TARGET_COUNT = MIN_CALIBRATION_LABEL_COUNT;
 export const CALIBRATION_LABEL_COLLECTION = 'trip_calibration_labels';
+export const CALIBRATION_MILESTONES = Object.freeze([
+  { count: 10, label: 'Getting started', benefit: 'Trip rating history begins' },
+  { count: 50, label: 'Early insights', benefit: 'Trend patterns emerging' },
+  { count: 200, label: 'Personalized', benefit: 'Local threshold suggestions unlocked' },
+  { count: 500, label: 'Well-calibrated', benefit: 'Scoring models refined to your style' },
+  { count: 2000, label: 'Fully calibrated', benefit: 'Community calibration eligible' },
+]);
 export const POST_TRIP_SURVEY_QUESTION = 'How did this drive feel? (1 risky - 5 excellent)';
 export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
 export const SURVEY_RATING_OPTIONS = Object.freeze([
@@ -44,6 +51,24 @@ const numberOrNull = (value) => {
 };
 
 const boolOrNull = (value) => (typeof value === 'boolean' ? value : null);
+
+function normalizedLabelCount(labelCount) {
+  const count = Math.floor(Number(labelCount));
+  return Number.isFinite(count) ? Math.max(0, count) : 0;
+}
+
+export function getCalibrationMilestone(labelCount) {
+  const count = normalizedLabelCount(labelCount);
+  return CALIBRATION_MILESTONES
+    .slice()
+    .reverse()
+    .find((milestone) => count >= milestone.count) ?? null;
+}
+
+export function getNextCalibrationMilestone(labelCount) {
+  const count = normalizedLabelCount(labelCount);
+  return CALIBRATION_MILESTONES.find((milestone) => count < milestone.count) ?? null;
+}
 
 const round = (value, digits = 3) => {
   const number = Number(value);

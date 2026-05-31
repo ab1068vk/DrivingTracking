@@ -83,7 +83,30 @@ describe('mapMatching', () => {
       osrm_map_matching_url: 'https://example.test',
     });
 
-    expect(result.status).toBe('needs_consent');
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('requires OSRM consent to be explicitly boolean true', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: 'true',
+    });
+
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not send route points without a configured OSRM endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -137,10 +160,7 @@ describe('mapMatching', () => {
       osrm_data_sharing_consented: true,
     });
 
-    expect(result).toMatchObject({
-      status: 'public_demo_blocked',
-      isOsrmDemoUrl: true,
-    });
+    expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 

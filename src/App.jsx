@@ -12,10 +12,12 @@ import { configureNotificationChannels, syncReminderNotifications } from '@/lib/
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
+import { logError } from '@/lib/errorReporting';
 import { Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import { PageSkeleton } from '@/components/PageSkeleton';
 
 const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
@@ -52,12 +54,18 @@ const AuthenticatedApp = () => {
 
   useEffect(() => {
     const bootstrapSettings = async () => {
-      configureNotificationChannels().catch(() => {});
+      configureNotificationChannels().catch((err) => {
+        logError('notification_channel_configure', err);
+      });
       const settings = await localSettings.hydrateFromNative();
-      syncReminderNotifications(settings, { requestPermission: false }).catch(() => {});
+      syncReminderNotifications(settings, { requestPermission: false }).catch((err) => {
+        logError('reminder_notification_sync', err, { tracking_mode: settings.tracking_mode });
+      });
       setOnboardingDone(settings.onboarding_completed);
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-        startNativeAutoTracking().catch(() => {});
+        startNativeAutoTracking().catch((err) => {
+          logError('native_auto_tracking_start_bootstrap', err, { mode: settings.tracking_mode });
+        });
       }
 
       applyThemeMode(settings.dark_mode);
@@ -73,13 +81,16 @@ const AuthenticatedApp = () => {
       else if (extra.type === 'phone_use_pattern') navigate('/coach');
       else if (extra.type === 'maintenance') navigate('/vehicles');
       else if (extra.type === 'export_saved') {
-        openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch(() => {
+        openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch((err) => {
+          logError('export_location_open', err, { uri: extra.uri, mimeType: extra.mimeType });
           navigate('/reports');
         });
       }
     }).then((handle) => {
       listener = handle;
-    }).catch(() => {});
+    }).catch((err) => {
+      logError('notification_action_listener_register', err);
+    });
     return () => {
       listener?.remove?.();
     };
@@ -96,7 +107,7 @@ const AuthenticatedApp = () => {
   }
 
   return (
-    <Suspense fallback={<AppLoading />}>
+    <Suspense fallback={<PageSkeleton />}>
     <Routes>
       {/* Onboarding (no layout) - only shown to new users */}
       {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}

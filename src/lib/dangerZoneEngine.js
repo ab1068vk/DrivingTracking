@@ -1,5 +1,5 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
-import { haversineDistance } from '@/lib/tripEngine';
+import { haversineDistance } from '@/lib/gps/math';
 
 export const DANGER_ZONES_KEY = 'road_sage_danger_zones';
 const EARTH_M_PER_DEG = 111320;

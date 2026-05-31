@@ -39,6 +39,18 @@
             android:name=".DriveSenseActivityReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".ParkedCarWidgetProvider"
+            android:exported="true"
+            android:label="Parked Car Locator">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_parked_car_info" />
+        </receiver>
+
         <service
             android:name="com.equimaps.capacitor_background_geolocation.BackgroundGeolocationService"
             android:exported="false"

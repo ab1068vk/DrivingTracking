@@ -1,6 +1,6 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp } from '@/lib/mathUtils';
-import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/tripEngine';
+import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/gps/math';
 import { scoringValue } from '@/lib/scoringConstants';
 
 export const CALIBRATION_PROFILE_KEY = 'road_sage_calibration_profile';

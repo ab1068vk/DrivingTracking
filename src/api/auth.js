@@ -3,17 +3,22 @@ import { apiClient } from "@/api/client";
 const AUTH_STORAGE_KEYS = ["token", "access_token"];
 
 export const migrateLegacyAuthTokens = () => {
-  try {
-    AUTH_STORAGE_KEYS.forEach((key) => {
+  AUTH_STORAGE_KEYS.forEach((key) => {
+    try {
       const legacyToken = localStorage.getItem(key);
-      if (legacyToken && !sessionStorage.getItem(key)) {
+      if (!legacyToken) return;
+
+      if (!sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, legacyToken);
       }
-      localStorage.removeItem(key);
-    });
-  } catch {
-    // Storage can be unavailable in hardened browser modes.
-  }
+
+      if (sessionStorage.getItem(key) === legacyToken) {
+        localStorage.removeItem(key);
+      }
+    } catch {
+      // Storage can be unavailable in hardened browser modes.
+    }
+  });
 };
 
 // TODO: Implement /auth/me and a matching login flow if you want cloud auth.

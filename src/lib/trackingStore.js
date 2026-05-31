@@ -11,7 +11,7 @@ import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
-import { ECO_DEFAULTS } from '@/lib/tripEngine';
+import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
@@ -139,9 +139,13 @@ const syncSettingsForNative = (settings) => {
     })
     .then((module) => {
       if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized }).catch(() => {});
+      module.Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized }).catch((err) => {
+        logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
+      });
     })
-    .catch(() => {});
+    .catch((err) => {
+      logError('native_settings_sync_module_load', err);
+    });
 };
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
@@ -671,7 +675,9 @@ export const localSettings = {
       if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(data));
       else memorySettings = data;
       syncSettingsForNative(data);
-    } catch {}
+    } catch (err) {
+      logError('settings_save', err);
+    }
   },
   update(patch) {
     const current = this.get();
@@ -712,7 +718,9 @@ export const activeTripStore = {
   set(trip) {
     try {
       localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(trip));
-    } catch {}
+    } catch (err) {
+      logError('active_trip_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
+    }
   },
   clear() {
     localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);

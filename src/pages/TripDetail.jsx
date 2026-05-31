@@ -15,21 +15,29 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import { ComplianceScore, normalizeComplianceSpeedLimitSource } from '@/components/ComplianceScore';
 import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
+import { TripEventList, classifyTripEvent } from '@/components/TripEventList';
 import {
   calculateSegmentMetrics,
+} from '@/lib/gps/math';
+import {
   formatDistance,
   formatDuration,
   formatDateTime,
   formatSpeed,
   getScoreColor,
-  getTripComponentScore,
-  inferSpeedZones,
-  PHONE_USE_SAFETY_WEIGHT,
+} from '@/lib/gps/formatting';
+import {
   splitTripAtStops,
-} from '@/lib/tripEngine';
+} from '@/lib/gps/routeSummary';
+import {
+  getTripComponentScore,
+  PHONE_USE_SAFETY_WEIGHT,
+} from '@/lib/scoring/componentScores';
+import { inferSpeedZones } from '@/lib/gps/speedLimits';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { getJson, setJson } from '@/lib/mobileStorage';
@@ -76,8 +84,10 @@ import {
   SURVEY_RATING_OPTIONS,
   TRIP_CONTEXT_TAG_OPTIONS,
   WAS_DRIVER_OPTIONS,
+  getCalibrationMilestone,
+  getNextCalibrationMilestone,
 } from '@/lib/calibrationLabeling';
-import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
+import { formatEstimatedScore, formatScoreWithProvenance, isApproximateScoreOutput } from '@/lib/scoreDisplay';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 
 const roadTypeConfig = {
@@ -102,6 +112,17 @@ const DIAGNOSTIC_EVENT_EXPLANATIONS = {
   phone_use_gps_proxy: 'Diagnostic only because GPS motion patterns are not confirmed phone interaction; Android Usage Access is required for scored phone-use evidence.',
 };
 
+const DIAGNOSTIC_TYPES = new Set([
+  'heading_deviation',
+  'heading_deviation_legacy',
+  'tailgate_cycle',
+  'stop_start_pattern',
+  'erratic_speed',
+  'close_proximity',
+  'aggressive_overtake',
+  'phone_use_gps_proxy',
+]);
+
 const isGpsPhoneUseProxyEvent = (event = {}) => (
   event.type === 'phone_use' && (event.source === 'gps_proxy' || event.diagnostic_only === true)
 );
@@ -112,7 +133,13 @@ const diagnosticExplanationForEvent = (event = {}) => (
     : DIAGNOSTIC_EVENT_EXPLANATIONS[event.type] || null
 );
 
-const isDiagnosticOnlyTripEvent = (event = {}) => Boolean(diagnosticExplanationForEvent(event));
+const isDiagnosticOnlyTripEvent = (event = {}) => (
+  classifyTripEvent(event) !== 'scored'
+  || DIAGNOSTIC_TYPES.has(event.type)
+  || event.confidence === 'low'
+  || event.badge === 'GPS estimate'
+  || Boolean(diagnosticExplanationForEvent(event))
+);
 
 const uniqueTripEvents = (events = []) => {
   const seen = new Set();
@@ -166,6 +193,43 @@ const eventDisplayConfig = (event = {}, gpsPhoneUseProxy = false) => {
     badge: resolveEventDisplayValue(cfg.badge, event),
   };
 };
+
+const getEventRowStyle = (evt = {}, cfg = {}, diagnostic = false) => {
+  const isDiagnostic =
+    diagnostic
+    || DIAGNOSTIC_TYPES.has(evt.type)
+    || evt.confidence === 'low'
+    || evt.badge === 'GPS estimate'
+    || cfg.badge === 'GPS estimate';
+
+  if (isDiagnostic) {
+    return {
+      row: 'rounded-xl border border-border/50 bg-secondary/30 px-3 py-2 opacity-80',
+      icon: 'text-muted-foreground',
+      label: 'text-muted-foreground',
+      severity: 'bg-secondary text-muted-foreground',
+      severityLabel: 'diagnostic only',
+      badge: (
+        <span className="ml-1 rounded bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
+          diagnostic only
+        </span>
+      ),
+    };
+  }
+
+  return {
+    row: 'border-b border-border/50 py-2 last:border-0',
+    icon: '',
+    label: cfg.color,
+    severity: evt.severity === 'high'
+      ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'
+      : evt.severity === 'medium'
+        ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400'
+        : 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400',
+    severityLabel: evt.severity || evt.confidence_level || 'diagnostic',
+    badge: null,
+  };
+};
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
 
@@ -199,6 +263,12 @@ export default function TripDetail() {
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
+
+  const { data: allTripsForBaseline = [] } = useQuery({
+    queryKey: ['all-trips'],
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+  });
+  const completedTripCountForBaseline = allTripsForBaseline.filter((item) => item.status === 'completed').length;
 
   const deleteMutation = useMutation({
     mutationFn: () => tripService.delete(id),
@@ -501,7 +571,9 @@ export default function TripDetail() {
   const dismissTagSuggestion = () => {
     const next = [...new Set([...dismissedTags, String(trip.id)])];
     setDismissedTags(next);
-    setJson(DISMISSED_TAG_SUGGESTIONS_KEY, next).catch(() => {});
+    setJson(DISMISSED_TAG_SUGGESTIONS_KEY, next).catch(() => {
+      // Intentionally silent - tag suggestion dismissal is a UI preference only.
+    });
   };
   const openTagEditorWithSuggestion = () => {
     setEditingMetadata(true);
@@ -743,7 +815,7 @@ export default function TripDetail() {
     : speedLimitContext
       ? 'Road data was checked, but no usable speed limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
       : 'Before getting road data, this map shows GPS speed bands and event markers only.';
-  const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false } = {}) => {
+  const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false, badge = null } = {}) => {
     const key = eventFeedbackKey(evt, originalIndex);
     const feedback = eventFeedback[key]?.verdict || null;
     const cfg = eventDisplayConfig(evt, isGpsPhoneUseProxyEvent(evt));
@@ -772,13 +844,17 @@ export default function TripDetail() {
             ? `${evt.confidence || evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
             : 'Measured from GPS motion';
     const diagnosticExplanation = diagnostic ? diagnosticExplanationForEvent(evt) : null;
-    const severityLabel = evt.severity || evt.confidence_level || 'diagnostic';
+    const rowStyle = getEventRowStyle(evt, cfg, diagnostic);
     return (
-      <div key={`${evt.type}-${evt.timestamp || evt.startTime || originalIndex}`} className="flex flex-col gap-2 py-2 border-b border-border/50 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+      <div key={`${evt.type}-${evt.timestamp || evt.startTime || originalIndex}`} className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${rowStyle.row}`}>
         <div className="flex items-center gap-2.5">
-          <span className="text-lg">{cfg.icon}</span>
+          <span className={`text-lg ${rowStyle.icon}`}>{cfg.icon}</span>
           <div>
-            <div className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`text-sm font-medium ${rowStyle.label}`}>{cfg.label}</span>
+              {badge}
+              {rowStyle.badge}
+            </div>
             <div className="text-xs text-muted-foreground">
               {timeText} - {eventValueText}
             </div>
@@ -792,11 +868,8 @@ export default function TripDetail() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0">
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize
-            ${evt.severity === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400' :
-              evt.severity === 'medium' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400' :
-              'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
-            {severityLabel}
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${rowStyle.severity}`}>
+            {rowStyle.severityLabel}
           </span>
           {[
             { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
@@ -1428,7 +1501,7 @@ export default function TripDetail() {
         message="Something went wrong while preparing this trip's score summary. Reload to try again."
         resetKey={trip.id}
       >
-        <TripScoreOverview trip={trip} />
+        <TripScoreOverview trip={trip} completedTripCount={completedTripCountForBaseline} />
       </SectionErrorBoundary>
       <PostTripCalibrationSurvey
         status={calibrationSurveyStatus}
@@ -1563,7 +1636,7 @@ export default function TripDetail() {
         </div>
       </motion.div>
 
-      {speedZoneSummary.length > 0 && (
+      {(speedZoneSummary.length > 0 || complianceRows.length > 0) && (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1591,9 +1664,18 @@ export default function TripDetail() {
             ))}
             {complianceRows.map(({ key, label, data }) => (
               <div key={`compliance-${key}`} className="rounded-xl bg-secondary/50 p-3">
-                <div className="mb-2 flex items-center justify-between text-sm">
-                  <div className="font-semibold">{label} compliance</div>
-                  <div className="font-semibold">{Math.round((data.rate || 0) * 100)}%</div>
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <ComplianceScore
+                    label={`${label} compliance score`}
+                    score={data.score}
+                    isProvisional={isApproximateScoreOutput(trip.score_provenance)}
+                    speedLimitSource={complianceSpeedLimitSourceForBucket(data, trip)}
+                    onFetch={confirmAndFetchRoadContext}
+                  />
+                  <div className="shrink-0 text-right">
+                    <div className="text-sm font-semibold">{Math.round((data.rate || 0) * 100)}%</div>
+                    <div className="text-[11px] text-muted-foreground">within limit</div>
+                  </div>
                 </div>
                 <div className="h-2 rounded-full bg-background">
                   <div
@@ -1876,29 +1958,20 @@ export default function TripDetail() {
             ))}
           </div>
 
-          {scoredEventRows.length > 0 ? (
-            <div className="space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
-              {scoredEventRows.map((row) => renderEventRow(row))}
-            </div>
-          ) : (
-            <div className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">
-              No scored driving events were recorded on this trip.
-            </div>
-          )}
+          <div className="mb-2 flex items-center gap-4 px-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-red-500" /> Scored
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-muted-foreground/30" /> Diagnostic (doesn't affect score)
+            </span>
+          </div>
 
-          {diagnosticEventRows.length > 0 && (
-            <details className="mt-4 rounded-2xl border border-border bg-secondary/30 p-3">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold">
-                <span>Diagnostic-Only Events (Not Scored)</span>
-                <span className="rounded-full bg-card px-2 py-0.5 text-xs text-muted-foreground">
-                  {diagnosticEventRows.length}
-                </span>
-              </summary>
-              <div className="mt-3 space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
-                {diagnosticEventRows.map((row) => renderEventRow(row, { diagnostic: true }))}
-              </div>
-            </details>
-          )}
+          <TripEventList
+            scoredRows={scoredEventRows}
+            diagnosticRows={diagnosticEventRows}
+            renderEventRow={renderEventRow}
+          />
         </motion.div>
       )}
 
@@ -2102,6 +2175,19 @@ function usesInferredSpeedLimitScoring(trip = {}) {
     .some((bucket) => bucket.limit_source === 'inferred');
 }
 
+function complianceSpeedLimitSourceForBucket(bucket = {}, trip = {}) {
+  const normalizedSource = normalizeComplianceSpeedLimitSource(bucket.limit_source);
+  if (normalizedSource !== 'none') return normalizedSource;
+  if (bucket.score == null) return 'none';
+  if (usesInferredSpeedLimitScoring(trip)) return 'gps_inferred';
+  if (trip.speed_limit_context || (trip.route_points || []).some((point) => (
+    ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source)
+  ))) {
+    return 'osm';
+  }
+  return 'none';
+}
+
 const SCORE_ACCURACY_LABELS = {
   accurate: 'Accurate',
   too_high: 'Too high',
@@ -2138,9 +2224,9 @@ function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPendi
   const submittedRating = Number(status?.rating);
   const submitted = Number.isInteger(submittedRating) && submittedRating >= 1 && submittedRating <= 5;
   const skipped = status?.skipped === true;
-  const progressText = Number.isFinite(Number(labelCount))
-    ? `${Math.min(Number(labelCount), CALIBRATION_LABEL_TARGET_COUNT).toLocaleString()} / ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`
-    : `Target: ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`;
+  const normalizedLabelCount = Number.isFinite(Number(labelCount)) ? Math.max(0, Math.floor(Number(labelCount))) : 0;
+  const milestone = getCalibrationMilestone(normalizedLabelCount);
+  const nextMilestone = getNextCalibrationMilestone(normalizedLabelCount);
   const disabled = isPending || isSkipping || submitted || skipped;
   const canSubmit = Number.isInteger(Number(draft.overallDriveRating)) &&
     Number(draft.overallDriveRating) >= 1 &&
@@ -2183,7 +2269,16 @@ function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPendi
             Optional calibration label. It never blocks your trip results.
           </div>
         </div>
-        <div className="text-xs font-medium text-muted-foreground">{progressText}</div>
+        <div className="text-xs text-muted-foreground sm:text-right">
+          {milestone && (
+            <span className="mr-1 font-medium text-emerald-600 dark:text-emerald-400">
+              Reached: {milestone.label}.
+            </span>
+          )}
+          {nextMilestone
+            ? `${(nextMilestone.count - normalizedLabelCount).toLocaleString()} more labels to: ${nextMilestone.benefit}`
+            : `Fully calibrated: ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips reached`}
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-5 gap-2">
@@ -2332,7 +2427,7 @@ function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPendi
   );
 }
 
-function TripScoreOverview({ trip }) {
+function TripScoreOverview({ trip, completedTripCount = null }) {
   const overallScore = getTripComponentScore(trip, 'overall');
   const unavailableOverallScore = overallScore.value == null;
   const scoreProvenance = trip.score_provenance;
@@ -2380,6 +2475,7 @@ function TripScoreOverview({ trip }) {
           title={confidenceTitle}
           evidence={overallScore.evidence}
           scoreProvenance={scoreProvenance}
+          tripCount={completedTripCount}
         />
         <div className="grid flex-1 grid-cols-3 gap-3">
           {headlineScores.map(({ label, key, component }) => {

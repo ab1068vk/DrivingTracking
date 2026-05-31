@@ -43,7 +43,9 @@ export function recordTrackingDiagnostic(event = {}) {
   const next = [nextEvent, ...current].slice(0, MAX_EVENTS);
   try {
     localStorage.setItem(DIAGNOSTIC_EVENTS_KEY, JSON.stringify(next));
-  } catch {}
+  } catch {
+    // Intentionally silent - diagnostic persistence must never create recursive diagnostics.
+  }
   return nextEvent;
 }
 
@@ -51,7 +53,9 @@ export function clearTrackingDiagnostics() {
   try {
     localStorage.removeItem(DIAGNOSTIC_EVENTS_KEY);
     legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).forEach((key) => localStorage.removeItem(key));
-  } catch {}
+  } catch {
+    // Intentionally silent - clearing local diagnostics is best-effort only.
+  }
 }
 
 export function normalizeNativeDiagnosticEvents(nativePayload = {}) {

@@ -1,5 +1,5 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { haversineDistance } from '@/lib/tripEngine';
+import { haversineDistance } from '@/lib/gps/math';
 import { withRetry } from '@/lib/retry';
 import { getPrivacyZones } from '@/lib/privacyZones';
 

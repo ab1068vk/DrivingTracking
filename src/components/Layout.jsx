@@ -38,7 +38,9 @@ export default function Layout() {
     const checkTracking = () => {
       try {
         setTrackingActive(!!activeTripStore.get());
-      } catch {}
+      } catch {
+        // Intentionally silent - header badge polling should not disrupt app navigation.
+      }
     };
     checkTracking();
     const interval = setInterval(checkTracking, 2000);

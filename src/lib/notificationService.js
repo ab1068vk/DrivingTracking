@@ -6,6 +6,7 @@ import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { legacyStorageKeysFor } from '@/lib/storageKeyMigration';
+import { logError } from '@/lib/errorReporting';
 
 export const TRACKING_CHANNEL_ID = 'road_sage_tracking';
 export const SUMMARY_CHANNEL_ID = 'road_sage_summary';
@@ -116,6 +117,7 @@ const readNotifiedAchievementIds = () => {
     const ids = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(ids) ? ids : []);
   } catch {
+    // Intentionally silent - corrupt local notification de-dupe state can be rebuilt.
     return new Set();
   }
 };
@@ -123,7 +125,9 @@ const readNotifiedAchievementIds = () => {
 const writeNotifiedAchievementIds = (ids) => {
   try {
     localStorage.setItem(NOTIFIED_ACHIEVEMENTS_KEY, JSON.stringify([...ids]));
-  } catch {}
+  } catch {
+    // Intentionally silent - notification de-dupe state is a local optimization.
+  }
 };
 
 const readNumber = (key, fallback = 0) => {
@@ -131,6 +135,7 @@ const readNumber = (key, fallback = 0) => {
     const value = Number(readLocalString(key));
     return Number.isFinite(value) ? value : fallback;
   } catch {
+    // Intentionally silent - local throttle state is allowed to reset.
     return fallback;
   }
 };
@@ -138,7 +143,9 @@ const readNumber = (key, fallback = 0) => {
 const writeNumber = (key, value) => {
   try {
     localStorage.setItem(key, String(value));
-  } catch {}
+  } catch {
+    // Intentionally silent - notification throttle state is a local optimization.
+  }
 };
 
 const readDedupeState = () => {
@@ -157,7 +164,9 @@ const readDedupeState = () => {
 const writeDedupeState = (state) => {
   try {
     localStorage.setItem(NOTIFICATION_DEDUPE_KEY, JSON.stringify(state));
-  } catch {}
+  } catch {
+    // Intentionally silent - notification de-dupe state is a local optimization.
+  }
 };
 
 const wasRecentlySent = (key, cooldownMs) => {
@@ -180,7 +189,9 @@ const cancelNotificationIds = async (ids = []) => {
     .filter((id) => Number.isFinite(Number(id)))
     .map((id) => ({ id: Number(id) }));
   if (!notifications.length) return;
-  await LocalNotifications.cancel({ notifications }).catch(() => {});
+  await LocalNotifications.cancel({ notifications }).catch((err) => {
+    logError('notification_cancel', err, { notification_ids: notifications.map((item) => item.id).join(',') });
+  });
 };
 
 const scheduleNotification = async (
@@ -226,7 +237,9 @@ const writeAchievementNotificationIds = (ids) => {
   fallbackAchievementNotificationIds = { ...ids };
   try {
     localStorage.setItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY, JSON.stringify(ids));
-  } catch {}
+  } catch {
+    // Intentionally silent - achievement notification IDs have an in-memory fallback.
+  }
 };
 
 const nextAchievementNotificationId = (assignedIds) => {
@@ -355,7 +368,9 @@ export async function configureNotificationChannels() {
 
   if (typeof LocalNotifications.deleteChannel === 'function') {
     await Promise.all(LEGACY_NOTIFICATION_CHANNEL_IDS.map((id) => (
-      LocalNotifications.deleteChannel({ id }).catch(() => {})
+      LocalNotifications.deleteChannel({ id }).catch(() => {
+        // Intentionally silent - best-effort cleanup of legacy notification channels only.
+      })
     )));
   }
 }
@@ -562,7 +577,9 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
   const tripId = opts.tripId || 'active';
   try {
     if (readLocalString(FATIGUE_NOTIF_TRIP_KEY) === String(tripId)) return null;
-  } catch {}
+  } catch {
+    // Intentionally silent - missing local throttle state should not block reminders.
+  }
 
   const minutes = Math.round(Number(opts.tripDurationMinutes) || 0);
   const notification = {
@@ -576,7 +593,9 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
   const scheduled = await scheduleNotification(notification);
   try {
     if (scheduled) localStorage.setItem(FATIGUE_NOTIF_TRIP_KEY, String(tripId));
-  } catch {}
+  } catch {
+    // Intentionally silent - reminder throttle state is a local optimization.
+  }
   return scheduled;
 }
 

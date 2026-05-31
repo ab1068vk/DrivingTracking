@@ -1,9 +1,9 @@
 import {
   buildDrivingThresholds,
   calculateTripScores,
-  calculateTripStats,
-  detectDrivingEvents,
-} from '@/lib/tripEngine';
+} from '@/lib/scoring/componentScores';
+import { calculateTripStats } from '@/lib/gps/routeSummary';
+import { detectDrivingEvents } from '@/lib/detection/harshEvents';
 import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
@@ -22,6 +22,38 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
 });
 
 export { PUBLIC_OSRM_DEMO_URL };
+
+function skippedMapMatchingContext(originalPoints = [], settings = {}) {
+  const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
+  if (settings.map_matching_enabled === false) {
+    return { routePoints: originalPoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
+  }
+  if (isOsrmDemoUrl) {
+    return {
+      routePoints: originalPoints,
+      status: 'public_demo_blocked',
+      provider: 'osrm',
+      error: 'The public OSRM demo is reference-only in Road Sage. Configure a private or trusted OSRM endpoint before route snapping.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (!settings.osrm_map_matching_url) {
+    return {
+      routePoints: originalPoints,
+      status: 'needs_endpoint',
+      provider: 'osrm',
+      error: 'Route snapping is optional and needs a private or trusted OSRM endpoint before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
+  return {
+    routePoints: originalPoints,
+    status: 'needs_consent',
+    provider: 'osrm',
+    error: 'Route snapping needs explicit OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
+    isOsrmDemoUrl,
+  };
+}
 
 export const isOsrmMapMatchingConfigured = (settings = {}) => (
   settings.map_matching_enabled !== false &&
@@ -103,7 +135,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
   stage(onProgress, osrmConfigured ? 'Snapping route to roads with OSRM' : 'Skipping route snapping');
-  const mapMatchingContext = await timeout(
+  const mapMatchingContext = (await timeout(
     mapMatchRoute(originalPoints, settings),
     16000,
     'OSRM route snapping timed out'
@@ -114,7 +146,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     error: error?.message || 'Map matching unavailable',
     confidence: null,
     snapped_coverage: 0,
-  }));
+  }))) || skippedMapMatchingContext(originalPoints, settings);
   let routePoints = mapMatchingContext.routePoints || originalPoints;
   stage(onProgress, 'Getting speed limits from OpenStreetMap');
   const speedLimitContext = await timeout(

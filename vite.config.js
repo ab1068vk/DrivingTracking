@@ -18,6 +18,8 @@ export default defineConfig({
           'charts-vendor': ['recharts'],
           'html2canvas-vendor': ['html2canvas'],
           'jspdf-vendor': ['jspdf'],
+          'settings': ['./src/pages/Settings', './src/features/settings/hooks/useSettingsSections'],
+          'trip-detail': ['./src/pages/TripDetail', './src/lib/tripInsights'],
           'capacitor-vendor': [
             '@capacitor/app',
             '@capacitor/core',

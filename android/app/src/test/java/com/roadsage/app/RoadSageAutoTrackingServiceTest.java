@@ -67,9 +67,9 @@ public class RoadSageAutoTrackingServiceTest {
         );
         calculateStats.setAccessible(true);
 
-        JSONArray points = fixture.getJSONArray("points");
-        long startMs = Instant.parse(fixture.getString("startTime")).toEpochMilli();
-        long endMs = Instant.parse(fixture.getString("endTime")).toEpochMilli();
+        JSONArray points = normalizeFixturePoints(fixture.getJSONArray("points"));
+        long startMs = parseFixtureTimeMs(fixture.getString("startTime"));
+        long endMs = parseFixtureTimeMs(fixture.getString("endTime"));
         Object stats = calculateStats.invoke(service, points, startMs, endMs);
         JSONObject expected = fixture.getJSONObject("expectedStats");
 
@@ -111,6 +111,20 @@ public class RoadSageAutoTrackingServiceTest {
         assertEquals(noiseFloorCase.getDouble("expectedNoiseFloorM"), actual, 0.0d);
     }
 
+    @Test
+    public void parkedCarWidgetFormatsAgeAndReadsNativeTimestamp() throws Exception {
+        assertEquals("just now", ParkedCarWidgetProvider.formatAge(59_000L));
+        assertEquals("10m ago", ParkedCarWidgetProvider.formatAge(10 * 60_000L));
+        assertEquals("2h ago", ParkedCarWidgetProvider.formatAge(2 * 60 * 60_000L));
+        assertEquals("2h 15m ago", ParkedCarWidgetProvider.formatAge((2 * 60 + 15) * 60_000L));
+
+        JSONObject numericTimestamp = new JSONObject().put("timestamp_ms", 1_700_000_000_000L);
+        assertEquals(1_700_000_000_000L, ParkedCarWidgetProvider.parkedTimestampMs(numericTimestamp, 42L));
+
+        JSONObject isoTimestamp = new JSONObject().put("timestamp", "2026-05-31T04:00:00Z");
+        assertEquals(Instant.parse("2026-05-31T04:00:00Z").toEpochMilli(), ParkedCarWidgetProvider.parkedTimestampMs(isoTimestamp, 42L));
+    }
+
     private static JSONObject loadParityFixture() throws Exception {
         try (InputStream stream = RoadSageAutoTrackingServiceTest.class
             .getClassLoader()
@@ -132,7 +146,10 @@ public class RoadSageAutoTrackingServiceTest {
     private static void assertGoldenScoringFixtureStats(String name) throws Exception {
         JSONObject fixture = loadGoldenScoringFixture(name);
 
-        assertEquals("2.1.0", fixture.getString("scoring_version"));
+        assertEquals(
+            fixture.getString("scoring_version"),
+            fixture.getJSONObject("expected").getJSONObject("score_provenance").getString("scoring_version")
+        );
         assertTrue(fixture.getBoolean("human_verified"));
         assertTrue(fixture.getJSONArray("points").length() > 1);
         assertTrue(fixture.getJSONObject("expected").getJSONObject("scores").has("score_overall"));
@@ -146,9 +163,9 @@ public class RoadSageAutoTrackingServiceTest {
         );
         calculateStats.setAccessible(true);
 
-        JSONArray points = fixture.getJSONArray("points");
-        long startMs = Instant.parse(fixture.getString("startTime")).toEpochMilli();
-        long endMs = Instant.parse(fixture.getString("endTime")).toEpochMilli();
+        JSONArray points = normalizeFixturePoints(fixture.getJSONArray("points"));
+        long startMs = parseFixtureTimeMs(fixture.getString("startTime"));
+        long endMs = parseFixtureTimeMs(fixture.getString("endTime"));
         Object stats = calculateStats.invoke(service, points, startMs, endMs);
         JSONObject expected = fixture.getJSONObject("expected").getJSONObject("stats");
 
@@ -194,5 +211,28 @@ public class RoadSageAutoTrackingServiceTest {
     private static double round(double value, int decimals) {
         double factor = Math.pow(10d, decimals);
         return Math.round(value * factor) / factor;
+    }
+
+    private static long parseFixtureTimeMs(String value) {
+        try {
+            return Instant.parse(value).toEpochMilli();
+        } catch (Exception ignored) {
+            return LocalDateTime.parse(value)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+        }
+    }
+
+    private static JSONArray normalizeFixturePoints(JSONArray points) throws Exception {
+        JSONArray normalized = new JSONArray(points.toString());
+        for (int i = 0; i < normalized.length(); i++) {
+            JSONObject point = normalized.getJSONObject(i);
+            String timestamp = point.optString("timestamp", "");
+            if (!timestamp.isEmpty()) {
+                point.put("timestamp", Instant.ofEpochMilli(parseFixtureTimeMs(timestamp)).toString());
+            }
+        }
+        return normalized;
     }
 }

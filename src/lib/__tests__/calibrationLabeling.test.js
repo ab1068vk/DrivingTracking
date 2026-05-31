@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
+  getCalibrationMilestone,
+  getNextCalibrationMilestone,
 } from '@/lib/calibrationLabeling';
 import { fitCalibrationDataset, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
-import { SCORING_VERSION } from '@/lib/tripEngine';
+import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
 
 const completedTrip = {
   id: 'trip_private_id',
@@ -46,6 +48,26 @@ const completedTrip = {
 };
 
 describe('calibration labeling pipeline', () => {
+  it('reports intermediate calibration milestones before full calibration', () => {
+    expect(getCalibrationMilestone(5)).toBeNull();
+    expect(getNextCalibrationMilestone(5)).toMatchObject({
+      count: 10,
+      benefit: 'Trip rating history begins',
+    });
+    expect(getCalibrationMilestone(50)).toMatchObject({
+      label: 'Early insights',
+      benefit: 'Trend patterns emerging',
+    });
+    expect(getNextCalibrationMilestone(50)).toMatchObject({
+      count: 200,
+      benefit: 'Local threshold suggestions unlocked',
+    });
+    expect(getCalibrationMilestone(2500)).toMatchObject({
+      label: 'Fully calibrated',
+    });
+    expect(getNextCalibrationMilestone(2500)).toBeNull();
+  });
+
   it('builds anonymized post-trip survey labels without route geometry or private trip fields', () => {
     const payload = buildCalibrationLabelPayload(completedTrip, 4, {
       submittedAt: '2026-05-26T18:00:00.000Z',

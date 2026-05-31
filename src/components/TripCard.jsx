@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon } from 'lucide-react';
-import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import {
   buildScoreExplanation,
   getTripDisplayName,
@@ -10,7 +11,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
-import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
+import { formatScoreWithProvenance, isApproximateScoreOutput, scoreEstimateProgressText } from '@/lib/scoreDisplay';
 
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const evidenceLabel = (evidence) => `${evidence || 'unavailable'} evidence`;
@@ -22,6 +23,7 @@ export default function TripCard({
   index = 0,
   scoreDelta = null,
   onToggleFavorite = null,
+  tripCount = null,
 }) {
   const navigate = useNavigate();
   const overallScore = getTripComponentScore(trip, 'overall');
@@ -35,6 +37,9 @@ export default function TripCard({
   const tags = normalizeTripTags(trip);
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
   const title = getTripDisplayName(trip);
+  const estimateProgressText = !unavailableScore && isApproximateScoreOutput(trip.score_provenance)
+    ? scoreEstimateProgressText(tripCount)
+    : null;
 
   return (
     <motion.div
@@ -191,6 +196,11 @@ export default function TripCard({
             </span>
           )}
           <span className={`text-xs font-medium ${color}`}>{scoreLabel}</span>
+          {estimateProgressText && (
+            <div className="max-w-[120px] text-center text-xs leading-snug text-muted-foreground">
+              {estimateProgressText}
+            </div>
+          )}
           {phoneUsePermissionRequired && (
             <div
               className="inline-flex max-w-[7rem] items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300"

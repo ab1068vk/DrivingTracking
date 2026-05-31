@@ -103,6 +103,24 @@ describe('release blocker regressions', () => {
 
   it('leaves no auth token readable from localStorage after migration', () => {
     const legacyTokens = new Map([['token', 'legacy-token']]);
+    const sessionTokens = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
+      removeItem: vi.fn((key) => legacyTokens.delete(key)),
+    });
+    vi.stubGlobal('sessionStorage', {
+      getItem: vi.fn((key) => sessionTokens.get(key) ?? null),
+      setItem: vi.fn((key, value) => sessionTokens.set(key, value)),
+    });
+
+    migrateLegacyAuthTokens();
+
+    const xssReadableToken = localStorage.getItem('token') || localStorage.getItem('access_token');
+    expect(xssReadableToken).toBeNull();
+  });
+
+  it('keeps legacy auth token in localStorage if session migration cannot be verified', () => {
+    const legacyTokens = new Map([['token', 'legacy-token']]);
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
       removeItem: vi.fn((key) => legacyTokens.delete(key)),
@@ -114,8 +132,8 @@ describe('release blocker regressions', () => {
 
     migrateLegacyAuthTokens();
 
-    const xssReadableToken = localStorage.getItem('token') || localStorage.getItem('access_token');
-    expect(xssReadableToken).toBeNull();
+    expect(localStorage.getItem('token')).toBe('legacy-token');
+    expect(localStorage.removeItem).not.toHaveBeenCalledWith('token');
   });
 
   it('fails API calls clearly when no backend is configured', async () => {
@@ -262,8 +280,7 @@ describe('release blocker regressions', () => {
 
     const result = await mapMatchRoute(route, { map_matching_enabled: true, osrm_map_matching_url: '' });
 
-    expect(result.status).toBe('needs_endpoint');
-    expect(result.routePoints).toBe(route);
+    expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -481,7 +498,9 @@ describe('release blocker regressions', () => {
 
     expect(appSource).toContain('context="trip_detail_page"');
     expect(tripDetailSource).toContain('context="trip_detail_score_overview"');
-    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} />');
+    expect(tripDetailSource).toContain(
+      '<TripScoreOverview trip={trip} completedTripCount={completedTripCountForBaseline} />',
+    );
     expect(dashboardSource).toContain('context="dashboard_risk_panel"');
     expect(dashboardSource).toContain('<DashboardRiskPanel');
     expect(tripMapSource).toContain('context="trip_map"');

@@ -8,4 +8,6 @@
     <string name="capacitor_background_geolocation_notification_channel_name">Trip Tracking</string>
     <string name="capacitor_background_geolocation_notification_icon">drawable/ic_stat_drivesense</string>
     <string name="capacitor_background_geolocation_notification_color">#0F766E</string>
+    <string name="widget_parked_description">Shows where you last parked your car</string>
+    <string name="widget_parked_map_description">Map showing parked car location</string>
 </resources>

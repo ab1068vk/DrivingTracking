@@ -4,11 +4,11 @@ import { isAndroid } from '@/lib/nativePlatform';
 import {
   buildDrivingThresholds,
   calculateTripScores,
-  calculateTripStats,
-  detectDrivingEvents,
   getScoreProvenanceStatus,
   SCORING_VERSION,
-} from '@/lib/tripEngine';
+} from '@/lib/scoring/componentScores';
+import { calculateTripStats } from '@/lib/gps/routeSummary';
+import { detectDrivingEvents } from '@/lib/detection/harshEvents';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
@@ -569,6 +569,7 @@ const rescoreTrip = (trip, vehicles = []) => {
     ...(sensorFusionSummary ? { sensor_fusion_summary: sensorFusionSummary } : {}),
     driving_events: drivingEvents,
     phone_usage_access_provenance: phoneUsageAccessProvenance.changed ? phoneUsageAccessProvenance : null,
+    scored_with_settings_version: scores.score_provenance.settings_version,
     ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
     feedback_adjusted_events_count: feedbackAdjusted.removed,
     needs_rescore: false,

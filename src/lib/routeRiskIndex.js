@@ -1,5 +1,5 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
-import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
+import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/gps/math';
 import { scoringValue } from '@/lib/scoringConstants';
 
 export const GRID_PRECISION = 3;
