@@ -7,6 +7,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.util.Log;
@@ -70,7 +71,7 @@ public class MapTileFetchWorker extends Worker {
         Bitmap raw = fetchTile(url);
         if (raw == null) return Result.retry();
 
-        Bitmap pinned = raw.copy(Bitmap.Config.ARGB_8888, true);
+        Bitmap pinned = applyDarkMapStyle(raw);
         raw.recycle();
         drawParkedPin(pinned, tileW);
 
@@ -98,6 +99,20 @@ public class MapTileFetchWorker extends Worker {
 
     static File getCacheFile(Context context, int widgetId) {
         return new File(context.getFilesDir(), "parked_map_widget_" + widgetId + ".png");
+    }
+
+    private static Bitmap applyDarkMapStyle(Bitmap source) {
+        Bitmap dark = Bitmap.createBitmap(source.getWidth(), source.getHeight(), Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(dark);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColorFilter(new ColorMatrixColorFilter(new float[]{
+            -0.75f, 0f, 0f, 0f, 207f,
+            0f, -0.78f, 0f, 0f, 239f,
+            0f, 0f, -0.85f, 0f, 271f,
+            0f, 0f, 0f, 1f, 0f
+        }));
+        canvas.drawBitmap(source, 0f, 0f, paint);
+        return dark;
     }
 
     private static Bitmap fetchTile(String url) {
