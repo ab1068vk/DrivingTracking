@@ -93,6 +93,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onDisabled(Context context) {
+        WorkManager.getInstance(context).cancelAllWorkByTag("parked_map");
         cancelAgeAlarms(context);
     }
 
