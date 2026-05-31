@@ -84,6 +84,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
     public void onDeleted(Context context, int[] widgetIds) {
         cancelAgeAlarms(context);
         for (int widgetId : widgetIds) {
+            WorkManager.getInstance(context).cancelUniqueWork(mapWorkName(widgetId));
             File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
             if (cacheFile.exists()) cacheFile.delete();
         }
