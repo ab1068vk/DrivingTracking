@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -45,7 +45,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
     @Test
     public void packageNameMatchesConfiguredApplicationId() {
-        assertEquals("com.drivesense.app", context.getPackageName());
+        assertEquals("com.roadsage.app", context.getPackageName());
     }
 
     @Test
@@ -134,8 +134,8 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             assertEquals(thresholds.getDouble("STATIONARY_SPEED_KMH"), doubleConstant("STATIONARY_SPEED_KMH"), 0.0d);
             assertEquals(thresholds.getDouble("MIN_TRUSTED_SPEED_KMH"), doubleConstant("MIN_TRUSTED_SPEED_KMH"), 0.0d);
 
-            DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
-            Method calculateStats = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+            RoadSageAutoTrackingService service = new RoadSageAutoTrackingService();
+            Method calculateStats = RoadSageAutoTrackingService.class.getDeclaredMethod(
                 "calculateStats",
                 JSONArray.class,
                 long.class,
@@ -154,7 +154,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             assertEquals(expected.getBoolean("nightDriving"), booleanField(stats, "nightDriving"));
 
             JSONObject noiseFloorCase = fixture.getJSONArray("noiseFloorCases").getJSONObject(0);
-            Method noiseFloor = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+            Method noiseFloor = RoadSageAutoTrackingService.class.getDeclaredMethod(
                 "noiseFloor",
                 double.class,
                 double.class
@@ -191,13 +191,13 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     private static long longConstant(String name) throws Exception {
-        Field field = DriveSenseAutoTrackingService.class.getDeclaredField(name);
+        Field field = RoadSageAutoTrackingService.class.getDeclaredField(name);
         field.setAccessible(true);
         return field.getLong(null);
     }
 
     private static double doubleConstant(String name) throws Exception {
-        Field field = DriveSenseAutoTrackingService.class.getDeclaredField(name);
+        Field field = RoadSageAutoTrackingService.class.getDeclaredField(name);
         field.setAccessible(true);
         return field.getDouble(null);
     }

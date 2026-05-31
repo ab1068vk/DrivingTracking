@@ -6,6 +6,7 @@ import { importDriveSenseBackup, MAX_BACKUP_BYTES, parseDriveSenseBackup } from 
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
 import { localTripRepository } from '@/lib/localTripRepository';
+import { getBestMapCenter } from '@/lib/mapDefaults';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { formatDataSourceLabel, METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
@@ -438,7 +439,7 @@ describe('release blocker regressions', () => {
     });
 
     const diagnostic = logError('post_trip_completed_notification', new Error('notification failed'), { tripId: 'trip-1' });
-    const events = JSON.parse(values.get('drivesense_tracking_diagnostics'));
+    const events = JSON.parse(values.get('road_sage_tracking_diagnostics'));
 
     expect(diagnostic).toMatchObject({
       type: 'operation_error',
@@ -489,16 +490,17 @@ describe('release blocker regressions', () => {
     expect(tripPlaybackSource).toContain('function TripPlaybackContent');
   });
 
-  it('does not hard-code London as the Trip Playback default map center', () => {
-    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
-    const legacyLondonLat = ['51', '505'].join('.');
-    const legacyLondonLng = ['-0', '09'].join('.');
+  it('returns null map center when no trip, parked location, or known location exists', () => {
+    expect(getBestMapCenter({ trip: null, lastParked: null, lastKnownLocation: null })).toBeNull();
+  });
 
-    expect(tripPlaybackSource).not.toContain(legacyLondonLat);
-    expect(tripPlaybackSource).not.toContain(legacyLondonLng);
-    expect(tripPlaybackSource).toContain('resolveFallbackMapCenter');
-    expect(tripPlaybackSource).toContain('last_map_center');
-    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LAT');
-    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LNG');
+  it('prefers trip route midpoint over parked location', () => {
+    const center = getBestMapCenter({
+      trip: { route_points: [{ lat: 51.5, lng: -0.1 }, { lat: 52.0, lng: -0.5 }] },
+      lastParked: { lat: 43.6, lng: -79.4 },
+      lastKnownLocation: null,
+    });
+
+    expect(center[0]).toBeCloseTo(51.75, 1);
   });
 });

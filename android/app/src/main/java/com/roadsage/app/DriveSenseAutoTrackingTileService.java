@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import android.Manifest;
 import android.content.Context;
@@ -14,7 +14,8 @@ import org.json.JSONObject;
 
 public class DriveSenseAutoTrackingTileService extends TileService {
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
-    private static final String SETTINGS_KEY = "drivesense_settings";
+    private static final String SETTINGS_KEY_OLD = "drivesense_settings";
+    private static final String SETTINGS_KEY = "road_sage_settings";
 
     @Override
     public void onStartListening() {
@@ -27,7 +28,7 @@ public class DriveSenseAutoTrackingTileService extends TileService {
         super.onClick();
         if (isBackgroundAutoActive()) {
             setBackgroundAutoPaused();
-            DriveSenseAutoTrackingService.stop(this);
+            RoadSageAutoTrackingService.stop(this);
             updateTile("Auto off", Tile.STATE_INACTIVE);
             return;
         }
@@ -38,7 +39,7 @@ public class DriveSenseAutoTrackingTileService extends TileService {
         }
 
         setBackgroundAutoEnabled();
-        DriveSenseAutoTrackingService.start(this);
+        RoadSageAutoTrackingService.start(this);
         updateTile("Auto on", Tile.STATE_ACTIVE);
     }
 
@@ -58,6 +59,12 @@ public class DriveSenseAutoTrackingTileService extends TileService {
     private JSONObject getSettings() {
         SharedPreferences prefs = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
         String raw = prefs.getString(SETTINGS_KEY, null);
+        if (raw == null || raw.trim().isEmpty()) {
+            raw = prefs.getString(SETTINGS_KEY_OLD, null);
+            if (raw != null && !raw.trim().isEmpty()) {
+                prefs.edit().putString(SETTINGS_KEY, raw).apply();
+            }
+        }
         if (raw == null || raw.trim().isEmpty()) return new JSONObject();
         try {
             return new JSONObject(raw);

@@ -25,6 +25,8 @@ import {
   scoringValue,
 } from './scoringConstants';
 import { formatEstimatedScore, isEstimatedScoreMetric } from './scoreDisplay';
+import { createScoringPipelineContext } from './scoring/pipeline';
+import { explainScores } from './scoring/explainer';
 
 /**
  * Provisional multiplier for converting coefficient of variation in moving
@@ -6047,7 +6049,7 @@ export function calculateTripScores(
     { score: stopStartPatternScore, weight: safetyBlend.stopStart },
     { score: brakingScoreForSafety, weight: safetyBlend.braking },
     { score: complianceScoreForSafety, weight: safetyBlend.compliance },
-    { score: phoneUseScoreForSafety, weight: PHONE_USE_SAFETY_WEIGHT },
+    { score: phoneUseScoreForSafety, weight: safetyBlend.phoneUse ?? PHONE_USE_SAFETY_WEIGHT },
     { score: laneChangingScoreForSafety, weight: laneChangingSafetyWeight },
   ]) ?? baseSafety;
   let safety = safetyWithoutOvertake;
@@ -6408,9 +6410,69 @@ export function calculateTripScores(
       note: 'Driving-time proxy only; not a diagnosis of fatigue.',
     }),
   };
+  const scorePipelineContext = createScoringPipelineContext({
+    routePoints,
+    events: scoringEvents,
+    settings: thresholds,
+    externalContext: { stats, component_scores },
+    stages: {
+      safety_base: { score: baseSafety, penalty: safetyPenalty },
+      braking_efficiency: {
+        score: brakingScoreForSafety,
+        sequenceCount: brakingEfficiency.braking_sequence_count,
+      },
+      speed_compliance: {
+        score: complianceScoreForSafety,
+        highway: compliance.highway_compliance,
+        urban: compliance.urban_compliance,
+        residential: compliance.residential_compliance,
+      },
+      stop_start: {
+        score: stopStartPatternScore,
+        count: stopStartPatternCount,
+        highwayScore: highwayStopStartPatternScore,
+        urbanScore: urbanStopStartPatternScore,
+      },
+      lane_changing: {
+        score: laneChangingScoreForSafety,
+        effectiveWeight: laneChangingSafetyWeight,
+        count: laneChanging.lane_change_count,
+        confidence: laneChanging.lane_changing_confidence,
+      },
+      phone_use: {
+        score: phoneUseScoreForSafety,
+        risk: confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_risk : 'none',
+        scoreDeduction: phoneUseDeduction,
+        totalSeconds: confirmedPhoneScoreAvailable ? phoneUseResult.phone_use_total_seconds : 0,
+      },
+      safety_blend: {
+        score: safetyScoreValue,
+        weights: safetyBlend,
+        fatigueAdjusted: fatiguePenalty > 0,
+      },
+      smoothness_base: { score: baseSmoothness, penalty: smoothnessPenalty },
+      jerk: { score: jerkScoreForSmoothness },
+      svi: { score: sviScoreForSmoothness },
+      brake_onset: { score: brakeOnsetScoreForSmoothness },
+      cornering: { score: corneringScoreForSmoothness },
+      smoothness_blend: { score: smoothnessScoreValue, weights: smoothnessBlend },
+      eco: {
+        score: ecoScoreValue,
+        baseScore: baseEco,
+        ecoDrivingScore: ecoDriving.eco_driving_score,
+        fuelBandScore: fuelBand.fuel_band_score,
+        weights: ecoBlend,
+      },
+      intersection: { score: intersectionScore },
+      fatigue_adjustment: { deduction: fatiguePenalty },
+      weather_adjustment: { skipped: true, reason: 'applied_after_trip_scoring_when_weather_context_exists' },
+      overall_blend: { score: overallScoreValue, weights: overallBlend },
+    },
+  });
   return {
     ...scoredTrip,
     component_scores,
+    score_explanation: explainScores(scorePipelineContext),
     score_provenance: buildScoreProvenance(component_scores, thresholds),
   };
 }

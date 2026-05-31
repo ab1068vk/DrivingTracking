@@ -1,4 +1,5 @@
 import { isNativePlatform } from '@/lib/nativePlatform';
+import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
 
 const memoryFallback = new Map();
 
@@ -11,52 +12,68 @@ const hasLocalStorage = () => {
 };
 
 export async function getJson(key, fallback) {
+  const currentKey = resolveStorageKey(key);
+  const legacyKeys = legacyStorageKeysFor(key);
   try {
     if (isNativePlatform()) {
       const { Preferences } = await import('@capacitor/preferences');
-      const { value } = await Preferences.get({ key });
+      let { value } = await Preferences.get({ key: currentKey });
+      for (const legacyKey of legacyKeys) {
+        if (value !== null) break;
+        const legacy = await Preferences.get({ key: legacyKey });
+        value = legacy.value;
+        if (value !== null) await Preferences.set({ key: currentKey, value });
+      }
       return value ? JSON.parse(value) : fallback;
     }
 
     if (hasLocalStorage()) {
-      const value = localStorage.getItem(key);
+      let value = localStorage.getItem(currentKey);
+      for (const legacyKey of legacyKeys) {
+        if (value !== null) break;
+        value = localStorage.getItem(legacyKey);
+        if (value !== null) localStorage.setItem(currentKey, value);
+      }
       return value ? JSON.parse(value) : fallback;
     }
 
-    return memoryFallback.has(key) ? memoryFallback.get(key) : fallback;
+    return memoryFallback.has(currentKey) ? memoryFallback.get(currentKey) : fallback;
   } catch {
     return fallback;
   }
 }
 
 export async function setJson(key, value) {
+  const currentKey = resolveStorageKey(key);
   const serialized = JSON.stringify(value);
 
   if (isNativePlatform()) {
     const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.set({ key, value: serialized });
+    await Preferences.set({ key: currentKey, value: serialized });
     return;
   }
 
   if (hasLocalStorage()) {
-    localStorage.setItem(key, serialized);
+    localStorage.setItem(currentKey, serialized);
     return;
   }
 
-  memoryFallback.set(key, value);
+  memoryFallback.set(currentKey, value);
 }
 
 export async function removeJson(key) {
+  const currentKey = resolveStorageKey(key);
+  const keys = [currentKey, ...legacyStorageKeysFor(key)];
   if (isNativePlatform()) {
     const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.remove({ key });
+    await Promise.all(keys.map((storageKey) => Preferences.remove({ key: storageKey })));
     return;
   }
 
   if (hasLocalStorage()) {
-    localStorage.removeItem(key);
+    keys.forEach((storageKey) => localStorage.removeItem(storageKey));
     return;
   }
 
-  memoryFallback.delete(key);
+  keys.forEach((storageKey) => memoryFallback.delete(storageKey));
 }

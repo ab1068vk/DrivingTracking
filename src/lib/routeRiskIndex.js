@@ -4,7 +4,7 @@ import { scoringValue } from '@/lib/scoringConstants';
 
 export const GRID_PRECISION = 3;
 export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
-export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
+export const ROUTE_RISK_INDEX_KEY = 'road_sage_route_risk_index';
 export const ROUTE_RISK_PRIVACY_ZONE_GUARD_M = 50;
 /**
  * Internal segment-risk weighting policy. These weights identify repeated

@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import android.app.AppOpsManager;
 import android.app.usage.UsageEvents;
@@ -147,7 +147,7 @@ class DriveSensePhoneUsageTracker {
             long mergedDurationSeconds = Math.max(1L, Math.min(MAX_SESSION_MS, endMs - previousStartMs) / 1000L);
             try {
                 previous.put("end_ms", endMs);
-                previous.put("end_time", DriveSenseAutoTrackingService.iso(endMs));
+                previous.put("end_time", RoadSageAutoTrackingService.iso(endMs));
                 previous.put("duration_seconds", mergedDurationSeconds);
             } catch (JSONException ignored) {}
             return endMs;
@@ -158,8 +158,8 @@ class DriveSensePhoneUsageTracker {
             session.put("package_name", packageName);
             session.put("start_ms", startMs);
             session.put("end_ms", endMs);
-            session.put("start_time", DriveSenseAutoTrackingService.iso(startMs));
-            session.put("end_time", DriveSenseAutoTrackingService.iso(endMs));
+            session.put("start_time", RoadSageAutoTrackingService.iso(startMs));
+            session.put("end_time", RoadSageAutoTrackingService.iso(endMs));
             session.put("duration_seconds", Math.max(1L, durationMs / 1000L));
             session.put("source", "android_usage_access");
         } catch (JSONException ignored) {}

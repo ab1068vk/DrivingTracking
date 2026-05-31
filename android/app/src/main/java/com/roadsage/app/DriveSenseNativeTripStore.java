@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -7,20 +7,40 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.Map;
 import java.util.UUID;
 
 class DriveSenseNativeTripStore {
-    private static final String PREFS = "drivesense_native_tracking";
+    private static final String PREFS_OLD = "drivesense_native_tracking";
+    private static final String PREFS = "road_sage_native_tracking";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
     private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
     private static final String KEY_LAST_PARKED = "last_parked_location";
-    private static final String SHARED_LAST_PARKED_KEY = "drivesense_last_parked";
+    private static final String SHARED_LAST_PARKED_KEY_OLD = "drivesense_last_parked";
+    private static final String SHARED_LAST_PARKED_KEY = "road_sage_last_parked";
+    private static final String KEY_MIGRATED_FROM_V1 = "migrated_from_drivesense_v1";
     private static final int MAX_DIAGNOSTIC_EVENTS = 120;
 
     static SharedPreferences prefs(Context context) {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences oldPrefs = context.getSharedPreferences(PREFS_OLD, Context.MODE_PRIVATE);
+        SharedPreferences currentPrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (!currentPrefs.contains(KEY_MIGRATED_FROM_V1) && oldPrefs.getAll().size() > 0) {
+            SharedPreferences.Editor editor = currentPrefs.edit();
+            for (Map.Entry<String, ?> entry : oldPrefs.getAll().entrySet()) {
+                Object value = entry.getValue();
+                String key = entry.getKey();
+                if (value instanceof String) editor.putString(key, (String) value);
+                else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
+                else if (value instanceof Integer) editor.putInt(key, (Integer) value);
+                else if (value instanceof Long) editor.putLong(key, (Long) value);
+                else if (value instanceof Float) editor.putFloat(key, (Float) value);
+            }
+            editor.putBoolean(KEY_MIGRATED_FROM_V1, true);
+            editor.apply();
+        }
+        return currentPrefs;
     }
 
     static boolean isServiceEnabled(Context context) {
@@ -79,6 +99,9 @@ class DriveSenseNativeTripStore {
         if (raw == null || raw.trim().isEmpty()) {
             raw = context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SHARED_LAST_PARKED_KEY, null);
         }
+        if (raw == null || raw.trim().isEmpty()) {
+            raw = context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SHARED_LAST_PARKED_KEY_OLD, null);
+        }
         if (raw == null || raw.trim().isEmpty()) return null;
         try {
             return new JSONObject(raw);
@@ -92,7 +115,7 @@ class DriveSenseNativeTripStore {
         try {
             parked.put("lat", lat);
             parked.put("lng", lng);
-            parked.put("timestamp", DriveSenseAutoTrackingService.iso(timestampMs));
+            parked.put("timestamp", RoadSageAutoTrackingService.iso(timestampMs));
             parked.put("timestamp_ms", timestampMs);
             parked.put("tripId", tripId);
             parked.put("source", source);

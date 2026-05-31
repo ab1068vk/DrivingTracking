@@ -5,13 +5,22 @@ import { localSettings } from '@/lib/trackingStore';
 import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { legacyStorageKeysFor } from '@/lib/storageKeyMigration';
 
-export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
-export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
-export const ACHIEVEMENT_CHANNEL_ID = 'drivesense_achievements';
-export const SAFETY_ALERTS_CHANNEL_ID = 'drivesense_safety_alerts';
-export const COACHING_CHANNEL_ID = 'drivesense_coaching';
-export const VEHICLE_CHANNEL_ID = 'drivesense_vehicle';
+export const TRACKING_CHANNEL_ID = 'road_sage_tracking';
+export const SUMMARY_CHANNEL_ID = 'road_sage_summary';
+export const ACHIEVEMENT_CHANNEL_ID = 'road_sage_achievements';
+export const SAFETY_ALERTS_CHANNEL_ID = 'road_sage_safety_alerts';
+export const COACHING_CHANNEL_ID = 'road_sage_coaching';
+export const VEHICLE_CHANNEL_ID = 'road_sage_vehicle';
+const LEGACY_NOTIFICATION_CHANNEL_IDS = [
+  'drivesense_tracking',
+  'drivesense_summary',
+  'drivesense_achievements',
+  'drivesense_safety_alerts',
+  'drivesense_coaching',
+  'drivesense_vehicle',
+];
 export const NOTIFICATION_IDS = {
   LONG_TRIP_REMINDER: 2001,
   TRIP_STARTED: 2003,
@@ -66,13 +75,13 @@ const STAY_ALERT_ID = NOTIFICATION_IDS.STAY_ALERT;
 const ACHIEVEMENT_BASE_ID = 3000;
 export const MAX_ACHIEVEMENT_NOTIF_IDS = 999;
 const ACHIEVEMENT_GROUP_ID = ACHIEVEMENT_BASE_ID + MAX_ACHIEVEMENT_NOTIF_IDS;
-const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
-const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'drivesense_achievement_notification_ids_v1';
-const NOTIFICATION_DEDUPE_KEY = 'drivesense_notification_dedupe_v1';
-const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
-const HEADING_DRIFT_NOTIF_LAST_KEY = 'drivesense_heading_drift_notif_last_ms';
-const SPEEDING_NOTIF_LAST_KEY = 'drivesense_speeding_notif_last_ms';
-const FATIGUE_NOTIF_TRIP_KEY = 'drivesense_fatigue_notif_trip_id';
+const NOTIFIED_ACHIEVEMENTS_KEY = 'road_sage_notified_achievements';
+const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'road_sage_achievement_notification_ids_v1';
+const NOTIFICATION_DEDUPE_KEY = 'road_sage_notification_dedupe_v1';
+const PHONE_NOTIF_LAST_KEY = 'road_sage_phone_notif_last_ms';
+const HEADING_DRIFT_NOTIF_LAST_KEY = 'road_sage_heading_drift_notif_last_ms';
+const SPEEDING_NOTIF_LAST_KEY = 'road_sage_speeding_notif_last_ms';
+const FATIGUE_NOTIF_TRIP_KEY = 'road_sage_fatigue_notif_trip_id';
 const DEDUPE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const TRIP_NOTIFICATION_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 const SAFE_DRIVING_TIPS = [
@@ -90,6 +99,12 @@ const notificationsEnabled = (key) => {
   return settings.notifications_enabled !== false && settings[key] !== false;
 };
 
+const readLocalString = (key) => {
+  const current = localStorage.getItem(key);
+  if (current !== null) return current;
+  return legacyStorageKeysFor(key).map((legacyKey) => localStorage.getItem(legacyKey)).find((value) => value !== null) ?? null;
+};
+
 const todaysSafeDrivingTip = () => {
   const dayIndex = Math.floor(Date.now() / 86400000);
   return SAFE_DRIVING_TIPS[dayIndex % SAFE_DRIVING_TIPS.length];
@@ -97,7 +112,7 @@ const todaysSafeDrivingTip = () => {
 
 const readNotifiedAchievementIds = () => {
   try {
-    const raw = localStorage.getItem(NOTIFIED_ACHIEVEMENTS_KEY);
+    const raw = readLocalString(NOTIFIED_ACHIEVEMENTS_KEY);
     const ids = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(ids) ? ids : []);
   } catch {
@@ -113,7 +128,7 @@ const writeNotifiedAchievementIds = (ids) => {
 
 const readNumber = (key, fallback = 0) => {
   try {
-    const value = Number(localStorage.getItem(key));
+    const value = Number(readLocalString(key));
     return Number.isFinite(value) ? value : fallback;
   } catch {
     return fallback;
@@ -128,7 +143,7 @@ const writeNumber = (key, value) => {
 
 const readDedupeState = () => {
   try {
-    const raw = localStorage.getItem(NOTIFICATION_DEDUPE_KEY);
+    const raw = readLocalString(NOTIFICATION_DEDUPE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     const now = Date.now();
     return Object.fromEntries(Object.entries(parsed).filter(([, value]) => (
@@ -199,7 +214,7 @@ const isAchievementNotificationId = (id) => (
 
 const readAchievementNotificationIds = () => {
   try {
-    const raw = localStorage.getItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY);
+    const raw = readLocalString(ACHIEVEMENT_NOTIFICATION_IDS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
@@ -337,6 +352,12 @@ export async function configureNotificationChannels() {
     sound: null,
     vibration: false,
   });
+
+  if (typeof LocalNotifications.deleteChannel === 'function') {
+    await Promise.all(LEGACY_NOTIFICATION_CHANNEL_IDS.map((id) => (
+      LocalNotifications.deleteChannel({ id }).catch(() => {})
+    )));
+  }
 }
 
 export async function scheduleLongTripReminder(startTime) {
@@ -540,7 +561,7 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
   if (isQuietHours(settings, true)) return null;
   const tripId = opts.tripId || 'active';
   try {
-    if (localStorage.getItem(FATIGUE_NOTIF_TRIP_KEY) === String(tripId)) return null;
+    if (readLocalString(FATIGUE_NOTIF_TRIP_KEY) === String(tripId)) return null;
   } catch {}
 
   const minutes = Math.round(Number(opts.tripDurationMinutes) || 0);
@@ -754,7 +775,7 @@ export async function checkAndNotifyPhoneUsePattern(recentTrips = [], settings =
     (trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high')
   )).length;
   if (affected < 3) return null;
-  const key = 'drivesense_phone_pattern_last_ms';
+  const key = 'road_sage_phone_pattern_last_ms';
   const now = Date.now();
   if (now - readNumber(key) < 48 * 60 * 60 * 1000) return null;
   const notification = {

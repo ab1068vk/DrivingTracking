@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -14,7 +14,7 @@ public class DriveSenseActivityReceiver extends BroadcastReceiver {
         ActivityRecognitionResult result = ActivityRecognitionResult.extractResult(intent);
         if (result == null) return;
         DetectedActivity activity = result.getMostProbableActivity();
-        DriveSenseAutoTrackingService.handleActivityBroadcast(context, activity);
+        RoadSageAutoTrackingService.handleActivityBroadcast(context, activity);
         DriveSenseActivityRecognitionPlugin.publishActivity(activity);
     }
 }

@@ -3,8 +3,8 @@
     <string name="app_name">Road Sage</string>
     <string name="title_activity_main">Road Sage</string>
     <string name="quick_settings_resume_auto_tracking">Auto Tracking</string>
-    <string name="package_name">com.drivesense.app</string>
-    <string name="custom_url_scheme">com.drivesense.app</string>
+    <string name="package_name">com.roadsage.app</string>
+    <string name="custom_url_scheme">com.roadsage.app</string>
     <string name="capacitor_background_geolocation_notification_channel_name">Trip Tracking</string>
     <string name="capacitor_background_geolocation_notification_icon">drawable/ic_stat_drivesense</string>
     <string name="capacitor_background_geolocation_notification_color">#0F766E</string>

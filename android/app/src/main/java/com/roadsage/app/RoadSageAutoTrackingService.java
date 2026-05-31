@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import android.Manifest;
 import android.app.Notification;
@@ -45,12 +45,13 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Locale;
+import java.util.Map;
 
-public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
-    static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
-    static final String ACTION_STOP = "com.drivesense.app.action.STOP_NATIVE_AUTO";
-    static final String ACTION_END_TRIP = "com.drivesense.app.action.END_NATIVE_TRIP";
-    static final String ACTION_ACTIVITY = "com.drivesense.app.action.ACTIVITY_UPDATE";
+public class RoadSageAutoTrackingService extends Service implements SensorEventListener {
+    static final String ACTION_START = "com.roadsage.app.action.START_NATIVE_AUTO";
+    static final String ACTION_STOP = "com.roadsage.app.action.STOP_NATIVE_AUTO";
+    static final String ACTION_END_TRIP = "com.roadsage.app.action.END_NATIVE_TRIP";
+    static final String ACTION_ACTIVITY = "com.roadsage.app.action.ACTIVITY_UPDATE";
     static final String EXTRA_ACTIVITY_TYPE = "activityType";
     static final String EXTRA_ACTIVITY_CONFIDENCE = "activityConfidence";
 
@@ -59,8 +60,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int NOTIF_ID_AUTO_STATUS = 4103;
     private static final int NIGHT_START_HOUR = 22;
     private static final int NIGHT_END_HOUR = 5;
-    private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
-    private static final String AUTO_STATUS_CHANNEL_ID = "drivesense_auto_status";
+    private static final String CHANNEL_ID = "road_sage_native_auto_tracking";
+    private static final String AUTO_STATUS_CHANNEL_ID = "road_sage_auto_status";
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
     private static final int MIN_STILL_CONFIDENCE = 70;
     private static final int MIN_POINTS_TO_SAVE = 2;
@@ -98,11 +99,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int CANDIDATE_MIN_STABLE_POINTS = 4;
     private static final int CANDIDATE_MIN_STABLE_POINTS_COOLDOWN = 5;
     private static final long CANDIDATE_MAX_REVIEW_MS = 180_000L;
-    private static final String SAFETY_ALERTS_CHANNEL_ID = "drivesense_safety_alerts";
-    private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
+    private static final String SAFETY_ALERTS_CHANNEL_ID = "road_sage_safety_alerts";
+    private static final String SUMMARY_CHANNEL_ID = "road_sage_summary";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
-    private static final String SETTINGS_KEY = "drivesense_settings";
-    private static final String NOTIFICATION_PREFS = "drivesense_native_notification_state";
+    private static final String SETTINGS_KEY_OLD = "drivesense_settings";
+    private static final String SETTINGS_KEY = "road_sage_settings";
+    private static final String NOTIFICATION_PREFS_OLD = "drivesense_native_notification_state";
+    private static final String NOTIFICATION_PREFS = "road_sage_native_notification_state";
     private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
@@ -261,7 +264,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     static void start(Context context) {
         cancelAutoTrackingOffNotification(context);
-        Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
+        Intent intent = new Intent(context, RoadSageAutoTrackingService.class);
         intent.setAction(ACTION_START);
         try {
             ContextCompat.startForegroundService(context, intent);
@@ -269,7 +272,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     static void stop(Context context) {
-        Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
+        Intent intent = new Intent(context, RoadSageAutoTrackingService.class);
         intent.setAction(ACTION_STOP);
         DriveSenseNativeTripStore.setServiceEnabled(context, false);
         try {
@@ -322,14 +325,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         channel.setDescription("Status updates when Road Sage auto tracking is turned on or off.");
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) manager.createNotificationChannel(channel);
+        if (manager != null) {
+            manager.createNotificationChannel(channel);
+            manager.deleteNotificationChannel("drivesense_auto_status");
+        }
     }
 
     static void handleActivityBroadcast(Context context, DetectedActivity activity) {
         if (activity == null) return;
         if (!DriveSenseNativeTripStore.isServiceEnabled(context)) return;
 
-        Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
+        Intent intent = new Intent(context, RoadSageAutoTrackingService.class);
         intent.setAction(ACTION_ACTIVITY);
         intent.putExtra(EXTRA_ACTIVITY_TYPE, activity.getType());
         intent.putExtra(EXTRA_ACTIVITY_CONFIDENCE, activity.getConfidence());
@@ -1276,7 +1282,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private void speakNativeAlertNow(String text) {
         if (textToSpeech == null) return;
-        String utteranceId = "drivesense_phone_use_" + System.currentTimeMillis();
+        String utteranceId = "road_sage_phone_use_" + System.currentTimeMillis();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
         } else {
@@ -1392,7 +1398,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         channel.setLightColor(Color.RED);
         channel.enableLights(true);
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) manager.createNotificationChannel(channel);
+        if (manager != null) {
+            manager.createNotificationChannel(channel);
+            manager.deleteNotificationChannel("drivesense_safety_alerts");
+        }
     }
 
     private void ensureSummaryChannel() {
@@ -1404,7 +1413,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         channel.setDescription("Trip completion and driving summary notifications.");
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) manager.createNotificationChannel(channel);
+        if (manager != null) {
+            manager.createNotificationChannel(channel);
+            manager.deleteNotificationChannel("drivesense_summary");
+        }
     }
 
     private void stopEverything() {
@@ -1436,7 +1448,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 .setContentText(text)
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(text));
         } else if (isTripActive()) {
-            Intent stopIntent = new Intent(this, DriveSenseAutoTrackingService.class);
+            Intent stopIntent = new Intent(this, RoadSageAutoTrackingService.class);
             stopIntent.setAction(ACTION_END_TRIP);
             PendingIntent stopPendingIntent = PendingIntent.getService(
                 this,
@@ -1503,7 +1515,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private boolean isSettingEnabled(String key, boolean defaultValue) {
         try {
-            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SETTINGS_KEY, null);
+            String raw = getCapacitorPreference(SETTINGS_KEY, SETTINGS_KEY_OLD);
             if (raw == null || raw.trim().isEmpty()) return defaultValue;
             JSONObject settings = new JSONObject(raw);
             if (!settings.has(key) || settings.isNull(key)) return defaultValue;
@@ -1514,7 +1526,35 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private SharedPreferences notificationPrefs() {
-        return getSharedPreferences(NOTIFICATION_PREFS, Context.MODE_PRIVATE);
+        SharedPreferences oldPrefs = getSharedPreferences(NOTIFICATION_PREFS_OLD, Context.MODE_PRIVATE);
+        SharedPreferences currentPrefs = getSharedPreferences(NOTIFICATION_PREFS, Context.MODE_PRIVATE);
+        if (!currentPrefs.contains("migrated_from_drivesense_v1") && oldPrefs.getAll().size() > 0) {
+            SharedPreferences.Editor editor = currentPrefs.edit();
+            for (Map.Entry<String, ?> entry : oldPrefs.getAll().entrySet()) {
+                Object value = entry.getValue();
+                String key = entry.getKey();
+                if (value instanceof String) editor.putString(key, (String) value);
+                else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
+                else if (value instanceof Integer) editor.putInt(key, (Integer) value);
+                else if (value instanceof Long) editor.putLong(key, (Long) value);
+                else if (value instanceof Float) editor.putFloat(key, (Float) value);
+            }
+            editor.putBoolean("migrated_from_drivesense_v1", true);
+            editor.apply();
+        }
+        return currentPrefs;
+    }
+
+    private String getCapacitorPreference(String key, String legacyKey) {
+        SharedPreferences prefs = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
+        String raw = prefs.getString(key, null);
+        if (raw == null || raw.trim().isEmpty()) {
+            raw = prefs.getString(legacyKey, null);
+            if (raw != null && !raw.trim().isEmpty()) {
+                prefs.edit().putString(key, raw).apply();
+            }
+        }
+        return raw;
     }
 
     private String buildLiveTripStatus(long nowMs) {
@@ -1584,7 +1624,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         channel.setDescription("Keeps Road Sage ready to detect and record driving trips.");
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.createNotificationChannel(channel);
+        if (manager != null) {
+            manager.createNotificationChannel(channel);
+            manager.deleteNotificationChannel("drivesense_native_auto_tracking");
+        }
     }
 
     static String iso(long timeMs) {

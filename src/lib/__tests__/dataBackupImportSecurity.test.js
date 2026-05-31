@@ -265,6 +265,9 @@ describe('backup trip import sanitization', () => {
         reason: 'scoring_inputs_changed',
         changed_constants: ['PENALTY_SCALE_FACTOR'],
       },
+      score_explanation: {
+        safety: [{ factor: 'phone_use', label: 'Phone use detected while driving', impact: -10 }],
+      },
     }]);
 
     expect(trip.component_scores.safety).toEqual({
@@ -279,6 +282,10 @@ describe('backup trip import sanitization', () => {
       constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
     });
     expect(trip.score_provenance_change.changed_constants).toEqual(['PENALTY_SCALE_FACTOR']);
+    expect(trip.score_explanation.safety[0]).toMatchObject({
+      factor: 'phone_use',
+      impact: -10,
+    });
   });
 
   it('rejects imported trips without a non-empty string id', () => {
@@ -368,5 +375,13 @@ describe('backup schema migrations', () => {
     expect(parsed.sourceVersion).toBe(1);
     expect(parsed.version).toBe(BACKUP_VERSION);
     expect(parsed.trips[0].needs_rescore).toBe(true);
+  });
+
+  it('gives an actionable error for backups from newer app versions', () => {
+    expect(() => parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION + 1,
+      trips: [],
+    }))).toThrow(`backup v${BACKUP_VERSION + 1}, this app supports up to v${BACKUP_VERSION}`);
   });
 });

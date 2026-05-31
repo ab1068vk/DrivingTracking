@@ -97,6 +97,7 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'score_eco_confidence',
   'component_scores',
   'score_provenance',
+  'score_explanation',
   'score_provenance_change',
   'harsh_brakes_count',
   'rapid_accel_count',
@@ -253,6 +254,15 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'fatigue_risk_score_confidence',
   'speed_creep_score',
   'speed_creep_score_confidence',
+  'lane_changing_score',
+  'lane_changing_score_confidence',
+  'lane_changing_safety_weight',
+  'lane_change_count',
+  'unsafe_lane_changes',
+  'lane_changing_confidence',
+  'lane_change_detection_confidence',
+  'lane_change_detection_method',
+  'lane_change_events',
   'segment_scores',
   'hill_route',
   'map_matching_status',
@@ -520,54 +530,133 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   return { native: false, filename: outputName, backup, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
 }
 
-export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
-  const sourceVersion = Number.isInteger(Number(fromVersion)) && Number(fromVersion) > 0 ? Number(fromVersion) : 1;
-  if (sourceVersion > BACKUP_VERSION) {
-    throw new Error(`Backup version ${sourceVersion} is newer than this app supports.`);
-  }
-
-  let version = sourceVersion;
-  let migrated = { ...data };
-  while (version < BACKUP_VERSION) {
-    if (version === 1) {
-      migrated = {
-        ...migrated,
-        vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
-        ui: isPlainObject(migrated.ui) ? migrated.ui : { saved_trip_filters: [] },
+export const BACKUP_MIGRATIONS = Object.freeze([
+  /*
+   * Migration backup v1 -> v2
+   *
+   * Adds: vehicles array and ui.saved_trip_filters container.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: no.
+   *
+   * After writing a backup migration, update:
+   * - src/lib/schema/tripSchema.js when trip fields change
+   * - BACKUP_VERSION and this migration registry
+   * - backup migration tests and golden fixtures if affected
+   */
+  Object.freeze({
+    from: 1,
+    to: 2,
+    migrate(data) {
+      return {
+        ...data,
+        vehicles: Array.isArray(data.vehicles) ? data.vehicles : [],
+        ui: isPlainObject(data.ui) ? data.ui : { saved_trip_filters: [] },
       };
-    } else if (version === 2) {
-      migrated = {
-        ...migrated,
+    },
+  }),
+  /*
+   * Migration backup v2 -> v3
+   *
+   * Adds: trip route_points, driving_events, event_feedback defaults.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: no.
+   */
+  Object.freeze({
+    from: 2,
+    to: 3,
+    migrate(data) {
+      return {
+        ...data,
         ui: {
-          ...(isPlainObject(migrated.ui) ? migrated.ui : {}),
-          saved_trip_filters: Array.isArray(migrated.ui?.saved_trip_filters) ? migrated.ui.saved_trip_filters : [],
+          ...(isPlainObject(data.ui) ? data.ui : {}),
+          saved_trip_filters: Array.isArray(data.ui?.saved_trip_filters) ? data.ui.saved_trip_filters : [],
         },
-        trips: (migrated.trips || []).map((trip) => ({
+        trips: (data.trips || []).map((trip) => ({
           ...trip,
           route_points: Array.isArray(trip?.route_points) ? trip.route_points : [],
           driving_events: Array.isArray(trip?.driving_events) ? trip.driving_events : [],
           event_feedback: isPlainObject(trip?.event_feedback) ? trip.event_feedback : {},
         })),
       };
-    } else if (version === 3) {
-      migrated = {
-        ...migrated,
-        trips: (migrated.trips || []).map((trip) => (
+    },
+  }),
+  /*
+   * Migration backup v3 -> v4
+   *
+   * Adds: needs_rescore on completed trips so modern scoring fields refresh.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: yes.
+   */
+  Object.freeze({
+    from: 3,
+    to: 4,
+    migrate(data) {
+      return {
+        ...data,
+        trips: (data.trips || []).map((trip) => (
           trip?.status === 'discarded' ? trip : { ...trip, needs_rescore: true }
         )),
       };
-    } else if (version === 4) {
-      migrated = {
-        ...migrated,
-        ui: isPlainObject(migrated.ui) ? migrated.ui : { saved_trip_filters: [] },
+    },
+  }),
+  /*
+   * Migration backup v4 -> v5
+   *
+   * Adds: ui fallback container for hardened imports.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: no.
+   */
+  Object.freeze({
+    from: 4,
+    to: 5,
+    migrate(data) {
+      return {
+        ...data,
+        ui: isPlainObject(data.ui) ? data.ui : { saved_trip_filters: [] },
       };
-    } else if (version === 5) {
-      migrated = {
-        ...migrated,
-        trips: (migrated.trips || []).map(migrateLegacyLaneChangeTrip),
+    },
+  }),
+  /*
+   * Migration backup v5 -> v6
+   *
+   * Adds: heading_deviation_legacy counts for retired lane-change records.
+   * Removes: lane_changes_count, lane_changes_per_10km.
+   * Renames: driving_events[].type lane_change -> heading_deviation_legacy.
+   * Requires rescore: no; the migrated event is diagnostic only.
+   */
+  Object.freeze({
+    from: 5,
+    to: 6,
+    migrate(data) {
+      return {
+        ...data,
+        trips: (data.trips || []).map(migrateLegacyLaneChangeTrip),
       };
-    }
-    version += 1;
+    },
+  }),
+]);
+
+export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
+  const sourceVersion = Number.isInteger(Number(fromVersion)) && Number(fromVersion) > 0 ? Number(fromVersion) : 1;
+  if (sourceVersion > BACKUP_VERSION) {
+    throw new Error(
+      `This backup was made with a newer version of Road Sage (backup v${sourceVersion}, ` +
+      `this app supports up to v${BACKUP_VERSION}). ` +
+      'Update Road Sage to the latest version and try again.'
+    );
+  }
+
+  let version = sourceVersion;
+  let migrated = { ...data };
+  while (version < BACKUP_VERSION) {
+    const migration = BACKUP_MIGRATIONS.find((step) => step.from === version);
+    if (!migration) throw new Error(`Missing backup migration from v${version}.`);
+    migrated = migration.migrate(migrated);
+    version = migration.to;
   }
 
   return { ...migrated, version: BACKUP_VERSION };

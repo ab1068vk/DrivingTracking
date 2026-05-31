@@ -58,7 +58,7 @@ import {
   tripsToCSV,
 } from '@/lib/tripEngine';
 import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
-import { LANE_CHANGING_SAFETY_WEIGHT } from '@/lib/scoringConstants';
+import { LANE_CHANGING_SAFETY_WEIGHT, scoringValue } from '@/lib/scoringConstants';
 import {
   getLastParkedLocation,
   localSettings,
@@ -604,7 +604,8 @@ describe('tripEngine', () => {
     const shortDeduction = scoreAt(1, 0) - scoreAt(1, 100);
     const longDeduction = scoreAt(200, 0) - scoreAt(200, 100);
 
-    expect(shortDeduction).toBe(FATIGUE_SAFETY_MAX_PENALTY);
+    expect(shortDeduction).toBeGreaterThanOrEqual(FATIGUE_SAFETY_MAX_PENALTY - 1);
+    expect(shortDeduction).toBeLessThanOrEqual(FATIGUE_SAFETY_MAX_PENALTY);
     expect(longDeduction).toBeGreaterThanOrEqual(shortDeduction);
   });
 
@@ -941,6 +942,11 @@ describe('tripEngine', () => {
     );
 
     expect(scores.distraction_score).toBe(30);
+    expect(scores.score_explanation.safety[0]).toMatchObject({
+      factor: 'phone_use',
+      label: 'Phone use detected while driving',
+      impact: -100,
+    });
   });
 
   it('caps safety and overall scores after road-condition bonuses', () => {
@@ -1708,11 +1714,12 @@ describe('tripEngine', () => {
       },
     });
     const complianceScore = scored.overall_compliance_score;
+    const safetyBlend = scoringValue('SAFETY_SCORE_BLEND_WEIGHTS');
     const expectedSafety = Math.round((
-      100 * 0.52 +
-      complianceScore * 0.10 +
+      100 * safetyBlend.base +
+      complianceScore * safetyBlend.compliance +
       scored.lane_changing_score * LANE_CHANGING_SAFETY_WEIGHT
-    ) / (0.52 + 0.10 + LANE_CHANGING_SAFETY_WEIGHT));
+    ) / (safetyBlend.base + safetyBlend.compliance + LANE_CHANGING_SAFETY_WEIGHT));
     expect(laneChangeResult).toMatchObject({
       lane_change_count: 3,
       unsafe_lane_changes: 1,

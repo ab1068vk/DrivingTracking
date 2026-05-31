@@ -45,6 +45,30 @@ describe('scoring constants registry', () => {
     expect(TIME_OF_DAY_NIGHT_MULTIPLIER).toBe(scoringValue('UBI_NIGHT_MULTIPLIER'));
   });
 
+  it('keeps blend weights normalized and non-negative', () => {
+    const blendConfigs = [
+      ['OVERALL_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.OVERALL_SCORE_BLEND_WEIGHTS.value],
+      ['SAFETY_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.SAFETY_SCORE_BLEND_WEIGHTS.value],
+      ['SMOOTHNESS_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.SMOOTHNESS_SCORE_BLEND_WEIGHTS.value],
+      ['ECO_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.ECO_SCORE_BLEND_WEIGHTS.value],
+      ['DEFENSIVE_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.DEFENSIVE_SCORE_BLEND_WEIGHTS.value],
+      ['UBI_CATEGORY_WEIGHTS', SCORING_CONSTANTS.UBI_CATEGORY_WEIGHTS.value],
+      ['PRE_TRIP_RISK_WEIGHTS', SCORING_CONSTANTS.PRE_TRIP_RISK_WEIGHTS.value],
+    ];
+
+    for (const [key, weights] of blendConfigs) {
+      const values = Object.values(weights);
+      const sum = values.reduce((total, weight) => total + weight, 0);
+
+      expect(sum, key).toBeCloseTo(1.0, 6);
+      for (const weight of values) {
+        expect(Number.isFinite(weight), key).toBe(true);
+        expect(weight, key).toBeGreaterThanOrEqual(0);
+      }
+    }
+    expect(SCORING_CONSTANTS.SAFETY_SCORE_BLEND_WEIGHTS.value.phoneUse).toBe(scoringValue('PHONE_USE_SAFETY_WEIGHT'));
+  });
+
   it('registers the default hourly fallback risk profile with calibration metadata', () => {
     expect(SCORING_CONSTANTS.DEFAULT_HOURLY_RISK_PROFILE).toBe(DEFAULT_HOURLY_RISK_PROFILE);
     expect(scoringValue('DEFAULT_HOURLY_RISK_PROFILE')).toEqual([

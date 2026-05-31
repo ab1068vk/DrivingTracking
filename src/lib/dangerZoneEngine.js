@@ -1,7 +1,7 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
 
-export const DANGER_ZONES_KEY = 'drivesense_danger_zones';
+export const DANGER_ZONES_KEY = 'road_sage_danger_zones';
 const EARTH_M_PER_DEG = 111320;
 const DEFAULT_EVENT_TYPES = ['harsh_brake', 'sharp_turn', 'speeding'];
 const PROXY_EVENT_TYPES = new Set(['near_miss', 'close_proximity', 'tailgate_cycle', 'stop_start_pattern']);

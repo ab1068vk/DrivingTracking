@@ -2,7 +2,7 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 
-const CACHE_KEY = 'drivesense_map_matching_cache_v2';
+const CACHE_KEY = 'road_sage_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
 export const DEFAULT_OSRM_TIMEOUT_MS = 12000;
 export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || DEFAULT_OSRM_TIMEOUT_MS;

@@ -5,7 +5,7 @@ import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
 import { getPrivacyZones } from '@/lib/privacyZones';
 
-const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
+const WEATHER_CACHE_KEY = 'road_sage_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const HISTORICAL_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const ZONE_BUFFER_M = 100;

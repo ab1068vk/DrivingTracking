@@ -34,7 +34,7 @@ const focusLabels = {
   consistency: 'Consistency',
 };
 
-const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
+const DRIVER_SIGNATURE_KEY = 'road_sage_driver_signature';
 
 export default function DrivingCoach() {
   const settings = localSettings.get();

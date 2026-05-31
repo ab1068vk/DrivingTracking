@@ -25,7 +25,7 @@ import {
   trimParkedTail,
   validateCandidateTrip
 } from '@/lib/tripEngine';
-import { activeTripStore, getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { activeTripStore, getLastParkedLocation, localSettings, saveLastMapCenter, saveLastParkedLocation } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import {
   scheduleLongTripReminder,
@@ -433,6 +433,11 @@ export default function Dashboard() {
         setCurrentLocation(point);
         setLocationError(null);
         const latestSettings = localSettings.get();
+        saveLastMapCenter({
+          ...point,
+          tripId: activeTripRef.current?.id ?? null,
+          source: 'tracking',
+        });
         const tripBeforePoint = activeTripRef.current;
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
         const latestPrivacyZones = getPrivacyZones(latestSettings);
@@ -1285,6 +1290,11 @@ export default function Dashboard() {
         (point) => {
           setCurrentLocation(point);
           setLocationError(null);
+          saveLastMapCenter({
+            ...point,
+            tripId: activeTripRef.current?.id ?? null,
+            source: 'auto_tracking',
+          });
           maybeAutoStart(point);
         },
         (err) => {

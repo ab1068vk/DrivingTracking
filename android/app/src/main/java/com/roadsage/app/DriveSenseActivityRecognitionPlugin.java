@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import android.Manifest;
 import android.app.PendingIntent;
@@ -146,7 +146,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         }
 
         try {
-            DriveSenseAutoTrackingService.start(getContext());
+            RoadSageAutoTrackingService.start(getContext());
         } catch (Exception error) {
             call.reject(error.getMessage());
             return;
@@ -159,7 +159,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     @PluginMethod
     public void stopNativeAutoTracking(PluginCall call) {
-        DriveSenseAutoTrackingService.stop(getContext());
+        RoadSageAutoTrackingService.stop(getContext());
         JSObject payload = new JSObject();
         payload.put("enabled", false);
         call.resolve(payload);

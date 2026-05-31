@@ -1,4 +1,4 @@
-package com.drivesense.app;
+package com.roadsage.app;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -18,7 +18,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
-public class DriveSenseAutoTrackingServiceTest {
+public class RoadSageAutoTrackingServiceTest {
 
     @Test
     public void nightDrivingUsesDeviceLocalTimeAcrossMidnight() {
@@ -40,9 +40,9 @@ public class DriveSenseAutoTrackingServiceTest {
                 .toInstant()
                 .toEpochMilli();
 
-            assertTrue(DriveSenseAutoTrackingService.isNightDrivingEpochMs(localEvening));
-            assertTrue(DriveSenseAutoTrackingService.isNightDrivingEpochMs(beforeLocalEnd));
-            assertFalse(DriveSenseAutoTrackingService.isNightDrivingEpochMs(atLocalEnd));
+            assertTrue(RoadSageAutoTrackingService.isNightDrivingEpochMs(localEvening));
+            assertTrue(RoadSageAutoTrackingService.isNightDrivingEpochMs(beforeLocalEnd));
+            assertFalse(RoadSageAutoTrackingService.isNightDrivingEpochMs(atLocalEnd));
         } finally {
             TimeZone.setDefault(original);
         }
@@ -58,8 +58,8 @@ public class DriveSenseAutoTrackingServiceTest {
         assertEquals(thresholds.getDouble("STATIONARY_SPEED_KMH"), doubleConstant("STATIONARY_SPEED_KMH"), 0.0d);
         assertEquals(thresholds.getDouble("MIN_TRUSTED_SPEED_KMH"), doubleConstant("MIN_TRUSTED_SPEED_KMH"), 0.0d);
 
-        DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
-        Method calculateStats = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+        RoadSageAutoTrackingService service = new RoadSageAutoTrackingService();
+        Method calculateStats = RoadSageAutoTrackingService.class.getDeclaredMethod(
             "calculateStats",
             JSONArray.class,
             long.class,
@@ -95,8 +95,8 @@ public class DriveSenseAutoTrackingServiceTest {
         JSONObject fixture = loadParityFixture();
         JSONObject noiseFloorCase = fixture.getJSONArray("noiseFloorCases").getJSONObject(0);
 
-        DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
-        Method noiseFloor = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+        RoadSageAutoTrackingService service = new RoadSageAutoTrackingService();
+        Method noiseFloor = RoadSageAutoTrackingService.class.getDeclaredMethod(
             "noiseFloor",
             double.class,
             double.class
@@ -112,7 +112,7 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     private static JSONObject loadParityFixture() throws Exception {
-        try (InputStream stream = DriveSenseAutoTrackingServiceTest.class
+        try (InputStream stream = RoadSageAutoTrackingServiceTest.class
             .getClassLoader()
             .getResourceAsStream("androidTripStatsParityFixture.json")) {
             assertNotNull("Missing shared Android/JS parity fixture", stream);
@@ -121,7 +121,7 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     private static JSONObject loadGoldenScoringFixture(String name) throws Exception {
-        try (InputStream stream = DriveSenseAutoTrackingServiceTest.class
+        try (InputStream stream = RoadSageAutoTrackingServiceTest.class
             .getClassLoader()
             .getResourceAsStream(name)) {
             assertNotNull("Missing shared golden scoring fixture " + name, stream);
@@ -137,8 +137,8 @@ public class DriveSenseAutoTrackingServiceTest {
         assertTrue(fixture.getJSONArray("points").length() > 1);
         assertTrue(fixture.getJSONObject("expected").getJSONObject("scores").has("score_overall"));
 
-        DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
-        Method calculateStats = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+        RoadSageAutoTrackingService service = new RoadSageAutoTrackingService();
+        Method calculateStats = RoadSageAutoTrackingService.class.getDeclaredMethod(
             "calculateStats",
             JSONArray.class,
             long.class,
@@ -162,13 +162,13 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     private static long longConstant(String name) throws Exception {
-        Field field = DriveSenseAutoTrackingService.class.getDeclaredField(name);
+        Field field = RoadSageAutoTrackingService.class.getDeclaredField(name);
         field.setAccessible(true);
         return field.getLong(null);
     }
 
     private static double doubleConstant(String name) throws Exception {
-        Field field = DriveSenseAutoTrackingService.class.getDeclaredField(name);
+        Field field = RoadSageAutoTrackingService.class.getDeclaredField(name);
         field.setAccessible(true);
         return field.getDouble(null);
     }

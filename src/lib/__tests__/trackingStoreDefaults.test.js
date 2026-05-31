@@ -51,6 +51,9 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({
       last_map_center: { lat: 91, lng: -181 },
     }).last_map_center).toBeUndefined();
+    expect(sanitizeImportedSettings({
+      last_map_center: { lat: 0, lng: 0 },
+    }).last_map_center).toBeUndefined();
   });
 
   it('keeps inferred speed-limit country defaults configurable', () => {

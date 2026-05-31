@@ -23,16 +23,17 @@ import {
 import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } from '@/lib/mapPlaybackInsights';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 
-const TRIPS_KEY = 'drivesense_trips';
-const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
-const DEFAULT_DB_NAME = 'drivesense_mobile';
-export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
+const TRIPS_KEY = 'road_sage_trips';
+const DRIVER_SIGNATURE_KEY = 'road_sage_driver_signature';
+const LEGACY_DEFAULT_DB_NAME = 'drivesense_mobile';
+const DEFAULT_DB_NAME = 'road_sage_mobile';
+export const DB_NAME_META_KEY = 'road_sage_indexeddb_name';
 export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
 const TRIP_STORE = 'trips';
 export const TRIP_SCHEMA_VERSION = 23;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
-export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
-export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
+export const TRIP_EVENT_MIGRATION_KEY = 'road_sage_trip_event_migration_version';
+export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'road_sage_heading_event_migration_note_dismissed';
 export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
 export const AUTO_RESCORE_RECENT_WINDOW_DAYS = 28;
 export const AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO = 0.2;
@@ -240,7 +241,7 @@ export const migrateIndexedDbName = async ({
   if (!canUseIndexedDb() || !storage) return false;
 
   const storedPreviousName = previousName ?? storage.getItem(DB_NAME_META_KEY);
-  const legacyPreviousName = storedPreviousName || (currentName !== DEFAULT_DB_NAME ? DEFAULT_DB_NAME : currentName);
+  const legacyPreviousName = storedPreviousName || (currentName !== LEGACY_DEFAULT_DB_NAME ? LEGACY_DEFAULT_DB_NAME : currentName);
   if (!legacyPreviousName || legacyPreviousName === currentName) {
     storage.setItem(DB_NAME_META_KEY, currentName);
     return false;

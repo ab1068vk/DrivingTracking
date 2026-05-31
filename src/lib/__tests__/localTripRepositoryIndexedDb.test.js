@@ -200,10 +200,10 @@ describe('localTripRepository IndexedDB migrations', () => {
       start_time: '2026-05-22T10:00:00.000Z',
     });
 
-    const database = fakeIndexedDb.databases.get('drivesense_mobile');
+    const database = fakeIndexedDb.databases.get('road_sage_mobile');
     const trips = database.stores.get('trips');
 
-    expect(DB_NAME).toBe('drivesense_mobile');
+    expect(DB_NAME).toBe('road_sage_mobile');
     expect(database.version).toBe(DB_VERSION);
     expect(trips.keyPath).toBe('id');
     expect(trips.indexes.has('start_time')).toBe(true);

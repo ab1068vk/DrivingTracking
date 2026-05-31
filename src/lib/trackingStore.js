@@ -4,6 +4,8 @@
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
+import { isValidLatLng } from '@/lib/mapDefaults';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
@@ -21,6 +23,8 @@ import {
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+const ACTIVE_TRIP_STORAGE_KEY = resolveStorageKey(ACTIVE_TRIP_KEY);
+const SETTINGS_STORAGE_KEY = resolveStorageKey(SETTINGS_KEY);
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
@@ -32,6 +36,22 @@ const settingsStorage = () => {
   } catch {
     return null;
   }
+};
+
+const readStorageWithLegacyFallback = (storage, key) => {
+  const currentKey = resolveStorageKey(key);
+  let raw = storage?.getItem(currentKey);
+  if (raw != null) return raw;
+
+  for (const legacyKey of legacyStorageKeysFor(key)) {
+    raw = storage?.getItem(legacyKey);
+    if (raw != null) {
+      storage?.setItem(currentKey, raw);
+      return raw;
+    }
+  }
+
+  return null;
 };
 
 const finiteNumber = (value) => {
@@ -119,7 +139,7 @@ const syncSettingsForNative = (settings) => {
     })
     .then((module) => {
       if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch(() => {});
+      module.Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized }).catch(() => {});
     })
     .catch(() => {});
 };
@@ -420,7 +440,7 @@ const sanitizeMapCenter = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const lat = Number(value.lat);
   const lng = Number(value.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  if (!isValidLatLng(lat, lng)) return null;
 
   return {
     lat,
@@ -573,6 +593,21 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
   return parkedLocation;
 }
 
+export function saveLastMapCenter({ lat, lng, tripId = null, source = 'tracking', updated_at = new Date().toISOString() } = {}) {
+  const settings = localSettings.get();
+  if (settings.store_last_map_center === false || !isValidLatLng(lat, lng)) return null;
+
+  const center = {
+    lat: Number(lat),
+    lng: Number(lng),
+    tripId,
+    source,
+    updated_at,
+  };
+  localSettings.update({ last_map_center: center });
+  return center;
+}
+
 // ─── Local Settings Store ──────────────────────────────────────────────────────
 export const localSettings = {
   async hydrateFromNative() {
@@ -581,14 +616,20 @@ export const localSettings = {
       if (!Capacitor.isNativePlatform()) return this.get();
 
       const { Preferences } = await import('@capacitor/preferences');
-      const { value } = await Preferences.get({ key: SETTINGS_KEY });
+      let { value } = await Preferences.get({ key: SETTINGS_STORAGE_KEY });
+      for (const legacyKey of legacyStorageKeysFor(SETTINGS_KEY)) {
+        if (value !== null) break;
+        const legacy = await Preferences.get({ key: legacyKey });
+        value = legacy.value;
+        if (value !== null) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value });
+      }
       if (!value) return this.get();
 
       const parsed = JSON.parse(value);
       const { settings: merged, changed } = migrateDefaultSettings(parsed);
       const serialized = JSON.stringify(merged);
-      localStorage.setItem(SETTINGS_KEY, serialized);
-      if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
+      localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+      if (changed) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
       return merged;
     } catch {
@@ -598,12 +639,12 @@ export const localSettings = {
   get() {
     try {
       const storage = settingsStorage();
-      const raw = storage?.getItem(SETTINGS_KEY);
+      const raw = readStorageWithLegacyFallback(storage, SETTINGS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         const { settings: merged, changed } = migrateDefaultSettings(parsed);
         if (changed) {
-          storage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+          storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
           syncSettingsForNative(merged);
         }
         syncSettingsForNative(merged);
@@ -616,7 +657,7 @@ export const localSettings = {
       }
       // New user: save defaults immediately so we can detect returning users
       const defaults = { ...DEFAULT_SETTINGS };
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
+      if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults));
       else memorySettings = defaults;
       syncSettingsForNative(defaults);
       return defaults;
@@ -627,7 +668,7 @@ export const localSettings = {
   set(data) {
     try {
       const storage = settingsStorage();
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(data));
+      if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(data));
       else memorySettings = data;
       syncSettingsForNative(data);
     } catch {}
@@ -662,7 +703,7 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 export const activeTripStore = {
   get() {
     try {
-      const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
+      const raw = readStorageWithLegacyFallback(localStorage, ACTIVE_TRIP_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -670,11 +711,12 @@ export const activeTripStore = {
   },
   set(trip) {
     try {
-      localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip));
+      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(trip));
     } catch {}
   },
   clear() {
-    localStorage.removeItem(ACTIVE_TRIP_KEY);
+    localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+    legacyStorageKeysFor(ACTIVE_TRIP_KEY).forEach((key) => localStorage.removeItem(key));
   },
   addPoint(point) {
     const trip = this.get();
