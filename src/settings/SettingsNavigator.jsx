@@ -6,6 +6,7 @@ import { SECTION_GROUPS, SettingsNav } from '@/features/settings/components/Sett
 const TrackingSettings = lazy(() => import('./sections/TrackingSettings').then((module) => ({ default: module.TrackingSettings })));
 const ScoringSettings = lazy(() => import('./sections/ScoringSettings').then((module) => ({ default: module.ScoringSettings })));
 const PrivacySettings = lazy(() => import('./sections/PrivacySettings').then((module) => ({ default: module.PrivacySettings })));
+const PrivacyZonesSettings = lazy(() => import('./PrivacyZonesSettings'));
 const VehicleSettings = lazy(() => import('./sections/VehicleSettings').then((module) => ({ default: module.VehicleSettings })));
 const UBISettings = lazy(() => import('./sections/UBISettings').then((module) => ({ default: module.UBISettings })));
 const AdvancedSettings = lazy(() => import('./sections/AdvancedSettings').then((module) => ({ default: module.AdvancedSettings })));
@@ -25,6 +26,11 @@ const SECTION_RENDERERS = [
     id: 'privacy',
     legacyIds: ['settings-privacy-data'],
     Component: PrivacySettings,
+  },
+  {
+    id: 'privacy-zones',
+    legacyIds: ['settings-privacy-zones'],
+    Component: PrivacyZonesSettings,
   },
   {
     id: 'vehicle',

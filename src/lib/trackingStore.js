@@ -23,9 +23,14 @@ import {
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+const PRIVACY_ZONES_KEY = 'road_sage_privacy_zones';
 const ACTIVE_TRIP_STORAGE_KEY = resolveStorageKey(ACTIVE_TRIP_KEY);
 const SETTINGS_STORAGE_KEY = resolveStorageKey(SETTINGS_KEY);
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
+const PRIVACY_ZONE_RADIUS_DEFAULT_M = 200;
+const PRIVACY_ZONE_RADIUS_MIN_M = 50;
+const PRIVACY_ZONE_RADIUS_MAX_M = 500;
+const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
@@ -58,6 +63,64 @@ const finiteNumber = (value) => {
   if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+};
+
+const isPrivacyZoneLatLng = (lat, lng) => {
+  const parsedLat = Number(lat);
+  const parsedLng = Number(lng);
+  return Number.isFinite(parsedLat) &&
+    Number.isFinite(parsedLng) &&
+    parsedLat >= -90 &&
+    parsedLat <= 90 &&
+    parsedLng >= -180 &&
+    parsedLng <= 180;
+};
+
+const clampPrivacyZoneRadius = (radius) => {
+  const value = Number(radius);
+  if (!Number.isFinite(value)) return PRIVACY_ZONE_RADIUS_DEFAULT_M;
+  return clampNumber(Math.round(value), PRIVACY_ZONE_RADIUS_MIN_M, PRIVACY_ZONE_RADIUS_MAX_M);
+};
+
+const normalizePreferencePrivacyZone = (zone) => {
+  if (!zone || typeof zone !== 'object' || Array.isArray(zone)) return null;
+  const lat = Number(zone.lat);
+  const lng = Number(zone.lng);
+  if (!isPrivacyZoneLatLng(lat, lng)) return null;
+
+  return {
+    name: String(zone.name || 'Private zone').trim().slice(0, 80) || 'Private zone',
+    lat,
+    lng,
+    radius: clampPrivacyZoneRadius(zone.radius),
+  };
+};
+
+const normalizePreferencePrivacyZones = (zones) => (
+  Array.isArray(zones)
+    ? zones.map(normalizePreferencePrivacyZone).filter(Boolean).slice(0, 20)
+    : []
+);
+
+const preferencesModule = async () => {
+  const { Preferences } = await import('@capacitor/preferences');
+  return Preferences;
+};
+
+const distanceMetersBetweenLatLng = (lat, lng, zone) => {
+  const zoneLat = Number(zone?.lat);
+  const zoneLng = Number(zone?.lng);
+  if (!isPrivacyZoneLatLng(lat, lng) || !isPrivacyZoneLatLng(zoneLat, zoneLng)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const phi1 = lat * Math.PI / 180;
+  const phi2 = zoneLat * Math.PI / 180;
+  const deltaPhi = (zoneLat - lat) * Math.PI / 180;
+  const deltaLambda = (zoneLng - lng) * Math.PI / 180;
+  const a = Math.sin(deltaPhi / 2) ** 2 +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
 };
 
 const defaultOsrmEndpoint = () => {
@@ -126,6 +189,34 @@ const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
       distanceMeters(location, zone) <= radiusM + PARKED_LOCATION_PRIVACY_GUARD_M;
   });
 };
+
+export async function getPrivacyZones() {
+  try {
+    const Preferences = await preferencesModule();
+    const { value } = await Preferences.get({ key: PRIVACY_ZONES_KEY });
+    return normalizePreferencePrivacyZones(value ? JSON.parse(value) : []);
+  } catch {
+    return [];
+  }
+}
+
+export async function savePrivacyZones(zones) {
+  const Preferences = await preferencesModule();
+  await Preferences.set({
+    key: PRIVACY_ZONES_KEY,
+    value: JSON.stringify(normalizePreferencePrivacyZones(zones)),
+  });
+}
+
+export async function isInPrivacyZone(lat, lng) {
+  const zones = await getPrivacyZones();
+  for (const zone of zones) {
+    if (distanceMetersBetweenLatLng(lat, lng, zone) <= zone.radius) {
+      return { inZone: true, zoneName: zone.name };
+    }
+  }
+  return { inZone: false, zoneName: null };
+}
 
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;

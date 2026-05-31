@@ -44,7 +44,7 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold">
                         <MapPin className="h-4 w-4 text-primary" />
-                        Privacy Zones
+                        Trip Map Privacy Zones
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">Mask sensitive places from maps, CSV exports, and backups.</div>
                     </div>

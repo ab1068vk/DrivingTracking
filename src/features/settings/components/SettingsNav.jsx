@@ -2,6 +2,7 @@ import {
   BarChart3,
   Bell,
   Car,
+  Lock,
   MapPin,
   Shield,
   SlidersHorizontal,
@@ -31,9 +32,16 @@ export const SECTION_GROUPS = [
   {
     id: 'privacy',
     label: 'Privacy & Data',
-    description: 'Privacy zones, export, import, retention',
+    description: 'Export, import, retention',
     icon: Shield,
     ids: ['settings-privacy-data'],
+  },
+  {
+    id: 'privacy-zones',
+    label: 'Privacy zones',
+    description: 'Parked-location privacy for maps',
+    icon: Lock,
+    ids: ['settings-privacy-zones'],
   },
   {
     id: 'notifications',
