@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BEST_WINDOW_MIN_TRIPS,
+  PERSONAL_BASELINE_INTERVAL_INSUFFICIENT_NOTE,
+  PERSONAL_BASELINE_INTERVAL_METHOD,
+  PERSONAL_BASELINE_MIXED_PROVENANCE_NOTE,
   PERSONAL_PERCENTILE_MIN_WEEKS,
   buildDrivingCoachInsights,
   computePersonalBaseline,
 } from '@/lib/tripInsights';
+import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 const trip = (startTime, score = 80, overrides = {}) => ({
   id: `trip-${startTime}`,
@@ -13,6 +17,7 @@ const trip = (startTime, score = 80, overrides = {}) => ({
   distance_km: 10,
   duration_seconds: 1800,
   score_overall: score,
+  score_provenance: { scoring_version: SCORING_VERSION },
   harsh_brakes_count: 0,
   rapid_accel_count: 0,
   sharp_turns_count: 0,
@@ -44,6 +49,54 @@ describe('trip insight evidence gates', () => {
     expect(oneWeek.percentile_label).toBe('Percentile among your recorded weeks');
     expect(fourWeeks.weeks_analyzed).toBeGreaterThanOrEqual(PERSONAL_PERCENTILE_MIN_WEEKS);
     expect(fourWeeks.percentile).not.toBeNull();
+  });
+
+  it('uses a bounded percentile interval for personal baseline scores', () => {
+    vi.setSystemTime(new Date('2026-05-25T12:00:00.000Z'));
+
+    const scores = [75, 80, 82, 84, 86, 88, 90, 92, 95, 100];
+    const baseline = computePersonalBaseline(scores.map((score, index) => (
+      trip(`2026-05-${String(24 - index).padStart(2, '0')}T08:00:00.000Z`, score)
+    )));
+    const sparse = computePersonalBaseline(scores.slice(0, 9).map((score, index) => (
+      trip(`2026-05-${String(24 - index).padStart(2, '0')}T08:00:00.000Z`, score)
+    )));
+
+    expect(baseline.baseline_confidence_interval).toEqual({ lower: 75, upper: 100 });
+    expect(baseline.baseline_confidence_interval_label).toBe('75-100');
+    expect(baseline.baseline_confidence_interval_method).toBe(PERSONAL_BASELINE_INTERVAL_METHOD);
+    expect(sparse.baseline_confidence_interval).toBeNull();
+    expect(sparse.baseline_confidence_interval_note).toBe(PERSONAL_BASELINE_INTERVAL_INSUFFICIENT_NOTE);
+  });
+
+  it('prefers current scoring provenance and labels mixed fallback baselines', () => {
+    vi.setSystemTime(new Date('2026-05-25T12:00:00.000Z'));
+
+    const currentTrips = Array.from({ length: 10 }, (_, index) => (
+      trip(`2026-05-${String(24 - index).padStart(2, '0')}T08:00:00.000Z`, 80 + index)
+    ));
+    const legacyTrips = Array.from({ length: 10 }, (_, index) => (
+      trip(`2026-05-${String(14 - index).padStart(2, '0')}T08:00:00.000Z`, 20, {
+        score_provenance: { scoring_version: '2.0.0' },
+      })
+    ));
+    const filtered = computePersonalBaseline([...currentTrips, ...legacyTrips]);
+
+    expect(filtered.baseline_score_version).toBe(SCORING_VERSION);
+    expect(filtered.baseline_trip_count).toBe(10);
+    expect(filtered.baseline_avg).toBeGreaterThan(80);
+    expect(filtered.baseline_includes_older_scores).toBe(false);
+
+    const mixed = computePersonalBaseline([
+      ...currentTrips.slice(0, 4),
+      ...legacyTrips,
+    ]);
+
+    expect(mixed.baseline_score_version).toBe('mixed');
+    expect(mixed.baseline_includes_older_scores).toBe(true);
+    expect(mixed.baseline_label).toBe(PERSONAL_BASELINE_MIXED_PROVENANCE_NOTE);
+    expect(mixed.baseline_confidence_interval).toBeNull();
+    expect(mixed.baseline_confidence_interval_note).toBe(PERSONAL_BASELINE_MIXED_PROVENANCE_NOTE);
   });
 
   it('requires minimum trips before selecting a best driving window', () => {

@@ -1,3 +1,5 @@
+import { SCORING_VERSION } from './scoringVersion.generated.js';
+
 export const CALIBRATION_STATUSES = Object.freeze({
   PROVISIONAL: 'provisional',
   CALIBRATED: 'calibrated',
@@ -9,9 +11,12 @@ export const SCORE_OUTPUT_CALIBRATION_STATUSES = Object.freeze({
   CALIBRATED: 'calibrated',
 });
 
+export { SCORING_VERSION };
+
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness', 'score_eco'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];
 const ubiMetrics = ['ubi_score'];
+export const LANE_CHANGING_SAFETY_WEIGHT = 0.05;
 
 export const PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS = Object.freeze({
   process_id: 'penalty-scale-factor-outcome-calibration-v1',
@@ -62,7 +67,7 @@ export const PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS = Object.freeze({
       'replace PENALTY_SCALE_FACTOR value with the fitted candidate',
       'record dataset_id, eligible_labeled_trip_count, validation_mae, validation_rmse, and calibration_date',
       'change SCORING_CONSTANTS.PENALTY_SCALE_FACTOR.calibration_status to calibrated',
-      'increment SCORING_VERSION so older approximate scores can be distinguished from calibrated rescored trips',
+      'regenerate the content-derived SCORING_VERSION so older approximate scores can be distinguished from calibrated rescored trips',
       'keep score displays approximate for any legacy/unrescored trips whose score_provenance is still approximate',
     ]),
   }),
@@ -117,12 +122,31 @@ const constant = (value, {
   ...(calibration_metadata ? { calibration_metadata: Object.freeze(calibration_metadata) } : {}),
 });
 
+const defaultHourlyRiskProfileValues = Object.freeze([
+  60, 60, 60, 60, 60, 20, 20, 35, 35, 35, 20, 20,
+  20, 20, 20, 20, 40, 40, 40, 20, 20, 20, 60, 60,
+]);
+
+export const DEFAULT_HOURLY_RISK_PROFILE = constant(defaultHourlyRiskProfileValues, {
+  label: 'Default hourly risk profile',
+  domain: 'historical_context',
+  calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
+  calibration_note: 'Global default fallback used only when a personal hourly baseline is unavailable. The profile is not geographically, seasonally, or outcome calibrated.',
+  affected_metrics: routeRiskMetrics,
+  calibration_metadata: Object.freeze({
+    ...pendingCalibrationMetadata,
+    profile_version: 'default-hourly-risk-profile-v1',
+    replacement_policy: 'Change this constant through SCORING_VERSION-gated scoring releases until build-time or backend-provided regional profiles are available.',
+  }),
+});
+
 /**
  * Single source of truth for domain-significant scoring, evidence, and risk
  * model inputs. "Cited" means an external rationale is documented; it does
  * not claim outcome validation unless the status is changed to "calibrated".
  */
 export const SCORING_CONSTANTS = Object.freeze({
+  DEFAULT_HOURLY_RISK_PROFILE,
   NIGHT_START_HOUR: constant(22, { label: 'Fallback night start hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
   NIGHT_END_HOUR: constant(5, { label: 'Fallback night end hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
   PENALTY_SCALE_FACTOR: constant(40, {
@@ -140,7 +164,15 @@ export const SCORING_CONSTANTS = Object.freeze({
     label: 'Fatigue to Safety penalty scale',
     domain: 'trip_score',
     calibration_status: CALIBRATION_STATUSES.CITED,
-    calibration_note: 'Williamson & Feyer (Occup Environ Med, 2000) found 17-19 hours awake can match or exceed 0.05% BAC-equivalent impairment; max fatigue proxy maps conservatively to 15 raw Safety penalty points.',
+    calibration_note: 'Williamson & Feyer (Occup Environ Med, 2000) found 17-19 hours awake can match or exceed 0.05% BAC-equivalent impairment; max fatigue proxy maps conservatively to 15 Safety score deduction points.',
+    affected_metrics: ['score_safety', 'score_overall'],
+    calibration_metadata: pendingCalibrationMetadata,
+  }),
+  FATIGUE_SAFETY_MAX_PENALTY: constant(15, {
+    label: 'Fatigue Safety deduction cap',
+    domain: 'trip_score',
+    calibration_status: CALIBRATION_STATUSES.CITED,
+    calibration_note: 'Caps the fatigue proxy as a flat Safety score deduction after event-rate normalization, preventing trip distance from diluting or amplifying the fatigue effect.',
     affected_metrics: ['score_safety', 'score_overall'],
     calibration_metadata: pendingCalibrationMetadata,
   }),
@@ -174,11 +206,12 @@ export const SCORING_CONSTANTS = Object.freeze({
     phone_use: { low: 5, medium: 12, high: 20 },
   }), { label: 'Driving event penalty points', domain: 'trip_score', calibration_note: 'Event deductions are product heuristics pending outcome calibration.', affected_metrics: scoreMetrics }),
   OVERALL_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ safety: 0.35, smoothness: 0.30, eco: 0.20, intersection: 0.15 }), { label: 'Overall score blend weights', domain: 'trip_score', calibration_note: 'Composite score weighting policy.', affected_metrics: ['score_overall'] }),
-  SAFETY_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.57, stopStart: 0.05, braking: 0.15, compliance: 0.10 }), { label: 'Safety score blend weights', domain: 'trip_score', calibration_note: 'Composite Safety weighting policy; phone-use share is recorded separately.', affected_metrics: ['score_safety', 'score_overall'] }),
+  LANE_CHANGING_SAFETY_WEIGHT: constant(LANE_CHANGING_SAFETY_WEIGHT, { label: 'Lane-changing Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional Safety blend share for lane-changing rate and simultaneous-braking evidence. GPS-only confidence applies a 0.7 weight multiplier.', affected_metrics: ['score_safety', 'score_overall'] }),
+  SAFETY_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.52, stopStart: 0.05, braking: 0.15, compliance: 0.10, laneChanging: LANE_CHANGING_SAFETY_WEIGHT }), { label: 'Safety score blend weights', domain: 'trip_score', calibration_note: 'Composite Safety weighting policy; phone-use share is recorded separately.', affected_metrics: ['score_safety', 'score_overall'] }),
   SMOOTHNESS_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.45, jerk: 0.25, speedVariability: 0.10, brakeOnset: 0.10, cornering: 0.10 }), { label: 'Smoothness score blend weights', domain: 'trip_score', calibration_note: 'Composite Smoothness weighting policy.', affected_metrics: ['score_smoothness', 'score_overall'] }),
   ECO_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.40, ecoDriving: 0.40, fuelBand: 0.20 }), { label: 'Eco score blend weights', domain: 'trip_score', calibration_note: 'Composite Eco weighting policy.', affected_metrics: ['score_eco', 'score_overall'] }),
   DEFENSIVE_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ smoothBraking: 0.30, intersection: 0.20, speedVariability: 0.20, stopStart: 0.30 }), { label: 'Defensive-driving blend weights', domain: 'trip_score', calibration_note: 'GPS behavior estimate weighting policy.', affected_metrics: ['defensive_driving_score'] }),
-  SPEED_CREEP_ECO_PENALTY_POINTS: constant(Object.freeze({ low: 2, medium: 5, high: 10 }), { label: 'Speed-creep Eco deductions', domain: 'trip_score', calibration_note: 'GPS diagnostic score deductions.', affected_metrics: ['score_eco', 'score_overall'] }),
+  SPEED_CREEP_ECO_PENALTY_POINTS: constant(Object.freeze({ low: 2, medium: 5, high: 10 }), { label: 'Speed-creep Eco deductions', domain: 'trip_score', calibration_note: 'GPS-derived Eco deductions applied through the normalized base Eco penalty; the exposed speed-creep diagnostic score is rate-normalized per 10 km.', affected_metrics: ['score_eco', 'score_overall'] }),
   PHONE_USE_RISK_DEDUCTION_POINTS: constant(Object.freeze({ none: 0, low: 10, medium: 35, high: 55 }), { label: 'Phone-use risk deductions', domain: 'trip_score', calibration_note: 'Confirmed signal score deductions.', affected_metrics: ['score_safety', 'score_overall'] }),
   WEATHER_SCORE_PENALTY_CAP: constant(12, { label: 'Weather score deduction cap', domain: 'weather_score', calibration_note: 'Weather-context adjustment ceiling.', affected_metrics: ['score_safety', 'score_overall'] }),
   WEATHER_EVENT_PENALTY_SCALE: constant(6, { label: 'Weather event deduction scale', domain: 'weather_score', calibration_note: 'Weather-context adjustment multiplier.', affected_metrics: ['score_safety', 'score_overall'] }),

@@ -72,7 +72,7 @@ describe('metric registry', () => {
     expect(headers.filter((header) => !CSV_METRIC_COLUMNS[header] && !CSV_RAW_COLUMNS.includes(header))).toEqual([]);
     expect(lines[1]).toContain('"Metric Metadata"');
     expect(lines[1]).toContain('Safety Pattern Estimate: Penalises harsh braking');
-    expect(lines[1]).toContain('gps_events; speed_limit_osm; phone_use_usage_access');
+    expect(METRIC_REGISTRY.score_safety.dataSources).toEqual(expect.arrayContaining(['obd_bluetooth']));
   });
 
   it('prefixes exported score values as estimates', () => {

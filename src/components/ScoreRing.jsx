@@ -12,12 +12,13 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
   const provisional = !unavailable && (scoreProvenance ? isApproximateScoreOutput(scoreProvenance) : approximate !== false);
   const radius = (size - strokeWidth * 2) / 2;
   const circumference = 2 * Math.PI * radius;
-  const progress = unavailable ? 100 : Math.max(0, Math.min(100, Number(score) || 0));
+  const progress = unavailable ? 0 : Math.max(0, Math.min(100, Number(score) || 0));
   const offset = circumference - (progress / 100) * circumference;
   const scoredColor = getScoreColor(Number(score) || 0);
   const color = unavailable ? 'text-muted-foreground' : scoredColor.color;
   const scoreLabel = unavailable ? 'Unavailable' : scoredColor.label;
-  const strokeColor = unavailable ? 'hsl(var(--muted-foreground))' : scoredColor.stroke;
+  const strokeColor = unavailable ? 'hsl(var(--muted-foreground) / 0.55)' : scoredColor.stroke;
+  const trackClassName = unavailable ? 'text-muted-foreground/25' : 'text-secondary';
   const evidenceText = {
     high: 'high evidence',
     developing: 'limited evidence',
@@ -37,23 +38,25 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
             fill="none"
             stroke="currentColor"
             strokeWidth={strokeWidth}
-            strokeDasharray={provisional ? '4 4' : undefined}
-            className="text-secondary"
+            strokeDasharray={unavailable ? '2 5' : provisional ? '4 4' : undefined}
+            className={trackClassName}
           />
           {/* Progress arc */}
-          <motion.circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke={strokeColor}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeDasharray={provisional ? '5 4' : circumference}
-            initial={animated ? { strokeDashoffset: circumference } : { strokeDashoffset: offset }}
-            animate={{ strokeDashoffset: offset }}
-            transition={{ duration: 1.2, ease: 'easeOut', delay: 0.1 }}
-          />
+          {!unavailable && (
+            <motion.circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth={strokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={provisional ? '5 4' : circumference}
+              initial={animated ? { strokeDashoffset: circumference } : { strokeDashoffset: offset }}
+              animate={{ strokeDashoffset: offset }}
+              transition={{ duration: 1.2, ease: 'easeOut', delay: 0.1 }}
+            />
+          )}
         </svg>
 
         {/* Score text */}

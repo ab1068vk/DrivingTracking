@@ -4,7 +4,9 @@ import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
-const OSRM_TIMEOUT_MS = 12000;
+export const DEFAULT_OSRM_TIMEOUT_MS = 12000;
+export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || DEFAULT_OSRM_TIMEOUT_MS;
+const OSRM_HEALTH_TIMEOUT_MS = 5000;
 
 const round = (value, places = 5) => +Number(value).toFixed(places);
 const isValidRoutePoint = (point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng);
@@ -122,6 +124,57 @@ function osrmMatchUrl(points = [], baseUrl) {
   return url.toString();
 }
 
+function osrmHealthCheckUrl(baseUrl) {
+  const url = new URL('/route/v1/driving/13.388860,52.517037;13.397634,52.529407', baseUrl);
+  url.searchParams.set('overview', 'false');
+  url.searchParams.set('steps', 'false');
+  return url.toString();
+}
+
+export async function checkOsrmEndpointHealth(endpoint) {
+  let url;
+  try {
+    url = new URL(String(endpoint || '').trim());
+  } catch {
+    return {
+      status: 'unreachable',
+      ok: false,
+      checked_at: new Date().toISOString(),
+      error: 'The OSRM endpoint is not a valid URL.',
+    };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OSRM_HEALTH_TIMEOUT_MS);
+    const response = await fetch(osrmHealthCheckUrl(url.toString()), { signal: controller.signal })
+      .finally(() => clearTimeout(timeout));
+    if (!response.ok) {
+      return {
+        status: 'unreachable',
+        ok: false,
+        checked_at: new Date().toISOString(),
+        error: `OSRM health check failed (${response.status}).`,
+      };
+    }
+    return {
+      status: 'connected',
+      ok: true,
+      checked_at: new Date().toISOString(),
+      error: '',
+    };
+  } catch (error) {
+    return {
+      status: 'unreachable',
+      ok: false,
+      checked_at: new Date().toISOString(),
+      error: error?.name === 'AbortError'
+        ? 'OSRM health check timed out.'
+        : error?.message || 'OSRM health check failed.',
+    };
+  }
+}
+
 function nearestMatchedPoint(original, geometry = []) {
   if (!geometry.length) return null;
   let best = null;
@@ -134,11 +187,16 @@ function nearestMatchedPoint(original, geometry = []) {
   return best;
 }
 
-async function fetchMatchedSegment(segment = [], endpoint) {
+const osrmTimeoutMs = (settings = {}) => {
+  const userTimeout = Number(settings.osrm_timeout_ms);
+  return Number.isFinite(userTimeout) && userTimeout > 0 ? userTimeout : OSRM_TIMEOUT_MS;
+};
+
+async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIMEOUT_MS) {
   const sampled = samplePoints(segment);
   const response = await withRetry('osrm-map-matching', async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     return fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
       .finally(() => clearTimeout(timeout));
   });
@@ -187,6 +245,24 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
+  if (isOsrmDemoUrl) {
+    return {
+      routePoints,
+      status: 'public_demo_blocked',
+      provider: 'osrm',
+      error: 'The public OSRM demo is reference-only in Road Sage. Configure a private or trusted OSRM endpoint before route snapping.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (settings.osrm_data_sharing_consented !== true) {
+    return {
+      routePoints,
+      status: 'needs_consent',
+      provider: 'osrm',
+      error: 'Route snapping needs OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
   const { segments, mergedTemplate, gapCount } = splitAtNullPoints(routePoints);
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
   const validCount = segments.reduce((count, segment) => count + segment.length, 0);
@@ -198,6 +274,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
 
   try {
     const endpoint = settings.osrm_map_matching_url;
+    const timeoutMs = osrmTimeoutMs(settings);
     try {
       new URL(endpoint);
     } catch {
@@ -215,7 +292,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
     await Promise.all(segments.map(async (segment, index) => {
       if (segment.length < 2) return;
       try {
-        segmentResults[index] = await fetchMatchedSegment(segment, endpoint);
+        segmentResults[index] = await fetchMatchedSegment(segment, endpoint, timeoutMs);
       } catch (error) {
         failures.push(error);
       }

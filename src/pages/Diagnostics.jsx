@@ -34,9 +34,13 @@ import {
   getTrackingDiagnostics,
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
-import { localSettings } from '@/lib/trackingStore';
+import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import { formatDateTime } from '@/lib/tripEngine';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
+import {
+  buildMotionSensorDiagnostics,
+  requestMotionSensorPermission,
+} from '@/lib/sensorFusionModel';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -110,13 +114,42 @@ function HealthIcon({ id }) {
   return <Icon className="h-4 w-4" />;
 }
 
+function yesNo(value) {
+  return value ? 'Yes' : 'No';
+}
+
+function relativeAge(value) {
+  const timestamp = value ? new Date(value).getTime() : NaN;
+  if (!Number.isFinite(timestamp)) return 'never';
+  const diffMs = Math.max(0, Date.now() - timestamp);
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days >= 1) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(diffMs / 3_600_000);
+  if (hours >= 1) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const minutes = Math.floor(diffMs / 60_000);
+  return minutes <= 1 ? 'just now' : `${minutes} minutes ago`;
+}
+
+function motionEvidenceLabel(status) {
+  const labels = {
+    current_trip: 'Current trip received IMU samples',
+    latest_trip: 'Latest trip received IMU samples',
+    current_trip_pending: 'Current trip has no saved IMU summary yet',
+    latest_trip_missing: 'Latest trip has no IMU samples',
+    none: 'No trip evidence yet',
+  };
+  return labels[status] || labels.none;
+}
+
 export default function Diagnostics() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
   const [nativeDiagnostics, setNativeDiagnostics] = useState({ enabled: false, events: [] });
   const [webDiagnostics, setWebDiagnostics] = useState(() => getTrackingDiagnostics());
+  const [activeTrip, setActiveTrip] = useState(() => activeTripStore.get());
   const [refreshing, setRefreshing] = useState(false);
+  const [motionPermissionBusy, setMotionPermissionBusy] = useState(false);
   const [testDataBusy, setTestDataBusy] = useState(false);
   const [testDataNotice, setTestDataNotice] = useState('');
 
@@ -138,6 +171,7 @@ export default function Diagnostics() {
   const refresh = async () => {
     setRefreshing(true);
     setWebDiagnostics(getTrackingDiagnostics());
+    setActiveTrip(activeTripStore.get());
     try {
       const [permissions, native, battery, nativeLog] = await Promise.all([
         getPermissionStatus(),
@@ -149,6 +183,7 @@ export default function Diagnostics() {
       setNativeStatus(native);
       setBatteryStatus(battery);
       setNativeDiagnostics(nativeLog || { enabled: false, events: [] });
+      setActiveTrip(activeTripStore.get());
       await Promise.all([
         refetch(),
         import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),
@@ -180,11 +215,28 @@ export default function Diagnostics() {
   const parkingTimeline = useMemo(() => buildParkingTimeline(latestTrip), [latestTrip]);
   const settings = localSettings.get();
   const backgroundAutoEnabled = settings.tracking_mode === 'background_auto' && !settings.tracking_paused;
+  const osrmLastReachable = settings.osrm_last_reachable_at ? relativeAge(settings.osrm_last_reachable_at) : 'never';
+  const motionDiagnostics = useMemo(() => buildMotionSensorDiagnostics({
+    permissionState: permissionStatus?.motionSensors,
+    settings,
+    currentTrip: activeTrip,
+    latestTrip,
+  }), [permissionStatus?.motionSensors, settings, activeTrip, latestTrip]);
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
     if (isAndroid()) await clearNativeDiagnostics().catch(() => {});
     await refresh();
+  };
+
+  const requestMotionPermission = async () => {
+    setMotionPermissionBusy(true);
+    try {
+      await requestMotionSensorPermission();
+      await refresh();
+    } finally {
+      setMotionPermissionBusy(false);
+    }
   };
 
   const armNative = async () => {
@@ -307,6 +359,95 @@ export default function Diagnostics() {
             </motion.div>
           ))}
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">OSRM Route Snapping</h2>
+            <div className="mt-1 text-xs text-muted-foreground">
+              OSRM last reachable: {osrmLastReachable}. {settings.osrm_health_status === 'unreachable' && settings.osrm_last_health_error ? settings.osrm_last_health_error : 'Health checks run when the endpoint is saved in Settings.'}
+            </div>
+          </div>
+          <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${
+            settings.osrm_health_status === 'connected'
+              ? statusStyle.good
+              : settings.osrm_health_status === 'unreachable'
+                ? statusStyle.bad
+                : statusStyle.unknown
+          }`}>
+            {settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true
+              ? settings.osrm_health_status || 'not checked'
+              : 'not configured'}
+          </span>
+        </div>
+      </section>
+
+      <section>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-secondary">
+                <SlidersHorizontal className="h-4 w-4" />
+              </div>
+              <div>
+                <h2 className="font-semibold">Motion Sensor</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  IMU evidence used for sensor fusion, harsh-event enrichment, and possible incident detection.
+                </p>
+              </div>
+            </div>
+          </div>
+          <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${motionDiagnostics.crashDetectionActive ? statusStyle.good : statusStyle.warn}`}>
+            Crash detection: {motionDiagnostics.crashDetectionActive ? 'active' : 'inactive'}
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Sensor available</div>
+            <div className="mt-1 text-sm font-semibold">{yesNo(motionDiagnostics.sensorAvailable)}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Permission</div>
+            <div className="mt-1 text-sm font-semibold capitalize">{motionDiagnostics.permissionState}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Trip IMU samples</div>
+            <div className="mt-1 text-sm font-semibold">{motionEvidenceLabel(motionDiagnostics.evidenceSource)}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Sample quality</div>
+            <div className="mt-1 text-sm font-semibold capitalize">
+              {motionDiagnostics.sampleCount} samples / {motionDiagnostics.quality}
+            </div>
+          </div>
+        </div>
+
+        {!motionDiagnostics.crashDetectionActive && (
+          <div className="mt-4 flex flex-col gap-3 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-200 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div>
+                <div className="font-semibold">
+                  Crash detection is inactive because {motionDiagnostics.inactiveReasons.join(', ') || 'motion readiness is unknown'}.
+                </div>
+                <div className="mt-1 text-xs">
+                  {motionDiagnostics.supportNote || 'Road Sage needs device motion samples before it can evaluate impact-like movement.'}
+                </div>
+              </div>
+            </div>
+            {motionDiagnostics.sensorAvailable && motionDiagnostics.permissionState !== 'granted' && (
+              <button
+                onClick={requestMotionPermission}
+                disabled={motionPermissionBusy}
+                className="inline-flex shrink-0 items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {motionPermissionBusy ? 'Requesting...' : 'Request permission'}
+              </button>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">

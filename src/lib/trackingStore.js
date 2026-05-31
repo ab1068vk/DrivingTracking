@@ -7,7 +7,10 @@ import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
+import { ECO_DEFAULTS } from '@/lib/tripEngine';
+import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -21,7 +24,7 @@ const LAST_PARKED_KEY = 'drivesense_last_parked';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 6;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
 
 const settingsStorage = () => {
   try {
@@ -36,6 +39,46 @@ const finiteNumber = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
+
+const defaultOsrmEndpoint = () => {
+  const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL || '').trim();
+  if (!value || isPublicOsrmDemoUrl(value)) return '';
+  try {
+    return new URL(value).toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+};
+
+const defaultOsrmTimeoutMs = () => {
+  const value = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? clampNumber(value, 5000, 30000) : 12000;
+};
+
+const ecoMultiplierMissingOrZero = (value) => {
+  if (value == null || value === '') return true;
+  const number = Number(value);
+  return !Number.isFinite(number) || number <= 0;
+};
+
+function repairEcoScoringSettings(settings, source, sourceValues = settings) {
+  if (!settings || typeof settings !== 'object') return false;
+  const cruiseInvalid = ecoMultiplierMissingOrZero(sourceValues?.eco_cruise_score_multiplier);
+  const idleInvalid = ecoMultiplierMissingOrZero(sourceValues?.eco_idle_penalty_multiplier);
+  if (!cruiseInvalid || !idleInvalid) return false;
+
+  settings.eco_cruise_score_multiplier = ECO_DEFAULTS.CRUISE_SCORE_MULTIPLIER;
+  settings.eco_idle_penalty_multiplier = ECO_DEFAULTS.IDLE_PENALTY_MULTIPLIER;
+  if (settings.eco_idle_max_penalty == null || settings.eco_idle_max_penalty === '') {
+    settings.eco_idle_max_penalty = ECO_DEFAULTS.IDLE_MAX_PENALTY;
+  }
+
+  logError('settings_eco_threshold_repair', new Error('Eco scoring settings restored to defaults during settings migration.'), {
+    migration_note: 'Restored eco cruise and idle multipliers from ECO_DEFAULTS because both were zero or missing.',
+    source,
+  });
+  return true;
+}
 
 const distanceMeters = (a, b) => {
   const aLat = finiteNumber(a?.lat);
@@ -125,6 +168,7 @@ export const DEFAULT_SETTINGS = {
   threshold_heading_drift_std_degs: scoringValue('HEADING_DRIFT_STD_DEG'),
   threshold_phone_proxy_oscillations: scoringValue('PHONE_MICRO_STEER_COUNT'),
   phone_use_detection_enabled: true,
+  lane_change_score_enabled: true,
   phone_usage_access_granted: false,
   phone_use_live_alert_enabled: true,
   phone_use_show_on_map: true,
@@ -166,8 +210,16 @@ export const DEFAULT_SETTINGS = {
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
   map_matching_enabled: false,
-  osrm_map_matching_url: '',
+  osrm_map_matching_url: defaultOsrmEndpoint(),
   osrm_public_demo_consent_at: '',
+  osrm_data_sharing_consented: false,
+  osrm_data_sharing_consented_at: '',
+  osrm_health_status: '',
+  osrm_last_health_checked_at: '',
+  osrm_last_reachable_at: '',
+  osrm_last_health_error: '',
+  osrm_timeout_ms: defaultOsrmTimeoutMs(),
+  last_map_center: null,
   predictive_route_risk_enabled: true,
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
@@ -252,11 +304,12 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.notif_heading_drift_alert_enabled = parsed.notif_drowsy_alert_enabled;
   }
   legacyProxyKeys.forEach((key) => delete merged[key]);
+  const ecoSettingsRepaired = repairEcoScoringSettings(merged, 'default_settings_migration');
 
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
@@ -303,6 +356,7 @@ const IMPORT_NUMBER_RANGES = {
   weekly_goal_max_night_km: [0, 10000],
   notif_inactive_nudge_days: [1, 365],
   notif_min_score_for_post_trip: [0, 100],
+  osrm_timeout_ms: [5000, 30000],
   co2_baseline_kg_per_100km: [0, 50],
   default_ev_kwh_per_100km: [5, 40],
   grid_co2_kg_per_kwh: [0, 2],
@@ -327,6 +381,12 @@ const IMPORT_ENUMS = {
 const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_map_matching_url',
   'osrm_public_demo_consent_at',
+  'osrm_data_sharing_consented',
+  'osrm_data_sharing_consented_at',
+  'osrm_health_status',
+  'osrm_last_health_checked_at',
+  'osrm_last_reachable_at',
+  'osrm_last_health_error',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -355,6 +415,21 @@ const sanitizeImportedPrivacyZones = (zones) => (
       })
     : []
 );
+
+const sanitizeMapCenter = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const lat = Number(value.lat);
+  const lng = Number(value.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+
+  return {
+    lat,
+    lng,
+    ...(typeof value.tripId === 'string' ? { tripId: value.tripId.slice(0, 120) } : {}),
+    ...(typeof value.source === 'string' ? { source: value.source.slice(0, 80) } : {}),
+    ...(typeof value.updated_at === 'string' ? { updated_at: value.updated_at.slice(0, 80) } : {}),
+  };
+};
 
 /**
  * @param {Record<string, any>} raw Settings imported from backup or user storage.
@@ -390,6 +465,12 @@ export function sanitizeImportedSettings(raw = {}) {
       return;
     }
 
+    if (key === 'last_map_center') {
+      const center = sanitizeMapCenter(value);
+      if (center) sanitized.last_map_center = center;
+      return;
+    }
+
     if (IMPORT_ENUMS[key]) {
       if (IMPORT_ENUMS[key].includes(value)) sanitized[key] = value;
       return;
@@ -417,6 +498,7 @@ export function sanitizeImportedSettings(raw = {}) {
       if (typeof value === 'string') sanitized[key] = value.slice(0, 500);
     }
   });
+  repairEcoScoringSettings(sanitized, 'backup_settings_import', normalizedRaw);
 
   return sanitized;
 }
@@ -429,6 +511,22 @@ export function validateSettingsPatch(patch = {}) {
 
   Object.entries(patch).forEach(([key, value]) => {
     if (!Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key)) return;
+    if (key === 'last_map_center') {
+      if (value !== null && !sanitizeMapCenter(value)) errors.push('last_map_center must contain valid lat and lng coordinates.');
+      return;
+    }
+    if (key === 'osrm_map_matching_url') {
+      const endpoint = String(value || '').trim();
+      if (!endpoint) return;
+      try {
+        new URL(endpoint);
+      } catch {
+        errors.push('osrm_map_matching_url must be a valid URL.');
+        return;
+      }
+      if (isPublicOsrmDemoUrl(endpoint)) errors.push('Use a private or trusted OSRM endpoint; the public OSRM demo cannot be saved as a route-snapping endpoint.');
+      return;
+    }
     if (SETTINGS_ENUMS[key] && !SETTINGS_ENUMS[key].includes(value)) {
       errors.push(`${key} must be one of: ${SETTINGS_ENUMS[key].join(', ')}.`);
       return;

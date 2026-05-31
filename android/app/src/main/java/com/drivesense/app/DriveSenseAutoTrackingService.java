@@ -11,6 +11,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.location.Location;
 import android.os.Build;
 import android.os.IBinder;
@@ -42,7 +46,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Locale;
 
-public class DriveSenseAutoTrackingService extends Service {
+public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
     static final String ACTION_STOP = "com.drivesense.app.action.STOP_NATIVE_AUTO";
     static final String ACTION_END_TRIP = "com.drivesense.app.action.END_NATIVE_TRIP";
@@ -117,13 +121,20 @@ public class DriveSenseAutoTrackingService extends Service {
     private static final double SUSTAINED_TURN_HEADING_CHANGE_DEG = 35.0d;
     private static final float TTS_SPEECH_RATE = 0.95f;
     private static final long MAX_TERMINAL_IDLE_SECONDS = 1800L;
+    private static final int MAX_NATIVE_MOTION_SAMPLES = 5000;
+    private static final long MOTION_SAMPLE_MIN_INTERVAL_MS = 100L;
+    private static final long MOTION_AXIS_FRESH_MS = 500L;
 
     private ActivityRecognitionClient activityClient;
     private FusedLocationProviderClient locationClient;
+    private SensorManager sensorManager;
+    private Sensor linearAccelerationSensor;
+    private Sensor gyroscopeSensor;
     private PendingIntent activityIntent;
     private LocationCallback locationCallback;
     private JSONArray activePoints;
     private JSONArray activeTimeline;
+    private JSONArray activeMotionSamples;
     private long activeStartMs = 0L;
     private long stillSinceMs = 0L;
     private long nonVehicleSinceMs = 0L;
@@ -152,6 +163,15 @@ public class DriveSenseAutoTrackingService extends Service {
     private int lastActivityType = DetectedActivity.UNKNOWN;
     private int lastActivityConfidence = 0;
     private long lastActivityUpdateMs = 0L;
+    private float lastAx = Float.NaN;
+    private float lastAy = Float.NaN;
+    private float lastAz = Float.NaN;
+    private float lastGx = Float.NaN;
+    private float lastGy = Float.NaN;
+    private float lastGz = Float.NaN;
+    private long lastLinearSensorMs = 0L;
+    private long lastGyroSensorMs = 0L;
+    private long lastMotionSampleMs = 0L;
 
     @Override
     public void onCreate() {
@@ -160,6 +180,11 @@ public class DriveSenseAutoTrackingService extends Service {
         ensureSafetyAlertsChannel();
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
+        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        if (sensorManager != null) {
+            linearAccelerationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+            gyroscopeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        }
         activityIntent = PendingIntent.getBroadcast(
             this,
             ACTIVITY_RECOGNITION_REQUEST_CODE,
@@ -217,6 +242,7 @@ public class DriveSenseAutoTrackingService extends Service {
         finishTrip("service_destroyed", false);
         removeActivityUpdates();
         stopLocationUpdates();
+        stopMotionSensors();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
         if (textToSpeech != null) {
             textToSpeech.stop();
@@ -461,6 +487,7 @@ public class DriveSenseAutoTrackingService extends Service {
         activeStartMs = triggerMs;
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
+        activeMotionSamples = new JSONArray();
         hasPermissionLoss = false;
         previousLocation = null;
         armedPreviousLocation = null;
@@ -482,6 +509,7 @@ public class DriveSenseAutoTrackingService extends Service {
         candidateNearParked = isInParkingCooldown(triggerLocation);
         candidateConfirmedMs = 0L;
         recentHeadings.clear();
+        resetMotionState();
         if (triggerLocation != null) {
             double triggerSpeedKmh = triggerLocation.hasSpeed()
                 ? Math.max(0d, triggerLocation.getSpeed() * 3.6d)
@@ -498,6 +526,7 @@ public class DriveSenseAutoTrackingService extends Service {
             recordDiagnostic("candidate_hidden_parking_cooldown", "Candidate hidden due to parking cooldown zone", "near_last_parked_location", lastKnownSpeedKmh, 0L, 0d);
         }
         updateNotification(candidateNearParked ? "Checking movement near parked car" : "Checking movement");
+        startMotionSensors();
         startTripLocationUpdates();
     }
 
@@ -785,6 +814,7 @@ public class DriveSenseAutoTrackingService extends Service {
         recordDiagnostic("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
         activePoints = null;
         activeTimeline = null;
+        activeMotionSamples = null;
         hasPermissionLoss = false;
         activeStartMs = 0L;
         previousLocation = null;
@@ -802,6 +832,8 @@ public class DriveSenseAutoTrackingService extends Service {
         candidateConfirmedMs = 0L;
         lastLiveNotificationMs = 0L;
         recentHeadings.clear();
+        resetMotionState();
+        stopMotionSensors();
         stopLocationUpdates();
         if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
             startArmedLocationUpdates();
@@ -867,6 +899,7 @@ public class DriveSenseAutoTrackingService extends Service {
         long endMs = System.currentTimeMillis();
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
+        JSONArray motionSamples = activeMotionSamples != null ? activeMotionSamples : new JSONArray();
         long startMs = activeStartMs;
         boolean startedNearParked = candidateNearParked;
         long confirmedMs = candidateConfirmedMs;
@@ -885,6 +918,7 @@ public class DriveSenseAutoTrackingService extends Service {
         recordDiagnostic("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         activePoints = null;
         activeTimeline = null;
+        activeMotionSamples = null;
         hasPermissionLoss = false;
         activeStartMs = 0L;
         previousLocation = null;
@@ -900,6 +934,8 @@ public class DriveSenseAutoTrackingService extends Service {
         candidateTrip = false;
         lastLiveNotificationMs = 0L;
         recentHeadings.clear();
+        resetMotionState();
+        stopMotionSensors();
         stopLocationUpdates();
         if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
             startArmedLocationUpdates();
@@ -929,6 +965,8 @@ public class DriveSenseAutoTrackingService extends Service {
             trip.put("idle_time_seconds", stats.idleSeconds);
             trip.put("night_driving", stats.nightDriving);
             trip.put("route_points", points);
+            trip.put("motion_samples", motionSamples);
+            trip.put("native_motion_sample_count", motionSamples.length());
             trip.put("driving_events", new JSONArray());
             trip.put("score_overall", JSONObject.NULL);
             trip.put("score_safety", JSONObject.NULL);
@@ -1075,6 +1113,94 @@ public class DriveSenseAutoTrackingService extends Service {
             reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH ||
             Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12d;
         return Math.max(0d, reportedCloseToImplied ? reportedSpeedKmh : impliedSpeedKmh);
+    }
+
+    private void startMotionSensors() {
+        if (sensorManager == null || activeMotionSamples == null) return;
+        if (linearAccelerationSensor != null) {
+            sensorManager.registerListener(this, linearAccelerationSensor, SensorManager.SENSOR_DELAY_GAME);
+        }
+        if (gyroscopeSensor != null) {
+            sensorManager.registerListener(this, gyroscopeSensor, SensorManager.SENSOR_DELAY_GAME);
+        }
+    }
+
+    private void stopMotionSensors() {
+        if (sensorManager != null) sensorManager.unregisterListener(this);
+    }
+
+    private void resetMotionState() {
+        lastAx = Float.NaN;
+        lastAy = Float.NaN;
+        lastAz = Float.NaN;
+        lastGx = Float.NaN;
+        lastGy = Float.NaN;
+        lastGz = Float.NaN;
+        lastLinearSensorMs = 0L;
+        lastGyroSensorMs = 0L;
+        lastMotionSampleMs = 0L;
+    }
+
+    @Override
+    public void onSensorChanged(SensorEvent event) {
+        if (event == null || event.sensor == null || event.values == null || event.values.length < 3) return;
+        if (!isTripActive() || activeMotionSamples == null) return;
+
+        long now = System.currentTimeMillis();
+        int sensorType = event.sensor.getType();
+        if (sensorType == Sensor.TYPE_LINEAR_ACCELERATION) {
+            lastAx = event.values[0];
+            lastAy = event.values[1];
+            lastAz = event.values[2];
+            lastLinearSensorMs = now;
+            appendMotionSample(now);
+        } else if (sensorType == Sensor.TYPE_GYROSCOPE) {
+            lastGx = event.values[0];
+            lastGy = event.values[1];
+            lastGz = event.values[2];
+            lastGyroSensorMs = now;
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        // The scoring model uses sample magnitudes and axes; Android sensor accuracy is not currently scored.
+    }
+
+    private void appendMotionSample(long timestampMs) {
+        if (activeMotionSamples == null || timestampMs - lastMotionSampleMs < MOTION_SAMPLE_MIN_INTERVAL_MS) return;
+        if (timestampMs - lastLinearSensorMs > MOTION_AXIS_FRESH_MS) return;
+
+        JSONObject sample = new JSONObject();
+        try {
+            double linearMagnitude = Math.sqrt(lastAx * lastAx + lastAy * lastAy + lastAz * lastAz);
+            sample.put("timestamp", iso(timestampMs));
+            sample.put("timestamp_ms", timestampMs);
+            sample.put("ax", lastAx);
+            sample.put("ay", lastAy);
+            sample.put("az", lastAz);
+            sample.put("linear_magnitude_ms2", linearMagnitude);
+            if (timestampMs - lastGyroSensorMs <= MOTION_AXIS_FRESH_MS) {
+                double rotationMagnitudeRadS = Math.sqrt(lastGx * lastGx + lastGy * lastGy + lastGz * lastGz);
+                sample.put("gx", lastGx);
+                sample.put("gy", lastGy);
+                sample.put("gz", lastGz);
+                sample.put("gz_deg_s", Math.toDegrees(lastGz));
+                sample.put("rotation_magnitude_deg_s", Math.toDegrees(rotationMagnitudeRadS));
+            } else {
+                sample.put("gx", JSONObject.NULL);
+                sample.put("gy", JSONObject.NULL);
+                sample.put("gz", JSONObject.NULL);
+                sample.put("gz_deg_s", JSONObject.NULL);
+                sample.put("rotation_magnitude_deg_s", JSONObject.NULL);
+            }
+            sample.put("source", "android_native_sensors");
+            activeMotionSamples.put(sample);
+            while (activeMotionSamples.length() > MAX_NATIVE_MOTION_SAMPLES) {
+                activeMotionSamples.remove(0);
+            }
+            lastMotionSampleMs = timestampMs;
+        } catch (JSONException ignored) {}
     }
 
     private double haversineKm(double lat1, double lng1, double lat2, double lng2) {

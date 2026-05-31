@@ -455,7 +455,7 @@ export default function MapScreen() {
               <div className="mt-2 grid gap-1">
                 <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'asks OpenStreetMap for road names and posted/default limits near the route.'}</div>
                 <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'asks Open-Meteo for privacy-safe route point/date weather.'}</div>
-                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url ? 'sends sampled GPS points to OSRM to clean up the route line.' : 'skipped until an OSRM endpoint is set in Settings.'}</div>
+                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint and consent are saved in Settings.'}</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : selectedLayerEffect}

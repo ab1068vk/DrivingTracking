@@ -10,6 +10,7 @@ const point = (index) => ({
 
 describe('mapMatching', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -31,7 +32,10 @@ describe('mapMatching', () => {
     })));
 
     const route = [point(20), point(21), point(22)];
-    const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://example.test' });
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+    });
 
     expect(result.status).toBe('matched');
     expect(typeof result.confidence).toBe('number');
@@ -62,14 +66,56 @@ describe('mapMatching', () => {
     })));
 
     const route = [point(70), point(71), point(72)];
-    const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://example.test' });
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+    });
 
     expect(result.status).toBe('matched');
     expect(result.confidence).toBe(1);
     expect(Number.isFinite(result.confidence)).toBe(true);
   });
 
-  it('marks route matches that use the public OSRM demo endpoint', async () => {
+  it('does not send route points without OSRM data-sharing consent', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'https://example.test',
+    });
+
+    expect(result.status).toBe('needs_consent');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('uses the user-configured OSRM timeout when matching routes', async () => {
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        matchings: [{
+          confidence: 0.9,
+          geometry: {
+            coordinates: [
+              [-79.38, 44.55],
+              [-79.38, 44.551],
+              [-79.38, 44.552],
+            ],
+          },
+        }],
+      }),
+    })));
+
+    const result = await mapMatchRoute([point(900), point(901), point(902)], {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+      osrm_timeout_ms: 7000,
+    });
+
+    expect(result.status).toBe('matched');
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 7000);
+  });
+
+  it('blocks route matches that use the public OSRM demo endpoint', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -88,12 +134,14 @@ describe('mapMatching', () => {
 
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
       osrm_map_matching_url: 'https://router.project-osrm.org',
+      osrm_data_sharing_consented: true,
     });
 
     expect(result).toMatchObject({
-      status: 'matched',
+      status: 'public_demo_blocked',
       isOsrmDemoUrl: true,
     });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('splits OSRM requests at privacy gaps instead of sending teleporting waypoints', async () => {
@@ -125,7 +173,10 @@ describe('mapMatching', () => {
       point(402),
     ];
 
-    const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://example.test' });
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+    });
 
     expect(fetch).toHaveBeenCalledTimes(2);
     const requestedCoords = fetch.mock.calls.map(([url]) => (

@@ -1,12 +1,18 @@
 import { EVENT_TYPES } from '@/lib/tripEngine';
-import { clamp } from '@/lib/mathUtils';
+import { clamp, pearsonCorrelation } from '@/lib/mathUtils';
 
 const MS2_PER_G = 9.80665;
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 60 * 1000;
+const RAD_TO_DEG = 180 / Math.PI;
 
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 const round2 = (value) => Math.round(value * 100) / 100;
 const safeMax = (values = [], fallback = 0) => values.length ? Math.max(...values) : fallback;
+const finiteNumberOrNull = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
 
 export function getMotionSensorSupport() {
   const win = /** @type {any} */ (typeof window !== 'undefined' ? window : {});
@@ -34,38 +40,130 @@ export async function requestMotionSensorPermission() {
 }
 
 export function normalizeMotionSample(input = {}) {
-  const acceleration = input.accelerationIncludingGravity || input.acceleration || input;
+  const acceleration = input.acceleration || input.accelerationIncludingGravity || input;
   const rotation = input.rotationRate || input.rotation || {};
-  const ax = Number(acceleration.x ?? input.ax ?? 0);
-  const ay = Number(acceleration.y ?? input.ay ?? 0);
-  const az = Number(acceleration.z ?? input.az ?? 0);
-  const alpha = Number(rotation.alpha ?? input.alpha ?? 0);
-  const beta = Number(rotation.beta ?? input.beta ?? 0);
-  const gamma = Number(rotation.gamma ?? input.gamma ?? 0);
+  const ax = finiteNumberOrNull(acceleration.x ?? input.ax);
+  const ay = finiteNumberOrNull(acceleration.y ?? input.ay);
+  const az = finiteNumberOrNull(acceleration.z ?? input.az);
+  const gx = finiteNumberOrNull(input.gx);
+  const gy = finiteNumberOrNull(input.gy);
+  const gz = finiteNumberOrNull(input.gz);
+  const alpha = finiteNumberOrNull(rotation.alpha ?? input.alpha);
+  const beta = finiteNumberOrNull(rotation.beta ?? input.beta);
+  const gamma = finiteNumberOrNull(rotation.gamma ?? input.gamma);
   const timestamp = input.timestamp || new Date().toISOString();
-  const magnitudeMs2 = Math.sqrt(ax * ax + ay * ay + az * az);
-  const linearMagnitudeMs2 = Math.abs(magnitudeMs2 - MS2_PER_G);
-  const rotationMagnitudeDegS = Math.sqrt(alpha * alpha + beta * beta + gamma * gamma);
+  const hasLinearAxes = ax != null && ay != null && az != null;
+  const magnitudeMs2 = finiteNumberOrNull(input.magnitude_ms2) ?? (
+    hasLinearAxes ? Math.sqrt(ax * ax + ay * ay + az * az) : 0
+  );
+  const providedLinearMagnitude = finiteNumberOrNull(input.linear_magnitude_ms2);
+  const usesGravityAdjustedBrowserSample = input.accelerationIncludingGravity && !input.acceleration && providedLinearMagnitude == null;
+  const inferredLinearMagnitudeMs2 = !hasLinearAxes
+    ? 0
+    : usesGravityAdjustedBrowserSample || input.linear_magnitude_ms2 == null
+      ? Math.abs(magnitudeMs2 - MS2_PER_G)
+      : magnitudeMs2;
+  const linearMagnitudeMs2 = providedLinearMagnitude ?? inferredLinearMagnitudeMs2;
+  const gzDegS = finiteNumberOrNull(input.gz_deg_s) ?? (gz != null ? gz * RAD_TO_DEG : null);
+  const hasGyroAxes = gx != null && gy != null && gz != null;
+  const rotationMagnitudeDegS = finiteNumberOrNull(input.rotation_magnitude_deg_s) ?? (
+    hasGyroAxes
+      ? Math.sqrt(gx * gx + gy * gy + gz * gz) * RAD_TO_DEG
+      : Math.sqrt((alpha ?? 0) * (alpha ?? 0) + (beta ?? 0) * (beta ?? 0) + (gamma ?? 0) * (gamma ?? 0))
+  );
 
   return {
     timestamp,
-    ax: Number.isFinite(ax) ? ax : 0,
-    ay: Number.isFinite(ay) ? ay : 0,
-    az: Number.isFinite(az) ? az : 0,
-    alpha: Number.isFinite(alpha) ? alpha : 0,
-    beta: Number.isFinite(beta) ? beta : 0,
-    gamma: Number.isFinite(gamma) ? gamma : 0,
+    ax,
+    ay,
+    az,
+    gx,
+    gy,
+    gz,
+    gz_deg_s: gzDegS != null ? round2(gzDegS) : null,
+    has_axes: ax != null && ay != null && gzDegS != null,
+    alpha: alpha ?? 0,
+    beta: beta ?? 0,
+    gamma: gamma ?? 0,
     magnitude_ms2: round2(magnitudeMs2),
     linear_magnitude_ms2: round2(linearMagnitudeMs2),
     rotation_magnitude_deg_s: round2(rotationMagnitudeDegS),
   };
 }
 
-export function buildSensorFusionSummary(samples = [], routePoints = [], activity = null) {
+const timestampToMs = (value) => {
+  if (value == null || value === '') return NaN;
+  if (typeof value === 'number') return value;
+  return new Date(value).getTime();
+};
+
+const axisAverage = (samples = [], axis) => {
+  const values = samples
+    .map((sample) => Number(sample?.[axis]))
+    .filter(Number.isFinite);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+};
+
+export function calibratePhoneOrientation(motionSamples = [], harshBrakeEvents = []) {
+  const normalized = (motionSamples || []).map(normalizeMotionSample);
+  const brakeEvents = (harshBrakeEvents || []).filter((event) => event?.type === EVENT_TYPES.HARSH_BRAKE);
+  const axPairs = [];
+  const ayPairs = [];
+
+  brakeEvents.forEach((event) => {
+    const eventMs = timestampToMs(event.timestamp);
+    const gpsDecel = Number(event.value) || 0;
+    if (!Number.isFinite(eventMs) || gpsDecel <= 0) return;
+
+    const nearbySamples = normalized.filter((sample) => (
+      sample.has_axes &&
+      Math.abs(timestampToMs(sample.timestamp) - eventMs) <= 1500
+    ));
+    if (nearbySamples.length < 3) return;
+
+    axPairs.push({ gpsDecel, imuVal: Math.abs(axisAverage(nearbySamples, 'ax')) });
+    ayPairs.push({ gpsDecel, imuVal: Math.abs(axisAverage(nearbySamples, 'ay')) });
+  });
+
+  if (axPairs.length < 2) {
+    return {
+      calibrated: false,
+      sample_count: axPairs.length,
+      reason: 'insufficient_harsh_brake_axis_samples',
+    };
+  }
+
+  const axR = pearsonCorrelation(
+    axPairs.map((item) => item.gpsDecel),
+    axPairs.map((item) => item.imuVal)
+  );
+  const ayR = pearsonCorrelation(
+    ayPairs.map((item) => item.gpsDecel),
+    ayPairs.map((item) => item.imuVal)
+  );
+  const axAbs = Math.abs(axR);
+  const ayAbs = Math.abs(ayR);
+  const axIsLongitudinal = axAbs >= ayAbs;
+  const bestCorrelation = Math.max(axAbs, ayAbs);
+
+  return {
+    calibrated: true,
+    longitudinal_axis: axIsLongitudinal ? 'ax' : 'ay',
+    lateral_axis: axIsLongitudinal ? 'ay' : 'ax',
+    longitudinal_correlation: round2(bestCorrelation),
+    ax_correlation: round2(axR),
+    ay_correlation: round2(ayR),
+    sample_count: axPairs.length,
+    confidence: axPairs.length >= 5 && bestCorrelation >= 0.5 ? 'high' : 'low',
+  };
+}
+
+export function buildSensorFusionSummary(samples = [], routePoints = [], activity = null, events = []) {
   const cutoff = Date.now() - MAX_SAMPLE_AGE_MS;
   const valid = (samples || [])
     .map(normalizeMotionSample)
     .filter((sample) => new Date(sample.timestamp).getTime() >= cutoff);
+  const phoneOrientation = calibratePhoneOrientation(valid, events);
   if (!valid.length) {
     return {
       sample_count: 0,
@@ -77,6 +175,7 @@ export function buildSensorFusionSummary(samples = [], routePoints = [], activit
       activity_type: activity?.type || 'unknown',
       activity_confidence: activity?.confidence || 0,
       quality: 'unavailable',
+      phone_orientation: phoneOrientation,
     };
   }
 
@@ -103,6 +202,64 @@ export function buildSensorFusionSummary(samples = [], routePoints = [], activit
     activity_type: activity?.type || 'unknown',
     activity_confidence: activity?.confidence || 0,
     quality: valid.length >= Math.min(120, Math.max(20, routePointCount * 2)) ? 'good' : 'partial',
+    phone_orientation: phoneOrientation,
+  };
+}
+
+const finiteSampleCount = (value) => {
+  const count = Number(value);
+  return Number.isFinite(count) && count > 0 ? Math.round(count) : 0;
+};
+
+function normalizeFusionQuality(summary = null) {
+  const sampleCount = finiteSampleCount(summary?.sample_count);
+  if (sampleCount <= 0) return 'unavailable';
+  return summary?.quality === 'good' ? 'good' : 'partial';
+}
+
+export function buildMotionSensorDiagnostics({
+  support = getMotionSensorSupport(),
+  permissionState = support?.status,
+  settings = {},
+  currentTrip = null,
+  latestTrip = null,
+} = {}) {
+  const currentSummary = currentTrip?.sensor_fusion_summary || null;
+  const latestSummary = latestTrip?.sensor_fusion_summary || null;
+  const evidenceSummary = currentSummary || latestSummary || null;
+  const evidenceSource = currentSummary
+    ? 'current_trip'
+    : latestSummary
+      ? 'latest_trip'
+      : currentTrip
+        ? 'current_trip_pending'
+        : latestTrip
+          ? 'latest_trip_missing'
+          : 'none';
+  const permission = permissionState || support?.status || 'unknown';
+  const sensorAvailable = support?.supported === true;
+  const permissionGranted = permission === 'granted';
+  const sensorFusionEnabled = settings?.sensor_fusion_enabled !== false;
+  const crashDetectionEnabled = settings?.crash_detection_enabled !== false;
+  const crashDetectionActive = sensorAvailable && permissionGranted && sensorFusionEnabled && crashDetectionEnabled;
+  const inactiveReasons = [];
+
+  if (!sensorAvailable) inactiveReasons.push('IMU unavailable');
+  if (sensorAvailable && !permissionGranted) inactiveReasons.push('permission missing');
+  if (!sensorFusionEnabled) inactiveReasons.push('sensor fusion disabled');
+  if (!crashDetectionEnabled) inactiveReasons.push('crash detection disabled');
+
+  return {
+    sensorAvailable,
+    permissionState: permission,
+    permissionRequired: support?.permissionRequired === true,
+    supportNote: support?.note || '',
+    sampleCount: finiteSampleCount(evidenceSummary?.sample_count),
+    quality: normalizeFusionQuality(evidenceSummary),
+    receivedSamples: finiteSampleCount(evidenceSummary?.sample_count) > 0,
+    evidenceSource,
+    crashDetectionActive,
+    inactiveReasons,
   };
 }
 

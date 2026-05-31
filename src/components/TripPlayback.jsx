@@ -7,12 +7,14 @@ import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed,
 import { buildSpeedSegmentPopupHtml, titleCase } from '@/lib/mapPopupHtml';
 import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
-import { localSettings } from '@/lib/trackingStore';
+import { getLastParkedLocation, localSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const DEFAULT_MAP_ZOOM = 13;
+const DEVICE_LOCATION_TIMEOUT_MS = 1800;
 
 const EVENT_COLORS = {
   harsh_brake: '#ef4444',
@@ -104,6 +106,114 @@ function loadLeaflet() {
 
 const SPEEDS = [1, 2, 4, 8];
 const REVIEW_SECONDS_PER_POINT = 0.6;
+
+const finiteCoordinate = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const validLatLng = (lat, lng) => {
+  const parsedLat = finiteCoordinate(lat);
+  const parsedLng = finiteCoordinate(lng);
+  if (parsedLat == null || parsedLng == null) return null;
+  if (parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) return null;
+  return { lat: parsedLat, lng: parsedLng };
+};
+
+const settingMapCenter = (value) => (
+  value && typeof value === 'object' ? validLatLng(value.lat, value.lng) : null
+);
+
+const envDefaultMapCenter = () => (
+  validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)
+);
+
+const privacyZoneMapCenter = (settings = {}) => {
+  const zone = Array.isArray(settings.privacy_zones)
+    ? settings.privacy_zones.find((item) => validLatLng(item?.lat, item?.lng))
+    : null;
+  return zone ? validLatLng(zone.lat, zone.lng) : null;
+};
+
+const getDeviceMapCenter = async () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const { Geolocation } = await import('@capacitor/geolocation');
+    const position = await Geolocation.getCurrentPosition({
+      enableHighAccuracy: false,
+      timeout: DEVICE_LOCATION_TIMEOUT_MS,
+      maximumAge: 10 * 60 * 1000,
+    });
+    return validLatLng(position?.coords?.latitude, position?.coords?.longitude);
+  } catch {
+    return new Promise((resolve) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
+        resolve(null);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve(validLatLng(position?.coords?.latitude, position?.coords?.longitude)),
+        () => resolve(null),
+        {
+          enableHighAccuracy: false,
+          timeout: DEVICE_LOCATION_TIMEOUT_MS,
+          maximumAge: 10 * 60 * 1000,
+        }
+      );
+    });
+  }
+};
+
+const firstValidMapCenter = async (candidates) => {
+  const pending = new Set(candidates.map((candidate) => Promise.resolve(candidate)));
+  while (pending.size > 0) {
+    const settled = await Promise.race(
+      Array.from(pending, (promise) => promise.then(
+        (value) => ({ promise, value }),
+        () => ({ promise, value: null })
+      ))
+    );
+    pending.delete(settled.promise);
+    if (settled.value) return settled.value;
+  }
+  return null;
+};
+
+const resolveFallbackMapCenter = async (settings = {}) => {
+  const saved = settingMapCenter(settings.last_map_center);
+  if (saved) return { ...saved, source: 'last_map_center' };
+
+  const zoneCenter = privacyZoneMapCenter(settings);
+  const contextualCenter = await firstValidMapCenter([
+    getLastParkedLocation()
+      .then((parked) => {
+        const parkedCenter = validLatLng(parked?.lat, parked?.lng);
+        return parkedCenter ? { ...parkedCenter, source: 'last_parked' } : null;
+      })
+      .catch(() => null),
+    Promise.resolve(zoneCenter ? { ...zoneCenter, source: 'privacy_zone' } : null),
+    getDeviceMapCenter().then((device) => (
+      device ? { ...device, source: 'device_location' } : null
+    )),
+  ]);
+  if (contextualCenter) return contextualCenter;
+
+  const envCenter = envDefaultMapCenter();
+  return envCenter ? { ...envCenter, source: 'env_default' } : null;
+};
+
+const persistLastMapCenter = (point, tripId = null) => {
+  const center = validLatLng(point?.lat, point?.lng);
+  if (!center) return;
+  localSettings.update({
+    last_map_center: {
+      ...center,
+      tripId: tripId ?? null,
+      source: 'trip_playback',
+      updated_at: new Date().toISOString(),
+    },
+  });
+};
 
 const carIconHtml = (color, heading, label = '') => `
   <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.94);border:1px solid rgba(15,23,42,0.18);box-shadow:0 4px 16px rgba(15,23,42,0.24);display:flex;align-items:center;justify-content:center">
@@ -222,12 +332,17 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
       leafletMapRef.current = map;
       window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
-      const firstPoint = points.find((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
-      if (firstPoint) {
-        map.setView([firstPoint.lat, firstPoint.lng], 15);
-      }
+      map.whenReady(() => {
+        if (!cancelled) setTimeout(() => map.invalidateSize(), 50);
+      });
 
-      if (points.length > 1) {
+      if (points.length === 1) {
+        const onlyPoint = validLatLng(points[0].lat, points[0].lng);
+        if (onlyPoint) {
+          persistLastMapCenter(onlyPoint, trip?.id);
+          map.setView([onlyPoint.lat, onlyPoint.lng], 15);
+        }
+      } else if (points.length > 1) {
         const latLngs = points.map(p => [p.lat, p.lng]);
 
         window.L.polyline(latLngs, {
@@ -334,6 +449,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         }
 
         const bounds = window.L.latLngBounds(latLngs);
+        const midpoint = points[Math.floor((points.length - 1) / 2)];
+        persistLastMapCenter(midpoint, trip?.id);
         visiblePrivacyZones.forEach((zone) => {
           const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
           const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
@@ -353,8 +470,10 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         map.fitBounds(bounds, { padding: [24, 24] });
         setTimeout(() => map.invalidateSize(), 50);
       } else {
-        map.setView([51.505, -0.09], 13);
-        setTimeout(() => map.invalidateSize(), 50);
+        resolveFallbackMapCenter(privacySettings).then((center) => {
+          if (cancelled || !center || !leafletMapRef.current) return;
+          map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM);
+        });
       }
     }).catch((error) => {
       console.error('Playback map failed to initialize', error);
@@ -368,7 +487,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       secondaryMarkerRef.current = null;
       progressLayersRef.current = null;
     };
-  }, [events, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
+  }, [events, points, privacySettings, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !points[currentIdx]) return;

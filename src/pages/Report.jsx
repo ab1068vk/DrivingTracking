@@ -91,6 +91,16 @@ export default function Reports() {
     : 0;
   // FIX: Compute report average speed from avg_running_speed_kmh, falling back only for legacy trips.
   const baseline = computePersonalBaseline(completed);
+  const baselineRangeLabel = baseline.baseline_includes_older_scores
+    ? baseline.baseline_label
+    : baseline.baseline_confidence_interval_label;
+  const baselineText = baseline.baseline_avg == null
+    ? `A baseline unlocks after 10 completed trips in 4 weeks (${baseline.baseline_trip_count}/10 recorded).`
+    : baseline.baseline_includes_older_scores
+      ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
+      : baseline.delta == null
+        ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). No trip was recorded this week.`
+        : `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`;
   const carbonImpact = calculateCarbonImpact(trips, settings, vehicleById);
   const commutePatterns = identifyCommutePatterns(trips);
   const peakHourStress = calculatePeakHourStress(trips);
@@ -472,11 +482,7 @@ export default function Reports() {
             </div>
             <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
             <p className="text-xs text-muted-foreground mb-4">
-              {baseline.baseline_avg == null
-                ? `A baseline unlocks after 10 completed trips in 4 weeks (${baseline.baseline_trip_count}/10 recorded).`
-                : baseline.delta == null
-                  ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). No trip was recorded this week.`
-                  : `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`}
+              {baselineText}
             </p>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
@@ -484,7 +490,7 @@ export default function Reports() {
                 <div className="text-xs text-muted-foreground">this week</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${formatEstimatedScore(baseline.baseline_avg)} +/- ${baseline.baseline_confidence_interval}`}</div>
+                <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : baselineRangeLabel ? `${formatEstimatedScore(baseline.baseline_avg)} (${baselineRangeLabel})` : formatEstimatedScore(baseline.baseline_avg)}</div>
                 <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
               </div>
               <div className="bg-secondary/50 rounded-xl p-3">

@@ -7,6 +7,7 @@ import {
   NIGHT_START_HOUR,
 } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
+import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
 export const DEFAULT_L_PER_100KM = 8.5;
@@ -49,14 +50,17 @@ export const PERSONAL_BASELINE_MIN_TRIPS = 10;
 export const PERSONAL_PERCENTILE_MIN_WEEKS = 4;
 export const BEST_WINDOW_MIN_TRIPS = 3;
 export const PERSONAL_BASELINE_DECAY = 0.85;
-export const PERSONAL_BASELINE_INTERVAL_METHOD = 'normal_approximation_95';
-export const PERSONAL_BASELINE_INTERVAL_NOTE = 'Approximate 95% CI assuming roughly normal score distribution; may be too narrow for bounded or skewed scores.';
+export const PERSONAL_BASELINE_INTERVAL_METHOD = 'percentile_interval_95';
+export const PERSONAL_BASELINE_INTERVAL_NOTE = '95% percentile interval from recent personal scores; bounded and data-driven for skewed score distributions.';
+export const PERSONAL_BASELINE_INTERVAL_INSUFFICIENT_NOTE = 'insufficient data for interval';
+export const PERSONAL_BASELINE_MIXED_PROVENANCE_NOTE = 'Includes older trip scores';
 export const PEAK_STRESS_MIN_TRIP_KM = 0.5;
 export const RISK_EVENT_RATE_MIN_DISTANCE_KM = 50;
 export const SCORE_TIP_MIN_TRIP_KM = 2;
 export const SCORE_TIP_MIN_CONFIDENCE = 0.5;
 export const FATIGUE_HEATMAP_SEGMENT_SECONDS = 30;
 export const FATIGUE_HEATMAP_MIN_SEGMENTS = 20;
+export const DRIVER_SIGNATURE_BRAKING_RECENCY_DAYS = 90;
 
 export const STRESS_UNITS = {
   harsh_brake: { low: 1.5, medium: 4, high: 8 },
@@ -333,14 +337,21 @@ export function buildDriverSignature(trips) {
   const overallScores = completed.map((trip) => finiteScore(trip.score_overall)).filter(Number.isFinite);
   const scoreIqr = iqr(overallScores);
   const consistencyIdx = overallScores.length >= 2 ? clamp(1 - scoreIqr / 100, 0, 1) : null;
-  const brakingScores = completed
-    .map((trip) => trip.braking_efficiency_score)
-    .filter((score) => score != null && Number.isFinite(Number(score)))
-    .map((score) => Number(score));
-  const brakingStyle = brakingScores.length >= 3
-    ? clamp(brakingScores.reduce((sum, score) => sum + score, 0) / brakingScores.length / 100, 0, 1)
+  const brakingCutoffMs = Date.now() - DRIVER_SIGNATURE_BRAKING_RECENCY_DAYS * DAY_MS;
+  const brakingScoresWithDates = completed
+    .filter((trip) => trip.braking_efficiency_score != null && trip.braking_efficiency_score !== '')
+    .map((trip) => ({
+      score: Number(trip.braking_efficiency_score),
+      timestamp: new Date(trip.start_time || trip.created_at || 0).getTime(),
+    }))
+    .filter(({ score, timestamp }) => Number.isFinite(score) && Number.isFinite(timestamp));
+  const recentBrakingScores = brakingScoresWithDates
+    .filter(({ timestamp }) => timestamp >= brakingCutoffMs)
+    .map(({ score }) => score);
+  const brakingStyle = recentBrakingScores.length >= 3
+    ? clamp(recentBrakingScores.reduce((sum, score) => sum + score, 0) / recentBrakingScores.length / 100, 0, 1)
     : null;
-  const brakingConfidence = clamp(brakingScores.length / 10, 0, 1);
+  const brakingConfidence = clamp(recentBrakingScores.length / 10, 0, 1);
   const featureRows = completed.map((trip) => {
     const aggressiveScore = finiteScore(trip.aggressive_driving_score);
     const smoothnessScore = finiteScore(trip.score_smoothness ?? trip.smoothness_score);
@@ -349,6 +360,9 @@ export function buildDriverSignature(trips) {
       aggression: aggressiveScore == null ? null : clamp(1 - (aggressiveScore / 100), 0, 1),
       smoothness: smoothnessScore == null ? null : clamp(smoothnessScore / 100, 0, 1),
       ecoMindedness: ecoScore == null ? null : clamp(ecoScore / 100, 0, 1),
+      powertrainStress: finiteScore(trip.engine_stress_score) == null || (Number(trip.obd_powertrain_sample_count) || 0) <= 0
+        ? null
+        : clamp(1 - (Number(trip.engine_stress_score) / 100), 0, 1),
       speedTolerance: clamp(
         ((Number(trip.speeding_events_count) || 0) / Math.max(1, Number(trip.distance_km) || 1)) / 0.4,
         0,
@@ -361,7 +375,7 @@ export function buildDriverSignature(trips) {
     };
   });
 
-  const numericKeys = ['aggression', 'smoothness', 'ecoMindedness', 'speedTolerance', 'consistencyIdx'];
+  const numericKeys = ['aggression', 'smoothness', 'ecoMindedness', 'powertrainStress', 'speedTolerance', 'consistencyIdx'];
   const keys = [...numericKeys, 'brakingStyle'];
   const avgDim = (rows, key) => {
     const validValues = rows.map((row) => row[key]).filter(Number.isFinite);
@@ -860,6 +874,15 @@ function isoWeekKey(dateInput) {
   return `${date.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+const tripScoringVersion = (trip = {}) => (
+  trip.score_version ||
+  trip.score_provenance?.version ||
+  trip.score_provenance?.scoring_version ||
+  null
+);
+
+const hasCurrentScoringVersion = (trip = {}) => tripScoringVersion(trip) === SCORING_VERSION;
+
 export function computePersonalBaseline(completedTrips = []) {
   const completed = [...completedTrips]
     .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
@@ -870,35 +893,51 @@ export function computePersonalBaseline(completedTrips = []) {
   };
   const exponentiallyWeighted = (items) => {
     const valid = items.filter((trip) => Number.isFinite(Number(trip.score_overall)));
-    if (!valid.length) return { average: null, interval: null };
+    if (!valid.length) return { average: null };
     const weighted = valid.map((trip, index) => ({
       score: Number(trip.score_overall),
       weight: Math.pow(PERSONAL_BASELINE_DECAY, index),
     }));
     const weightSum = weighted.reduce((sum, item) => sum + item.weight, 0);
     const averageScore = weighted.reduce((sum, item) => sum + item.score * item.weight, 0) / weightSum;
-    const variance = weighted.reduce((sum, item) => sum + item.weight * ((item.score - averageScore) ** 2), 0) / weightSum;
-    const weightSquares = weighted.reduce((sum, item) => sum + item.weight ** 2, 0);
-    const effectiveSamples = weightSum ** 2 / Math.max(weightSquares, 1);
-    const interval = Math.ceil(1.96 * Math.sqrt(variance / Math.max(1, effectiveSamples)));
-    return { average: Math.round(averageScore), interval };
+    return { average: Math.round(averageScore) };
+  };
+  const percentileInterval = (items) => {
+    const sorted = items
+      .map((trip) => Number(trip.score_overall))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    if (sorted.length < PERSONAL_BASELINE_MIN_TRIPS) return null;
+    const lower = sorted[Math.floor(sorted.length * 0.025)] ?? sorted[0];
+    const upper = sorted[Math.ceil(sorted.length * 0.975)] ?? sorted[sorted.length - 1];
+    return {
+      lower: Math.round(lower),
+      upper: Math.round(upper),
+    };
   };
 
   const now = new Date();
   const fourWeeksAgo = new Date(now.getTime() - 28 * DAY_MS);
   const weekStart = startOfWeek(now);
-  const baselineTrips = completed.filter((trip) => new Date(trip.start_time) >= fourWeeksAgo);
-  const thisWeekTrips = completed.filter((trip) => new Date(trip.start_time) >= weekStart);
+  const recentWindowTrips = completed.filter((trip) => new Date(trip.start_time) >= fourWeeksAgo);
+  const currentVersionRecentTrips = recentWindowTrips.filter(hasCurrentScoringVersion);
+  const olderScoringRecentTripCount = recentWindowTrips.length - currentVersionRecentTrips.length;
+  const usesMixedScoringVersions = olderScoringRecentTripCount > 0 && currentVersionRecentTrips.length < 5;
+  const comparableCompleted = usesMixedScoringVersions
+    ? completed
+    : completed.filter(hasCurrentScoringVersion);
+  const baselineTrips = comparableCompleted.filter((trip) => new Date(trip.start_time) >= fourWeeksAgo);
+  const thisWeekTrips = comparableCompleted.filter((trip) => new Date(trip.start_time) >= weekStart);
   const weightedBaseline = exponentiallyWeighted(baselineTrips);
   const baselineAvg = baselineTrips.length >= PERSONAL_BASELINE_MIN_TRIPS ? weightedBaseline.average : null;
-  const baselineInterval = baselineAvg == null ? null : weightedBaseline.interval;
+  const baselineInterval = baselineAvg == null || usesMixedScoringVersions ? null : percentileInterval(baselineTrips);
   const thisWeekAvg = avg(thisWeekTrips);
   const delta = thisWeekAvg != null && baselineAvg != null ? thisWeekAvg - baselineAvg : null;
   const trend = delta == null ? 'unknown' : delta >= 5 ? 'improving' : delta <= -5 ? 'declining' : 'steady';
 
   const twelveWeeksAgo = new Date(now.getTime() - 12 * 7 * DAY_MS);
   const byWeek = new Map();
-  completed
+  comparableCompleted
     .filter((trip) => new Date(trip.start_time) >= twelveWeeksAgo)
     .forEach((trip) => {
       const key = isoWeekKey(trip.start_time);
@@ -916,10 +955,25 @@ export function computePersonalBaseline(completedTrips = []) {
   return {
     baseline_avg: baselineAvg,
     baseline_confidence_interval: baselineInterval,
-    baseline_confidence_interval_method: baselineAvg == null ? null : PERSONAL_BASELINE_INTERVAL_METHOD,
-    baseline_confidence_interval_note: baselineAvg == null ? null : PERSONAL_BASELINE_INTERVAL_NOTE,
+    baseline_confidence_interval_label: baselineInterval == null ? null : `${baselineInterval.lower}-${baselineInterval.upper}`,
+    baseline_confidence_interval_method: baselineInterval == null ? null : PERSONAL_BASELINE_INTERVAL_METHOD,
+    baseline_confidence_interval_note: usesMixedScoringVersions
+      ? PERSONAL_BASELINE_MIXED_PROVENANCE_NOTE
+      : baselineInterval == null
+        ? PERSONAL_BASELINE_INTERVAL_INSUFFICIENT_NOTE
+        : PERSONAL_BASELINE_INTERVAL_NOTE,
     baseline_trip_count: baselineTrips.length,
-    baseline_confidence: baselineAvg == null ? 'insufficient_data' : baselineTrips.length >= 20 ? 'high' : 'developing',
+    baseline_current_score_trip_count: currentVersionRecentTrips.length,
+    baseline_older_score_trip_count: olderScoringRecentTripCount,
+    baseline_recent_trip_count: recentWindowTrips.length,
+    baseline_includes_older_scores: usesMixedScoringVersions,
+    baseline_score_version: usesMixedScoringVersions ? 'mixed' : SCORING_VERSION,
+    baseline_label: usesMixedScoringVersions ? PERSONAL_BASELINE_MIXED_PROVENANCE_NOTE : null,
+    baseline_confidence: baselineAvg == null
+      ? 'insufficient_data'
+      : usesMixedScoringVersions
+        ? 'mixed_provenance'
+        : baselineTrips.length >= 20 ? 'high' : 'developing',
     this_week_avg: thisWeekAvg,
     delta,
     trend,
@@ -928,7 +982,7 @@ export function computePersonalBaseline(completedTrips = []) {
     percentile_min_weeks: PERSONAL_PERCENTILE_MIN_WEEKS,
     personal_best_week_avg: weeklyAverages.length ? Math.max(...weeklyAverages) : null,
     personal_best_trip_score: weeklyAverages.length
-      ? Math.max(...completed.map((trip) => finiteScore(trip.score_overall)).filter(Number.isFinite))
+      ? Math.max(...comparableCompleted.map((trip) => finiteScore(trip.score_overall)).filter(Number.isFinite))
       : null,
     weeks_analyzed: weeklyAverages.length,
   };

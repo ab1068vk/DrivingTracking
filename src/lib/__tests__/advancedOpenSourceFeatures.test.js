@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
-import { parseObdPidResponse } from '@/lib/obdBluetooth';
-import { buildSensorFusionSummary, detectCrashIncident, enrichEventsWithSensorContext, getMotionSensorSupport } from '@/lib/sensorFusionModel';
+import { annotateRoutePointWithObd, buildObdRoutePointPatch, parseObdPidResponse } from '@/lib/obdBluetooth';
+import { buildMotionSensorDiagnostics, buildSensorFusionSummary, calibratePhoneOrientation, detectCrashIncident, enrichEventsWithSensorContext, getMotionSensorSupport, normalizeMotionSample } from '@/lib/sensorFusionModel';
 import { estimatePredictiveRouteRisk, ROUTE_RISK_CONSTANTS } from '@/lib/predictiveRouteRisk';
 import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildHabitProfile } from '@/lib/habitProfile';
@@ -43,13 +43,128 @@ describe('advanced open-source features', () => {
     expect(enriched[0].sensor_confirmed).toBe(true);
   });
 
+  it('preserves native IMU axes and derives yaw rate in degrees per second', () => {
+    const sample = normalizeMotionSample({
+      timestamp: 1770000000000,
+      ax: 1.2,
+      ay: -0.4,
+      az: 0.1,
+      gx: 0.01,
+      gy: 0.02,
+      gz: Math.PI / 2,
+      linear_magnitude_ms2: 1.27,
+    });
+
+    expect(sample).toMatchObject({
+      timestamp: 1770000000000,
+      ax: 1.2,
+      ay: -0.4,
+      az: 0.1,
+      gx: 0.01,
+      gy: 0.02,
+      gz: Math.PI / 2,
+      gz_deg_s: 90,
+      has_axes: true,
+      linear_magnitude_ms2: 1.27,
+    });
+    expect(sample.rotation_magnitude_deg_s).toBeCloseTo(90, 0);
+  });
+
+  it('calibrates phone orientation from harsh-brake IMU axes', () => {
+    const baseMs = Date.now() - 20_000;
+    const brakeEvents = [3.6, 4.8, 6.2].map((value, index) => ({
+      type: 'harsh_brake',
+      value,
+      timestamp: new Date(baseMs + index * 4000).toISOString(),
+    }));
+    const samples = brakeEvents.flatMap((event, index) => {
+      const eventMs = new Date(event.timestamp).getTime();
+      return [-400, 0, 400].map((offset) => ({
+        timestamp: new Date(eventMs + offset).toISOString(),
+        ax: 0.3 + index * 0.05,
+        ay: -event.value,
+        az: 0.1,
+        gz: 0.02,
+      }));
+    });
+
+    const orientation = calibratePhoneOrientation(samples, brakeEvents);
+    expect(orientation).toMatchObject({
+      calibrated: true,
+      longitudinal_axis: 'ay',
+      lateral_axis: 'ax',
+      confidence: 'low',
+      sample_count: 3,
+    });
+    expect(orientation.longitudinal_correlation).toBeGreaterThan(0.9);
+
+    const summary = buildSensorFusionSummary(samples, [], null, brakeEvents);
+    expect(summary.phone_orientation.longitudinal_axis).toBe('ay');
+  });
+
   it('reports motion sensor support for permission checks', () => {
     expect(['granted', 'not_requested', 'unavailable']).toContain(getMotionSensorSupport().status);
+  });
+
+  it('summarizes motion sensor diagnostics for crash readiness', () => {
+    const diagnostics = buildMotionSensorDiagnostics({
+      support: { supported: true, permissionRequired: true, status: 'granted' },
+      permissionState: 'granted',
+      settings: { sensor_fusion_enabled: true, crash_detection_enabled: true },
+      latestTrip: {
+        sensor_fusion_summary: {
+          sample_count: 42,
+          quality: 'partial',
+        },
+      },
+    });
+
+    expect(diagnostics).toMatchObject({
+      sensorAvailable: true,
+      permissionState: 'granted',
+      receivedSamples: true,
+      sampleCount: 42,
+      quality: 'partial',
+      evidenceSource: 'latest_trip',
+      crashDetectionActive: true,
+    });
+  });
+
+  it('explains inactive crash readiness when IMU permission is missing', () => {
+    const diagnostics = buildMotionSensorDiagnostics({
+      support: { supported: true, permissionRequired: true, status: 'not_requested' },
+      permissionState: 'not_requested',
+      settings: { sensor_fusion_enabled: true, crash_detection_enabled: true },
+      latestTrip: { sensor_fusion_summary: { sample_count: 0, quality: 'unavailable' } },
+    });
+
+    expect(diagnostics.crashDetectionActive).toBe(false);
+    expect(diagnostics.inactiveReasons).toContain('permission missing');
+    expect(diagnostics.quality).toBe('unavailable');
   });
 
   it('parses common OBD-II PID responses', () => {
     expect(parseObdPidResponse('41 0C 1A F8')?.value).toBe(1726);
     expect(parseObdPidResponse('41 11 80')?.label).toBe('Throttle');
+  });
+
+  it('normalizes OBD-II measurements for route-point annotation', () => {
+    const timestamp = '2026-01-01T12:00:00.000Z';
+    const measurements = [
+      '41 0D 2A',
+      '41 0C 1A F8',
+      '41 11 80',
+    ];
+    const patch = buildObdRoutePointPatch(measurements, timestamp);
+    const point = annotateRoutePointWithObd({ lat: 43.65, lng: -79.38, speed_kmh: 35 }, measurements, timestamp);
+
+    expect(patch).toMatchObject({
+      obd_speed_kmh: 42,
+      obd_rpm: 1726,
+      obd_throttle_pct: 50,
+      obd_data_source: 'obd_bluetooth',
+    });
+    expect(point.obd_speed_kmh).toBe(42);
   });
 
   it('scores unusual trips against a local driver model', () => {

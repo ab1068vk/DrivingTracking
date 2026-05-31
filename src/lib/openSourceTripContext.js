@@ -24,7 +24,10 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
 export { PUBLIC_OSRM_DEMO_URL };
 
 export const isOsrmMapMatchingConfigured = (settings = {}) => (
-  settings.map_matching_enabled !== false && Boolean(settings.osrm_map_matching_url)
+  settings.map_matching_enabled !== false &&
+  Boolean(settings.osrm_map_matching_url) &&
+  settings.osrm_data_sharing_consented === true &&
+  !isPublicOsrmDemoUrl(settings.osrm_map_matching_url)
 );
 
 export const isOsrmMapMatchingEnabled = (settings = {}) => (
@@ -47,9 +50,11 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push(isPublicOsrmDemoUrl(settings.osrm_map_matching_url)
-      ? '- Snap route to roads: sends sampled GPS points to router.project-osrm.org, a public third-party OSRM demo server not operated by Road Sage.'
-      : '- Snap route to roads: sends sampled GPS points to the configured OSRM endpoint.');
+    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');
+  } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
+    lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
+  } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
+    lines.push('- Snap route to roads has an endpoint but will be skipped until OSRM data-sharing consent is saved.');
   } else if (isOsrmMapMatchingEnabled(settings)) {
     lines.push('- Snap route to roads is on but has no endpoint, so OSRM will be skipped until a link is added.');
   } else {
@@ -126,7 +131,10 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }));
   routePoints = speedLimitContext.routePoints || routePoints;
   stage(onProgress, 'Recalculating trip scores');
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, trip);
+  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
+    ...trip,
+    raw_route_points: originalPoints,
+  });
   const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
   const phoneUse = buildPhoneUseFromTripEvidence(
     trip,
@@ -199,7 +207,13 @@ export function describeMapMatchingStatus(context = {}) {
     return 'Route snapping was skipped. Add an OSRM endpoint in Settings only if you want sampled GPS points sent there.';
   }
   if (context.status === 'needs_endpoint') {
-    return context.error || 'Route snapping is on, but no OSRM endpoint is set. Add a link in Settings or use the public OSRM demo.';
+    return context.error || 'Route snapping is on, but no OSRM endpoint is set. Add a private or trusted OSRM endpoint in Settings.';
+  }
+  if (context.status === 'needs_consent') {
+    return context.error || 'Route snapping needs OSRM data-sharing consent before sampled GPS coordinate pairs are sent.';
+  }
+  if (context.status === 'public_demo_blocked') {
+    return context.error || 'The public OSRM demo is shown only as an example. Configure a private or trusted OSRM endpoint.';
   }
   if (context.status === 'matched' || context.status === 'partial_matched') {
     const prefix = context.status === 'partial_matched' ? 'OSRM partially snapped' : 'OSRM snapped';

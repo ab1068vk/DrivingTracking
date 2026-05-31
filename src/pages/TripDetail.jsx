@@ -9,7 +9,7 @@ import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
   Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag,
-  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star,
+  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info,
   StickyNote, X
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -78,6 +78,7 @@ import {
   WAS_DRIVER_OPTIONS,
 } from '@/lib/calibrationLabeling';
 import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
+import { formatDataSourceLabel } from '@/lib/metricRegistry';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -112,6 +113,59 @@ const diagnosticExplanationForEvent = (event = {}) => (
 );
 
 const isDiagnosticOnlyTripEvent = (event = {}) => Boolean(diagnosticExplanationForEvent(event));
+
+const uniqueTripEvents = (events = []) => {
+  const seen = new Set();
+  return events.filter((event, index) => {
+    const key = [
+      event?.type || 'event',
+      event?.timestamp || event?.startTime || index,
+      event?.direction || '',
+      event?.detection_method || '',
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const resolveEventDisplayValue = (value, event) => (
+  typeof value === 'function' ? value(event) : value
+);
+
+const eventDisplayConfig = (event = {}, gpsPhoneUseProxy = false) => {
+  const labels = {
+    harsh_brake: { label: 'Harsh Brake', icon: '!', color: 'text-red-600' },
+    rapid_acceleration: { label: 'Rapid Acceleration', icon: '+', color: 'text-yellow-600' },
+    sharp_turn: { label: 'Sharp Turn', icon: '<', color: 'text-blue-600' },
+    speeding: { label: 'Speeding', icon: '>', color: 'text-orange-600' },
+    idle: { label: 'Excessive Idle', icon: 'P', color: 'text-slate-500' },
+    close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
+    aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
+    heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
+    heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
+    lane_change_detected: {
+      label: (laneChange) => `Lane Change (${laneChange.direction === 'left' ? 'Left' : 'Right'})${laneChange.simultaneous_braking ? ' - Braking' : ''}`,
+      icon: '<->',
+      color: (laneChange) => laneChange.simultaneous_braking ? 'text-red-600' : 'text-sky-600',
+      badge: (laneChange) => laneChange.confidence === 'low' ? 'GPS estimate' : null,
+    },
+    tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
+    stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
+    erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
+    possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
+    phone_use: gpsPhoneUseProxy
+      ? { label: 'GPS Phone-Use Proxy', icon: 'P', color: 'text-violet-600' }
+      : { label: 'Phone Use', icon: 'P', color: 'text-red-600' },
+  };
+  const cfg = labels[event.type] || { label: event.type, icon: '!', color: 'text-foreground' };
+  return {
+    label: resolveEventDisplayValue(cfg.label, event),
+    icon: resolveEventDisplayValue(cfg.icon, event),
+    color: resolveEventDisplayValue(cfg.color, event),
+    badge: resolveEventDisplayValue(cfg.badge, event),
+  };
+};
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
 
@@ -589,7 +643,9 @@ export default function TripDetail() {
     low: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
-  const displayEvents = mergePhoneUseEventsIntoDrivingEvents(trip.driving_events || [], displayPhoneUse)
+  const laneChangeEvents = Array.isArray(trip.lane_change_events) ? trip.lane_change_events : [];
+  const rawDrivingEvents = uniqueTripEvents([...(trip.driving_events || []), ...laneChangeEvents]);
+  const displayEvents = mergePhoneUseEventsIntoDrivingEvents(rawDrivingEvents, displayPhoneUse)
     .filter((event) => event.type !== 'near_miss');
   const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
   const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
@@ -605,6 +661,25 @@ export default function TripDetail() {
     ...phoneProxyDiagnosticRows,
   ];
   const eventPanelCount = scoredEventRows.length + diagnosticEventRows.length;
+  const headingDeviationEventCount = Number.isFinite(Number(trip.heading_deviation_count))
+    ? Number(trip.heading_deviation_count)
+    : displayEvents.filter((event) => event.type === 'heading_deviation').length;
+  const headingDeviationScoringEnabled = trip.heading_deviation_scoring_enabled != null
+    ? trip.heading_deviation_scoring_enabled !== false
+    : trip.heading_deviation_available !== false && settings.advanced_safety_detection_enabled !== false;
+  const headingDeviationPrompt = headingDeviationScoringEnabled
+    ? null
+    : 'Enable Advanced Safety to include this in your score';
+  const eventSummaryRows = [
+    { label: 'Harsh Brakes', value: trip.harsh_brakes_count, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+    { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
+    { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
+    { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+    { label: 'Heading Events (Beta)', value: headingDeviationEventCount, note: headingDeviationPrompt, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
+    { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
+    { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
+  ];
+  const showDrivingEventsPanel = Boolean(trip);
   const eventFeedback = trip.event_feedback || {};
   const eventFeedbackKey = (event, index) => [
     event.type || 'event',
@@ -671,25 +746,7 @@ export default function TripDetail() {
   const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false } = {}) => {
     const key = eventFeedbackKey(evt, originalIndex);
     const feedback = eventFeedback[key]?.verdict || null;
-    const labels = {
-      harsh_brake: { label: 'Harsh Brake', icon: '!', color: 'text-red-600' },
-      rapid_acceleration: { label: 'Rapid Acceleration', icon: '+', color: 'text-yellow-600' },
-      sharp_turn: { label: 'Sharp Turn', icon: '<', color: 'text-blue-600' },
-      speeding: { label: 'Speeding', icon: '>', color: 'text-orange-600' },
-      idle: { label: 'Excessive Idle', icon: 'P', color: 'text-slate-500' },
-      close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
-      aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
-      heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
-      heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
-      tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
-      stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
-      erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
-      possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
-      phone_use: isGpsPhoneUseProxyEvent(evt)
-        ? { label: 'GPS Phone-Use Proxy', icon: 'P', color: 'text-violet-600' }
-        : { label: 'Phone Use', icon: 'P', color: 'text-red-600' },
-    };
-    const cfg = labels[evt.type] || { label: evt.type, icon: '!', color: 'text-foreground' };
+    const cfg = eventDisplayConfig(evt, isGpsPhoneUseProxyEvent(evt));
     const timeText = evt.timestamp || evt.startTime
       ? new Date(evt.timestamp || evt.startTime).toLocaleTimeString()
       : 'Time unknown';
@@ -697,8 +754,10 @@ export default function TripDetail() {
       ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
       : evt.type === 'phone_use'
         ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
+        : evt.type === 'lane_change_detected'
+          ? `${Math.round(evt.speed_kmh || 0)} km/h${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
         : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-    const inferredTypes = ['tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
+    const inferredTypes = ['lane_change_detected', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
     const confidenceText = evt.source === 'android_usage_access'
       ? 'Measured phone activity'
       : evt.type === 'speeding' && evt.speed_limit_source
@@ -710,7 +769,7 @@ export default function TripDetail() {
         : diagnostic
           ? 'Diagnostic GPS inference - not scored'
           : inferredTypes.includes(evt.type)
-            ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
+            ? `${evt.confidence || evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
             : 'Measured from GPS motion';
     const diagnosticExplanation = diagnostic ? diagnosticExplanationForEvent(evt) : null;
     const severityLabel = evt.severity || evt.confidence_level || 'diagnostic';
@@ -723,6 +782,9 @@ export default function TripDetail() {
             <div className="text-xs text-muted-foreground">
               {timeText} - {eventValueText}
             </div>
+            {cfg.badge && (
+              <div className="mt-0.5 inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">{cfg.badge}</div>
+            )}
             <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
             {diagnosticExplanation && (
               <div className="mt-0.5 text-[11px] text-muted-foreground">{diagnosticExplanation}</div>
@@ -1200,7 +1262,7 @@ export default function TripDetail() {
             <div>Get Road Data: checks the enabled options below for this trip.</div>
             <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.'}</div>
             <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends a privacy-safe route point and date to Open-Meteo.'}</div>
-            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url ? 'sends sampled GPS points to OSRM to clean up the route line.' : 'skips OSRM until an endpoint is set in Settings.'}</div>
+            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint and consent are saved in Settings.'}</div>
             <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>
@@ -1562,6 +1624,7 @@ export default function TripDetail() {
             { icon: AlertTriangle, label: 'estimated fatigue risk (driving-time proxy)', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'smoothness index', componentKey: 'smoothness_index', color: 'text-sky-500' },
             { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', value: brakeOnsetCollectingDataText, show: Boolean(brakeOnsetCollectingDataText), color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : brakeOnsetCollectingDataText ? 'text-amber-500' : 'text-emerald-500' },
+            { icon: Shuffle, label: 'lane changing', componentKey: 'lane_changing', value: trip.lane_changing_grade ?? 'unavailable', useComponentValue: false, color: ['frequent', 'erratic'].includes(trip.lane_changing_grade) ? 'text-red-500' : trip.lane_changing_grade === 'acceptable' ? 'text-sky-500' : 'text-emerald-500', capitalize: true, badge: trip.lane_changing_confidence !== 'imu_calibrated' ? 'GPS estimate' : null },
             { icon: Leaf, label: 'eco driving', componentKey: 'eco_driving', color: 'text-emerald-500' },
             { icon: ShieldCheck, label: 'stop-start pattern estimate', componentKey: 'stop_start_pattern', color: 'text-blue-500' },
             { icon: Focus, label: 'attention-pattern estimate', componentKey: 'distraction', color: 'text-violet-500' },
@@ -1578,11 +1641,14 @@ export default function TripDetail() {
               ? evidenceScore.value
               : item.value;
             return { ...item, evidenceScore, value, show: item.show ?? (!evidenceScore || evidenceScore.value != null) };
-          }).filter(({ show = true }) => show).map(({ icon: Icon, label, value, color, capitalize, evidenceScore }) => (
+          }).filter(({ show = true }) => show).map(({ icon: Icon, label, value, color, capitalize, evidenceScore, useComponentValue, badge }) => (
             <div key={label} className="bg-secondary/50 rounded-xl p-3" title={evidenceScore?.note}>
               <Icon className={`w-4 h-4 mb-2 ${color}`} />
-              <div className={`font-grotesk font-bold text-xl ${value === brakeOnsetCollectingDataText ? 'text-sm leading-snug' : ''} ${capitalize ? 'capitalize' : ''}`}>{evidenceScore && evidenceScore.value != null ? formatScoreWithProvenance(value, trip.score_provenance) : value}</div>
+              <div className={`font-grotesk font-bold text-xl ${value === brakeOnsetCollectingDataText ? 'text-sm leading-snug' : ''} ${capitalize ? 'capitalize' : ''}`}>{evidenceScore && useComponentValue !== false && evidenceScore.value != null ? formatScoreWithProvenance(value, trip.score_provenance) : value}</div>
               <div className="text-xs text-muted-foreground">{label}</div>
+              {badge && (
+                <div className="mt-0.5 inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">{badge}</div>
+              )}
               {evidenceScore && shouldShowComponentEvidenceBadge(evidenceScore.evidence) && (
                 <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(evidenceScore.evidence)}</div>
               )}
@@ -1768,7 +1834,7 @@ export default function TripDetail() {
       </motion.div>
 
       {/* Driving Events */}
-      {eventPanelCount > 0 && (
+      {showDrivingEventsPanel && (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1798,19 +1864,13 @@ export default function TripDetail() {
           )}
 
           <div className="grid grid-cols-2 gap-3 mb-4">
-            {[
-              { label: 'Harsh Brakes', value: trip.harsh_brakes_count, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-              { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
-              { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-              { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
-              { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
-            ].map(({ label, value, icon: Icon, color, bg }) => (
+            {eventSummaryRows.map(({ label, value, note, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />
                 <div>
                   <div className={`font-grotesk font-bold text-xl ${color}`}>{value || 0}</div>
                   <div className="text-xs text-muted-foreground">{label}</div>
+                  {note && <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{note}</div>}
                 </div>
               </div>
             ))}
@@ -1878,7 +1938,7 @@ export default function TripDetail() {
               { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
               { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
               { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ...(trip.heading_deviation_available === true ? [{ label: 'Heading Events (Beta)', value: trip.heading_deviation_count ?? 0, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' }] : []),
+              { label: 'Heading Events (Beta)', value: headingDeviationEventCount, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
               { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
               { label: 'Brake-Turn Alerts', value: trip.close_proximity_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
@@ -2004,7 +2064,30 @@ function componentEvidenceText(evidence) {
 }
 
 function shouldShowComponentEvidenceBadge(evidence) {
-  return evidence === 'low' || evidence === 'unavailable';
+  return Boolean(evidence) && evidence !== 'high';
+}
+
+function componentDataSources(component = {}) {
+  const sources = Array.isArray(component.dataSource)
+    ? component.dataSource
+    : Array.isArray(component.data_sources)
+      ? component.data_sources
+      : [];
+  return [...new Set(sources.filter(Boolean).map(String))];
+}
+
+function componentSourceDetails(component = {}) {
+  const sources = componentDataSources(component);
+  const sourceLabels = sources.length ? sources.map(formatDataSourceLabel) : ['No source recorded'];
+  const sampleCount = Number(component.sampleCount ?? component.sample_count);
+  const sampleText = Number.isFinite(sampleCount)
+    ? `${Math.max(0, Math.round(sampleCount))} sample${Math.round(sampleCount) === 1 ? '' : 's'}`
+    : 'Sample count unavailable';
+  return {
+    sourceText: sourceLabels.join(', '),
+    sampleText,
+    title: `Sources: ${sourceLabels.join(', ')}. ${sampleText}.`,
+  };
 }
 
 function usesInferredSpeedLimitScoring(trip = {}) {
@@ -2261,11 +2344,21 @@ function TripScoreOverview({ trip }) {
     { label: 'Safety', key: 'safety' },
     { label: 'Smooth', key: 'smoothness' },
     { label: 'Eco', key: 'eco' },
-  ].map((item) => ({ ...item, component: getTripComponentScore(trip, item.key) }))
-    .filter(({ component }) => component.value != null);
+  ].map((item) => ({ ...item, component: getTripComponentScore(trip, item.key) }));
   const lowScoreConfidence = !unavailableOverallScore && overallScore.evidence !== 'high';
   const inferredSpeedLimitScoring = usesInferredSpeedLimitScoring(trip);
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
+  const componentSummaryRows = [
+    { label: 'Aggression', metricKey: 'aggressive_driving_score', component: getTripComponentScore(trip, 'aggressive_driving'), grade: trip.aggressive_grade },
+    { label: 'Defensive Driving Estimate', metricKey: 'defensive_driving_score', component: getTripComponentScore(trip, 'defensive_driving'), grade: trip.defensive_grade, qualifier: 'GPS + stop-behaviour proxy' },
+    {
+      label: 'Lane Changing',
+      metricKey: 'lane_changing_score',
+      component: getTripComponentScore(trip, 'lane_changing'),
+      grade: trip.lane_changing_grade,
+      badge: trip.lane_changing_confidence !== 'imu_calibrated' ? 'GPS estimate' : null,
+    },
+  ].filter(({ component }) => component.value != null);
   const confidenceTitle = lowScoreConfidence
     ? 'Score based on limited available evidence.'
     : unavailableOverallScore
@@ -2288,16 +2381,33 @@ function TripScoreOverview({ trip }) {
           evidence={overallScore.evidence}
           scoreProvenance={scoreProvenance}
         />
-        <div className="flex-1 grid grid-cols-3 gap-3">
+        <div className="grid flex-1 grid-cols-3 gap-3">
           {headlineScores.map(({ label, key, component }) => {
-            const { color: c } = getScoreColor(component.value || 0);
+            const unavailable = component.value == null || component.evidence === 'unavailable';
+            const { color: c } = unavailable ? { color: 'text-muted-foreground' } : getScoreColor(component.value || 0);
+            const sourceDetails = componentSourceDetails(component);
             return (
-              <div key={label} className="text-center" title={component.note || buildScoreExplanation(trip, `score_${key}`)}>
-                <div className={`font-grotesk font-bold text-xl ${c}`}>{formatScoreWithProvenance(component.value, scoreProvenance)}</div>
-                <div className="text-xs text-muted-foreground">{label}</div>
+              <div
+                key={label}
+                className={`min-w-0 rounded-xl border px-2 py-2 text-center ${unavailable ? 'border-border bg-secondary/40' : 'border-border/60 bg-background/50'}`}
+                title={component.note || buildScoreExplanation(trip, `score_${key}`)}
+              >
+                <div className={`font-grotesk text-xl font-bold ${c}`}>
+                  {unavailable ? '-' : formatScoreWithProvenance(component.value, scoreProvenance)}
+                </div>
+                <div className="text-xs font-medium text-muted-foreground">{label}</div>
                 {shouldShowComponentEvidenceBadge(component.evidence) && (
                   <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
                 )}
+                <span
+                  tabIndex={0}
+                  title={sourceDetails.title}
+                  aria-label={sourceDetails.title}
+                  className="mx-auto mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                >
+                  <Info className="h-3 w-3" />
+                  Sources
+                </span>
               </div>
             );
           })}
@@ -2347,10 +2457,7 @@ function TripScoreOverview({ trip }) {
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 mt-5 sm:grid-cols-2">
-        {[
-          { label: 'Aggression', component: getTripComponentScore(trip, 'aggressive_driving'), grade: trip.aggressive_grade },
-          { label: 'Defensive Driving Estimate', component: getTripComponentScore(trip, 'defensive_driving'), grade: trip.defensive_grade, qualifier: 'GPS + stop-behaviour proxy' },
-        ].filter(({ component }) => component.value != null).map(({ label, component, grade, qualifier }) => (
+        {componentSummaryRows.map(({ label, metricKey, component, grade, qualifier, badge }) => (
           <div key={label} className="flex min-w-0 items-center gap-3 rounded-2xl bg-secondary/50 p-3">
             <div className="shrink-0">
               <ScoreRing
@@ -2358,20 +2465,23 @@ function TripScoreOverview({ trip }) {
                 evidence={component.evidence}
                 size={56}
                 strokeWidth={5}
-                title={buildScoreExplanation(trip, label === 'Aggression' ? 'aggressive_driving_score' : 'defensive_driving_score')}
+                title={buildScoreExplanation(trip, metricKey)}
                 scoreProvenance={scoreProvenance}
               />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold leading-tight">{label}</div>
               {qualifier && <div className="text-[11px] text-muted-foreground">{qualifier}</div>}
+              {badge && (
+                <div className="mt-0.5 inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">{badge}</div>
+              )}
               {shouldShowComponentEvidenceBadge(component.evidence) && (
                 <div className="text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
               )}
               <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${
-                ['calm', 'exemplary', 'defensive'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
-                  grade === 'moderate' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :
-                    ['assertive', 'average'].includes(grade) ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' :
+                ['calm', 'exemplary', 'defensive', 'smooth'].includes(grade) ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
+                  ['moderate', 'acceptable'].includes(grade) ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' :
+                    ['assertive', 'average', 'frequent'].includes(grade) ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' :
                       'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
               }`}>{grade || 'unknown'}</span>
             </div>

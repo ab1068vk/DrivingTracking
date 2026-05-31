@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDriverSignature } from '@/lib/tripInsights';
 
 const trip = (index, overrides = {}) => ({
@@ -15,6 +15,14 @@ const trip = (index, overrides = {}) => ({
 });
 
 describe('driver signature', () => {
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-01-25T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns null for no trips', () => {
     expect(buildDriverSignature([])).toBeNull();
   });
@@ -61,6 +69,24 @@ describe('driver signature', () => {
     expect(result.braking_confidence).toBe(1);
   });
 
+  it('bases braking confidence on recent braking evidence only', () => {
+    vi.setSystemTime(new Date('2026-05-27T12:00:00.000Z'));
+
+    const recentWithoutBraking = Array.from({ length: 10 }, (_, index) => trip(index, {
+      start_time: new Date(Date.UTC(2026, 4, 27 - index)).toISOString(),
+      braking_efficiency_score: null,
+    }));
+    const staleWithBraking = Array.from({ length: 10 }, (_, index) => trip(index + 20, {
+      start_time: new Date(Date.UTC(2026, 0, 10 - index)).toISOString(),
+      braking_efficiency_score: 80,
+    }));
+
+    const result = buildDriverSignature([...recentWithoutBraking, ...staleWithBraking]);
+
+    expect(result.dimensions.brakingStyle).toBeNull();
+    expect(result.braking_confidence).toBe(0);
+  });
+
   it('classifies aggressive commuter boundary patterns', () => {
     const result = buildDriverSignature(Array.from({ length: 6 }, (_, index) => trip(index, {
       aggressive_driving_score: 35,
@@ -85,6 +111,15 @@ describe('driver signature', () => {
     expect(result.dimensions.ecoMindedness).toBeNull();
     expect(result.dimensions.consistencyIdx).toBeNull();
     expect(result.archetype).toBe('balanced');
+  });
+
+  it('adds OBD-backed powertrain stress when engine telemetry exists', () => {
+    const result = buildDriverSignature(Array.from({ length: 6 }, (_, index) => trip(index, {
+      engine_stress_score: 70,
+      obd_powertrain_sample_count: 20,
+    })));
+
+    expect(result.dimensions.powertrainStress).toBe(0.3);
   });
 
   it('detects an increasing aggression style shift', () => {

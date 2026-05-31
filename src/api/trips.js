@@ -79,6 +79,12 @@ export const tripService = {
       scoring_version: null,
       completed_count: 0,
       mismatch_count: 0,
+      recent_window_days: 28,
+      recent_completed_count: 0,
+      recent_mismatch_count: 0,
+      recent_mismatch_ratio: 0,
+      auto_rescore_threshold_ratio: 0.2,
+      auto_rescore_recommended: false,
       unavailable_score_count: 0,
       trips: [],
     };

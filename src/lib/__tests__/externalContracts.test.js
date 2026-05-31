@@ -271,7 +271,10 @@ describe('external service contracts', () => {
       }),
     })));
 
-    const result = await mapMatchRoute(route, { osrm_map_matching_url: 'https://osrm.example' });
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+    });
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [rawUrl] = fetch.mock.calls[0];

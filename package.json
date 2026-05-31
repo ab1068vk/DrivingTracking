@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm run scoring:version",
     "build": "vite build",
+    "pretest": "npm run scoring:version:check",
     "test": "vitest run",
+    "scoring:version": "node scripts/generate-scoring-version.mjs",
+    "scoring:version:check": "node scripts/generate-scoring-version.mjs --check",
     "test:contracts:live": "node scripts/run-live-contracts.mjs",
     "test:e2e": "node ./node_modules/vite/bin/vite.js build && node ./node_modules/playwright/cli.js test",
     "postinstall": "node scripts/patch-android-gradle.mjs",

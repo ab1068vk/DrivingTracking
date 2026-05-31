@@ -1,21 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
   CALIBRATION_STATUSES,
+  DEFAULT_HOURLY_RISK_PROFILE,
   PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS,
   SCORE_OUTPUT_CALIBRATION_STATUSES,
   SCORING_CONSTANTS,
+  SCORING_VERSION,
   calibrationStatusForMetrics,
   calibrationEntryForSetting,
   getProvisionalScoringConstants,
   hasProvisionalCalibration,
   scoringValue,
 } from '@/lib/scoringConstants';
-import { FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
+import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
 import { PHONE_USE_PENALTY_POINTS } from '@/lib/phoneUsageAccess';
 import { DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
 import { TIME_OF_DAY_NIGHT_MULTIPLIER } from '@/lib/ubiReport';
 
 describe('scoring constants registry', () => {
+  it('uses a generated content-hash scoring version', () => {
+    expect(SCORING_VERSION).toMatch(/^[a-f0-9]{8}$/);
+    expect(SCORING_VERSION).not.toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
   it('registers domain constants with explicit calibration metadata', () => {
     const validStatuses = new Set(Object.values(CALIBRATION_STATUSES));
 
@@ -31,10 +38,27 @@ describe('scoring constants registry', () => {
   it('drives existing scoring exports from the central values', () => {
     expect(PENALTY_SCALE_FACTOR).toBe(scoringValue('PENALTY_SCALE_FACTOR'));
     expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(scoringValue('FATIGUE_SAFETY_PENALTY_SCALE'));
+    expect(FATIGUE_SAFETY_MAX_PENALTY).toBe(scoringValue('FATIGUE_SAFETY_MAX_PENALTY'));
     expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS).toBe(scoringValue('HILL_INFRACTION_PENALTY_POINTS'));
     expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM).toBe(scoringValue('HILL_INFRACTION_PENALTY_POINTS_PER_KM'));
     expect(PHONE_USE_PENALTY_POINTS.high).toBe(scoringValue('PHONE_PENALTY_HIGH'));
     expect(TIME_OF_DAY_NIGHT_MULTIPLIER).toBe(scoringValue('UBI_NIGHT_MULTIPLIER'));
+  });
+
+  it('registers the default hourly fallback risk profile with calibration metadata', () => {
+    expect(SCORING_CONSTANTS.DEFAULT_HOURLY_RISK_PROFILE).toBe(DEFAULT_HOURLY_RISK_PROFILE);
+    expect(scoringValue('DEFAULT_HOURLY_RISK_PROFILE')).toEqual([
+      60, 60, 60, 60, 60, 20, 20, 35, 35, 35, 20, 20,
+      20, 20, 20, 20, 40, 40, 40, 20, 20, 20, 60, 60,
+    ]);
+    expect(DEFAULT_HOURLY_RISK_PROFILE).toMatchObject({
+      calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
+      calibration_note: expect.stringContaining('Global default fallback'),
+      calibration_metadata: {
+        profile_version: 'default-hourly-risk-profile-v1',
+        replacement_policy: expect.stringContaining('SCORING_VERSION-gated'),
+      },
+    });
   });
 
   it('exposes provisional settings and affected score surfaces as approximate', () => {
@@ -58,6 +82,11 @@ describe('scoring constants registry', () => {
         warning: 'Calibration pending: not enough labeled trips yet.',
       },
       value: 0.15,
+    });
+    expect(SCORING_CONSTANTS.FATIGUE_SAFETY_MAX_PENALTY).toMatchObject({
+      calibration_status: CALIBRATION_STATUSES.CITED,
+      calibration_note: expect.stringContaining('flat Safety score deduction'),
+      value: 15,
     });
     expect(SCORING_CONSTANTS.HILL_INFRACTION_PENALTY_POINTS_PER_KM).toMatchObject({
       calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
@@ -87,7 +116,7 @@ describe('scoring constants registry', () => {
     expect(process.fitting_method.model).toContain('penalty_rate_per_km * PENALTY_SCALE_FACTOR');
     expect(process.promotion_criteria.commit_requirements).toEqual(expect.arrayContaining([
       expect.stringContaining('change SCORING_CONSTANTS.PENALTY_SCALE_FACTOR.calibration_status to calibrated'),
-      expect.stringContaining('increment SCORING_VERSION'),
+      expect.stringContaining('regenerate the content-derived SCORING_VERSION'),
     ]));
   });
 

@@ -4,6 +4,28 @@
  * Entries document the intended interpretation of a metric. Calibration notes
  * explicitly identify approximations until validated against external outcomes.
  */
+export const DATA_SOURCE_LABELS = Object.freeze({
+  android_activity_recognition: 'Android activity recognition',
+  android_usage_access: 'Android Usage Access',
+  device_motion_imu: 'Device motion IMU',
+  imu_yaw: 'IMU yaw',
+  gps: 'GPS route samples',
+  gps_altitude: 'GPS altitude',
+  gps_events: 'GPS event detection',
+  gps_inferred_speed_limit: 'GPS-inferred speed limit',
+  gps_proxy: 'GPS diagnostic proxy',
+  gps_timestamps: 'GPS timestamps',
+  legacy_unverified: 'Legacy unverified evidence',
+  obd_bluetooth: 'OBD-II Bluetooth',
+  open_meteo_weather: 'Open-Meteo weather',
+  osm_speed_limit: 'OpenStreetMap speed limits',
+  phone_use_usage_access: 'Android Usage Access',
+  speed_limit_osm: 'OpenStreetMap speed limits',
+  trip_distance_history: 'Trip distance history',
+  trip_scores: 'Trip scores',
+  trip_timestamps: 'Trip timestamps',
+});
+
 export const METRIC_REGISTRY = Object.freeze({
   duration_seconds: {
     label: 'Duration',
@@ -22,28 +44,28 @@ export const METRIC_REGISTRY = Object.freeze({
   avg_speed_kmh: {
     label: 'Average Speed',
     description: 'Distance divided by elapsed trip duration.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0,
     calibrationNote: 'Includes stopped time.',
   },
   avg_running_speed_kmh: {
     label: 'Average Moving Speed',
     description: 'Average speed while the vehicle is moving.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0,
     calibrationNote: 'Depends on the configured stopped-speed threshold.',
   },
   max_speed_kmh: {
     label: 'Maximum Speed',
-    description: 'Highest accepted GPS speed sample.',
-    dataSources: ['gps'],
+    description: 'Highest accepted vehicle speed sample.',
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0,
-    calibrationNote: 'Subject to GPS sampling and quality filtering.',
+    calibrationNote: 'Subject to GPS/OBD sampling and quality filtering.',
   },
   score_overall: {
     label: 'Overall Score Estimate',
     description: 'Approximate weighted blend of safety, smoothness, eco and approach-stop evidence.',
-    dataSources: ['gps_events', 'speed_limit_osm', 'phone_use_usage_access'],
+    dataSources: ['gps_events', 'obd_bluetooth', 'speed_limit_osm', 'phone_use_usage_access'],
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'Weighting is provisional and intended for coaching feedback; not a validated safety outcome.',
@@ -51,7 +73,7 @@ export const METRIC_REGISTRY = Object.freeze({
   score_safety: {
     label: 'Safety Pattern Estimate',
     description: 'Penalises harsh braking, speeding and selected GPS motion/phone-use evidence.',
-    dataSources: ['gps_events', 'speed_limit_osm', 'phone_use_usage_access'],
+    dataSources: ['gps_events', 'obd_bluetooth', 'speed_limit_osm', 'phone_use_usage_access'],
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'Provisional GPS coaching score; not calibrated to crashes, claims, or safety outcomes.',
@@ -59,7 +81,7 @@ export const METRIC_REGISTRY = Object.freeze({
   score_smoothness: {
     label: 'GPS Motion Smoothness Estimate',
     description: 'Blends event penalties with GPS acceleration, braking and cornering regularity.',
-    dataSources: ['gps', 'gps_events'],
+    dataSources: ['gps', 'obd_bluetooth', 'gps_events'],
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'GPS-derived motion proxy; not vehicle sensor validation.',
@@ -67,7 +89,7 @@ export const METRIC_REGISTRY = Object.freeze({
   score_eco: {
     label: 'Eco Score Estimate',
     description: 'Estimates efficient speed stability, cruise behaviour and fuel-band operation.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'Coaching proxy; not measured fuel consumption.',
@@ -154,7 +176,7 @@ export const METRIC_REGISTRY = Object.freeze({
   jerk_score: {
     label: 'Smoothness Index',
     description: 'Scores acceleration jerk calculated from route-speed samples.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 3,
     calibrationNote: 'Dependent on GPS sampling cadence and filtering.',
@@ -169,14 +191,14 @@ export const METRIC_REGISTRY = Object.freeze({
   smoothness_index: {
     label: 'Smoothness Index Value',
     description: 'Acceleration-jerk summary exposed with the jerk score.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'GPS motion estimate.',
   },
   eco_driving_score: {
     label: 'Eco Driving Estimate',
     description: 'Estimates efficient cruise and idling patterns.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 3,
     calibrationNote: 'Not calibrated to fuel or energy consumption.',
@@ -184,14 +206,14 @@ export const METRIC_REGISTRY = Object.freeze({
   cruise_score: {
     label: 'Cruise Score',
     description: 'Speed-stability contribution to eco driving.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'Provisional speed-stability conversion.',
   },
   svi_score: {
     label: 'Speed Variability Score',
     description: 'Scores speed variation relative to observed road type.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'Road-type-stratified GPS estimate.',
@@ -199,7 +221,7 @@ export const METRIC_REGISTRY = Object.freeze({
   speed_variability_index: {
     label: 'Speed Variability Index',
     description: 'Coefficient-based measure of moving-speed variability.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'GPS estimate; affected by traffic conditions.',
   },
@@ -213,15 +235,43 @@ export const METRIC_REGISTRY = Object.freeze({
   fuel_band_score: {
     label: 'Fuel Band Score',
     description: 'Scores time spent in speed bands associated with steady driving.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 3,
-    calibrationNote: 'Efficiency proxy; does not observe engine load.',
+    calibrationNote: 'Efficiency proxy; OBD RPM/throttle refine this score when connected.',
+  },
+  obd_powertrain_sample_count: {
+    label: 'OBD Powertrain Sample Count',
+    description: 'Number of route samples with OBD RPM or throttle evidence.',
+    dataSources: ['obd_bluetooth'],
+    minDistanceKm: 0,
+    calibrationNote: 'Diagnostic support count for optional OBD-II evidence.',
+  },
+  obd_idle_seconds: {
+    label: 'OBD Engine Idle Seconds',
+    description: 'Low-speed seconds with engine RPM present, used to refine avoidable idle scoring.',
+    dataSources: ['obd_bluetooth'],
+    minDistanceKm: 0,
+    calibrationNote: 'Depends on supported RPM PID and sample cadence.',
+  },
+  obd_over_rev_count: {
+    label: 'OBD Over-Rev Count',
+    description: 'Count of RPM samples above the provisional over-rev threshold.',
+    dataSources: ['obd_bluetooth'],
+    minDistanceKm: 0,
+    calibrationNote: 'Vehicle gearing and engine type are not model-specific yet.',
+  },
+  obd_high_throttle_count: {
+    label: 'OBD High-Throttle Count',
+    description: 'Count of high-throttle acceleration samples used as a physical correlate for rapid acceleration.',
+    dataSources: ['obd_bluetooth'],
+    minDistanceKm: 0,
+    calibrationNote: 'Depends on supported throttle-position PID and sample cadence.',
   },
   optimal_band_ratio: {
     label: 'Optimal Speed Band Ratio',
     description: 'Share of accepted samples in the estimated efficient speed band.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'Efficiency proxy.',
   },
@@ -299,18 +349,18 @@ export const METRIC_REGISTRY = Object.freeze({
   },
   engine_stress_score: {
     label: 'Engine Stress Score',
-    description: 'Estimates high-speed acceleration stress from GPS events.',
-    dataSources: ['gps_events'],
+    description: 'Estimates high-speed acceleration stress, refined by OBD RPM/throttle when connected.',
+    dataSources: ['gps_events', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 2,
-    calibrationNote: 'No engine telemetry is read.',
+    calibrationNote: 'OBD powertrain telemetry is optional; GPS events remain the fallback.',
   },
   high_speed_accel_count: {
     label: 'High-Speed Acceleration Count',
     description: 'Number of high-speed acceleration patterns supporting engine stress.',
-    dataSources: ['gps_events'],
+    dataSources: ['gps_events', 'obd_bluetooth'],
     minDistanceKm: 0,
-    calibrationNote: 'No engine telemetry is read.',
+    calibrationNote: 'OBD high-throttle samples refine stress when available.',
   },
   trip_tire_wear_units: {
     label: 'Tire Wear Units',
@@ -396,7 +446,7 @@ export const METRIC_REGISTRY = Object.freeze({
   brake_onset_smoothness_score: {
     label: 'Brake Onset Smoothness Score',
     description: 'Scores ramp-up smoothness at the onset of braking sequences.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'GPS-derived braking proxy.',
@@ -404,21 +454,21 @@ export const METRIC_REGISTRY = Object.freeze({
   avg_brake_onset_ramp_seconds: {
     label: 'Average Brake Onset Ramp',
     description: 'Average observed ramp duration for braking onset.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'Available only with qualifying braking sequences.',
   },
   brake_onset_sequence_count: {
     label: 'Brake Onset Sequence Count',
     description: 'Number of braking sequences supporting onset smoothness.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0,
     calibrationNote: 'Diagnostic support count.',
   },
   cornering_consistency_score: {
     label: 'Cornering Consistency Score',
     description: 'Scores consistency of GPS-derived lateral acceleration in corners.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 1,
     calibrationNote: 'GPS-derived lateral acceleration estimate.',
@@ -426,28 +476,28 @@ export const METRIC_REGISTRY = Object.freeze({
   mean_lateral_g: {
     label: 'Mean Lateral G',
     description: 'Mean estimated lateral acceleration during observed corners.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'GPS-derived estimate.',
   },
   peak_lateral_g: {
     label: 'Peak Lateral G',
     description: 'Peak estimated lateral acceleration during observed corners.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     calibrationNote: 'GPS-derived estimate.',
   },
   corner_sample_count: {
     label: 'Corner Sample Count',
     description: 'Number of corner observations supporting consistency scoring.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0,
     calibrationNote: 'Diagnostic support count.',
   },
   braking_efficiency_score: {
     label: 'Braking Efficiency Score',
     description: 'Scores controlled speed reduction across braking sequences.',
-    dataSources: ['gps'],
+    dataSources: ['gps', 'obd_bluetooth'],
     minDistanceKm: 0.5,
     minSamples: 1,
     calibrationNote: 'GPS-derived braking proxy.',
@@ -518,6 +568,26 @@ export const METRIC_REGISTRY = Object.freeze({
     minDistanceKm: 0.5,
     minSamples: 2,
     calibrationNote: 'Coaching estimate from event detection.',
+  },
+  lane_changing_score: {
+    label: 'Lane Changing',
+    description: 'Scores lane-changing rate and safety on highway segments. Unsafe changes (simultaneous braking) carry higher penalties.',
+    dataSources: ['gps', 'device_motion_imu'],
+    sources: ['gps', 'imu_yaw'],
+    minDistanceKm: 5,
+    minSamples: 2,
+    evidence_minimum: { distance_km: 5, sample_count: 2 },
+    calibrationNote: 'IMU yaw bilateral pattern + GPS heading validation. GPS-only confidence weighted lower. Not validated against collision outcome data. Limits: cannot detect slow-traffic lane changes below 65 km/h, cannot reliably separate lane changes from curved-road background heading changes, cannot distinguish signalled from unsignalled changes because no turn-signal sensor exists, and cannot judge following-vehicle gap because no ranging sensor exists. GPS-only detection can produce about 30-40% false positives in GPS telematics testing conditions; IMU-fused detection is expected around 10-15%. Phone orientation calibration requires at least two GPS-confirmed harsh-brake events per trip, so early trip segments may use GPS-only detection until calibration confidence is available.',
+    calibration_note: 'IMU yaw bilateral pattern + GPS heading validation. GPS-only confidence weighted lower. Not validated against collision outcome data. Limits: cannot detect slow-traffic lane changes below 65 km/h, cannot reliably separate lane changes from curved-road background heading changes, cannot distinguish signalled from unsignalled changes because no turn-signal sensor exists, and cannot judge following-vehicle gap because no ranging sensor exists. GPS-only detection can produce about 30-40% false positives in GPS telematics testing conditions; IMU-fused detection is expected around 10-15%. Phone orientation calibration requires at least two GPS-confirmed harsh-brake events per trip, so early trip segments may use GPS-only detection until calibration confidence is available.',
+    affected_components: ['score_safety', 'score_overall'],
+  },
+  lane_change_count: {
+    label: 'Lane Changes',
+    description: 'Count of detected lane-change manoeuvres.',
+    dataSources: ['gps_events', 'device_motion_imu'],
+    minDistanceKm: 5,
+    minSamples: 2,
+    calibrationNote: 'Requires calibrated IMU axes for high confidence; GPS-only fallback is lower confidence.',
   },
   defensive_grade: {
     label: 'Defensive Driving Grade',
@@ -610,6 +680,15 @@ export const METRIC_REGISTRY = Object.freeze({
     dataSources: ['gps_events'],
     minDistanceKm: 0,
     calibrationNote: 'GPS heading based event count.',
+  },
+  possible_crash_count: {
+    label: 'Possible Incident Signals',
+    description: 'Count of possible crash or incident signals detected from abrupt IMU motion followed by little movement.',
+    dataSources: ['gps', 'device_motion_imu', 'android_activity_recognition'],
+    minDistanceKm: 0,
+    calibrationNote: 'Emergency workflow trigger only; not a crash diagnosis and unavailable without device motion samples.',
+    permission_required: 'motion_sensors',
+    permissionRequiredNote: 'Device motion/IMU access is required before Road Sage can evaluate impact-like movement for possible incident detection.',
   },
   speeding_events_count: {
     label: 'Speeding Events',
@@ -872,6 +951,7 @@ export const COMPONENT_METRIC_KEYS = Object.freeze({
   overtake_quality: 'overtake_quality_score',
   aggressive_driving: 'aggressive_driving_score',
   defensive_driving: 'defensive_driving_score',
+  lane_changing: 'lane_changing_score',
   fatigue_risk: 'fatigue_risk_score',
 });
 
@@ -991,6 +1071,16 @@ export const UBI_CATEGORY_METRIC_KEYS = Object.freeze({
 export function formatMetricMetadata(metricKey) {
   const metric = METRIC_REGISTRY[metricKey];
   if (!metric) return '';
-  const sources = metric.dataSources.join('; ');
+  const sources = metric.dataSources.map(formatDataSourceLabel).join('; ');
   return `${metric.label}: ${metric.description} Sources: ${sources}. Minimum distance: ${metric.minDistanceKm} km. ${metric.calibrationNote}`;
+}
+
+export function formatDataSourceLabel(source) {
+  if (!source) return '';
+  const key = String(source);
+  return DATA_SOURCE_LABELS[key] || key
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.toUpperCase() === part ? part : part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }

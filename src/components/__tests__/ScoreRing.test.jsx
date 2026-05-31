@@ -15,8 +15,10 @@ describe('ScoreRing evidence styles', () => {
     const html = renderToStaticMarkup(<ScoreRing score={null} evidence="unavailable" animated={false} />);
 
     expect(html).toContain('data-evidence="unavailable"');
-    expect(html).toContain('hsl(var(--muted-foreground))');
+    expect(html).toContain('stroke-dasharray="2 5"');
+    expect(html).toContain('text-muted-foreground');
     expect(html).toContain('>-</span>');
+    expect(html).not.toContain('stroke-dasharray="5 4"');
   });
 
   it('renders low and limited evidence with dashed rings', () => {

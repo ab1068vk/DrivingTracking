@@ -46,6 +46,9 @@ export default function DrivingCoach() {
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');
   const coach = buildDrivingCoachInsights(completed, settings);
+  const coachBaselineRangeLabel = coach.baseline?.baseline_includes_older_scores
+    ? coach.baseline.baseline_label
+    : coach.baseline?.baseline_confidence_interval_label;
   const weeklySummary = buildWeeklyCoachSummary(completed);
   const driverSignature = useMemo(() => buildDriverSignature(completed), [completed]);
   const driverModel = useMemo(() => buildOnDeviceDriverModel(completed), [completed]);
@@ -298,7 +301,7 @@ export default function DrivingCoach() {
                   <div className="text-xs text-muted-foreground">this week</div>
                 </div>
                 <div className="bg-secondary/50 rounded-xl p-3">
-                  <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg == null ? '-' : `${coach.baseline.baseline_avg} +/- ${coach.baseline.baseline_confidence_interval}`}</div>
+                  <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg == null ? '-' : coachBaselineRangeLabel ? `${coach.baseline.baseline_avg} (${coachBaselineRangeLabel})` : coach.baseline.baseline_avg}</div>
                   <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
                 </div>
                 <div className="bg-secondary/50 rounded-xl p-3">

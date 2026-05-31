@@ -5,6 +5,7 @@ import {
 } from '@/lib/calibrationLabeling';
 import { fitCalibrationDataset, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
+import { SCORING_VERSION } from '@/lib/tripEngine';
 
 const completedTrip = {
   id: 'trip_private_id',
@@ -37,7 +38,7 @@ const completedTrip = {
     { type: 'speeding', severity: 'low', lat: 43.66, lng: -79.39, timestamp: '2026-01-01T12:01:00.000Z' },
   ],
   score_provenance: {
-    scoring_version: '2.2.0',
+    scoring_version: SCORING_VERSION,
     calibration_status: 'approximate',
     provisional_constants: ['PENALTY_SCALE_FACTOR'],
     constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
@@ -55,7 +56,7 @@ describe('calibration labeling pipeline', () => {
     expect(payload).toMatchObject({
       schemaVersion: 1,
       anonymousInstallIdHash: 'install_hash',
-      scoringModelVersion: '2.2.0',
+      scoringModelVersion: SCORING_VERSION,
       createdAt: '2026-05-26T18:00:00.000Z',
       surveyLabel: {
         overallDriveRating: 4,

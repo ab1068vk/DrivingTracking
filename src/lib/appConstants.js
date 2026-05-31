@@ -17,10 +17,10 @@ export const PENALTY_SCALE_FACTOR = scoringValue('PENALTY_SCALE_FACTOR');
  * Source: Williamson & Feyer, Occupational and Environmental Medicine (2000):
  * 17-19 hours awake can produce performance impairment equivalent or worse
  * than 0.05% BAC. Conservative mapping: max fatigue proxy (100) to about
- * 0.05% BAC-equivalent impairment and 15 raw Safety penalty points before
- * distance normalization.
+ * 0.05% BAC-equivalent impairment and 15 flat Safety deduction points.
  */
 export const FATIGUE_SAFETY_PENALTY_SCALE = scoringValue('FATIGUE_SAFETY_PENALTY_SCALE');
+export const FATIGUE_SAFETY_MAX_PENALTY = scoringValue('FATIGUE_SAFETY_MAX_PENALTY');
 
 export const MAX_VISIBLE_DANGER_ZONES = 6;
 export const MAX_ROUTE_RISK_SEGMENTS_SHOWN = 3;

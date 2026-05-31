@@ -21,6 +21,9 @@ import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
 import {
+  AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
+  AUTO_RESCORE_RECENT_WINDOW_DAYS,
+  RESCORE_PROGRESS_EVENT,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
@@ -66,6 +69,7 @@ import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { checkOsrmEndpointHealth } from '@/lib/mapMatching';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
@@ -245,9 +249,13 @@ export default function Settings() {
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [rescoreStatus, setRescoreStatus] = useState('');
+  const [rescoreProgress, setRescoreProgress] = useState(null);
   const [headingEventMigrationNoteVisible, setHeadingEventMigrationNoteVisible] = useState(false);
-  const [osrmDemoConsentOpen, setOsrmDemoConsentOpen] = useState(false);
-  const [osrmDemoConsentChecked, setOsrmDemoConsentChecked] = useState(false);
+  const [osrmConsentOpen, setOsrmConsentOpen] = useState(false);
+  const [osrmConsentChecked, setOsrmConsentChecked] = useState(false);
+  const [osrmPendingEndpoint, setOsrmPendingEndpoint] = useState('');
+  const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
+  const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -264,6 +272,12 @@ export default function Settings() {
     scoring_version: SCORING_VERSION,
     completed_count: 0,
     mismatch_count: 0,
+    recent_window_days: AUTO_RESCORE_RECENT_WINDOW_DAYS,
+    recent_completed_count: 0,
+    recent_mismatch_count: 0,
+    recent_mismatch_ratio: 0,
+    auto_rescore_threshold_ratio: AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
+    auto_rescore_recommended: false,
     unavailable_score_count: 0,
     event_migration_version: 0,
     trips: [],
@@ -287,6 +301,17 @@ export default function Settings() {
       });
       return cfg;
     }
+    const nextCfg = { ...cfg, ...patch };
+    const touchesEcoMultipliers = Object.prototype.hasOwnProperty.call(patch, 'eco_cruise_score_multiplier') ||
+      Object.prototype.hasOwnProperty.call(patch, 'eco_idle_penalty_multiplier');
+    if (touchesEcoMultipliers && wouldDisableEcoScore(nextCfg)) {
+      toast({
+        title: 'Eco setting not saved',
+        description: 'Eco scoring needs either the cruise multiplier or idle multiplier above 0.',
+        variant: 'destructive',
+      });
+      return cfg;
+    }
     const updated = localSettings.update(patch);
     setCfg(updated);
     setSaved(true);
@@ -294,10 +319,9 @@ export default function Settings() {
     return updated;
   };
 
-  const openOsrmDemoConsent = () => {
-    setOsrmDemoConsentChecked(false);
-    setOsrmDemoConsentOpen(true);
-  };
+  useEffect(() => {
+    setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
+  }, [cfg.osrm_map_matching_url]);
 
   useEffect(() => {
     let active = true;
@@ -316,47 +340,135 @@ export default function Settings() {
     };
   }, [scoreMigrationSummary.event_migration_version]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onProgress = (event) => {
+      const detail = event.detail || {};
+      setRescoreProgress(detail);
+      if (detail.status === 'running') {
+        setRescoreStatus(detail.reason === 'auto_provenance'
+          ? `Updating older trip scores ${detail.completed || 0}/${detail.total || 0}.`
+          : `Refreshing stored trip scores ${detail.completed || 0}/${detail.total || 0}.`);
+      }
+      if (detail.status === 'complete') {
+        setRescoreStatus(`${detail.completed || 0} trip${detail.completed === 1 ? '' : 's'} re-scored.`);
+        qc.invalidateQueries({ queryKey: ['settings-trips'] });
+        qc.invalidateQueries({ queryKey: ['score-migration-summary'] });
+        setTimeout(() => {
+          setRescoreProgress(null);
+          setRescoreStatus('');
+        }, 5000);
+      }
+    };
+    window.addEventListener(RESCORE_PROGRESS_EVENT, onProgress);
+    return () => window.removeEventListener(RESCORE_PROGRESS_EVENT, onProgress);
+  }, [qc]);
+
   const dismissHeadingEventMigrationNote = async () => {
     await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
     setHeadingEventMigrationNoteVisible(false);
   };
 
-  const acceptOsrmDemoConsent = () => {
-    if (!osrmDemoConsentChecked) return;
-    updateCfg({
-      map_matching_enabled: true,
-      osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL,
-      osrm_public_demo_consent_at: new Date().toISOString(),
-    });
-    setOsrmDemoConsentOpen(false);
-    setOsrmDemoConsentChecked(false);
-  };
-
   const enableOsrmMapMatching = (enabled) => {
     if (!enabled) {
-      updateCfg({ map_matching_enabled: false, osrm_map_matching_url: '', osrm_public_demo_consent_at: '' });
+      updateCfg({ map_matching_enabled: false });
       return;
     }
-    if (isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)) {
-      openOsrmDemoConsent();
+    if (!cfg.osrm_map_matching_url || cfg.osrm_data_sharing_consented !== true) {
+      toast({
+        title: 'OSRM endpoint not ready',
+        description: 'Save a trusted OSRM endpoint and confirm data sharing before route snapping can run.',
+        variant: 'destructive',
+      });
       return;
     }
     updateCfg({ map_matching_enabled: true });
   };
 
-  const usePublicOsrmDemo = () => {
-    openOsrmDemoConsent();
+  const runOsrmEndpointHealthCheck = async (endpoint) => {
+    setOsrmHealthCheckState('checking');
+    const result = await checkOsrmEndpointHealth(endpoint);
+    const patch = {
+      osrm_health_status: result.ok ? 'connected' : 'unreachable',
+      osrm_last_health_checked_at: result.checked_at,
+      osrm_last_health_error: result.error || '',
+      ...(result.ok ? { osrm_last_reachable_at: result.checked_at } : {}),
+    };
+    setOsrmHealthCheckState('idle');
+    return { result, patch };
   };
 
-  const updateOsrmEndpoint = (value) => {
-    if (isPublicOsrmDemoUrl(value)) {
-      openOsrmDemoConsent();
+  const saveOsrmEndpoint = async (endpoint, consented = false) => {
+    const value = String(endpoint || '').trim().replace(/\/$/, '');
+    if (!value) {
+      updateCfg({
+        map_matching_enabled: false,
+        osrm_map_matching_url: '',
+        osrm_public_demo_consent_at: '',
+        osrm_data_sharing_consented: false,
+        osrm_data_sharing_consented_at: '',
+        osrm_health_status: '',
+        osrm_last_health_checked_at: '',
+        osrm_last_reachable_at: '',
+        osrm_last_health_error: '',
+      });
       return;
     }
+    if (isPublicOsrmDemoUrl(value)) {
+      toast({
+        title: 'Public demo not saved',
+        description: `Use a private or trusted OSRM endpoint. ${PUBLIC_OSRM_DEMO_URL} is shown only as an example.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      new URL(value);
+    } catch {
+      toast({
+        title: 'Endpoint not saved',
+        description: 'Enter a valid OSRM URL, such as https://your-osrm.example.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!consented) {
+      setOsrmPendingEndpoint(value);
+      setOsrmConsentChecked(false);
+      setOsrmConsentOpen(true);
+      return;
+    }
+
+    const consentedAt = new Date().toISOString();
+    const { result, patch } = await runOsrmEndpointHealthCheck(value);
     updateCfg({
+      map_matching_enabled: true,
       osrm_map_matching_url: value,
-      ...(cfg.osrm_public_demo_consent_at ? { osrm_public_demo_consent_at: '' } : {}),
+      osrm_public_demo_consent_at: '',
+      osrm_data_sharing_consented: true,
+      osrm_data_sharing_consented_at: consentedAt,
+      ...patch,
     });
+    toast({
+      title: result.ok ? 'OSRM endpoint connected' : 'OSRM endpoint saved, but unreachable',
+      description: result.ok ? 'Route snapping can use this endpoint when you tap Get Road Data.' : result.error,
+      variant: result.ok ? undefined : 'destructive',
+    });
+  };
+
+  const requestSaveOsrmEndpoint = () => {
+    const value = String(osrmEndpointDraft || '').trim().replace(/\/$/, '');
+    const alreadyConsentedForEndpoint = cfg.osrm_data_sharing_consented === true && cfg.osrm_map_matching_url === value;
+    saveOsrmEndpoint(value, alreadyConsentedForEndpoint);
+  };
+
+  const acceptOsrmDataSharingConsent = () => {
+    if (!osrmConsentChecked || !osrmPendingEndpoint) return;
+    const endpoint = osrmPendingEndpoint;
+    setOsrmConsentOpen(false);
+    setOsrmConsentChecked(false);
+    setOsrmPendingEndpoint('');
+    saveOsrmEndpoint(endpoint, true);
   };
 
   const updateExternalContextAutoFetch = (enabled) => {
@@ -382,6 +494,19 @@ export default function Settings() {
     if (parsed <= min + span * 0.12) return 'Very sensitive';
     if (parsed >= max - span * 0.12) return 'Very lenient';
     return null;
+  };
+  const effectiveEcoMultiplier = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  };
+  const wouldDisableEcoScore = (settings) => (
+    effectiveEcoMultiplier(settings.eco_cruise_score_multiplier) === 0 &&
+    effectiveEcoMultiplier(settings.eco_idle_penalty_multiplier) === 0
+  );
+  const ecoScoreWarning = (key, value = cfg[key]) => {
+    if (!['eco_cruise_score_multiplier', 'eco_idle_penalty_multiplier'].includes(key)) return null;
+    const next = { ...cfg, [key]: value };
+    return wouldDisableEcoScore(next) ? 'Eco score unavailable' : null;
   };
 
   const updateTheme = (mode) => {
@@ -464,7 +589,7 @@ export default function Settings() {
   const showPrivacyPolicy = () => {
     toast({
       title: 'Privacy and local data',
-      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points to your configured OSRM endpoint or the public OSRM demo if you explicitly enable it.',
+      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent.',
       duration: 9000,
     });
   };
@@ -899,7 +1024,7 @@ export default function Settings() {
     { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Currency, fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'currency symbol money cost price co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },
     { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
     { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },
-    { label: 'Detection thresholds', section: 'Detection Thresholds', sectionId: 'settings-detection-thresholds', detail: 'Sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle brake turn heading drift calibration rescore feedback accurate wrong false positive' },
+    { label: 'Detection features', section: 'Detection Features', sectionId: 'settings-detection-thresholds', detail: 'Detection toggles, sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle lane changing brake turn heading drift calibration rescore feedback accurate wrong false positive' },
     { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, historical context risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
     { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },
     { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },
@@ -919,6 +1044,12 @@ export default function Settings() {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setSettingsSearch('');
   };
+  const rescoreTotal = Number(rescoreProgress?.total) || 0;
+  const rescoreCompleted = Number(rescoreProgress?.completed) || 0;
+  const rescoreProgressPct = rescoreTotal > 0
+    ? Math.min(100, Math.round((rescoreCompleted / rescoreTotal) * 100))
+    : 0;
+  const autoRescoreVisible = scoreMigrationSummary.auto_rescore_recommended || rescoreProgress?.reason === 'auto_provenance';
 
   return (
     <div className="space-y-4 pb-6">
@@ -1589,8 +1720,8 @@ export default function Settings() {
           )}
         </div>
 
-        {/* Detection Thresholds */}
-        <SectionTitle id="settings-detection-thresholds">Detection Thresholds</SectionTitle>
+        {/* Detection Features */}
+        <SectionTitle id="settings-detection-thresholds">Detection Features</SectionTitle>
         <SettingRow
           icon={Info}
           label="Driving Pattern Definitions"
@@ -1626,6 +1757,21 @@ export default function Settings() {
             These settings directly change trip event detection, scoring, imports, and rescoring.
           </div>
         )}
+        <div className="mb-3 rounded-2xl bg-secondary/40 p-3">
+          <SettingRow
+            icon={Route}
+            label="Lane-change score"
+            sublabel="Highway-speed estimate only; use lane-change rate and simultaneous-braking detections in Safety scoring"
+          >
+            <Toggle
+              value={cfg.lane_change_score_enabled !== false}
+              onChange={v => updateCfg({ lane_change_score_enabled: v })}
+            />
+          </SettingRow>
+          <div className="px-1 pb-2 text-xs leading-relaxed text-muted-foreground">
+            Does not detect slow traffic below 65 km/h, curved-road lane changes, turn-signal use, or following-vehicle gaps. GPS-only detection may see 30-40% false positives in testing conditions; IMU-fused detection is closer to 10-15%. IMU calibration needs at least two GPS-confirmed harsh-brake events, so early trip segments may stay GPS-only.
+          </div>
+        </div>
         <div className="mb-4 rounded-2xl border border-border bg-secondary/30 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -1709,13 +1855,41 @@ export default function Settings() {
             </button>
             {rescoreStatus && <span className="text-xs text-muted-foreground">{rescoreStatus}</span>}
           </div>
+          {(rescoreProgress?.status === 'running' || autoRescoreVisible) && (
+            <div className="mt-3 rounded-xl border border-border bg-card p-3 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold">
+                    {rescoreProgress?.status === 'running' ? 'Re-scoring trip history' : 'Automatic re-score ready'}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {rescoreProgress?.status === 'running'
+                      ? `${rescoreCompleted}/${rescoreTotal} completed`
+                      : `${scoreMigrationSummary.recent_mismatch_count} of ${scoreMigrationSummary.recent_completed_count} recent trips use older scoring inputs.`}
+                  </div>
+                </div>
+                <div className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                  {rescoreProgress?.status === 'running' ? `${rescoreProgressPct}%` : `>${Math.round((scoreMigrationSummary.auto_rescore_threshold_ratio || AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO) * 100)}%`}
+                </div>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${rescoreProgress?.status === 'running' ? rescoreProgressPct : Math.min(100, Math.round((scoreMigrationSummary.recent_mismatch_ratio || 0) * 100))}%` }}
+                />
+              </div>
+              <div className="mt-2 text-muted-foreground">
+                Older scores are recalculated with scoring version {scoreMigrationSummary.scoring_version || SCORING_VERSION} before they are mixed into recent baselines.
+              </div>
+            </div>
+          )}
           {(scoreMigrationSummary.mismatch_count > 0 || scoreMigrationSummary.unavailable_score_count > 0) && (
             <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
               {scoreMigrationSummary.mismatch_count > 0 && (
                 <>
                   <div className="font-semibold">Scoring model update available</div>
                   <div className="mt-1">
-                    {scoreMigrationSummary.mismatch_count} completed trip{scoreMigrationSummary.mismatch_count === 1 ? '' : 's'} used a different scoring model than version {scoreMigrationSummary.scoring_version || SCORING_VERSION}. Re-score only when you want those stored scores updated.
+                    {scoreMigrationSummary.mismatch_count} completed trip{scoreMigrationSummary.mismatch_count === 1 ? '' : 's'} {scoreMigrationSummary.trips.some((item) => item.status === 'unknown_legacy_unrescored') ? 'are marked unknown legacy until re-scored for' : 'used a different scoring model than'} version {scoreMigrationSummary.scoring_version || SCORING_VERSION}. Re-score only when you want those stored scores updated.
                   </div>
                   <div className="mt-2 space-y-1">
                     {scoreMigrationSummary.trips.slice(0, 4).map((item) => (
@@ -1792,9 +1966,9 @@ export default function Settings() {
                   {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
                     <CalibrationStatusTag />
                   )}
-                  {sliderWarning(cfg[key], min, max) && thresholdEditingEnabled && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                      {sliderWarning(cfg[key], min, max)}
+                  {(ecoScoreWarning(key) || (thresholdEditingEnabled && sliderWarning(cfg[key], min, max))) && (
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] ${ecoScoreWarning(key) ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'}`}>
+                      {ecoScoreWarning(key) || sliderWarning(cfg[key], min, max)}
                     </span>
                   )}
                   {cfg[key]} {unit}
@@ -1812,7 +1986,7 @@ export default function Settings() {
             <SettingRow
               icon={SlidersHorizontal}
               label="Advanced Safety Detection"
-              sublabel={cfg.advanced_safety_detection_enabled === false ? 'Heading-drift beta, brake-turn alert, phone-proxy, speed-creep, and overtake detection are off' : 'Low-confidence GPS safety signatures are enabled'}
+              sublabel={cfg.advanced_safety_detection_enabled === false ? 'Heading events are still collected as diagnostic-only; score-affecting advanced safety signals are off' : 'Low-confidence GPS safety signatures can contribute to score context'}
             >
               <Toggle
                 value={cfg.advanced_safety_detection_enabled !== false}
@@ -1823,7 +1997,7 @@ export default function Settings() {
               {[
                 { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
                 { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
-                { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Curving roads and GPS noise can produce alerts; this is not a fatigue measurement.' },
+                { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Heading events are visible as diagnostic-only when Advanced Safety is off; enabling it allows eligible advanced safety context to affect scoring.' },
                 { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 6, max: 8, step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
                 { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
                 { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },
@@ -1914,53 +2088,82 @@ export default function Settings() {
             sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
           >
             <Toggle
-              value={cfg.map_matching_enabled !== false}
+              value={cfg.map_matching_enabled !== false && Boolean(cfg.osrm_map_matching_url) && cfg.osrm_data_sharing_consented === true}
               onChange={enableOsrmMapMatching}
             />
           </SettingRow>
           <div className="px-1 py-3 border-b border-border/50">
-            <div className="mb-1 text-xs font-medium">Custom OSRM endpoint</div>
+            <div className="flex justify-between gap-3 text-xs mb-1.5">
+              <span className="font-medium">Network timeout</span>
+              <span className="text-primary font-semibold">
+                {Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)} sec
+              </span>
+            </div>
+            <input
+              type="range"
+              min={5}
+              max={30}
+              step={1}
+              value={Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)}
+              onChange={event => updateCfg({ osrm_timeout_ms: Number(event.target.value) * 1000 })}
+              className="w-full accent-primary"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>5 sec</span>
+              <span>30 sec</span>
+            </div>
+          </div>
+          <div className="px-1 py-3 border-b border-border/50">
+            <div className="mb-1 text-xs font-medium">Trusted OSRM endpoint</div>
             <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
               <input
-                value={cfg.osrm_map_matching_url || ''}
-                onChange={event => updateOsrmEndpoint(event.target.value)}
-                disabled={cfg.map_matching_enabled === false}
+                value={osrmEndpointDraft}
+                onChange={event => setOsrmEndpointDraft(event.target.value)}
                 placeholder="https://your-osrm.example"
                 className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
               />
               <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
                 <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                 <span>
-                  Custom endpoints receive raw sampled GPS coordinate pairs. Only use an OSRM server you trust.
+                  OSRM endpoints receive sampled GPS coordinate pairs. Save only a private or trusted server.
                 </span>
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={usePublicOsrmDemo}
-                disabled={cfg.map_matching_enabled === false}
-                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                onClick={requestSaveOsrmEndpoint}
+                disabled={osrmHealthCheckState === 'checking'}
+                className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
-                Use public OSRM demo
+                {osrmHealthCheckState === 'checking' ? 'Checking...' : 'Save endpoint'}
               </button>
               <button
                 type="button"
-                onClick={() => updateCfg({ map_matching_enabled: false, osrm_map_matching_url: '' })}
-                disabled={cfg.map_matching_enabled === false || !cfg.osrm_map_matching_url}
+                onClick={() => {
+                  setOsrmEndpointDraft('');
+                  saveOsrmEndpoint('', true);
+                }}
+                disabled={!cfg.osrm_map_matching_url && !osrmEndpointDraft}
                 className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
                 Turn off + clear
               </button>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. A custom/private OSRM server is best for privacy; the public demo is convenient but receives sampled route points and has no service guarantee.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {PUBLIC_OSRM_DEMO_URL}. The public demo is not saved or used by Road Sage because it receives route points and has no service guarantee.</p>
             <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-              {cfg.map_matching_enabled === false
+              {cfg.osrm_health_status === 'connected' && cfg.osrm_last_reachable_at
+                ? `Connected. OSRM last reachable: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`
+                : cfg.osrm_health_status === 'unreachable'
+                  ? `Unreachable${cfg.osrm_last_health_error ? `: ${cfg.osrm_last_health_error}` : '.'}`
+                  : cfg.map_matching_enabled === false
                 ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
-                : cfg.osrm_map_matching_url
-                  ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
-                    ? 'Public demo on: Get Road Data sends sampled GPS points to router.project-osrm.org, a public third-party server not operated by Road Sage.'
-                    : 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
+                  : cfg.osrm_map_matching_url
+                    ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
+                      ? 'Blocked: the public OSRM demo cannot be used as a route-snapping endpoint.'
+                      : cfg.osrm_data_sharing_consented === true
+                        ? 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
+                        : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
                   : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
             </div>
           </div>
@@ -2257,13 +2460,15 @@ export default function Settings() {
                 : 'sends a privacy-safe route point and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
             </div>
             <div>
-              <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url ? 'ON' : 'NEEDS LINK'}:</span>{' '}
+              <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}:</span>{' '}
               {cfg.map_matching_enabled === false
                 ? 'skips OSRM; map/playback keep the original GPS line.'
                 : cfg.osrm_map_matching_url
                   ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
-                    ? 'sends sampled GPS points to router.project-osrm.org, a public third-party server not operated by Road Sage.'
-                    : 'sends sampled GPS points to OSRM and may make map/playback follow roads more cleanly.'
+                    ? 'blocked because the public OSRM demo is reference text only.'
+                    : cfg.osrm_data_sharing_consented === true
+                      ? 'sends sampled GPS points to your trusted OSRM endpoint and may make map/playback follow roads more cleanly.'
+                      : 'will be skipped until OSRM data-sharing consent is saved.'
                   : 'will be skipped until an OSRM endpoint is added.'}
             </div>
             <div>
@@ -2499,40 +2704,43 @@ export default function Settings() {
         onChange={handleImportBackup}
       />
 
-      <Dialog open={osrmDemoConsentOpen} onOpenChange={(open) => {
-        setOsrmDemoConsentOpen(open);
-        if (!open) setOsrmDemoConsentChecked(false);
+      <Dialog open={osrmConsentOpen} onOpenChange={(open) => {
+        setOsrmConsentOpen(open);
+        if (!open) {
+          setOsrmConsentChecked(false);
+          setOsrmPendingEndpoint('');
+        }
       }}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Use public OSRM demo?</DialogTitle>
+            <DialogTitle>Share route samples with OSRM?</DialogTitle>
             <DialogDescription>
-              Your GPS route coordinates (excluding privacy zones) will be sent to router.project-osrm.org, a public third-party server. This is not operated by Road Sage. Enable only if you accept this data sharing.
+              Road Sage will send sampled GPS coordinate pairs from one selected trip at a time to the OSRM endpoint you save. This happens only when you tap Get Road Data; each continuous route segment sends up to 100 sampled coordinate pairs, with privacy-zone gaps excluded.
             </DialogDescription>
           </DialogHeader>
           <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
             <Checkbox
-              checked={osrmDemoConsentChecked}
-              onCheckedChange={(checked) => setOsrmDemoConsentChecked(checked === true)}
+              checked={osrmConsentChecked}
+              onCheckedChange={(checked) => setOsrmConsentChecked(checked === true)}
               className="mt-0.5"
             />
-            <span>I understand and accept that sampled route GPS coordinates will be sent to the public OSRM demo when I tap Get Road Data.</span>
+            <span>I understand and accept that sampled GPS coordinate pairs from selected trips will be sent to this OSRM endpoint when I tap Get Road Data.</span>
           </label>
           <DialogFooter>
             <button
               type="button"
-              onClick={() => setOsrmDemoConsentOpen(false)}
+              onClick={() => setOsrmConsentOpen(false)}
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
             >
               Cancel
             </button>
             <button
               type="button"
-              onClick={acceptOsrmDemoConsent}
-              disabled={!osrmDemoConsentChecked}
+              onClick={acceptOsrmDataSharingConsent}
+              disabled={!osrmConsentChecked}
               className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
-              Enable public demo
+              Confirm and check endpoint
             </button>
           </DialogFooter>
         </DialogContent>

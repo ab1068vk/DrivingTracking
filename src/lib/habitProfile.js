@@ -1,5 +1,5 @@
 import { clamp } from '@/lib/mathUtils';
-import { isEveningRushHour, isMorningRushHour, isNightRiskHour } from '@/lib/appConstants';
+import { scoringValue } from '@/lib/scoringConstants';
 
 const HABIT_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,
@@ -12,11 +12,9 @@ const HABIT_CONSTANTS = {
   DEFAULT_FATIGUE_ONSET_MINUTES: 90,
   MIN_MULTI_TRIP_DAYS_FOR_FATIGUE: 10,
   FATIGUE_DROP_POINTS: 10,
-  FALLBACK_NIGHT_RISK: 60,
-  FALLBACK_MORNING_RUSH_RISK: 35,
-  FALLBACK_EVENING_RUSH_RISK: 40,
-  FALLBACK_DEFAULT_RISK: 20,
 };
+
+const DEFAULT_HOURLY_RISK_PROFILE = scoringValue('DEFAULT_HOURLY_RISK_PROFILE');
 
 const TIME_BUCKETS = ['Morning', 'Afternoon', 'Evening', 'Night'];
 
@@ -92,11 +90,9 @@ export function getTimeBucket(hour) {
   return 'Night';
 }
 
-const hardcodedFallback = (hour) => {
-  if (isNightRiskHour(hour)) return HABIT_CONSTANTS.FALLBACK_NIGHT_RISK;
-  if (isMorningRushHour(hour)) return HABIT_CONSTANTS.FALLBACK_MORNING_RUSH_RISK;
-  if (isEveningRushHour(hour)) return HABIT_CONSTANTS.FALLBACK_EVENING_RUSH_RISK;
-  return HABIT_CONSTANTS.FALLBACK_DEFAULT_RISK;
+const defaultHourlyRiskForHour = (hour) => {
+  const risk = DEFAULT_HOURLY_RISK_PROFILE?.[hour];
+  return Number.isFinite(Number(risk)) ? clamp(Math.round(Number(risk)), 0, 100) : 20;
 };
 
 /**
@@ -218,7 +214,7 @@ export function buildHabitProfile(trips = []) {
  */
 export function getFallbackTimeRisk(hour, profile = null) {
   const normalizedHour = ((Math.trunc(Number(hour) || 0) % 24) + 24) % 24;
-  const baseFallback = hardcodedFallback(normalizedHour);
+  const baseFallback = defaultHourlyRiskForHour(normalizedHour);
   if (!profile || Number(profile.confidence) < 0.5) return baseFallback;
 
   const avgScore = Number.isFinite(Number(profile.allTimeAvgScore))

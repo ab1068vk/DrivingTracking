@@ -145,6 +145,9 @@ const pushBoundary = (masked, insidePoint, outsidePoint, zone) => {
 };
 
 export function maskRoutePointsForPrivacy(routePoints = [], settings = localSettings.get()) {
+  // Display/export masking only. Scoring that depends on continuous movement
+  // windows, including intersection-stop behavior, should run before this on
+  // raw local points and persist aggregate scores rather than private coords.
   const zones = getPrivacyZones(settings);
   if (!zones.length) return routePoints;
 

@@ -41,8 +41,9 @@ describe('brake onset smoothness', () => {
     expect(scoreBrakeOnsetSmoothness(4, 0)).toBe(0);
   });
 
-  it('applies the documented peak-deceleration over ramp-duration formula', () => {
-    expect(scoreBrakeOnsetSmoothness(6, 6)).toBe(99);
+  it('penalizes both onset rate and absolute braking severity', () => {
+    expect(scoreBrakeOnsetSmoothness(6, 6)).toBe(76);
+    expect(scoreBrakeOnsetSmoothness(9, 2)).toBe(24);
     expect(scoreBrakeOnsetSmoothness(600, 6)).toBe(0);
   });
 });

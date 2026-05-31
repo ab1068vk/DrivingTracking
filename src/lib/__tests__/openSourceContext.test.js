@@ -38,9 +38,11 @@ describe('open-source trip context', () => {
   it('treats OSRM road matching as explicit opt-in', () => {
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: '' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
-    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(true);
+    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(false);
+    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test', osrm_data_sharing_consented: true })).toBe(true);
     expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('sampled GPS points');
     expect(describeMapMatchingStatus({ status: 'needs_endpoint' })).toContain('OSRM endpoint');
+    expect(describeMapMatchingStatus({ status: 'needs_consent' })).toContain('consent');
     expect(describeMapMatchingStatus({ status: 'manual_required' })).toContain('Get Road Data');
     expect(describeOsmSpeedLimitStatus({ status: 'manual_required' })).toContain('Get Road Data');
   });
@@ -54,13 +56,14 @@ describe('open-source trip context', () => {
       weather_context_enabled: true,
       map_matching_enabled: true,
       osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
     });
     expect(message).toContain('OpenStreetMap Overpass');
     expect(message).toContain('Open-Meteo');
     expect(message).toContain('Snap route to roads');
   });
 
-  it('identifies the public OSRM demo endpoint and discloses it in road-context consent', () => {
+  it('identifies the public OSRM demo endpoint as reference text only', () => {
     expect(PUBLIC_OSRM_DEMO_URL).toBe('https://router.project-osrm.org');
     expect(isPublicOsrmDemoUrl(PUBLIC_OSRM_DEMO_URL)).toBe(true);
     expect(isPublicOsrmDemoUrl('http://router.project-osrm.org')).toBe(true);
@@ -68,11 +71,12 @@ describe('open-source trip context', () => {
     const message = buildRoadContextPrivacyMessage({
       map_matching_enabled: true,
       osrm_map_matching_url: PUBLIC_OSRM_DEMO_URL,
+      osrm_data_sharing_consented: true,
     });
 
-    expect(message).toContain('router.project-osrm.org');
-    expect(message).toContain('public third-party OSRM demo server');
+    expect(message).toContain('public OSRM demo is help text only');
     expect(describeMapMatchingStatus({ status: 'matched', snapped_coverage: 100, isOsrmDemoUrl: true })).toContain('public OSRM demo');
+    expect(describeMapMatchingStatus({ status: 'public_demo_blocked' })).toContain('example');
   });
 
   it('penalizes harsh events more during risky weather', () => {

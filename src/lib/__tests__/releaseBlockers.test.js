@@ -7,6 +7,7 @@ import { scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
 import { localTripRepository } from '@/lib/localTripRepository';
 import { mapMatchRoute } from '@/lib/mapMatching';
+import { formatDataSourceLabel, METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
@@ -273,6 +274,20 @@ describe('release blocker regressions', () => {
     expect(Number.isFinite(result.phone_movement_score)).toBe(true);
   });
 
+  it('documents IMU as the sensor source for possible incident detection', () => {
+    expect(METRIC_REGISTRY.possible_crash_count.dataSources).toEqual(expect.arrayContaining([
+      'device_motion_imu',
+      'android_activity_recognition',
+    ]));
+    expect(METRIC_REGISTRY.possible_crash_count.permission_required).toBe('motion_sensors');
+  });
+
+  it('formats score provenance source labels for display', () => {
+    expect(formatDataSourceLabel('gps')).toBe('GPS route samples');
+    expect(formatDataSourceLabel('osm_speed_limit')).toBe('OpenStreetMap speed limits');
+    expect(formatDataSourceLabel('gps_inferred_speed_limit')).toBe('GPS-inferred speed limit');
+  });
+
   it('does not score GPS-only phone proxy evidence', () => {
     const result = mergePhoneUseSignals({ phone_use_score: 60 }, {}, 120);
 
@@ -472,5 +487,18 @@ describe('release blocker regressions', () => {
     expect(tripMapSource).toContain('function TripMapContent');
     expect(tripPlaybackSource).toContain('context="trip_playback"');
     expect(tripPlaybackSource).toContain('function TripPlaybackContent');
+  });
+
+  it('does not hard-code London as the Trip Playback default map center', () => {
+    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
+    const legacyLondonLat = ['51', '505'].join('.');
+    const legacyLondonLng = ['-0', '09'].join('.');
+
+    expect(tripPlaybackSource).not.toContain(legacyLondonLat);
+    expect(tripPlaybackSource).not.toContain(legacyLondonLng);
+    expect(tripPlaybackSource).toContain('resolveFallbackMapCenter');
+    expect(tripPlaybackSource).toContain('last_map_center');
+    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LAT');
+    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LNG');
   });
 });

@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SCORING_VERSION } from '@/lib/tripEngine';
 
 const navigate = vi.fn();
 const queryData = new Map();
@@ -39,13 +40,13 @@ const sampleTrip = {
   score_eco_confidence: 'high',
   score_provenance: {
     computed_at: '2026-05-24T17:23:44.000Z',
-    scoring_version: '2.2.0',
+    scoring_version: SCORING_VERSION,
     components: { overall: 'developing', safety: 'developing' },
     constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
   },
   score_provenance_change: {
     previous_scoring_version: '2.0.0',
-    current_scoring_version: '2.2.0',
+    current_scoring_version: SCORING_VERSION,
     reason: 'scoring_inputs_changed',
     changed_constants: ['PENALTY_SCALE_FACTOR'],
   },
@@ -235,6 +236,7 @@ vi.mock('@/lib/permissions', () => ({
 describe('core page component renders', () => {
   beforeEach(() => {
     queryData.clear();
+    delete settings.advanced_safety_detection_enabled;
     queryData.set(JSON.stringify(['recent-trips']), [sampleTrip]);
     queryData.set(JSON.stringify(['vehicles']), [{ id: 'vehicle-1', name: 'Commuter', fuel_type: 'gasoline' }]);
     queryData.set(JSON.stringify(['trip', 'trip-1']), sampleTrip);
@@ -308,7 +310,7 @@ describe('core page component renders', () => {
     expect(html).not.toContain('high evidence');
     expect(html).toContain('Scoring provenance');
     expect(html).toContain('approximate');
-    expect(html).not.toContain('Version 2.2.0');
+    expect(html).not.toContain(`Version ${SCORING_VERSION}`);
     expect(html).toContain('Updated constants: PENALTY_SCALE_FACTOR.');
     expect(html).toContain('GPS altitude estimate');
     expect(html).toContain('Hill-driving limitation');
@@ -345,6 +347,9 @@ describe('core page component renders', () => {
 
     expect(html).toContain('Speed-limit score uses inferred limits');
     expect(html).toContain('half-weighted');
+    expect(html).toContain('Sources');
+    expect(html).toContain('GPS-inferred speed limit');
+    expect(html).toContain('3 samples');
   });
 
   it('shows brake onset smoothness data collection state on TripDetail', async () => {
@@ -358,6 +363,25 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<TripDetail />);
 
     expect(html).toContain('Brake onset smoothness: 1 of 2 qualifying brake events recorded.');
+  });
+
+  it('surfaces heading diagnostics on TripDetail when Advanced Safety is off', async () => {
+    settings.advanced_safety_detection_enabled = false;
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      heading_deviation_available: true,
+      heading_deviation_scoring_enabled: false,
+      heading_deviation_count: 1,
+      driving_events: [
+        { type: 'heading_deviation', timestamp: '2026-01-01T12:05:00.000Z', value: 4.2, speed_kmh: 82 },
+      ],
+    });
+    const { default: TripDetail } = await import('@/pages/TripDetail');
+    const html = renderToStaticMarkup(<TripDetail />);
+
+    expect(html).toContain('Heading Events (Beta)');
+    expect(html).toContain('Enable Advanced Safety to include this in your score');
+    expect(html).toContain('Diagnostic-Only Events (Not Scored)');
   });
 
   it('shows public OSRM demo provenance on TripDetail', async () => {
@@ -400,7 +424,7 @@ describe('core page component renders', () => {
     expect(html).toContain('Tracking Mode');
     expect(html).toContain('Android Permissions');
     expect(html).toContain('Snap route to roads');
-    expect(html).toContain('Use public OSRM demo?');
+    expect(html).toContain('Share route samples with OSRM?');
     expect(html).toContain('Automatic road-data fetching');
     expect(html).toContain('Calibration registry');
     expect(html).toContain('Trip penalty scale factor');

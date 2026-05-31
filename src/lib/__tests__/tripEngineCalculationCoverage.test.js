@@ -31,10 +31,12 @@ import {
   headingDiff,
   inferSpeedZones,
   splitTripAtStops,
+  speedSourceForPoint,
   trimParkedTail,
   validateCandidateTrip,
+  vehicleSpeedKmh,
 } from '@/lib/tripEngine';
-import { FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
+import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
 
 const at = (seconds) => new Date(Date.UTC(2026, 0, 1, 12, 0, seconds)).toISOString();
 const point = (index, patch = {}) => ({
@@ -286,7 +288,7 @@ describe('trip engine calculation coverage', () => {
     expect(scores.score_safety).toBe(0);
   });
 
-  it('adds exactly the documented maximum fatigue penalty to Safety', () => {
+  it('adds exactly the documented maximum fatigue penalty to Safety after normalization', () => {
     const route = Array.from({ length: 20 }, (_, index) => point(0, {
       timestamp: new Date(Date.UTC(2026, 0, 1, 18, 0, index * 10)).toISOString(),
       speed_kmh: 0,
@@ -301,11 +303,13 @@ describe('trip engine calculation coverage', () => {
       {},
       { includeRoadTypeSegments: false }
     );
-    const fatiguePenalty = FATIGUE_SAFETY_PENALTY_SCALE * stats.fatigue_risk_score;
-    const expectedSafety = 100 - Math.round((fatiguePenalty / stats.distance_km) * PENALTY_SCALE_FACTOR);
+    const fatiguePenalty = Math.min(
+      FATIGUE_SAFETY_MAX_PENALTY,
+      FATIGUE_SAFETY_PENALTY_SCALE * stats.fatigue_risk_score
+    );
 
     expect(fatiguePenalty).toBe(15);
-    expect(scores.score_safety).toBe(expectedSafety);
+    expect(scores.score_safety).toBe(100 - fatiguePenalty);
   });
 
   it('uses the missing-speed tire-wear default for an explicitly null event speed', () => {
@@ -330,6 +334,62 @@ describe('trip engine calculation coverage', () => {
     expect(cleaned).toHaveLength(2);
     expect(cleaned.some((sample) => sample.speed_kmh > 300)).toBe(false);
     expect(detectDrivingEvents(cleaned, DEFAULT_THRESHOLDS).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
+  });
+
+  it('collects heading events when Advanced Safety scoring is off', () => {
+    const headings = [0, 0, 0, 8, 0, 0, 0];
+    const route = headings.map((heading, index) => point(index, {
+      lat: 43.65 + index * 0.0002,
+      speed_kmh: 90,
+      heading,
+      timestamp: at(index * 5),
+    }));
+    const thresholds = { ...DEFAULT_THRESHOLDS, ADVANCED_SAFETY_DETECTION_ENABLED: false };
+    const detection = detectDrivingEvents(route, thresholds);
+    const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp, thresholds);
+    const scores = calculateTripScores(detection.events, stats, route, thresholds, stats.duration_seconds);
+
+    expect(detection.events.some((event) => event.type === EVENT_TYPES.HEADING_DEVIATION)).toBe(true);
+    expect(scores.heading_deviation_count).toBeGreaterThan(0);
+    expect(scores.heading_deviation_available).toBe(true);
+    expect(scores.heading_deviation_scoring_enabled).toBe(false);
+    expect(scores.driving_events.some((event) => event.type === EVENT_TYPES.HEADING_DEVIATION)).toBe(true);
+  });
+
+  it('uses recent OBD speed when GPS accuracy is weak', () => {
+    const timestamp = at(0);
+    const pointWithWeakGps = point(0, {
+      speed_kmh: 8,
+      accuracy: 30,
+      obd_speed_kmh: 24,
+      obd_speed_timestamp: timestamp,
+      timestamp,
+    });
+    const pointWithGoodGps = { ...pointWithWeakGps, accuracy: 8 };
+
+    expect(speedSourceForPoint(pointWithWeakGps, DEFAULT_THRESHOLDS)).toBe('obd_bluetooth');
+    expect(vehicleSpeedKmh(pointWithWeakGps, DEFAULT_THRESHOLDS)).toBe(24);
+    expect(speedSourceForPoint(pointWithGoodGps, DEFAULT_THRESHOLDS)).toBe('gps');
+    expect(vehicleSpeedKmh(pointWithGoodGps, DEFAULT_THRESHOLDS)).toBe(8);
+  });
+
+  it('adds OBD powertrain evidence to eco scoring and component sources', () => {
+    const route = Array.from({ length: 12 }, (_, index) => point(index, {
+      speed_kmh: 4,
+      accuracy: 25,
+      obd_speed_kmh: index < 3 ? 0 : 55,
+      obd_speed_timestamp: at(index * 10),
+      obd_rpm: index < 3 ? 800 : index === 6 ? 3800 : 1800,
+      obd_throttle_pct: index === 7 ? 90 : 35,
+    }));
+    const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp);
+    const eco = calculateEcoDrivingScore(route, stats, DEFAULT_THRESHOLDS);
+    const scores = calculateTripScores([], stats, route, DEFAULT_THRESHOLDS, stats.duration_seconds);
+
+    expect(eco.obd_powertrain_sample_count).toBe(route.length);
+    expect(eco.obd_idle_seconds).toBeGreaterThan(0);
+    expect(eco.obd_over_rev_count).toBe(1);
+    expect(scores.component_scores.eco.dataSource).toContain('obd_bluetooth');
   });
 
   it('keeps confirmed phone-use distraction scoring independent of trip distance', () => {

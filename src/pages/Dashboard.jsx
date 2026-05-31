@@ -946,7 +946,7 @@ export default function Dashboard() {
     const shouldAutoFetchExternalContext = isExternalContextAutoFetchEnabled(cfg);
     const mapMatchingContext = {
       provider: 'osrm',
-      status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url ? 'manual_required' : 'disabled',
+      status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'manual_required' : 'disabled',
       confidence: null,
       snapped_coverage: 0,
       isOsrmDemoUrl: isPublicOsrmDemoUrl(cfg.osrm_map_matching_url),
@@ -971,7 +971,10 @@ export default function Dashboard() {
           error: null,
         };
     pts = speedLimitContext.routePoints || pts;
-    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds, tripToEnd);
+    const stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds, {
+      ...tripToEnd,
+      raw_route_points: cleanedPoints,
+    });
     const weatherContext = shouldAutoFetchExternalContext
       ? await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
           provider: 'open-meteo',
@@ -1003,7 +1006,14 @@ export default function Dashboard() {
       tripToEnd.native_phone_usage_access_granted === true;
     const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativePhoneUsageSummary || {}, pts, stats.duration_seconds);
     const phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
-    let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, { endTime, privacyZones: tripPrivacyZones });
+    const motionSamples = sensorFusionRef.current?.getSamples?.() || [];
+    const sensorFusionSummary = buildSensorFusionSummary(motionSamples, pts, latestActivityRef.current, events);
+    let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, {
+      endTime,
+      privacyZones: tripPrivacyZones,
+      motionSamples,
+      orientationCalibration: sensorFusionSummary.phone_orientation,
+    });
     scores = applyWeatherRiskToScores(scores, weatherContext);
     const tripEvents = maskEventsForPrivacy(
       mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
@@ -1011,7 +1021,6 @@ export default function Dashboard() {
     );
     const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
     const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
-    const sensorFusionSummary = buildSensorFusionSummary(sensorFusionRef.current?.getSamples?.() || [], pts, latestActivityRef.current);
     const driverModel = buildOnDeviceDriverModel(completedTrips);
     const anomaly = scoreTripAnomaly({ ...stats, ...scores }, driverModel);
     const dataQualityFlags = Array.from(new Set(Array.isArray(tripToEnd.data_quality_flags) ? tripToEnd.data_quality_flags : []));
@@ -1329,6 +1338,16 @@ export default function Dashboard() {
   const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
   const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
   const baseline = computePersonalBaseline(completedTrips);
+  const baselineRangeLabel = baseline.baseline_includes_older_scores
+    ? baseline.baseline_label
+    : baseline.baseline_confidence_interval_label;
+  const baselineText = baseline.baseline_avg == null
+    ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
+    : baseline.baseline_includes_older_scores
+      ? `Approximate baseline: ${baseline.baseline_avg}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
+      : baseline.delta == null
+        ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
+        : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
   const peakStress = calculatePeakHourStress(completedTrips);
   const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
     const points = activeTrip?.route_points || [];
@@ -1850,11 +1869,7 @@ export default function Dashboard() {
             <div>
               <h2 className="font-semibold text-base">Personal Baseline</h2>
               <p className="text-xs text-muted-foreground mt-1">
-                {baseline.baseline_avg == null
-                  ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
-                  : baseline.delta == null
-                    ? `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). Record a trip this week for a comparison.`
-                    : `Approximate baseline: ${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval} (based on recent trips; normal-curve interval). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`}
+                {baselineText}
               </p>
             </div>
             <div className={`text-sm font-bold capitalize ${
@@ -1869,7 +1884,7 @@ export default function Dashboard() {
               <div className="text-xs text-muted-foreground">this week</div>
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : `${baseline.baseline_avg} +/- ${baseline.baseline_confidence_interval}`}</div>
+              <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : baselineRangeLabel ? `${baseline.baseline_avg} (${baselineRangeLabel})` : baseline.baseline_avg}</div>
               <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
             </div>
             <div className="bg-secondary/50 rounded-xl p-3">

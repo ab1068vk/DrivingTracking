@@ -14,8 +14,11 @@ import {
   calculateTripStats,
   calculateHillDrivingScore,
   calculateEcoDrivingScore,
+  calculateLaneChangingScore,
+  buildDrivingThresholds,
   calculateTireWearUnits,
   calculateBrakeOnsetSmoothness,
+  scoreBrakeOnsetSmoothness,
   calculateSpeedLimitCompliance,
   cleanRoutePoints,
   computeSmoothedAccelerations,
@@ -26,6 +29,7 @@ import {
   getInferredLimitForPoint,
   resolveEffectiveSpeedLimitForIndex,
   detectHeadingDeviationEvents,
+  detectLaneChanges,
   detectErraticSpeedWindows,
   detectStopStartPatterns,
   detectCloseProximityManeuverAlerts,
@@ -53,18 +57,22 @@ import {
   validateCandidateTrip,
   tripsToCSV,
 } from '@/lib/tripEngine';
-import { FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
+import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
+import { LANE_CHANGING_SAFETY_WEIGHT } from '@/lib/scoringConstants';
 import {
   getLastParkedLocation,
   localSettings,
+  DEFAULT_SETTINGS,
   PARKED_LOCATION_PRIVACY_GUARD_M,
   saveLastParkedLocation,
+  sanitizeImportedSettings,
 } from '@/lib/trackingStore';
 import {
   shouldAutoStartTracking,
   shouldAutoStopTracking,
   ACTIVITY_TYPES,
 } from '@/lib/activityRecognition';
+import { maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 import {
   buildScoreTips,
   buildSpeedSegments,
@@ -295,6 +303,33 @@ describe('tripEngine', () => {
     }).cruise_score).toBe(65);
   });
 
+  it('keeps eco scoring available with default settings thresholds', () => {
+    const points = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.0002, -79.3832, index * 10, index < 9 ? 80 : 45, 6)
+    ));
+    const thresholds = buildDrivingThresholds(DEFAULT_SETTINGS);
+    const result = calculateEcoDrivingScore(points, { duration_seconds: 120 }, thresholds);
+
+    expect(result.eco_score_confidence).toBe('observed');
+    expect(result.eco_driving_score).not.toBeNull();
+    expect(Number.isFinite(result.eco_driving_score)).toBe(true);
+  });
+
+  it('repairs imported eco settings when both scoring multipliers are missing or zero', () => {
+    const repairedZeroes = sanitizeImportedSettings({
+      eco_cruise_score_multiplier: 0,
+      eco_idle_penalty_multiplier: 0,
+    });
+    const repairedMissing = sanitizeImportedSettings({
+      tracking_mode: 'manual',
+    });
+
+    expect(repairedZeroes.eco_cruise_score_multiplier).toBe(ECO_DEFAULTS.CRUISE_SCORE_MULTIPLIER);
+    expect(repairedZeroes.eco_idle_penalty_multiplier).toBe(ECO_DEFAULTS.IDLE_PENALTY_MULTIPLIER);
+    expect(repairedMissing.eco_cruise_score_multiplier).toBe(ECO_DEFAULTS.CRUISE_SCORE_MULTIPLIER);
+    expect(repairedMissing.eco_idle_penalty_multiplier).toBe(ECO_DEFAULTS.IDLE_PENALTY_MULTIPLIER);
+  });
+
   it('marks eco evidence unavailable when both effective multipliers are zero', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const points = Array.from({ length: 8 }, (_, index) => (
@@ -454,6 +489,25 @@ describe('tripEngine', () => {
     expect(detectSpeedCreepWithThresholds(points, DEFAULT_THRESHOLDS).speed_creep_event_count).toBe(0);
   });
 
+  it('normalizes speed-creep diagnostics by trip distance', () => {
+    const speeds = [
+      82, 85, 88, 90, 82, 82, 82,
+      82, 85, 88, 90, 82, 82, 82,
+      82, 85, 88, 90,
+    ];
+    const route = (distanceKm) => speeds.map((speed, index) => (
+      point(43.6532 + (distanceKm / 111) * (index / (speeds.length - 1)), -79.3832, index * 10, speed, 6)
+    ));
+
+    const shortTrip = detectSpeedCreepWithThresholds(route(5), DEFAULT_THRESHOLDS);
+    const longTrip = detectSpeedCreepWithThresholds(route(100), DEFAULT_THRESHOLDS);
+
+    expect(shortTrip.speed_creep_event_count).toBe(3);
+    expect(longTrip.speed_creep_event_count).toBe(3);
+    expect(shortTrip.speed_creep_rate_per_10km).toBeGreaterThan(longTrip.speed_creep_rate_per_10km);
+    expect(shortTrip.speed_creep_score).toBeLessThan(longTrip.speed_creep_score);
+  });
+
   it('detects sharp turns using lateral G-force at running speed', () => {
     const points = [
       point(43.6532, -79.3832, 0, 80),
@@ -528,14 +582,30 @@ describe('tripEngine', () => {
     expect(scoreFloor.score_smoothness).toBeNull();
   });
 
-  it('applies the named provisional fatigue-to-safety penalty scale', () => {
+  it('applies the named provisional fatigue-to-safety penalty scale as a flat deduction', () => {
     expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(0.15);
+    expect(FATIGUE_SAFETY_MAX_PENALTY).toBe(15);
 
-    const rested = calculateTripScores([], { distance_km: 40, fatigue_risk_score: 0 }, []);
-    const maximumFatigue = calculateTripScores([], { distance_km: 40, fatigue_risk_score: 100 }, []);
+    const routeForDistance = (distanceKm) => [
+      point(43.6532, -79.3832, 0, 80),
+      point(43.6532 + distanceKm / 111, -79.3832, 30, 80),
+    ];
+    const thresholds = { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false };
+    const scoreAt = (distanceKm, fatigueRiskScore) => calculateTripScores(
+      [],
+      { distance_km: distanceKm, duration_seconds: 300, fatigue_risk_score: fatigueRiskScore },
+      routeForDistance(distanceKm),
+      thresholds,
+      300,
+      {},
+      { includeRoadTypeSegments: false }
+    ).score_safety;
 
-    expect(rested.score_safety).toBeNull();
-    expect(maximumFatigue.score_safety).toBeNull();
+    const shortDeduction = scoreAt(1, 0) - scoreAt(1, 100);
+    const longDeduction = scoreAt(200, 0) - scoreAt(200, 100);
+
+    expect(shortDeduction).toBe(FATIGUE_SAFETY_MAX_PENALTY);
+    expect(longDeduction).toBeGreaterThanOrEqual(shortDeduction);
   });
 
   it('scores stop-start patterns only after enough highway GPS evidence', () => {
@@ -1098,6 +1168,32 @@ describe('tripEngine', () => {
     expect(Number.isFinite(highwayScores.score_overall)).toBe(true);
   });
 
+  it('scores intersection stops from raw points when display route is privacy-masked', () => {
+    const privateStopRoute = [
+      point(43.6470, -79.38, 0, 35),
+      point(43.6496, -79.38, 10, 25),
+      point(43.6500, -79.38, 15, 0),
+      point(43.6500, -79.38, 20, 0),
+      point(43.6530, -79.38, 30, 35),
+    ];
+    const privacyZone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 150 };
+    const maskedRoute = maskRoutePointsForPrivacy(privateStopRoute, { privacy_zones: [privacyZone] });
+    const stats = calculateTripStats(
+      maskedRoute,
+      privateStopRoute[0].timestamp,
+      privateStopRoute.at(-1).timestamp,
+      DEFAULT_THRESHOLDS,
+      { raw_route_points: privateStopRoute }
+    );
+
+    expect(analyzeIntersectionBehavior(maskedRoute).traffic_stop_count).toBe(0);
+    expect(stats.traffic_stop_count).toBe(1);
+    expect(stats.intersection_score_confidence).toBe('observed_stops');
+    expect(stats.intersection_events[0]).toMatchObject({ coordinates_private: true });
+    expect(stats.intersection_events[0]).not.toHaveProperty('lat');
+    expect(stats.intersection_events[0]).not.toHaveProperty('lng');
+  });
+
   it('computes second-wave advanced score components from route points', () => {
     const points = [
       point(43.6532, -79.3832, 0, 70),
@@ -1369,6 +1465,11 @@ describe('tripEngine', () => {
     expect(calculateHillDrivingScore(parkedJitter).hill_driving_score).toBeNull();
   });
 
+  it('penalizes slow-ramp hard braking more than slow-ramp gentle braking', () => {
+    expect(scoreBrakeOnsetSmoothness(6.5, 2)).toBe(54);
+    expect(scoreBrakeOnsetSmoothness(3.75, 2)).toBe(85);
+  });
+
   it('detects rapid acceleration and harsh braking in the first valid acceleration window', () => {
     const rapidStart = [
       point(43.6532, -79.3832, 0, 5),
@@ -1442,6 +1543,30 @@ describe('tripEngine', () => {
     expect(detectHighwayMergeBehavior(mergePoints).merge_event_count).toBe(1);
   });
 
+  it('scores highway merge quality by event ratio instead of absolute count', () => {
+    const mergeSequence = (startSeconds, poor = false) => [
+      point(43.6532 + startSeconds * 0.00001, -79.3832, startSeconds, 45),
+      point(43.6532 + (startSeconds + (poor ? 4 : 10)) * 0.00001, -79.3832, startSeconds + (poor ? 4 : 10), 88),
+    ];
+    const route = (poorCount) => Array.from({ length: 5 }, (_, index) => (
+      mergeSequence(index * 30, index < poorCount)
+    )).flat();
+
+    const onePoor = detectHighwayMergeBehavior(route(1));
+    const fourPoor = detectHighwayMergeBehavior(route(4));
+
+    expect(onePoor).toMatchObject({
+      merge_event_count: 5,
+      poor_merge_count: 1,
+      merge_score: 92,
+    });
+    expect(fourPoor).toMatchObject({
+      merge_event_count: 5,
+      poor_merge_count: 4,
+      merge_score: 68,
+    });
+  });
+
   it('detects heading deviations without counting sustained road curves', () => {
     const gentleLaneSwitch = [0, 2, 5, 7, 5, 2, 0].map((heading, index) => ({
       ...point(43.6532 + index * 0.00022, -79.3832, index * 2, 60),
@@ -1454,6 +1579,236 @@ describe('tripEngine', () => {
 
     expect(detectHeadingDeviationEvents(gentleLaneSwitch).length).toBeGreaterThan(0);
     expect(detectHeadingDeviationEvents(roadCurve).length).toBe(0);
+  });
+
+  it('detects calibrated IMU bilateral-yaw lane changes', () => {
+    const route = Array.from({ length: 12 }, (_, index) => ({
+      ...point(43.6532 + index * 0.00025, -79.3832, index, 92, 8),
+      heading: [0, 0, 2, 4, 3, 1, 0, 0, 0, 0, 0, 0][index],
+    }));
+    const baseMs = new Date(route[2].timestamp).getTime();
+    const motionSamples = [0, 700, 1400, 2100, 2800, 3500, 4200, 4900].map((offset, index) => ({
+      timestamp: new Date(baseMs + offset).toISOString(),
+      ax: index < 4 ? 1.25 : 0.95,
+      ay: index === 2 ? -3.1 : -0.2,
+      az: 0.1,
+      gz_deg_s: index < 4 ? 5 : -5,
+      has_axes: true,
+    }));
+
+    const result = detectLaneChanges(route, motionSamples, {
+      calibrated: true,
+      longitudinal_axis: 'ay',
+      lateral_axis: 'ax',
+    });
+
+    expect(result).toMatchObject({
+      lane_change_count: 1,
+      unsafe_lane_changes: 1,
+      confidence: 'imu_calibrated',
+      detection_method: 'imu_yaw_bilateral',
+    });
+    expect(result.lane_changes[0]).toMatchObject({
+      type: 'lane_change_detected',
+      detection_method: 'imu_yaw_bilateral',
+      confidence: 'high',
+      direction: 'right',
+      simultaneous_braking: true,
+    });
+    expect(result.lane_changes[0].lateral_g).toBeGreaterThanOrEqual(0.08);
+  });
+
+  it('detects low-confidence GPS bilateral-heading lane changes without IMU calibration', () => {
+    const route = [0, 0, 3, 6, 4, 1, 0, 0, 0, 0, 0].map((heading, index) => ({
+      ...point(43.6532 + index * 0.00025, -79.3832, index, 88, 8),
+      heading,
+    }));
+
+    const result = detectLaneChanges(route, [], null);
+
+    expect(result).toMatchObject({
+      lane_change_count: 1,
+      unsafe_lane_changes: 0,
+      confidence: 'gps_only',
+      detection_method: 'gps_bilateral_heading',
+    });
+    expect(result.lane_changes[0]).toMatchObject({
+      type: 'lane_change_detected',
+      detection_method: 'gps_bilateral_heading',
+      confidence: 'low',
+      lateral_g: null,
+    });
+  });
+
+  it('scores lane-changing rate and unsafe lane changes', () => {
+    const scored = calculateLaneChangingScore({
+      confidence: 'imu_calibrated',
+      unsafe_lane_changes: 1,
+      lane_changes: [
+        { type: 'lane_change_detected', simultaneous_braking: true },
+        { type: 'lane_change_detected', simultaneous_braking: false },
+      ],
+    }, 10);
+    const sparse = calculateLaneChangingScore({
+      confidence: 'imu_calibrated',
+      unsafe_lane_changes: 0,
+      lane_changes: [{ type: 'lane_change_detected' }],
+    }, 10);
+
+    expect(scored).toMatchObject({
+      lane_changing_score: 73,
+      lane_changing_rate_per_10km: 2,
+      unsafe_lane_changes: 1,
+      lane_changing_grade: 'acceptable',
+      lane_changing_confidence: 'imu_calibrated',
+    });
+    expect(sparse).toMatchObject({
+      lane_changing_score: null,
+      lane_changing_confidence: 'insufficient_data',
+    });
+  });
+
+  it('golden: scores IMU lane changes and blends them into Safety', () => {
+    const route = Array.from({ length: 40 }, (_, index) => ({
+      ...point(43.6532 + index * 0.00025, -79.3832, index, 92, 8),
+      timestamp: new Date(Date.UTC(2026, 5, 1, 17, 0, index)).toISOString(),
+      heading: 0,
+    }));
+    const laneStarts = [2, 13, 24];
+    const motionSamples = laneStarts.flatMap((startIndex, laneIndex) => {
+      const baseMs = new Date(route[startIndex].timestamp).getTime();
+      const sign = laneIndex % 2 === 0 ? 1 : -1;
+      return [0, 700, 1400, 2100, 2800, 3500, 4200, 4900].map((offset, sampleIndex) => ({
+        timestamp: new Date(baseMs + offset).toISOString(),
+        ax: sign * (sampleIndex < 4 ? 1.25 : 0.95),
+        ay: laneIndex === 0 && sampleIndex === 2 ? -3.1 : -0.2,
+        az: 0.1,
+        gz_deg_s: sign * (sampleIndex < 4 ? 5 : -5),
+        has_axes: true,
+      }));
+    });
+
+    const thresholds = { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false };
+    const laneChangeResult = detectLaneChanges(route, motionSamples, {
+      calibrated: true,
+      longitudinal_axis: 'ay',
+      lateral_axis: 'ax',
+    }, thresholds);
+    const scored = calculateTripScores([], {
+      distance_km: 10,
+      fatigue_risk_score: 0,
+      intersection_score: 100,
+    }, route, thresholds, 600, {}, {
+      includeRoadTypeSegments: false,
+      motionSamples,
+      orientationCalibration: {
+        calibrated: true,
+        longitudinal_axis: 'ay',
+        lateral_axis: 'ax',
+      },
+    });
+    const complianceScore = scored.overall_compliance_score;
+    const expectedSafety = Math.round((
+      100 * 0.52 +
+      complianceScore * 0.10 +
+      scored.lane_changing_score * LANE_CHANGING_SAFETY_WEIGHT
+    ) / (0.52 + 0.10 + LANE_CHANGING_SAFETY_WEIGHT));
+    expect(laneChangeResult).toMatchObject({
+      lane_change_count: 3,
+      unsafe_lane_changes: 1,
+      confidence: 'imu_calibrated',
+      detection_method: 'imu_yaw_bilateral',
+    });
+    expect(scored.lane_changing_score).toBeGreaterThanOrEqual(65);
+    expect(scored.lane_changing_score).toBeLessThanOrEqual(69);
+    expect(scored).toMatchObject({
+      lane_change_count: 3,
+      unsafe_lane_changes: 1,
+      lane_changing_confidence: 'imu_calibrated',
+      lane_changing_confidence_multiplier: 1,
+      lane_changing_safety_weight: LANE_CHANGING_SAFETY_WEIGHT,
+    });
+    expect(scored.score_safety).toBe(expectedSafety);
+  });
+
+  it('golden: detects GPS-only bilateral lane changes and lowers their Safety weight', () => {
+    const route = Array.from({ length: 28 }, (_, index) => ({
+      ...point(43.6532 + index * 0.00025, -79.3832, index, 90, 8),
+      timestamp: new Date(Date.UTC(2026, 5, 1, 17, 0, index)).toISOString(),
+      heading: 0,
+    }));
+    [2, 13].forEach((startIndex) => {
+      [3, 6, 4, 1, 0].forEach((heading, offset) => {
+        route[startIndex + offset].heading = heading;
+      });
+    });
+    const thresholds = { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false };
+    const laneChangeResult = detectLaneChanges(route, [], null, thresholds);
+    const scored = calculateTripScores([], {
+      distance_km: 10,
+      fatigue_risk_score: 0,
+      intersection_score: 100,
+    }, route, thresholds, 600, {}, {
+      includeRoadTypeSegments: false,
+    });
+
+    expect(laneChangeResult).toMatchObject({
+      lane_change_count: 2,
+      unsafe_lane_changes: 0,
+      confidence: 'gps_only',
+      detection_method: 'gps_bilateral_heading',
+    });
+    expect(laneChangeResult.lane_changes[0]).toMatchObject({
+      type: 'lane_change_detected',
+      confidence: 'low',
+      detection_method: 'gps_bilateral_heading',
+    });
+    expect(scored).toMatchObject({
+      lane_change_count: 2,
+      lane_changing_confidence: 'gps_only',
+      lane_changing_confidence_multiplier: 0.7,
+    });
+    expect(scored.lane_changing_safety_weight).toBeCloseTo(0.035, 6);
+  });
+
+  it('blends scored lane changing into Safety and leaves unavailable lane evidence neutral', () => {
+    const route = Array.from({ length: 12 }, (_, index) => (
+      point(43.6532 + index * 0.01, -79.3832, index * 5, 88, 8)
+    ));
+    const stats = { distance_km: 10, fatigue_risk_score: 0, intersection_score: 100 };
+    const thresholds = { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false };
+    const base = calculateTripScores([], stats, route, thresholds, 600, {}, {
+      includeRoadTypeSegments: false,
+      laneChangeResult: {
+        confidence: 'insufficient_data',
+        unsafe_lane_changes: 0,
+        lane_changes: [],
+      },
+    });
+    const withLaneChanging = calculateTripScores([], stats, route, thresholds, 600, {}, {
+      includeRoadTypeSegments: false,
+      laneChangeResult: {
+        confidence: 'imu_calibrated',
+        unsafe_lane_changes: 3,
+        lane_changes: [
+          { type: 'lane_change_detected', simultaneous_braking: true },
+          { type: 'lane_change_detected', simultaneous_braking: false },
+        ],
+      },
+    });
+
+    expect(base.lane_changing_score).toBeNull();
+    expect(base.score_safety).toBeGreaterThan(withLaneChanging.score_safety);
+    expect(withLaneChanging).toMatchObject({
+      lane_changing_score: 48,
+      lane_change_count: 2,
+      unsafe_lane_changes: 3,
+      lane_changing_confidence: 'imu_calibrated',
+    });
+    expect(withLaneChanging.component_scores.lane_changing).toMatchObject({
+      value: 48,
+      evidence: 'developing',
+    });
   });
 
   it('keeps heading-deviation events out of the safety score', () => {
@@ -1991,6 +2346,7 @@ describe('trip insights', () => {
       duration_seconds: 30 * 60,
       distance_km: 20,
       score_overall: 88,
+      score_provenance: { scoring_version: SCORING_VERSION },
       eco_driving_score: 90,
       driving_events: [{ type: 'harsh_brake', severity: 'medium' }],
     };
@@ -2025,6 +2381,7 @@ describe('trip insights', () => {
       start_time: new Date(Date.now() - index * 86400000).toISOString(),
       distance_km: 5,
       score_overall: 80,
+      score_provenance: { scoring_version: SCORING_VERSION },
     }));
     expect(computePersonalBaseline(trips).baseline_avg).toBeNull();
   });
@@ -2035,6 +2392,7 @@ describe('trip insights', () => {
       start_time: new Date(Date.now() - index * 86400000).toISOString(),
       distance_km: index === 9 ? 1 : 5,
       score_overall: index === 0 ? 60 : 90,
+      score_provenance: { scoring_version: SCORING_VERSION },
     }));
     const longOldTrip = trips.map((trip, index) => (index === 9 ? { ...trip, distance_km: 1000 } : trip));
     expect(computePersonalBaseline(trips).baseline_avg).toBe(computePersonalBaseline(longOldTrip).baseline_avg);
