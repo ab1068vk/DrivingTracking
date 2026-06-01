@@ -1,4 +1,5 @@
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
+import { LEGAL_DISCLAIMER_ITEMS, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
 
 export function PrivacySettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -23,12 +24,29 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
               <div>
                 <SettingRow
                   icon={Shield}
-                  label="Privacy Policy"
-                  sublabel="All data is stored locally on your device"
+                  label="Privacy, Legal & Safety"
+                  sublabel="Local data defaults plus personal-use legal disclaimers"
                   onClick={showPrivacyPolicy}
                 >
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </SettingRow>
+                <div className="my-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    <div>
+                      <div className="font-semibold text-foreground">Legal & Safety Disclaimers</div>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{LEGAL_DISCLAIMER_SUMMARY}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2">
+                    {LEGAL_DISCLAIMER_ITEMS.map((item) => (
+                      <div key={item.title} className="rounded-xl bg-card/70 px-3 py-2">
+                        <div className="text-xs font-semibold text-foreground">{item.title}</div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <SettingRow
                   icon={Target}
                   label="Share anonymized calibration labels"

@@ -80,6 +80,7 @@ import {
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { useSettingsSections } from '@/features/settings/hooks/useSettingsSections';
 import { SettingsNavigator } from '@/settings/SettingsNavigator';
+import { LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
 import {
   CALIBRATION_STATUSES,
   SCORING_CONSTANTS,
@@ -595,8 +596,8 @@ export default function Settings() {
 
   const showPrivacyPolicy = () => {
     toast({
-      title: 'Privacy and local data',
-      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent.',
+      title: 'Privacy, legal, and local data',
+      description: `Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent. ${LEGAL_DISCLAIMER_SUMMARY}`,
       duration: 9000,
     });
   };
@@ -1175,7 +1176,8 @@ export default function Settings() {
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
         <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
-        <div>Data: Stored locally by default · No ads · Calibration sharing is opt-in</div>
+        <div>Data: Stored locally by default - No ads - Calibration sharing is opt-in</div>
+        <div>Legal: Personal-use estimates only; not professional advice or official records.</div>
       </div>
     </div>
   );
