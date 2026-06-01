@@ -3,7 +3,7 @@ import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, getOrCreateInstallHash, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { decryptBackup, encryptBackup, isEncryptedBackup } from '@/lib/backupEncryption';
 
@@ -26,11 +26,13 @@ export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 export const MAX_IMPORTED_STRING_LENGTH = 5000;
 export const MAX_IMPORTED_TRIP_NOTES_LENGTH = 10000;
+export const BACKUP_INTEGRITY_ERROR = 'integrity_check_failed';
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 const filterString = (value, fallback = '') => (
   typeof value === 'string' ? value.slice(0, 120) : fallback
 );
+const INTEGRITY_FIELD = '_integrity';
 
 const IMPORTED_TRIP_STATUS = new Set(['completed', 'discarded']);
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -386,6 +388,82 @@ const sanitizeWhitelistedObject = (value, allowedFields, warnings = null) => {
   return sanitized;
 };
 
+const bytesToHex = (bytes) => (
+  Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+);
+
+const canonicalStringify = (value) => {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalStringify(item) ?? 'null').join(',')}]`;
+  if (isPlainObject(value)) {
+    const entries = Object.keys(value).sort().map((key) => {
+      const serialized = canonicalStringify(value[key]);
+      return serialized === undefined ? null : `${JSON.stringify(key)}:${serialized}`;
+    }).filter(Boolean);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const hmacCrypto = () => {
+  if (typeof globalThis === 'undefined' || !globalThis.crypto?.subtle || typeof TextEncoder === 'undefined') {
+    throw new Error('Backup integrity sealing requires Web Crypto support.');
+  }
+  return globalThis.crypto;
+};
+
+async function hmacSeal(message) {
+  const enc = new TextEncoder();
+  const seed = await getOrCreateInstallHash();
+  const keyMaterial = await hmacCrypto().subtle.importKey(
+    'raw',
+    enc.encode(seed),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await hmacCrypto().subtle.sign('HMAC', keyMaterial, enc.encode(message));
+  return bytesToHex(new Uint8Array(signature));
+}
+
+async function hmacVerify(message, expectedHex) {
+  if (typeof expectedHex !== 'string' || !/^[0-9a-f]{64}$/i.test(expectedHex)) return false;
+  const actual = await hmacSeal(message);
+  const normalizedExpected = expectedHex.toLowerCase();
+  if (actual.length !== normalizedExpected.length) return false;
+  let diff = 0;
+  for (let index = 0; index < actual.length; index += 1) {
+    diff |= actual.charCodeAt(index) ^ normalizedExpected.charCodeAt(index);
+  }
+  return diff === 0;
+}
+
+const stripIntegrityField = (backup) => {
+  if (!isPlainObject(backup)) return { data: backup, integrity: null };
+  const { [INTEGRITY_FIELD]: integrity, ...data } = backup;
+  return { data, integrity: typeof integrity === 'string' ? integrity : null };
+};
+
+export async function sealPlaintextBackup(backup) {
+  const payload = canonicalStringify(backup);
+  const integrity = await hmacSeal(payload);
+  return { ...backup, [INTEGRITY_FIELD]: integrity };
+}
+
+export async function verifyPlaintextBackupIntegrity(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { text, sealed: false };
+  }
+
+  const { data, integrity } = stripIntegrityField(parsed);
+  if (!integrity) return { text, sealed: false };
+  const valid = await hmacVerify(canonicalStringify(data), integrity);
+  if (!valid) return { error: BACKUP_INTEGRITY_ERROR };
+  return { text: JSON.stringify(data), sealed: true };
+}
+
 export function sanitizeImportedTrip(trip, warnings = null) {
   if (!isPlainObject(trip)) {
     throw new Error('Backup contains an invalid trip record.');
@@ -502,7 +580,8 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   const baseName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
   const encrypted = typeof password === 'string' && password.length > 0;
   const outputName = encrypted ? baseName.replace(/\.json$/i, '') + '.rsbackup' : baseName;
-  const json = JSON.stringify(backup, null, 2);
+  const exportBackup = encrypted ? backup : await sealPlaintextBackup(backup);
+  const json = JSON.stringify(exportBackup, null, 2);
   const content = encrypted ? await encryptBackup(json, password) : json;
   const mimeType = encrypted ? 'application/octet-stream' : 'application/json';
   let nativeFallbackError = null;
@@ -679,6 +758,7 @@ export function parseDriveSenseBackup(text) {
     throw new Error('This is not a valid Road Sage backup file.');
   }
 
+  parsed = stripIntegrityField(parsed).data;
   const sourceVersion = Number(parsed.version) || 1;
   const migrated = migrateBackup(parsed, sourceVersion);
   const warnings = [];
@@ -703,7 +783,8 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
   let text = await file.text();
-  if (isEncryptedBackup(text)) {
+  const encryptedBackup = isEncryptedBackup(text);
+  if (encryptedBackup) {
     if (!password) return { error: 'password_required' };
     try {
       text = await decryptBackup(text, password);
@@ -713,6 +794,10 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
       }
       throw error;
     }
+  } else {
+    const integrity = await verifyPlaintextBackupIntegrity(text);
+    if (integrity.error) return { error: integrity.error };
+    text = integrity.text;
   }
   const backup = parseDriveSenseBackup(text);
   if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {

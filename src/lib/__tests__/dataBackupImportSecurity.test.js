@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKUP_INTEGRITY_ERROR,
   importDriveSenseBackup,
   BACKUP_VERSION,
   MAX_BACKUP_BYTES,
@@ -8,6 +9,8 @@ import {
   MAX_IMPORTED_TRIP_ROUTE_POINTS,
   migrateBackup,
   parseDriveSenseBackup,
+  sealPlaintextBackup,
+  verifyPlaintextBackupIntegrity,
 } from '@/lib/dataBackup';
 import { encryptBackup } from '@/lib/backupEncryption';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
@@ -342,6 +345,56 @@ describe('backup trip import sanitization', () => {
       trips: 0,
       vehicles: 0,
     });
+  });
+
+  it('seals plaintext backups with a device-bound HMAC', async () => {
+    const backup = {
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-sealed', status: 'completed' }],
+    };
+
+    const sealed = await sealPlaintextBackup(backup);
+    expect(sealed._integrity).toMatch(/^[0-9a-f]{64}$/);
+
+    const verified = await verifyPlaintextBackupIntegrity(JSON.stringify(sealed));
+    expect(verified).toEqual({
+      text: JSON.stringify(backup),
+      sealed: true,
+    });
+  });
+
+  it('rejects tampered sealed plaintext backup imports before merging records', async () => {
+    const sealed = await sealPlaintextBackup({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-clean', status: 'completed' }],
+    });
+    const tampered = {
+      ...sealed,
+      trips: [{ id: 'trip-tampered', status: 'completed' }],
+    };
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify(tampered)),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: BACKUP_INTEGRITY_ERROR });
+  });
+
+  it('does not treat the plaintext integrity field as backup content', async () => {
+    const sealed = await sealPlaintextBackup({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-strip-integrity', status: 'completed' }],
+    });
+
+    const parsed = parseDriveSenseBackup(JSON.stringify(sealed));
+    expect(parsed.trips).toHaveLength(1);
+    expect(parsed._integrity).toBeUndefined();
   });
 });
 

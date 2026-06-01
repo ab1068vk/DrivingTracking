@@ -2,6 +2,7 @@ import { isNativePlatform } from '@/lib/nativePlatform';
 import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
 
 const memoryFallback = new Map();
+const INSTALL_HASH_KEY = 'road_sage_install_hash_v1';
 
 const hasLocalStorage = () => {
   try {
@@ -76,4 +77,26 @@ export async function removeJson(key) {
   }
 
   keys.forEach((storageKey) => memoryFallback.delete(storageKey));
+}
+
+const randomInstallSeed = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `install_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+};
+
+const sha256Hex = async (value) => {
+  if (typeof crypto === 'undefined' || !crypto.subtle || typeof TextEncoder === 'undefined') {
+    throw new Error('Install hash requires Web Crypto support.');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+export async function getOrCreateInstallHash() {
+  const existing = await getJson(INSTALL_HASH_KEY, null);
+  if (typeof existing === 'string' && existing) return existing;
+
+  const installHash = await sha256Hex(`road-sage-install:${randomInstallSeed()}`);
+  await setJson(INSTALL_HASH_KEY, installHash);
+  return installHash;
 }

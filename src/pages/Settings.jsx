@@ -50,6 +50,7 @@ import {
 } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
 import {
+  BACKUP_INTEGRITY_ERROR,
   BACKUP_TOO_LARGE_MESSAGE,
   exportDriveSenseBackup,
   importDriveSenseBackup,
@@ -1026,6 +1027,14 @@ export default function Settings() {
       setPendingBackupImportFile(file);
       setBackupImportError(result.error);
       setBackupImportOpen(true);
+      return null;
+    }
+    if (result?.error === BACKUP_INTEGRITY_ERROR) {
+      toast({
+        title: 'Backup integrity check failed',
+        description: 'The file may have been modified or exported from another Road Sage install.',
+        variant: 'destructive',
+      });
       return null;
     }
     if (result.requiresAcknowledgement) {

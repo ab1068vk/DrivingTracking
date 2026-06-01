@@ -1,5 +1,5 @@
 import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, getOrCreateInstallHash, setJson } from '@/lib/mobileStorage';
 import {
   MIN_CALIBRATION_LABEL_COUNT,
   surveyRatingToTargetScore,
@@ -340,14 +340,9 @@ function roundedCreatedAt(value, granularity = 'hour') {
   return date.toISOString();
 }
 
-const randomInstallId = () => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return `install_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-};
-
 export async function getAnonymousInstallIdHash() {
   const existing = await getJson(ANONYMOUS_INSTALL_ID_KEY, null);
-  const installId = typeof existing === 'string' && existing ? existing : randomInstallId();
+  const installId = typeof existing === 'string' && existing ? existing : await getOrCreateInstallHash();
   if (!existing) await setJson(ANONYMOUS_INSTALL_ID_KEY, installId);
   const input = `road-sage-calibration:${installId}`;
 
