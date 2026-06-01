@@ -337,6 +337,7 @@ export const DEFAULT_SETTINGS = {
   osrm_timeout_ms: defaultOsrmTimeoutMs(),
   last_map_center: null,
   predictive_route_risk_enabled: true,
+  route_risk_disclaimer_seen_count: 0,
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
   notif_phone_use_alert_enabled: true,

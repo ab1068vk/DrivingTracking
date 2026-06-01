@@ -53,6 +53,24 @@ function fatigueText(result) {
   ].join('\n');
 }
 
+function routeRiskText(result) {
+  const routeRisk = result.routeRiskCalibration;
+  if (!routeRisk) return '';
+  if (routeRisk.status !== 'refitted') return routeRisk.note || '';
+
+  return [
+    `Route risk trips: ${routeRisk.eligibleTripCount.toLocaleString()} eligible`,
+    `Route groups: ${routeRisk.routeGroupCount.toLocaleString()} repeated groups`,
+    `ROUTE_RISK_EVENT_WEIGHT: ${fmt(routeRisk.constants.ROUTE_RISK_EVENT_WEIGHT, 2)}`,
+    `ROUTE_RISK_HARSH_WEIGHT: ${fmt(routeRisk.constants.ROUTE_RISK_HARSH_WEIGHT, 2)}`,
+    `EVENT_DENSITY_MAX_EVENTS_PER_KM: ${fmt(routeRisk.constants.PREDICTIVE_EVENT_DENSITY_MAX_PER_KM, 2)}`,
+    `DANGER_ZONE_SATURATION_COUNT: ${fmt(routeRisk.constants.PREDICTIVE_DANGER_ZONE_SATURATION_COUNT, 0)}`,
+    `Repeated-route consistency: ${fmt(routeRisk.validation.repeatedRouteConsistency, 3)}`,
+    `Harsh vs normal route ratio: ${fmt(routeRisk.validation.harshVsNormalRouteRatio, 2)}`,
+    `Saturation effectiveness: ${fmt(routeRisk.validation.saturationEffectiveness, 3)}`,
+  ].join('\n');
+}
+
 function warningsText(result, currentConstants = {}) {
   const warnings = [];
   const fitted = Number(result.constants.PENALTY_SCALE_FACTOR);
@@ -87,6 +105,12 @@ export function printFitReport({ result, loadedCount, labelsFile, currentConstan
     console.log('');
     console.log('FATIGUE-SPECIFIC CALIBRATION');
     console.log(fatigue);
+  }
+  const routeRisk = routeRiskText(result);
+  if (routeRisk) {
+    console.log('');
+    console.log('ROUTE-RISK INTERNAL CONSISTENCY CALIBRATION');
+    console.log(routeRisk);
   }
   console.log('');
   console.log(warningsText(result, currentConstants));

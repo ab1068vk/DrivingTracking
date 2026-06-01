@@ -6,6 +6,8 @@ import { attachFatigueCalibration } from './calibration/fatigueFit.mjs';
 import { loadLabels } from './calibration/labels.mjs';
 import { promoteCalibration } from './calibration/promotion.mjs';
 import { printFitReport } from './calibration/report.mjs';
+import { attachRouteRiskCalibration } from './calibration/routeRiskFit.mjs';
+import { loadTrips } from './calibration/trips.mjs';
 import { validateCalibration } from './calibration/validation.mjs';
 
 async function fit(options) {
@@ -16,7 +18,10 @@ async function fit(options) {
     enforcePromotionGuards: options.promote === true || options.validate === true,
   });
   const currentConstants = await loadCurrentConstants();
-  const result = attachFatigueCalibration(baseResult, labels, currentConstants);
+  const fatigueResult = attachFatigueCalibration(baseResult, labels, currentConstants);
+  const result = options.routeRisk
+    ? attachRouteRiskCalibration(fatigueResult, (await loadTrips(options.tripsFile)).trips)
+    : fatigueResult;
   printFitReport({ result, loadedCount: labels.length, labelsFile, currentConstants });
   return { result, labels };
 }

@@ -4,12 +4,21 @@ import {
   countFatigueCalibrationLabels,
   fitFatigueConstants,
 } from './calibration/fatigueConstants.js';
+import {
+  ROUTE_RISK_MIN_ROUTE_GROUP_COUNT,
+  ROUTE_RISK_MIN_TRIP_COUNT,
+  fitRouteRiskConstants as fitRouteRiskConstantsImpl,
+  routeRiskCalibrationSample,
+} from './calibration/routeRiskConstants.js';
 
 export const MIN_CALIBRATION_LABEL_COUNT = 2000;
 export {
   MIN_FATIGUE_CALIBRATION_LABEL_COUNT,
+  ROUTE_RISK_MIN_ROUTE_GROUP_COUNT,
+  ROUTE_RISK_MIN_TRIP_COUNT,
   countFatigueCalibrationLabels,
   fitFatigueConstants,
+  routeRiskCalibrationSample,
 };
 export const CALIBRATION_PENDING_MESSAGE = 'Calibration pending: not enough labeled trips yet.';
 
@@ -47,6 +56,18 @@ export function surveyRatingToTargetScore(rating) {
     throw new Error('Survey rating must be an integer from 1 to 5.');
   }
   return (normalized - 1) * 25;
+}
+
+// FUTURE: External validation against public crash datasets.
+// Canada: Transport Canada NCDB (National Collision Database), open data.
+//         URL: https://open.canada.ca/data/en/dataset/1eb9eba7-71d1-4b30-9fb1-30cbdab7e63a
+//         Fields: collision_year, latitude, longitude, collision_severity.
+// UK:     STATS19, open data from DfT.
+// When external data is available, replace fitRouteRiskConstants with a version that
+// correlates route risk scores against historical collision density at the same GPS cells.
+// Until then, internal consistency calibration is the best available approach.
+export function fitRouteRiskConstants(trips = []) {
+  return fitRouteRiskConstantsImpl(trips);
 }
 
 function scoreBucket(score) {

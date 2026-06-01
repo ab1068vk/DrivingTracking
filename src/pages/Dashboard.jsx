@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
-  ParkingSquare, CheckCircle2, PhoneCall
+  ParkingSquare, CheckCircle2, Info, PhoneCall
 } from 'lucide-react';
 import {
   formatDistance, formatDuration, formatSpeed,
@@ -129,6 +129,7 @@ const AUTO_START_TRIGGER_SECONDS = 2;
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
 const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
+const ROUTE_RISK_DISCLAIMER_TEXT = 'Route risk shows where you\'ve had driving events on this route. It does not reflect road danger, traffic volume, or collision history.';
 
 const logNativeAutoStartFailure = (err, settings = {}, extra = {}) => {
   logError('native_auto_tracking_start', err, {
@@ -2322,6 +2323,16 @@ function DashboardRiskPanel({
   routeRiskIndex,
   settings,
 }) {
+  const initialRouteRiskDisclaimerSeenCount = useRef(Math.max(0, Number(settings.route_risk_disclaimer_seen_count) || 0));
+  const showFullRouteRiskDisclaimer = initialRouteRiskDisclaimerSeenCount.current < 3;
+
+  useEffect(() => {
+    const current = Math.max(0, Number(localSettings.get().route_risk_disclaimer_seen_count) || 0);
+    if (current < 3) {
+      localSettings.update({ route_risk_disclaimer_seen_count: current + 1 });
+    }
+  }, []);
+
   const predictiveRouteRisk = useMemo(() => estimatePredictiveRouteRisk({
     trips: completedTrips,
     dangerZones,
@@ -2430,6 +2441,13 @@ function DashboardRiskPanel({
                   <span className="flex min-w-0 flex-wrap items-center gap-2 break-words font-semibold">
                     Estimated historical context
                     {ROUTE_RISK_IS_APPROXIMATE && <CalibrationStatusTag />}
+                    {!showFullRouteRiskDisclaimer && (
+                      <Info
+                        className="h-3.5 w-3.5 text-muted-foreground"
+                        aria-label={ROUTE_RISK_DISCLAIMER_TEXT}
+                        title={ROUTE_RISK_DISCLAIMER_TEXT}
+                      />
+                    )}
                   </span>
                   <span className={`flex-shrink-0 font-bold capitalize ${
                     predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
@@ -2438,6 +2456,11 @@ function DashboardRiskPanel({
                   </span>
                 </div>
                 <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
+                {showFullRouteRiskDisclaimer && (
+                  <p className="mt-2 rounded-lg border border-border bg-background/60 p-2 text-muted-foreground">
+                    {ROUTE_RISK_DISCLAIMER_TEXT}
+                  </p>
+                )}
                 <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
                 {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
                   <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
