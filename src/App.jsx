@@ -13,6 +13,8 @@ import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
+import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
+import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
@@ -58,6 +60,17 @@ const AuthenticatedApp = () => {
         logError('notification_channel_configure', err);
       });
       const settings = await localSettings.hydrateFromNative();
+      reverifyConfiguredOsrmEndpoint(settings).then(({ result }) => {
+        if (result && !result.ok) {
+          toast({
+            title: 'OSRM route snapping disabled',
+            description: result.error || 'The configured OSRM endpoint did not pass verification.',
+            variant: 'destructive',
+          });
+        }
+      }).catch((err) => {
+        logError('osrm_launch_reverify', err);
+      });
       syncReminderNotifications(settings, { requestPermission: false }).catch((err) => {
         logError('reminder_notification_sync', err, { tracking_mode: settings.tracking_mode });
       });

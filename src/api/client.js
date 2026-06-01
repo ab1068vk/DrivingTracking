@@ -14,15 +14,7 @@ export class ApiError extends Error {
   }
 }
 
-export const getAuthToken = () => {
-  try {
-    // Auth tokens are intentionally session-scoped so an XSS cannot extract a
-    // long-lived credential from localStorage.
-    return sessionStorage.getItem("token") || sessionStorage.getItem("access_token");
-  } catch {
-    return null;
-  }
-};
+export const getAuthToken = () => null;
 
 const buildUrl = (path, query) => {
   if (!API_BASE_URL) {
@@ -58,16 +50,15 @@ const parseJsonSafely = async (response) => {
  * @param {{method?:string,body?:any,headers?:Record<string,string>,query?:Record<string,any>} & RequestInit} options
  */
 async function request(path, { method = "GET", body, headers, query, ...options } = {}) {
-  const token = getAuthToken();
   const hasBody = body !== undefined && body !== null;
 
   const response = await fetch(buildUrl(path, query), {
     method,
+    credentials: "include",
     ...options,
     headers: {
       Accept: "application/json",
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
     body: hasBody ? JSON.stringify(body) : undefined,

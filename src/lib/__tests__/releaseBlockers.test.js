@@ -59,7 +59,6 @@ describe('release blocker regressions', () => {
   });
 
   it('does not read auth tokens from localStorage', () => {
-    vi.stubGlobal('sessionStorage', { getItem: vi.fn(() => null) });
     vi.stubGlobal('localStorage', { getItem: vi.fn(() => 'local-token') });
 
     expect(getAuthToken()).toBeNull();
@@ -67,50 +66,35 @@ describe('release blocker regressions', () => {
   });
 
   it('removes auth tokens from all browser storage on logout', () => {
-    vi.stubGlobal('sessionStorage', { removeItem: vi.fn() });
     vi.stubGlobal('localStorage', { removeItem: vi.fn() });
 
     authService.logout();
 
-    expect(sessionStorage.removeItem).toHaveBeenCalledWith('token');
-    expect(sessionStorage.removeItem).toHaveBeenCalledWith('access_token');
     expect(localStorage.removeItem).toHaveBeenCalledWith('token');
     expect(localStorage.removeItem).toHaveBeenCalledWith('access_token');
   });
 
-  it('migrates legacy localStorage auth tokens into sessionStorage and deletes them', () => {
+  it('clears legacy localStorage auth tokens instead of migrating them into readable storage', () => {
     const legacyTokens = new Map([
       ['token', 'legacy-token'],
       ['access_token', 'legacy-access-token'],
     ]);
-    const sessionTokens = new Map();
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
       removeItem: vi.fn((key) => legacyTokens.delete(key)),
     });
-    vi.stubGlobal('sessionStorage', {
-      getItem: vi.fn((key) => sessionTokens.get(key) ?? null),
-      setItem: vi.fn((key, value) => sessionTokens.set(key, value)),
-    });
 
     migrateLegacyAuthTokens();
 
-    expect(sessionStorage.setItem).toHaveBeenCalledWith('token', 'legacy-token');
-    expect(sessionStorage.setItem).toHaveBeenCalledWith('access_token', 'legacy-access-token');
     expect(localStorage.getItem('token')).toBeNull();
     expect(localStorage.getItem('access_token')).toBeNull();
   });
 
   it('leaves no auth token readable from localStorage after migration', () => {
     const legacyTokens = new Map([['token', 'legacy-token']]);
-    const sessionTokens = new Map();
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
       removeItem: vi.fn((key) => legacyTokens.delete(key)),
-    });
-    vi.stubGlobal('sessionStorage', {
-      getItem: vi.fn((key) => sessionTokens.get(key) ?? null),
-      setItem: vi.fn((key, value) => sessionTokens.set(key, value)),
     });
 
     migrateLegacyAuthTokens();
@@ -119,21 +103,17 @@ describe('release blocker regressions', () => {
     expect(xssReadableToken).toBeNull();
   });
 
-  it('keeps legacy auth token in localStorage if session migration cannot be verified', () => {
+  it('does not keep a legacy auth token when browser storage is writable', () => {
     const legacyTokens = new Map([['token', 'legacy-token']]);
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
       removeItem: vi.fn((key) => legacyTokens.delete(key)),
     });
-    vi.stubGlobal('sessionStorage', {
-      getItem: vi.fn(() => null),
-      setItem: vi.fn(),
-    });
 
     migrateLegacyAuthTokens();
 
-    expect(localStorage.getItem('token')).toBe('legacy-token');
-    expect(localStorage.removeItem).not.toHaveBeenCalledWith('token');
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.removeItem).toHaveBeenCalledWith('token');
   });
 
   it('fails API calls clearly when no backend is configured', async () => {
@@ -141,6 +121,16 @@ describe('release blocker regressions', () => {
 
     await expect(apiClient.get('/trips')).rejects.toThrow('No backend API configured');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('contains no frontend bearer-token storage or authorization header logic', () => {
+    const authSource = readFileSync(new URL('../../api/auth.js', import.meta.url), 'utf8');
+    const clientSource = readFileSync(new URL('../../api/client.js', import.meta.url), 'utf8');
+
+    expect(`${authSource}\n${clientSource}`).not.toMatch(/sessionStorage\.(getItem|setItem)/);
+    expect(clientSource).toContain('credentials: "include"');
+    expect(clientSource).not.toContain('Authorization');
+    expect(clientSource).not.toContain('Bearer');
   });
 
   it('reports malformed backup JSON with a clear parse error', () => {

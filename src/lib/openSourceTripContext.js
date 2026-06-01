@@ -11,6 +11,7 @@ import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weat
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -46,21 +47,34 @@ function skippedMapMatchingContext(originalPoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
+  if (settings.osrm_data_sharing_consented !== true) {
+    return {
+      routePoints: originalPoints,
+      status: 'needs_consent',
+      provider: 'osrm',
+      error: 'Route snapping needs explicit OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (!hasVerifiedOsrmEndpoint(settings)) {
+    return {
+      routePoints: originalPoints,
+      status: 'unavailable',
+      provider: 'osrm',
+      error: settings.osrm_last_health_error || 'Route snapping is disabled until the OSRM endpoint passes verification.',
+      isOsrmDemoUrl,
+    };
+  }
   return {
     routePoints: originalPoints,
-    status: 'needs_consent',
+    status: 'unavailable',
     provider: 'osrm',
-    error: 'Route snapping needs explicit OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
+    error: 'Route snapping is unavailable.',
     isOsrmDemoUrl,
   };
 }
 
-export const isOsrmMapMatchingConfigured = (settings = {}) => (
-  settings.map_matching_enabled !== false &&
-  Boolean(settings.osrm_map_matching_url) &&
-  settings.osrm_data_sharing_consented === true &&
-  !isPublicOsrmDemoUrl(settings.osrm_map_matching_url)
-);
+export const isOsrmMapMatchingConfigured = (settings = {}) => hasVerifiedOsrmEndpoint(settings);
 
 export const isOsrmMapMatchingEnabled = (settings = {}) => (
   settings.map_matching_enabled !== false
@@ -85,6 +99,8 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');
   } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
+  } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true) {
+    lines.push('- Snap route to roads has an endpoint but will be skipped until its OSRM health check passes.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
     lines.push('- Snap route to roads has an endpoint but will be skipped until OSRM data-sharing consent is saved.');
   } else if (isOsrmMapMatchingEnabled(settings)) {

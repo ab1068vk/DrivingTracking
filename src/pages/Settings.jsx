@@ -70,7 +70,8 @@ import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { checkOsrmEndpointHealth } from '@/lib/mapMatching';
+import { checkOsrmEndpointHealth, buildOsrmHealthPatch } from '@/lib/osrmEndpointHealth';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
@@ -378,10 +379,10 @@ export default function Settings() {
       updateCfg({ map_matching_enabled: false });
       return;
     }
-    if (!cfg.osrm_map_matching_url || cfg.osrm_data_sharing_consented !== true) {
+    if (!hasVerifiedOsrmEndpoint(cfg)) {
       toast({
         title: 'OSRM endpoint not ready',
-        description: 'Save a trusted OSRM endpoint and confirm data sharing before route snapping can run.',
+        description: 'Save a trusted OSRM endpoint that passes the OSRM OPTIONS health check before route snapping can run.',
         variant: 'destructive',
       });
       return;
@@ -392,12 +393,7 @@ export default function Settings() {
   const runOsrmEndpointHealthCheck = async (endpoint) => {
     setOsrmHealthCheckState('checking');
     const result = await checkOsrmEndpointHealth(endpoint);
-    const patch = {
-      osrm_health_status: result.ok ? 'connected' : 'unreachable',
-      osrm_last_health_checked_at: result.checked_at,
-      osrm_last_health_error: result.error || '',
-      ...(result.ok ? { osrm_last_reachable_at: result.checked_at } : {}),
-    };
+    const patch = buildOsrmHealthPatch(result);
     setOsrmHealthCheckState('idle');
     return { result, patch };
   };
@@ -445,6 +441,14 @@ export default function Settings() {
 
     const consentedAt = new Date().toISOString();
     const { result, patch } = await runOsrmEndpointHealthCheck(value);
+    if (!result.ok) {
+      toast({
+        title: 'Endpoint not saved',
+        description: result.error,
+        variant: 'destructive',
+      });
+      return;
+    }
     updateCfg({
       map_matching_enabled: true,
       osrm_map_matching_url: value,
@@ -454,9 +458,8 @@ export default function Settings() {
       ...patch,
     });
     toast({
-      title: result.ok ? 'OSRM endpoint connected' : 'OSRM endpoint saved, but unreachable',
-      description: result.ok ? 'Route snapping can use this endpoint when you tap Get Road Data.' : result.error,
-      variant: result.ok ? undefined : 'destructive',
+      title: 'OSRM endpoint connected',
+      description: 'Route snapping can use this endpoint when you tap Get Road Data.',
     });
   };
 

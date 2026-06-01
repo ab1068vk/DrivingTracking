@@ -1,4 +1,5 @@
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
+import { OsrmEndpointPanel } from '@/settings/osrm/OsrmEndpointPanel';
 
 export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -117,60 +118,19 @@ export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
                         <span>30 sec</span>
                       </div>
                     </div>
-                    <div className="px-1 py-3">
-                      <div className="mb-1 text-xs font-medium">Trusted OSRM endpoint</div>
-                      <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
-                        <input
-                          value={osrmEndpointDraft}
-                          onChange={event => setOsrmEndpointDraft(event.target.value)}
-                          placeholder="https://your-osrm.example"
-                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
-                        />
-                        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                          <span>
-                            OSRM endpoints receive sampled GPS coordinate pairs. Save only a private or trusted server.
-                          </span>
-                        </div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={requestSaveOsrmEndpoint}
-                          disabled={osrmHealthCheckState === 'checking'}
-                          className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-                        >
-                          {osrmHealthCheckState === 'checking' ? 'Checking...' : 'Save endpoint'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOsrmEndpointDraft('');
-                            saveOsrmEndpoint('', true);
-                          }}
-                          disabled={!cfg.osrm_map_matching_url && !osrmEndpointDraft}
-                          className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
-                        >
-                          Turn off + clear
-                        </button>
-                      </div>
-                      <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {PUBLIC_OSRM_DEMO_URL}. The public demo is not saved or used by Road Sage because it receives route points and has no service guarantee.</p>
-                      <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-                        {cfg.osrm_health_status === 'connected' && cfg.osrm_last_reachable_at
-                          ? `Connected. OSRM last reachable: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`
-                          : cfg.osrm_health_status === 'unreachable'
-                            ? `Unreachable${cfg.osrm_last_health_error ? `: ${cfg.osrm_last_health_error}` : '.'}`
-                            : cfg.map_matching_enabled === false
-                          ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
-                            : cfg.osrm_map_matching_url
-                              ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
-                                ? 'Blocked: the public OSRM demo cannot be used as a route-snapping endpoint.'
-                                : cfg.osrm_data_sharing_consented === true
-                                  ? 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
-                                  : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
-                            : 'Optional: add a trusted OSRM endpoint only if you want road-snapped map lines.'}
-                      </div>
-                    </div>
+                    <OsrmEndpointPanel
+                      cfg={cfg}
+                      endpointDraft={osrmEndpointDraft}
+                      healthCheckState={osrmHealthCheckState}
+                      isPublicOsrmDemoUrl={isPublicOsrmDemoUrl}
+                      publicDemoUrl={PUBLIC_OSRM_DEMO_URL}
+                      onChangeEndpointDraft={setOsrmEndpointDraft}
+                      onSaveEndpoint={requestSaveOsrmEndpoint}
+                      onClearEndpoint={() => {
+                        setOsrmEndpointDraft('');
+                        saveOsrmEndpoint('', true);
+                      }}
+                    />
                   </div>
                 </details>
                 <SettingRow

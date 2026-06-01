@@ -274,6 +274,8 @@ describe('external service contracts', () => {
     const result = await mapMatchRoute(route, {
       osrm_map_matching_url: 'https://osrm.example',
       osrm_data_sharing_consented: true,
+      osrm_health_status: 'connected',
+      osrm_last_reachable_at: '2026-05-23T16:00:00.000Z',
     });
 
     expect(fetch).toHaveBeenCalledTimes(1);

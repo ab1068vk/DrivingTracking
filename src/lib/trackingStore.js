@@ -1,6 +1,6 @@
 /**
  * Road Sage Tracking Store
- * Manages active trip state in memory and persists to sessionStorage for crash recovery.
+ * Manages active trip state in memory and persists to localStorage for crash recovery.
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';

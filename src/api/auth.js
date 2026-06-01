@@ -1,6 +1,7 @@
 import { apiClient } from "@/api/client";
 
 const AUTH_STORAGE_KEYS = ["token", "access_token"];
+let legacyAuthTokensCleared = false;
 
 export const migrateLegacyAuthTokens = () => {
   AUTH_STORAGE_KEYS.forEach((key) => {
@@ -8,26 +9,29 @@ export const migrateLegacyAuthTokens = () => {
       const legacyToken = localStorage.getItem(key);
       if (!legacyToken) return;
 
-      if (!sessionStorage.getItem(key)) {
-        sessionStorage.setItem(key, legacyToken);
-      }
-
-      if (sessionStorage.getItem(key) === legacyToken) {
-        localStorage.removeItem(key);
-      }
+      localStorage.removeItem(key);
+      legacyAuthTokensCleared = true;
     } catch {
       // Storage can be unavailable in hardened browser modes.
     }
   });
 };
 
-// TODO: Implement /auth/me and a matching login flow if you want cloud auth.
+export const consumeLegacyAuthTokenMigration = () => {
+  const cleared = legacyAuthTokensCleared;
+  legacyAuthTokensCleared = false;
+  return cleared;
+};
+
+// The optional backend should set an httpOnly, Secure, SameSite=Strict cookie
+// from POST /auth/token. The frontend intentionally never stores bearer tokens.
 export const authService = {
+  exchangeTokenForCookie: (token) => apiClient.post("/auth/token", { token }),
+
   me: () => apiClient.get("/auth/me"),
 
   logout: () => {
     AUTH_STORAGE_KEYS.forEach((key) => {
-      sessionStorage.removeItem(key);
       localStorage.removeItem(key);
     });
   },
