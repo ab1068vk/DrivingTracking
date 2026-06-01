@@ -57,7 +57,6 @@ import {
   EVENT_TYPES,
   FATIGUE_SEGMENT_SECONDS,
   FUEL_BAND_FULL_SCORE_MULTIPLIER,
-  HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
   LEGACY_COMPONENT_FIELDS,
   MIN_BRAKE_ONSET_SMOOTHNESS_SEQUENCES,
   OBD_ECO_PENALTY_MAX,
@@ -134,6 +133,10 @@ import {
   perpendicularDistanceMeters,
   simplifyRoute
 } from '../route/downsampler.js';
+import {
+  buildLaneChangeSuppressionWindows,
+  isInsideLaneChangeSuppressionWindow
+} from './laneCurvature.js';
 import {
   average,
   calculateEstimatedPrivateDistanceKm,
@@ -439,7 +442,7 @@ export function detectHeadingDeviationEvents(points = [], thresholds = DEFAULT_T
   return merged.map(({ point, turnRate, speed, pointIndex }) => ({
     type: EVENT_TYPES.HEADING_DEVIATION,
     severity,
-    label: 'heading deviation event (beta)',
+    label: 'heading deviation event (diagnostic)',
     confidence: 'low',
     lat: point.lat,
     lng: point.lng,
@@ -461,6 +464,9 @@ export const LANE_CHANGE_MAX_GPS_ACCURACY_M = 20;
 export const LANE_CHANGE_GPS_MIN_DELTA_DEG = 1.5;
 export const LANE_CHANGE_GPS_MAX_DELTA_DEG = 8;
 export const LANE_CHANGE_MAX_SPEED_DROP_KMH = 12;
+export const LANE_CHANGE_HIGHWAY_SPEED_KMH = 100;
+export const LANE_CHANGE_REGIONAL_YAW_DEG_S = 2.4;
+export const LANE_CHANGE_HIGHWAY_YAW_DEG_S = 1.8;
 
 export function finiteSampleValue(sample, key) {
   const value = Number(sample?.[key]);
@@ -520,6 +526,13 @@ export function speedMaintainedInWindow(points = [], startMs, endMs, baselineSpe
   return baselineSpeed - minSpeed <= LANE_CHANGE_MAX_SPEED_DROP_KMH && maxSpeed - minSpeed <= 20;
 }
 
+export function laneChangeYawThresholdForSpeed(speedKmh, thresholds = DEFAULT_THRESHOLDS) {
+  const highwayCutoff = thresholds.LANE_CHANGE_HIGHWAY_SPEED_KMH ?? LANE_CHANGE_HIGHWAY_SPEED_KMH;
+  const highwayYaw = thresholds.LANE_CHANGE_HIGHWAY_YAW_DEG_S ?? LANE_CHANGE_HIGHWAY_YAW_DEG_S;
+  const regionalYaw = thresholds.LANE_CHANGE_REGIONAL_YAW_DEG_S ?? LANE_CHANGE_REGIONAL_YAW_DEG_S;
+  return Number(speedKmh) > highwayCutoff ? highwayYaw : regionalYaw;
+}
+
 /**
  * Detect probable lane changes from calibrated IMU axes, with a lower-confidence
  * GPS bilateral-heading fallback for highway-speed trips.
@@ -551,6 +564,7 @@ export function detectLaneChanges(cleanPoints = [], motionSamples = [], orientat
     .filter((sample) => Number.isFinite(sample.timestamp_ms));
   const laneChanges = [];
   let suppressUntilMs = 0;
+  const curvedRoadSuppressionWindows = buildLaneChangeSuppressionWindows(points, thresholds);
 
   const samplesInWindow = (startMs, endMs) => normalizedSamples.filter((sample) => (
     sample.timestamp_ms >= startMs && sample.timestamp_ms <= endMs
@@ -563,6 +577,7 @@ export function detectLaneChanges(cleanPoints = [], motionSamples = [], orientat
     const tMs = timestampMs(p);
     const windowEnd = tMs + LANE_CHANGE_BILATERAL_WINDOW_S * 1000;
     if (tMs < suppressUntilMs) continue;
+    if (isInsideLaneChangeSuppressionWindow(tMs, curvedRoadSuppressionWindows)) continue;
     if (speed < LANE_CHANGE_MIN_SPEED_KMH) continue;
     if (acc > LANE_CHANGE_MAX_GPS_ACCURACY_M) continue;
     if (!speedMaintainedInWindow(points, tMs, windowEnd, speed)) continue;
@@ -583,12 +598,13 @@ export function detectLaneChanges(cleanPoints = [], motionSamples = [], orientat
       if (peakLateral < LANE_CHANGE_MIN_LATERAL_G) continue;
       if (peakLateral > LANE_CHANGE_MAX_LATERAL_G) continue;
 
-      const firstYaw = yawValues.find((value) => Math.abs(value) > 2.0);
+      const yawThreshold = laneChangeYawThresholdForSpeed(speed, thresholds);
+      const firstYaw = yawValues.find((value) => Math.abs(value) > yawThreshold);
       if (firstYaw == null) continue;
       const firstSign = Math.sign(firstYaw);
       const hasReversal = yawValues.some((value, index) => (
         index > 1 &&
-        Math.abs(value) > 2.0 &&
+        Math.abs(value) > yawThreshold &&
         Math.sign(value) !== 0 &&
         Math.sign(value) !== firstSign
       ));
@@ -671,6 +687,7 @@ export function detectLaneChanges(cleanPoints = [], motionSamples = [], orientat
     unsafe_lane_changes: laneChanges.filter((laneChange) => laneChange.simultaneous_braking).length,
     confidence: imuAvailable ? 'imu_calibrated' : 'gps_only',
     detection_method: imuAvailable ? 'imu_yaw_bilateral' : 'gps_bilateral_heading',
+    curved_road_suppression_window_count: curvedRoadSuppressionWindows.length,
   };
 }
 

@@ -65,7 +65,6 @@ import {
   EVENT_TYPES,
   FATIGUE_SEGMENT_SECONDS,
   FUEL_BAND_FULL_SCORE_MULTIPLIER,
-  HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
   LEGACY_COMPONENT_FIELDS,
   MIN_BRAKE_ONSET_SMOOTHNESS_SEQUENCES,
   OBD_ECO_PENALTY_MAX,
@@ -1568,7 +1567,7 @@ export function calculateTripScores(
     close_proximity_score_confidence: componentEvidence.close_proximity,
     overtake_event_count: diagnosticOvertakeCount,
     overtake_score: null,
-    overtake_score_confidence: 'beta_diagnostic_only',
+    overtake_score_confidence: 'development_diagnostic_only',
     overtake_affects_score: false,
     intersection_score: intersectionScore,
     intersection_score_confidence: componentEvidence.intersection,
@@ -1624,7 +1623,8 @@ export function calculateTripScores(
     lane_change_events: laneChangeResult.lane_changes || [],
     ...overtakeQuality,
     overtake_quality_score_confidence: componentEvidence.overtake_quality,
-    overtake_quality_beta: true,
+    overtake_quality_beta: false,
+    overtake_quality_status: 'development_diagnostic_only',
     ...slippery,
     ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, scoringEvents, stats, thresholds)),
     ...aggressive,
@@ -1749,7 +1749,7 @@ export function calculateTripScores(
       gpsSources,
       {
         sampleCount: routeSampleCount,
-        note: 'GPS heading-drift beta estimate; this is not a fatigue diagnosis.',
+        note: 'GPS attention signal only - not a fatigue measurement.',
       }
     ),
     hill_driving: createComponentScore(hill.hill_driving_score, componentEvidence.hill_driving, combinedSources(gpsSources, ['gps_altitude']), {
@@ -1782,14 +1782,12 @@ export function calculateTripScores(
           ? 'Lane-changing scoring is disabled in Settings.'
           : laneChanging.lane_changing_score == null
             ? 'Requires at least 5 km and two detected lane-change manoeuvres.'
-            : laneChanging.lane_changing_confidence === 'gps_only'
-              ? 'GPS-only lane-change fallback; lower confidence than calibrated IMU detection.'
-              : undefined,
+            : 'Diagnostic only until 200 dashcam-reviewed labeled trips reach 85% agreement and curved-road false positives stay below 10%; not included in Safety.',
       }
     ),
     overtake_quality: createComponentScore(overtakeQuality.overtake_quality_score, componentEvidence.overtake_quality, gpsSources, {
       sampleCount: overtakeQuality.overtake_count,
-      note: 'Beta diagnostic only; excluded from Safety.',
+      note: 'Development diagnostic only; hidden from Trip Detail and excluded from scores.',
     }),
     aggressive_driving: createComponentScore(aggressive.aggressive_driving_score, componentEvidence.aggressive_driving, vehicleSpeedSources, {
       sampleCount: routeSampleCount,

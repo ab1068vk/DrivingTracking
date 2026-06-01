@@ -1,7 +1,6 @@
 import { EventStatusBadge } from './EventStatusBadge';
 
 export const DIAGNOSTIC_EVENT_TYPES = new Set([
-  'aggressive_overtake',
   'close_proximity',
   'erratic_speed',
   'gps_phone_use_proxy',
@@ -13,8 +12,6 @@ export const DIAGNOSTIC_EVENT_TYPES = new Set([
 ]);
 
 export const BETA_EVENT_TYPES = new Set([
-  'heading_drift_beta',
-  'overtake_pattern_beta',
   'pre_trip_readiness',
 ]);
 
@@ -55,7 +52,7 @@ export function TripEventList({ scoredRows = [], diagnosticRows = [], renderEven
         <details className="diagnostic-section mt-4 rounded-2xl border border-border bg-secondary/30 p-3">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold">
             <span>
-              Diagnostic &amp; Beta Data
+              Diagnostic Data
               <span className="ml-1 text-xs font-normal text-muted-foreground">- not scored</span>
             </span>
             <span className="rounded-full bg-card px-2 py-0.5 text-xs text-muted-foreground">

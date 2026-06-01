@@ -89,6 +89,7 @@ import {
 } from '@/lib/calibrationLabeling';
 import { formatEstimatedScore, formatScoreWithProvenance, isApproximateScoreOutput } from '@/lib/scoreDisplay';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
+import { BETA_FEATURE_POLICIES } from '@/lib/featureGraduationPolicy';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -105,7 +106,6 @@ const fatigueText = {
 };
 const CRITICAL_FATIGUE_CHART_LEVEL = DAILY_FATIGUE_THRESHOLDS.CRITICAL * 10;
 const DIAGNOSTIC_EVENT_EXPLANATIONS = {
-  aggressive_overtake: 'Diagnostic only because GPS can suggest an overtake pattern but cannot verify surrounding traffic, lane position, or safe re-entry.',
   heading_deviation: 'Diagnostic only because GPS heading changes cannot confirm a lane boundary crossing or driver intent.',
   heading_deviation_legacy: 'Diagnostic only because this is a migrated legacy GPS heading event, not measured lane-boundary evidence.',
   close_proximity: 'Diagnostic only because GPS brake-turn movement cannot measure object proximity, another road user, or an avoided collision.',
@@ -119,8 +119,11 @@ const DIAGNOSTIC_TYPES = new Set([
   'stop_start_pattern',
   'erratic_speed',
   'close_proximity',
-  'aggressive_overtake',
   'phone_use_gps_proxy',
+]);
+
+const USER_HIDDEN_EVENT_TYPES = new Set([
+  'aggressive_overtake',
 ]);
 
 const isGpsPhoneUseProxyEvent = (event = {}) => (
@@ -140,6 +143,8 @@ const isDiagnosticOnlyTripEvent = (event = {}) => (
   || event.badge === 'GPS estimate'
   || Boolean(diagnosticExplanationForEvent(event))
 );
+
+const isUserVisibleTripEvent = (event = {}) => !USER_HIDDEN_EVENT_TYPES.has(event.type);
 
 const uniqueTripEvents = (events = []) => {
   const seen = new Set();
@@ -168,8 +173,8 @@ const eventDisplayConfig = (event = {}, gpsPhoneUseProxy = false) => {
     speeding: { label: 'Speeding', icon: '>', color: 'text-orange-600' },
     idle: { label: 'Excessive Idle', icon: 'P', color: 'text-slate-500' },
     close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
-    aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
-    heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
+    aggressive_overtake: { label: 'Overtake Pattern (Development)', icon: '>>', color: 'text-orange-600' },
+    heading_deviation: { label: 'Heading Event (Diagnostic)', icon: '<>', color: 'text-sky-600' },
     heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
     lane_change_detected: {
       label: (laneChange) => `Lane Change (${laneChange.direction === 'left' ? 'Left' : 'Right'})${laneChange.simultaneous_braking ? ' - Braking' : ''}`,
@@ -718,7 +723,8 @@ export default function TripDetail() {
   const laneChangeEvents = Array.isArray(trip.lane_change_events) ? trip.lane_change_events : [];
   const rawDrivingEvents = uniqueTripEvents([...(trip.driving_events || []), ...laneChangeEvents]);
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(rawDrivingEvents, displayPhoneUse)
-    .filter((event) => event.type !== 'near_miss');
+    .filter((event) => event.type !== 'near_miss')
+    .filter(isUserVisibleTripEvent);
   const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
   const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
     .filter((event) => !displayEvents.some((candidate) => (
@@ -747,7 +753,7 @@ export default function TripDetail() {
     { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
     { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
     { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-    { label: 'Heading Events (Beta)', value: headingDeviationEventCount, note: headingDeviationPrompt, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
+    { label: 'Heading Events (Diagnostic)', value: headingDeviationEventCount, note: headingDeviationPrompt, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
     { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
     { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
   ];
@@ -1020,12 +1026,6 @@ export default function TripDetail() {
         <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           <Route className="h-4 w-4" />
           <span>Road-matched via public OSRM demo</span>
-        </div>
-      )}
-
-      {(trip.overtake_event_count || 0) > 0 && (
-        <div className="rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm font-medium text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300">
-          Overtake pattern (Beta): {trip.overtake_event_count} GPS pattern{trip.overtake_event_count === 1 ? '' : 's'} recorded for diagnostics only. It does not affect scores or coaching.
         </div>
       )}
 
@@ -1706,7 +1706,7 @@ export default function TripDetail() {
             { icon: AlertTriangle, label: 'estimated fatigue risk (driving-time proxy)', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'smoothness index', componentKey: 'smoothness_index', color: 'text-sky-500' },
             { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', value: brakeOnsetCollectingDataText, show: Boolean(brakeOnsetCollectingDataText), color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : brakeOnsetCollectingDataText ? 'text-amber-500' : 'text-emerald-500' },
-            { icon: Shuffle, label: 'lane changing', componentKey: 'lane_changing', value: trip.lane_changing_grade ?? 'unavailable', useComponentValue: false, color: ['frequent', 'erratic'].includes(trip.lane_changing_grade) ? 'text-red-500' : trip.lane_changing_grade === 'acceptable' ? 'text-sky-500' : 'text-emerald-500', capitalize: true, badge: trip.lane_changing_confidence !== 'imu_calibrated' ? 'GPS estimate' : null },
+            { icon: Shuffle, label: 'lane changing diagnostic', componentKey: 'lane_changing', value: trip.lane_changing_grade ?? 'unavailable', useComponentValue: false, color: ['frequent', 'erratic'].includes(trip.lane_changing_grade) ? 'text-red-500' : trip.lane_changing_grade === 'acceptable' ? 'text-sky-500' : 'text-emerald-500', capitalize: true, badge: BETA_FEATURE_POLICIES.laneChanging.userLabel },
             { icon: Leaf, label: 'eco driving', componentKey: 'eco_driving', color: 'text-emerald-500' },
             { icon: ShieldCheck, label: 'stop-start pattern estimate', componentKey: 'stop_start_pattern', color: 'text-blue-500' },
             { icon: Focus, label: 'attention-pattern estimate', componentKey: 'distraction', color: 'text-violet-500' },
@@ -1715,7 +1715,7 @@ export default function TripDetail() {
             { icon: Fuel, label: 'fuel band', componentKey: 'fuel_band', color: 'text-lime-500' },
             { icon: Car, label: 'engine stress', componentKey: 'engine_stress', color: 'text-orange-500' },
             { icon: ParkingSquare, label: 'parking', value: trip.parking_approach_grade ?? '-', color: 'text-slate-500', capitalize: true },
-            { icon: AlertTriangle, label: 'attention pattern (GPS beta)', value: trip.heading_drift_beta_level ?? 'none', componentKey: 'heading_drift_beta', useComponentValue: false, color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true, show: trip.heading_drift_beta_available === true },
+            { icon: AlertTriangle, label: 'GPS attention signal', value: trip.heading_drift_beta_level ?? 'none', componentKey: 'heading_drift_beta', useComponentValue: false, color: trip.heading_drift_beta_level === 'high' ? 'text-red-500' : trip.heading_drift_beta_level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true, badge: BETA_FEATURE_POLICIES.headingDrift.userLabel, show: trip.heading_drift_beta_available === true },
             { icon: Milestone, label: 'gradient driving estimate (GPS speed proxy)', componentKey: 'hill_driving', color: 'text-emerald-500' },
           ].map((item) => {
             const evidenceScore = item.componentKey ? componentScore(item.componentKey) : null;
@@ -2011,12 +2011,10 @@ export default function TripDetail() {
               { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
               { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
               { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              { label: 'Heading Events (Beta)', value: headingDeviationEventCount, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
+              { label: 'Heading Events (Diagnostic)', value: headingDeviationEventCount, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
               { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
               { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
               { label: 'Brake-Turn Alerts', value: trip.close_proximity_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-              { label: 'Overtake Patterns (Beta)', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality (Beta)', value: formatScoreWithProvenance(trip.overtake_quality_score, trip.score_provenance), icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
             ].map(({ label, value, icon: Icon, color, bg }) => (
               <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
                 <Icon className={`w-5 h-5 ${color}`} />
@@ -2040,8 +2038,8 @@ export default function TripDetail() {
                 speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
                 idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
                 close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
-                aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
-                heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
+                aggressive_overtake: { label: 'Overtake Pattern (Development)', icon: '>>', color: 'text-orange-600' },
+                heading_deviation: { label: 'Heading Event (Diagnostic)', icon: '<>', color: 'text-sky-600' },
                 heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
                 tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
                 stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
@@ -2055,7 +2053,7 @@ export default function TripDetail() {
                 : evt.type === 'phone_use'
                   ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
                   : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-              const inferredTypes = ['heading_deviation', 'heading_deviation_legacy', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity', 'aggressive_overtake'];
+              const inferredTypes = ['heading_deviation', 'heading_deviation_legacy', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity'];
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
                 : evt.type === 'speeding' && evt.speed_limit_source
@@ -2447,11 +2445,12 @@ function TripScoreOverview({ trip, completedTripCount = null }) {
     { label: 'Aggression', metricKey: 'aggressive_driving_score', component: getTripComponentScore(trip, 'aggressive_driving'), grade: trip.aggressive_grade },
     { label: 'Defensive Driving Estimate', metricKey: 'defensive_driving_score', component: getTripComponentScore(trip, 'defensive_driving'), grade: trip.defensive_grade, qualifier: 'GPS + stop-behaviour proxy' },
     {
-      label: 'Lane Changing',
+      label: 'Lane Changing Diagnostic',
       metricKey: 'lane_changing_score',
       component: getTripComponentScore(trip, 'lane_changing'),
       grade: trip.lane_changing_grade,
-      badge: trip.lane_changing_confidence !== 'imu_calibrated' ? 'GPS estimate' : null,
+      qualifier: BETA_FEATURE_POLICIES.laneChanging.userLabel,
+      badge: 'diagnostic only',
     },
   ].filter(({ component }) => component.value != null);
   const confidenceTitle = lowScoreConfidence

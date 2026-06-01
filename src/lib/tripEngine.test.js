@@ -1742,7 +1742,7 @@ describe('tripEngine', () => {
     expect(scored.score_safety).toBe(expectedSafety);
   });
 
-  it('golden: detects GPS-only bilateral lane changes and lowers their Safety weight', () => {
+  it('golden: detects GPS-only bilateral lane changes without Safety weight', () => {
     const route = Array.from({ length: 28 }, (_, index) => ({
       ...point(43.6532 + index * 0.00025, -79.3832, index, 90, 8),
       timestamp: new Date(Date.UTC(2026, 5, 1, 17, 0, index)).toISOString(),
@@ -1779,10 +1779,10 @@ describe('tripEngine', () => {
       lane_changing_confidence: 'gps_only',
       lane_changing_confidence_multiplier: 0.7,
     });
-    expect(scored.lane_changing_safety_weight).toBeCloseTo(0.035, 6);
+    expect(scored.lane_changing_safety_weight).toBe(0);
   });
 
-  it('blends scored lane changing into Safety and leaves unavailable lane evidence neutral', () => {
+  it('keeps scored lane changing diagnostic out of Safety', () => {
     const route = Array.from({ length: 12 }, (_, index) => (
       point(43.6532 + index * 0.01, -79.3832, index * 5, 88, 8)
     ));
@@ -1809,7 +1809,7 @@ describe('tripEngine', () => {
     });
 
     expect(base.lane_changing_score).toBeNull();
-    expect(base.score_safety).toBeGreaterThan(withLaneChanging.score_safety);
+    expect(base.score_safety).toBe(withLaneChanging.score_safety);
     expect(withLaneChanging).toMatchObject({
       lane_changing_score: 48,
       lane_change_count: 2,
@@ -1819,7 +1819,26 @@ describe('tripEngine', () => {
     expect(withLaneChanging.component_scores.lane_changing).toMatchObject({
       value: 48,
       evidence: 'developing',
+      note: 'Diagnostic only until 200 dashcam-reviewed labeled trips reach 85% agreement and curved-road false positives stay below 10%; not included in Safety.',
     });
+  });
+
+  it('suppresses lane-change detections during sustained curved-road windows', () => {
+    const start = Date.UTC(2026, 5, 1, 17, 0, 0);
+    const route = Array.from({ length: 16 }, (_, index) => ({
+      ...point(43.6532 + index * 0.0002, -79.3832 + index * 0.00002, index, 90, 8),
+      timestamp: new Date(start + index * 1000).toISOString(),
+      heading: index * 8,
+    }));
+    const thresholds = {
+      ...DEFAULT_THRESHOLDS,
+      LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M: 8,
+      LANE_CHANGE_CURVE_SUPPRESSION_SECONDS: 4,
+    };
+    const laneChangeResult = detectLaneChanges(route, [], null, thresholds);
+
+    expect(laneChangeResult.lane_change_count).toBe(0);
+    expect(laneChangeResult.curved_road_suppression_window_count).toBeGreaterThan(0);
   });
 
   it('keeps heading-deviation events out of the safety score', () => {
@@ -1860,7 +1879,7 @@ describe('tripEngine', () => {
     const csv = tripsToCSV([]);
     expect(csv).toContain('Brake Onset Smoothness Score');
     expect(csv).toContain('Stop-Start Pattern Estimate');
-    expect(csv).toContain('Heading Drift Beta');
+    expect(csv).toContain('GPS Attention Signal');
     expect(csv).toContain('Speed Limit Sources');
     expect(csv).not.toContain('Reaction Time');
     expect(csv).not.toContain('Lane Changes');

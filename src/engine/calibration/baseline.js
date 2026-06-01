@@ -93,14 +93,7 @@ export const CLOSE_PROXIMITY_DECAY_BASE = scoringValue('CLOSE_PROXIMITY_DECAY_BA
  */
 export const TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH = scoringValue('TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH');
 export const TIRE_WEAR_DEFAULT_SPEED_TURN_KMH = scoringValue('TIRE_WEAR_DEFAULT_SPEED_TURN_KMH');
-/**
- * Provisional circadian weighting for Heading Drift Beta windows starting
- * between 02:00 and 05:00 local time. NHTSA notes drowsy-driving crashes most
- * often occur from midnight to 06:00 during circadian dips and lists crossing
- * roadway lines as a drowsiness warning sign, but this 2.5x factor is not
- * calibrated to lane-keeping or crash outcome data.
- * @see https://www.nhtsa.gov/risky-driving/drowsy-driving
- */
+/** Retired multiplier retained as a neutral compatibility constant. */
 export const HEADING_DRIFT_CIRCADIAN_MULTIPLIER = scoringValue('HEADING_DRIFT_CIRCADIAN_MULTIPLIER');
 export const CONFIDENCE_LEVELS = Object.freeze({
   HIGH: 'high',
@@ -250,6 +243,11 @@ export const DEFAULT_THRESHOLDS = {
   PHONE_USE_DETECTION_ENABLED: true,
   PHONE_USE_AFFECTS_SCORE: true,
   LANE_CHANGE_SCORE_ENABLED: true,
+  LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M: scoringValue('LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M'),
+  LANE_CHANGE_CURVE_SUPPRESSION_SECONDS: scoringValue('LANE_CHANGE_CURVE_SUPPRESSION_SECONDS'),
+  LANE_CHANGE_REGIONAL_YAW_DEG_S: scoringValue('LANE_CHANGE_REGIONAL_YAW_DEG_S'),
+  LANE_CHANGE_HIGHWAY_YAW_DEG_S: scoringValue('LANE_CHANGE_HIGHWAY_YAW_DEG_S'),
+  LANE_CHANGE_HIGHWAY_SPEED_KMH: scoringValue('LANE_CHANGE_HIGHWAY_SPEED_KMH'),
   threshold_speed_creep_kmh: scoringValue('SPEED_CREEP_THRESHOLD_KMH'),
   threshold_overtake_accel_ms2: scoringValue('OVERTAKE_ACCEL_THRESHOLD_MS2'),
   OVERTAKE_MIN_BASELINE_SPEED_KMH: scoringValue('OVERTAKE_MIN_BASELINE_SPEED_KMH'),
@@ -518,6 +516,11 @@ export function buildDrivingThresholds(settings = {}) {
     PHONE_USE_DETECTION_ENABLED: settings.phone_use_detection_enabled !== false,
     PHONE_USE_AFFECTS_SCORE: settings.phone_use_affects_score !== false,
     LANE_CHANGE_SCORE_ENABLED: settings.lane_change_score_enabled !== false,
+    LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M: settingNumber(settings.lane_change_curve_suppression_deg_per_100m, DEFAULT_THRESHOLDS.LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M),
+    LANE_CHANGE_CURVE_SUPPRESSION_SECONDS: settingNumber(settings.lane_change_curve_suppression_seconds, DEFAULT_THRESHOLDS.LANE_CHANGE_CURVE_SUPPRESSION_SECONDS),
+    LANE_CHANGE_REGIONAL_YAW_DEG_S: settingNumber(settings.lane_change_regional_yaw_deg_s, DEFAULT_THRESHOLDS.LANE_CHANGE_REGIONAL_YAW_DEG_S),
+    LANE_CHANGE_HIGHWAY_YAW_DEG_S: settingNumber(settings.lane_change_highway_yaw_deg_s, DEFAULT_THRESHOLDS.LANE_CHANGE_HIGHWAY_YAW_DEG_S),
+    LANE_CHANGE_HIGHWAY_SPEED_KMH: settingNumber(settings.lane_change_highway_speed_kmh, DEFAULT_THRESHOLDS.LANE_CHANGE_HIGHWAY_SPEED_KMH),
     threshold_speed_creep_kmh: settingNumber(settings.threshold_speed_creep_kmh, DEFAULT_THRESHOLDS.threshold_speed_creep_kmh),
     threshold_overtake_accel_ms2: Math.max(3, settingNumber(settings.threshold_overtake_accel_ms2, DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2)),
     OVERTAKE_MIN_BASELINE_SPEED_KMH: settingNumber(settings.overtake_min_baseline_speed_kmh, DEFAULT_THRESHOLDS.OVERTAKE_MIN_BASELINE_SPEED_KMH),
@@ -583,6 +586,11 @@ export const PROVENANCE_THRESHOLD_KEYS = Object.freeze([
   'PHONE_USE_DETECTION_ENABLED',
   'PHONE_USE_AFFECTS_SCORE',
   'LANE_CHANGE_SCORE_ENABLED',
+  'LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M',
+  'LANE_CHANGE_CURVE_SUPPRESSION_SECONDS',
+  'LANE_CHANGE_REGIONAL_YAW_DEG_S',
+  'LANE_CHANGE_HIGHWAY_YAW_DEG_S',
+  'LANE_CHANGE_HIGHWAY_SPEED_KMH',
   'LANE_CHANGING_SAFETY_WEIGHT',
   'threshold_speed_creep_kmh',
   'threshold_overtake_accel_ms2',

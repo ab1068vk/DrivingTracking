@@ -183,8 +183,8 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
               <div className="mb-3 rounded-2xl bg-secondary/40 p-3">
                 <SettingRow
                   icon={Route}
-                  label="Lane-change score"
-                  sublabel="Highway-speed estimate only; use lane-change rate and simultaneous-braking detections in Safety scoring"
+                  label="Lane-change diagnostic"
+                  sublabel="Diagnostic only; excluded from Safety until dashcam-review criteria are met"
                 >
                   <Toggle
                     value={cfg.lane_change_score_enabled !== false}
@@ -192,7 +192,7 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
                   />
                 </SettingRow>
                 <div className="px-1 pb-2 text-xs leading-relaxed text-muted-foreground">
-                  Does not detect slow traffic below 65 km/h, curved-road lane changes, turn-signal use, or following-vehicle gaps. GPS-only detection may see 30-40% false positives in testing conditions; IMU-fused detection is closer to 10-15%. IMU calibration needs at least two GPS-confirmed harsh-brake events, so early trip segments may stay GPS-only.
+                  Safety weight is 0% until 200 dashcam-reviewed trips reach at least 85% agreement and curved-road false positives stay below 10%. Curved-road suppression and speed-specific IMU yaw thresholds are active; this still does not measure turn-signal use or following-vehicle gaps.
                 </div>
               </div>
               <div className="mb-4 rounded-2xl border border-border bg-secondary/30 p-4">
@@ -420,10 +420,10 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
                     {[
                       { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
                       { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
-                      { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Heading events are visible as diagnostic-only when Advanced Safety is off; enabling it allows eligible advanced safety context to affect scoring.' },
+                      { key: 'threshold_heading_drift_std_degs', label: 'GPS Attention Signal Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS attention signal only - not a fatigue measurement. The retired 02:00-05:00 multiplier is not applied.' },
                       { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 6, max: 8, step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
                       { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
-                      { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },
+                      { key: 'threshold_overtake_accel_ms2', label: 'Overtake Development Diagnostic', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Moved to Development Diagnostics and hidden from Trip Detail; it does not affect scores, coaching, route risk, or achievements.' },
                     ].map(({ key, label, unit, min, max, step, help }) => (
                       <div key={key} className={`px-1 ${cfg.advanced_safety_detection_enabled === false ? 'opacity-60' : ''}`}>
                         <div className="flex justify-between text-xs mb-1.5">

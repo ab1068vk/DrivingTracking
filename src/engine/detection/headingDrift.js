@@ -57,7 +57,6 @@ import {
   EVENT_TYPES,
   FATIGUE_SEGMENT_SECONDS,
   FUEL_BAND_FULL_SCORE_MULTIPLIER,
-  HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
   LEGACY_COMPONENT_FIELDS,
   MIN_BRAKE_ONSET_SMOOTHNESS_SEQUENCES,
   OBD_ECO_PENALTY_MAX,
@@ -439,9 +438,7 @@ export function detectHeadingDriftBeta(cleanPoints = [], durationSeconds = 0, th
     const windowSpeedStdDev = speedStdDevFromSummary(windowLength, speedSum, speedSumSq);
     if (windowHeadingStdDev > headingThreshold && windowSpeedStdDev < 6) {
       const elapsedFraction = Math.max(0, (startMs - startTime) / 1000) / Math.max(1, durationSeconds);
-      const startHour = new Date(startMs).getHours();
-      const circadianMultiplier = startHour >= 2 && startHour < 5 ? HEADING_DRIFT_CIRCADIAN_MULTIPLIER : 1;
-      weightedScore += (1 + elapsedFraction) * circadianMultiplier;
+      weightedScore += (1 + elapsedFraction);
       headingDriftWindowCount++;
       const nextIndex = i + Math.max(1, windowLength - 1);
       while (i < nextIndex && i < cleanPoints.length) {
