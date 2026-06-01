@@ -49,8 +49,6 @@ public class MapTileFetchWorker extends Worker {
     @NonNull
     @Override
     public Result doWork() {
-        if (getInputData().getBoolean(KEY_PRIVACY_ZONE, false)) return Result.success();
-
         Context context = getApplicationContext();
         int widgetId = getInputData().getInt(KEY_WIDGET_ID, -1);
         double lat = getInputData().getDouble(KEY_LAT, Double.NaN);
@@ -59,6 +57,13 @@ public class MapTileFetchWorker extends Worker {
         int tileH = getInputData().getInt(KEY_TILE_HEIGHT, 150);
 
         if (widgetId == -1 || !Double.isFinite(lat) || !Double.isFinite(lng)) return Result.failure();
+        if (
+            getInputData().getBoolean(KEY_PRIVACY_ZONE, false) ||
+            PrivacyZoneStore.findMatchingZone(lat, lng, context) != null
+        ) {
+            showPrivacyPlaceholder(context, widgetId);
+            return Result.success();
+        }
 
         String url = String.format(
             Locale.US,
@@ -99,6 +104,16 @@ public class MapTileFetchWorker extends Worker {
 
     static File getCacheFile(Context context, int widgetId) {
         return new File(context.getFilesDir(), "parked_map_widget_" + widgetId + ".png");
+    }
+
+    private static void showPrivacyPlaceholder(Context context, int widgetId) {
+        File cacheFile = getCacheFile(context, widgetId);
+        if (cacheFile.exists()) cacheFile.delete();
+
+        RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_parked_car);
+        views.setImageViewResource(R.id.iv_map, R.drawable.widget_map_placeholder);
+        views.setContentDescription(R.id.iv_map, context.getString(R.string.widget_privacy_map_hidden_description));
+        AppWidgetManager.getInstance(context).partiallyUpdateAppWidget(widgetId, views);
     }
 
     private static Bitmap applyDarkMapStyle(Bitmap source) {

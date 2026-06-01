@@ -14,6 +14,7 @@ import java.util.List;
 
 public final class PrivacyZoneStore {
     private static final String TAG = "PrivacyZoneStore";
+    private static final float MATCH_GUARD_BUFFER_M = 50f;
     private static final String NATIVE_PREFS = "road_sage_privacy_zones";
     private static final String ENCRYPTED_PREFS = "road_sage_privacy_zones_v2";
     private static final String NATIVE_KEY = "zones_json";
@@ -74,7 +75,9 @@ public final class PrivacyZoneStore {
     @Nullable
     public static PrivacyZone findMatchingZone(double lat, double lng, Context context) {
         for (PrivacyZone zone : getZones(context)) {
-            if (zone.containsPoint(lat, lng)) {
+            float[] results = new float[1];
+            android.location.Location.distanceBetween(lat, lng, zone.lat, zone.lng, results);
+            if (results[0] <= zone.radiusMeters + MATCH_GUARD_BUFFER_M) {
                 return zone;
             }
         }
