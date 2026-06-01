@@ -12,7 +12,7 @@ import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/
 import { getCurrentLocation } from '@/lib/trackingService';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
-import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { ensureRouteRiskIndexMigration, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
   buildOpenSourceTripContextPatch,
@@ -223,11 +223,9 @@ export default function MapScreen() {
 
       const zones = buildRiskHotspots(allCompleted);
       await saveDangerZones(zones);
-      let index = await loadRouteRiskIndex(privacyZones);
-      if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted, privacyZones);
-        await saveRouteRiskIndex(index);
-      } else if (privacyZones.length) {
+      const migration = await ensureRouteRiskIndexMigration({ trips: allCompleted, privacyZones });
+      const index = migration.index || await loadRouteRiskIndex(privacyZones);
+      if (privacyZones.length) {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {

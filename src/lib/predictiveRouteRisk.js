@@ -3,6 +3,7 @@ import { getFallbackTimeRisk } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
 import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
 import { scoringValue } from '@/lib/scoringConstants';
+import { getRouteRiskCellsNearPoint } from '@/lib/routeRiskIndex';
 
 export const ROUTE_RISK_CONSTANTS = {
   ...scoringValue('PREDICTIVE_ROUTE_RISK_POLICY'),
@@ -98,6 +99,12 @@ function dangerZonePrimaryFactor(zoneCount) {
   return `Repeated driving-event areas nearby (${zoneCount} ${zoneLabel} within ${radiusKm} km)`;
 }
 
+function routeRiskCellsNearCurrentLocation(routeRiskIndex, currentLocation, radiusM) {
+  if (!routeRiskIndex?.size || !currentLocation) return [];
+  return getRouteRiskCellsNearPoint(routeRiskIndex, currentLocation.lat, currentLocation.lng, radiusM)
+    .filter((cell) => (Number(cell.tripCount) || 0) >= 2 && ((Number(cell.totalEvents) || 0) > 0 || (Number(cell.riskScore) || 0) > 0));
+}
+
 /**
  * Estimate current historical-context risk from recent driving, repeated event areas, weather, and time.
  * @param {object} params - Route risk inputs.
@@ -106,6 +113,7 @@ function dangerZonePrimaryFactor(zoneCount) {
  * @param {number|null} [params.weatherRiskScore] - Weather risk score from 0 to 100, or null when unavailable.
  * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
  * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
+ * @param {Map|null} [params.routeRiskIndex] - Optional pre-built 15m route-risk cell index.
  * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
  * @returns {object} Historical context risk estimate, or an insufficient-history state without a score.
  * @example estimatePredictiveRouteRisk({ trips, dangerZones, habitProfile })
@@ -116,6 +124,7 @@ export function estimatePredictiveRouteRisk({
   weatherRiskScore = null,
   currentLocation = null,
   habitProfile = null,
+  routeRiskIndex = null,
   now: nowInput = null,
 } = {}) {
   const completed = (trips || []).filter((trip) => trip.status === 'completed');
@@ -165,9 +174,12 @@ export function estimatePredictiveRouteRisk({
     return sum + events;
   }, 0);
   const eventDensity = densityKm > 0 ? riskEvents / densityKm : 0;
-  const nearbyZones = currentLocation
-    ? checkDangerZoneProximity(currentLocation.lat, currentLocation.lng, dangerZones, ROUTE_RISK_CONSTANTS.PROXIMITY_METERS)
-    : [];
+  const nearbyRouteRiskCells = routeRiskCellsNearCurrentLocation(routeRiskIndex, currentLocation, ROUTE_RISK_CONSTANTS.PROXIMITY_METERS);
+  const nearbyZones = nearbyRouteRiskCells.length ? nearbyRouteRiskCells : (
+    currentLocation
+      ? checkDangerZoneProximity(currentLocation.lat, currentLocation.lng, dangerZones, ROUTE_RISK_CONSTANTS.PROXIMITY_METERS)
+      : []
+  );
   const now = nowInput instanceof Date
     ? nowInput
     : nowInput != null

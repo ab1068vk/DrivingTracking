@@ -82,6 +82,7 @@ import { RoadDataPrompt } from '@/components/RoadDataPrompt';
 import { RescoringBanner } from '@/components/RescoringBanner';
 import { TrackingHealthChip } from '@/components/TrackingHealthChip';
 import { usePermissionMonitor } from '@/hooks/usePermissionMonitor';
+import { useRouteRiskIndexMigration } from '@/hooks/useRouteRiskIndexMigration';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import {
   buildScoreTips,
@@ -98,7 +99,7 @@ import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } 
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
 import { computePreTripRisk } from '@/lib/preTripRisk';
-import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { buildRouteRiskCellsForTrip } from '@/lib/routeRiskIndex';
 import {
   buildDashboardTrackingExplanation,
   getTrackingDiagnostics,
@@ -316,6 +317,7 @@ export default function Dashboard() {
   );
   const todayTrips = getTodayTrips(completedTrips);
   const dailyFatigue = computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
+  const { routeRiskIndex, routeRiskIndexBuildStatus } = useRouteRiskIndexMigration(completedTrips, privacyZones);
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch((err) => {
@@ -1144,7 +1146,7 @@ export default function Dashboard() {
       stats.score_confidence_flag ||
       (dataQualityFlags.includes('location_permission_loss') ? 'data_gap_detected' : null);
 
-    const completedTrip = {
+    const completedTripDraft = {
       ...stats,
       start_time: tripToEnd.start_time,
       end_time: endTime,
@@ -1204,6 +1206,10 @@ export default function Dashboard() {
       score_confidence_flag: scoreConfidenceFlag,
       tracking_timeline: Array.isArray(tripToEnd.timeline) ? tripToEnd.timeline : [],
     };
+    const completedTrip = {
+      ...completedTripDraft,
+      route_risk_cells: buildRouteRiskCellsForTrip(completedTripDraft, privacyZones),
+    };
 
     const savedTrip = await tripService.create(completedTrip);
     recordTrackingDiagnostic({
@@ -1216,7 +1222,6 @@ export default function Dashboard() {
       parking_stop_duration_seconds: completedTrip.parking_stop_duration_seconds || 0,
     });
     await invalidateDangerZoneCache();
-    await invalidateRouteRiskIndex();
     const parkedPoint = pts[pts.length - 1];
     const endedStopped = completedTrip.parking_stop_detected ||
       Number(completedTrip.parking_stop_duration_seconds || 0) > 0 ||
@@ -1732,6 +1737,16 @@ export default function Dashboard() {
         isChecking={permissionMonitorChecking}
       />
 
+      {routeRiskIndexBuildStatus.status === 'running' && (
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-primary" />
+          Building route history...
+          {routeRiskIndexBuildStatus.total > 0 && (
+            <span>{routeRiskIndexBuildStatus.completed}/{routeRiskIndexBuildStatus.total}</span>
+          )}
+        </div>
+      )}
+
       {!rescoreBannerDismissed && (
         <RescoringBanner
           mismatchCount={dashboardRescoreMismatchCount}
@@ -2022,6 +2037,7 @@ export default function Dashboard() {
             dangerZones={dangerZones}
             habitProfile={habitProfile}
             onDismiss={() => setReadinessDismissed(true)}
+            routeRiskIndex={routeRiskIndex}
             settings={settings}
           />
         </SectionErrorBoundary>
@@ -2303,6 +2319,7 @@ function DashboardRiskPanel({
   dangerZones,
   habitProfile,
   onDismiss,
+  routeRiskIndex,
   settings,
 }) {
   const predictiveRouteRisk = useMemo(() => estimatePredictiveRouteRisk({
@@ -2311,7 +2328,8 @@ function DashboardRiskPanel({
     weatherRiskScore: null,
     currentLocation,
     habitProfile,
-  }), [completedTrips, currentLocation, dangerZones, habitProfile]);
+    routeRiskIndex,
+  }), [completedTrips, currentLocation, dangerZones, habitProfile, routeRiskIndex]);
 
   const preTripRisk = useMemo(() => computePreTripRisk(completedTrips, settings, dailyFatigue, {
     nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,

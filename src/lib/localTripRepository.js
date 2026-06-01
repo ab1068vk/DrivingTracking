@@ -14,7 +14,12 @@ import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
-import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import {
+  buildRouteRiskCellsForTrip,
+  invalidateRouteRiskIndex,
+  mergeRouteRiskTripIntoIndex,
+  rebuildRouteRiskIndex,
+} from '@/lib/routeRiskIndex';
 import {
   buildPhoneUsageAccessProvenance,
   buildPhoneUseFromTripEvidence,
@@ -22,14 +27,17 @@ import {
 } from '@/lib/phoneUsageAccess';
 import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } from '@/lib/mapPlaybackInsights';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
+import {
+  DB_NAME,
+  DB_NAME_META_KEY,
+  DB_VERSION,
+  LOCAL_DB_LEGACY_DEFAULT_NAME,
+  ROUTE_RISK_STORE,
+  TRIP_STORE,
+} from '@/lib/localDbConfig';
 
 const TRIPS_KEY = 'road_sage_trips';
 const DRIVER_SIGNATURE_KEY = 'road_sage_driver_signature';
-const LEGACY_DEFAULT_DB_NAME = 'drivesense_mobile';
-const DEFAULT_DB_NAME = 'road_sage_mobile';
-export const DB_NAME_META_KEY = 'road_sage_indexeddb_name';
-export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
-const TRIP_STORE = 'trips';
 export const TRIP_SCHEMA_VERSION = 23;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'road_sage_trip_event_migration_version';
@@ -153,9 +161,17 @@ const tripDbMigrationRunner = createIndexedDbMigrationRunner([
       ensureTripIndex(store, 'status', 'status');
     },
   },
+  {
+    version: DB_VERSION,
+    migrate({ db }) {
+      if (!hasStore(db, ROUTE_RISK_STORE)) {
+        db.createObjectStore(ROUTE_RISK_STORE, { keyPath: 'id' });
+      }
+    },
+  },
 ]);
 
-export const DB_VERSION = tripDbMigrationRunner.version;
+export { DB_NAME, DB_NAME_META_KEY, DB_VERSION };
 
 const localStorageMeta = () => {
   try {
@@ -241,7 +257,7 @@ export const migrateIndexedDbName = async ({
   if (!canUseIndexedDb() || !storage) return false;
 
   const storedPreviousName = previousName ?? storage.getItem(DB_NAME_META_KEY);
-  const legacyPreviousName = storedPreviousName || (currentName !== LEGACY_DEFAULT_DB_NAME ? LEGACY_DEFAULT_DB_NAME : currentName);
+  const legacyPreviousName = storedPreviousName || (currentName !== LOCAL_DB_LEGACY_DEFAULT_NAME ? LOCAL_DB_LEGACY_DEFAULT_NAME : currentName);
   if (!legacyPreviousName || legacyPreviousName === currentName) {
     storage.setItem(DB_NAME_META_KEY, currentName);
     return false;
@@ -377,6 +393,19 @@ const vehicleForTrip = (trip, vehicles = []) => (
     ? vehicles.find((vehicle) => String(vehicle.id) === String(trip?.vehicle_id)) || null
     : null
 );
+
+const withRouteRiskCells = (trip, privacyZones = getPrivacyZones(localSettings.get())) => (
+  trip?.status === 'completed'
+    ? { ...trip, route_risk_cells: buildRouteRiskCellsForTrip(trip, privacyZones, { preferExisting: false }) }
+    : trip
+);
+
+const mergeCompletedTripRouteRisk = async (trip) => {
+  if (trip?.status !== 'completed') return;
+  await mergeRouteRiskTripIntoIndex(trip, getPrivacyZones(localSettings.get())).catch(() => {
+    // Route risk can be rebuilt later; trip persistence should not fail because an overlay cache failed.
+  });
+};
 
 const tagExistingTripsWithCurrentScoringVersion = async (trips = []) => {
   const next = trips.map((trip) => tagLegacyScoreProvenance(trip));
@@ -560,7 +589,7 @@ const rescoreTrip = (trip, vehicles = []) => {
       rescored_at: scores.score_provenance.computed_at,
     }
     : trip.score_provenance_change;
-  return {
+  const rescored = {
     ...trip,
     ...stats,
     ...scores,
@@ -576,6 +605,7 @@ const rescoreTrip = (trip, vehicles = []) => {
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),
   };
+  return withRouteRiskCells(rescored, privacyZones);
 };
 
 const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.get()), options = {}) => (
@@ -632,6 +662,7 @@ const rescoreTripsIfNeeded = async (trips = []) => {
   }
   if (rescoredTrips.length) {
     await putTrips(rescoredTrips);
+    await rebuildRouteRiskIndex(next.filter((trip) => trip.status === 'completed'), getPrivacyZones(localSettings.get())).catch(() => {});
     emitRescoreProgress({
       status: 'complete',
       completed,
@@ -678,7 +709,7 @@ const importNativeCompletedTrips = async () => {
         { privacy_zones: privacyZones }
       );
 
-      const importedTrip = {
+      const importedTrip = withRouteRiskCells({
         ...trip,
         ...stats,
         ...scores,
@@ -691,9 +722,10 @@ const importNativeCompletedTrips = async () => {
         imported_from_native: true,
         schema_version: TRIP_SCHEMA_VERSION,
         updated_at: trip.updated_at || new Date().toISOString(),
-      };
+      }, privacyZones);
 
       await putTrip(importedTrip);
+      await mergeCompletedTripRouteRisk(importedTrip);
 
       const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
       const endedStopped = importedTrip.parking_stop_detected ||
@@ -798,16 +830,19 @@ export const localTripRepository = {
   },
 
   async create(trip) {
-    const saved = withId({ ...trip, created_at: new Date().toISOString() });
+    const saved = withRouteRiskCells(withId({ ...trip, created_at: new Date().toISOString() }));
     await putTrip(saved);
-    if (saved.status === 'completed') await invalidateTripDerivedCaches();
+    if (saved.status === 'completed') {
+      await invalidateDangerZoneCache();
+      await mergeCompletedTripRouteRisk(saved);
+    }
     await pruneExpiredTrips();
     return saved;
   },
 
   async update(id, patch) {
     const current = await this.getById(id);
-    const updated = withId({ ...current, ...patch, id: current.id });
+    const updated = withRouteRiskCells(withId({ ...current, ...patch, id: current.id }));
     await putTrip(updated);
     if (updated.status === 'completed') await invalidateTripDerivedCaches();
     return updated;
@@ -826,10 +861,14 @@ export const localTripRepository = {
         ...trip,
         created_at: trip.created_at || trip.start_time || new Date().toISOString(),
       });
-      return needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next;
+      return withRouteRiskCells(needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next);
     });
     await putTrips(normalized);
-    if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
+    const completed = normalized.filter((trip) => trip.status === 'completed');
+    if (completed.length) {
+      await invalidateDangerZoneCache();
+      for (const trip of completed) await mergeCompletedTripRouteRisk(trip);
+    }
     await pruneExpiredTrips();
     return normalized;
   },
