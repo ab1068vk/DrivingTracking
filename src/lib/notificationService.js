@@ -54,6 +54,7 @@ export const NOTIFICATION_IDS = {
   COACH_FOCUS_CHANGED: 4025,
   PERSONAL_BEST_WEEK: 4026,
   NIGHT_DRIVING_WARNING: 4027,
+  POST_TRIP_SURVEY_REMINDER: 4028,
   MAINTENANCE_DUE: 4030,
   MAINTENANCE_SOON: 4031,
   ODOMETER_MILESTONE: 4032,
@@ -213,6 +214,51 @@ const scheduleNotification = async (
 
 function scoreOf(trip = {}) {
   return Number(trip.score_overall ?? trip.overall_score ?? 0);
+}
+
+const notificationIdForTripSurvey = (trip = {}) => {
+  const key = String(trip?.id || trip?.end_time || trip?.start_time || '');
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = ((hash * 31) + key.charCodeAt(index)) % 900000;
+  }
+  return 5000 + hash;
+};
+
+const formatTripDuration = (trip = {}) => {
+  const seconds = Math.max(0, Number(trip.duration_seconds) || 0);
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
+};
+
+const tripDestinationLabel = (trip = {}) => {
+  const raw = trip.end_address || trip.destination || trip.nickname || 'Destination';
+  return String(raw).split(',')[0].trim() || 'Destination';
+};
+
+async function schedulePostTripSurveyNotification(trip, settings = localSettings.get()) {
+  if (!trip?.id) return null;
+  if (settings.notifications_enabled === false || settings.notif_post_trip_summary_enabled === false) return null;
+  const destination = tripDestinationLabel(trip);
+  return scheduleNotification({
+    id: notificationIdForTripSurvey(trip),
+    title: 'How was that drive?',
+    body: `${destination} trip · ${formatTripDuration(trip)}`.slice(0, 160),
+    channelId: SUMMARY_CHANNEL_ID,
+    schedule: { at: new Date(Date.now() + 5 * 60 * 1000), allowWhileIdle: true },
+    extra: {
+      type: 'trip_survey',
+      tripId: trip.id,
+      deeplink: `/survey/${trip.id}`,
+    },
+  }, {
+    requestPermission: false,
+    dedupeKey: `trip_survey:${trip.id}`,
+    cooldownMs: TRIP_NOTIFICATION_DEDUPE_MS,
+  });
 }
 
 let fallbackAchievementNotificationIds = {};
@@ -464,7 +510,9 @@ export async function notifyExportSaved(/** @type {any} */ { filename, uri, mime
       mimeType,
     },
   };
-  return scheduleNotification(notification);
+  const scheduled = await scheduleNotification(notification);
+  if (scheduled) await schedulePostTripSurveyNotification(trip, settings);
+  return scheduled;
 }
 
 export async function notifyStayAlert(opts = {}) {

@@ -18,11 +18,10 @@ export const CALIBRATION_MILESTONES = Object.freeze([
 export const POST_TRIP_SURVEY_QUESTION = 'How did this drive feel? (1 risky - 5 excellent)';
 export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
 export const SURVEY_RATING_OPTIONS = Object.freeze([
-  { value: 1, label: 'Risky' },
-  { value: 2, label: 'Poor' },
-  { value: 3, label: 'Okay' },
-  { value: 4, label: 'Good' },
-  { value: 5, label: 'Excellent' },
+  { value: 5, label: 'Careful drive', shortLabel: 'Careful' },
+  { value: 4, label: 'Normal drive', shortLabel: 'Normal' },
+  { value: 2, label: 'Rushed/stressed', shortLabel: 'Rushed' },
+  { value: 1, label: 'Something happened', shortLabel: 'Something happened' },
 ]);
 export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'too_low']);
 export const WAS_DRIVER_OPTIONS = Object.freeze(['yes', 'no', 'unsure']);
@@ -68,6 +67,51 @@ export function getCalibrationMilestone(labelCount) {
 export function getNextCalibrationMilestone(labelCount) {
   const count = normalizedLabelCount(labelCount);
   return CALIBRATION_MILESTONES.find((milestone) => count < milestone.count) ?? null;
+}
+
+const tripIdOf = (item = {}) => {
+  const id = item.trip_id ?? item.tripId ?? item.id;
+  return id == null ? null : String(id);
+};
+
+const hasComputedScore = (trip = {}) => (
+  trip.score_overall != null ||
+  trip.overall_score != null ||
+  trip.scoreOutput?.overall != null
+);
+
+const tripTimeMs = (trip = {}) => {
+  const value = trip.end_time ?? trip.start_time ?? trip.created_at ?? trip.createdAt;
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+};
+
+export function getCompletionRate(allTrips = [], labels = []) {
+  const trips = Array.isArray(allTrips) ? allTrips.filter(hasComputedScore) : [];
+  const total = trips.length;
+  const now = Date.now();
+  const recentCutoff = now - 30 * 24 * 60 * 60 * 1000;
+  const labelValues = Array.isArray(labels)
+    ? labels
+    : Object.values(labels && typeof labels === 'object' ? labels : {});
+  const labeledTripIds = new Set(labelValues
+    .filter((label) => label && label.skipped !== true)
+    .map(tripIdOf)
+    .filter(Boolean));
+  const labeled = labeledTripIds.size > 0
+    ? trips.filter((trip) => labeledTripIds.has(String(trip.id))).length
+    : Math.min(labelValues.filter((label) => label && label.skipped !== true).length, total);
+  const unlabeled_recent_30d = trips.filter((trip) => {
+    const time = tripTimeMs(trip);
+    return time != null && time >= recentCutoff && !labeledTripIds.has(String(trip.id));
+  }).length;
+
+  return {
+    labeled,
+    total,
+    rate: total > 0 ? labeled / total : 0,
+    unlabeled_recent_30d,
+  };
 }
 
 const round = (value, digits = 3) => {

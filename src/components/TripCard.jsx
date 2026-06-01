@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, ShieldCheck, X } from 'lucide-react';
+import { calibrationLabelService } from '@/api/calibrationLabels';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed } from '@/lib/gps/formatting';
 import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import {
@@ -10,12 +12,43 @@ import {
 } from '@/lib/tripMetadata';
 import { useNavigate } from 'react-router-dom';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import { SURVEY_RATING_OPTIONS } from '@/lib/calibrationLabeling';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatScoreWithProvenance, isApproximateScoreOutput, scoreEstimateProgressText } from '@/lib/scoreDisplay';
+import { localSettings } from '@/lib/trackingStore';
 
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const evidenceLabel = (evidence) => `${evidence || 'unavailable'} evidence`;
 const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
+
+const RATE_DRIVE_DISMISSED_KEY = 'road_sage_rate_drive_dismissed_v1';
+const RATE_DRIVE_DISMISS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+const RATING_ICONS = {
+  5: ShieldCheck,
+  4: CheckCircle2,
+  2: Gauge,
+  1: AlertTriangle,
+};
+
+const readDismissedRatings = () => {
+  try {
+    const raw = localStorage.getItem(RATE_DRIVE_DISMISSED_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => now - Number(value) < RATE_DRIVE_DISMISS_TTL_MS));
+  } catch {
+    return {};
+  }
+};
+
+const writeDismissedRatings = (dismissed) => {
+  try {
+    localStorage.setItem(RATE_DRIVE_DISMISSED_KEY, JSON.stringify(dismissed));
+  } catch {
+    // Intentionally silent - dismissal state is local UI convenience.
+  }
+};
 
 export default function TripCard({
   trip,
@@ -23,6 +56,7 @@ export default function TripCard({
   index = 0,
   scoreDelta = null,
   onToggleFavorite = null,
+  onCalibrationLabelSaved = null,
   tripCount = null,
 }) {
   const navigate = useNavigate();
@@ -40,6 +74,58 @@ export default function TripCard({
   const estimateProgressText = !unavailableScore && isApproximateScoreOutput(trip.score_provenance)
     ? scoreEstimateProgressText(tripCount)
     : null;
+  const [surveyStatus, setSurveyStatus] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
+  const [savingRating, setSavingRating] = useState(null);
+  const [showThanks, setShowThanks] = useState(false);
+  const sharingEnabled = localSettings.get().calibration_sharing_enabled === true;
+  const hasCalibrationLabel = Number.isInteger(Number(surveyStatus?.rating));
+  const showRatingFooter = !unavailableScore && !hasCalibrationLabel && !showThanks && (sharingEnabled || !dismissed);
+
+  useEffect(() => {
+    let cancelled = false;
+    calibrationLabelService.getTripSurveyStatus(trip.id).then((status) => {
+      if (!cancelled) setSurveyStatus(status);
+    });
+    const dismissedMap = readDismissedRatings();
+    setDismissed(Boolean(dismissedMap[String(trip.id)]));
+    writeDismissedRatings(dismissedMap);
+    return () => {
+      cancelled = true;
+    };
+  }, [trip.id]);
+
+  useEffect(() => {
+    if (!showThanks) return undefined;
+    const timeout = setTimeout(() => setShowThanks(false), 2000);
+    return () => clearTimeout(timeout);
+  }, [showThanks]);
+
+  const saveQuickRating = async (rating) => {
+    setSavingRating(rating);
+    try {
+      const record = await calibrationLabelService.submitTripSurveyLabel(trip, {
+        overallDriveRating: rating,
+        wasDriver: 'yes',
+        contextTags: rating === 1 ? ['other'] : [],
+      });
+      setSurveyStatus({
+        rating,
+        submitted_at: record?.createdAt ?? new Date().toISOString(),
+      });
+      setShowThanks(true);
+      onCalibrationLabelSaved?.(trip.id);
+    } finally {
+      setSavingRating(null);
+    }
+  };
+
+  const dismissRatingFooter = () => {
+    const dismissedMap = readDismissedRatings();
+    dismissedMap[String(trip.id)] = Date.now();
+    writeDismissedRatings(dismissedMap);
+    setDismissed(true);
+  };
 
   return (
     <motion.div
@@ -218,6 +304,56 @@ export default function TripCard({
       <div className="flex justify-end mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <ChevronRight className="w-4 h-4 text-muted-foreground" />
       </div>
+
+      {showThanks && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-3 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300"
+        >
+          Thanks!
+        </motion.div>
+      )}
+
+      {showRatingFooter && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          onClick={(event) => event.stopPropagation()}
+          className="mt-3 border-t border-border pt-3"
+        >
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">Rate this drive</span>
+            {!sharingEnabled && (
+              <button
+                type="button"
+                onClick={dismissRatingFooter}
+                className="rounded-md p-1 text-muted-foreground hover:bg-secondary"
+                aria-label="Dismiss rating prompt"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {SURVEY_RATING_OPTIONS.map((option) => {
+              const Icon = RATING_ICONS[option.value] || CheckCircle2;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={savingRating != null}
+                  onClick={() => saveQuickRating(option.value)}
+                  className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-border bg-secondary/40 px-2 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-60"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span className="min-w-0 truncate">{option.shortLabel || option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
     </motion.div>
   );
 }

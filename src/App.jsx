@@ -26,6 +26,7 @@ const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const TripHistory = lazy(() => import('@/pages/TripHistory'));
 const TripDetail = lazy(() => import('@/pages/TripDetail'));
+const SurveyPage = lazy(() => import('@/pages/SurveyPage'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
 const Reports = lazy(() => import('@/pages/Report'));
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -90,7 +91,8 @@ const AuthenticatedApp = () => {
     let listener;
     LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
       const extra = action.notification?.extra ?? {};
-      if (extra.tripId) navigate(`/trips/${extra.tripId}`);
+      if (extra.type === 'trip_survey' && extra.tripId) navigate(`/survey/${extra.tripId}`);
+      else if (extra.tripId) navigate(`/trips/${extra.tripId}`);
       else if (extra.type === 'phone_use_pattern') navigate('/coach');
       else if (extra.type === 'maintenance') navigate('/vehicles');
       else if (extra.type === 'export_saved') {
@@ -129,6 +131,7 @@ const AuthenticatedApp = () => {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/trips" element={<TripHistory />} />
+        <Route path="/survey/:tripId" element={<SurveyPage />} />
         <Route path="/trips/:id" element={(
           <SectionErrorBoundary
             context="trip_detail_page"

@@ -3,6 +3,7 @@ import {
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
   getCalibrationMilestone,
+  getCompletionRate,
   getNextCalibrationMilestone,
 } from '@/lib/calibrationLabeling';
 import { fitCalibrationDataset, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
@@ -66,6 +67,21 @@ describe('calibration labeling pipeline', () => {
       label: 'Fully calibrated',
     });
     expect(getNextCalibrationMilestone(2500)).toBeNull();
+  });
+
+  it('returns zero completion rate for unlabeled scored trips without throwing', () => {
+    const trips = Array.from({ length: 100 }, (_, index) => ({
+      id: `trip_${index}`,
+      status: 'completed',
+      score_overall: 80,
+      start_time: '2026-05-01T12:00:00.000Z',
+    }));
+
+    expect(getCompletionRate(trips, [])).toMatchObject({
+      labeled: 0,
+      total: 100,
+      rate: 0,
+    });
   });
 
   it('builds anonymized post-trip survey labels without route geometry or private trip fields', () => {

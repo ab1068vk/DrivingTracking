@@ -15,6 +15,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import PostTripCalibrationSurveyCard from '@/components/PostTripCalibrationSurvey';
 import { ComplianceScore, normalizeComplianceSpeedLimitSource } from '@/components/ComplianceScore';
 import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
@@ -78,15 +79,6 @@ import { DISMISSED_TAG_SUGGESTIONS_KEY, MAX_ROUTE_RISK_SEGMENTS_SHOWN } from '@/
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { getAndroidUsageAccessStatus } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
-import {
-  CALIBRATION_LABEL_TARGET_COUNT,
-  SCORE_ACCURACY_OPTIONS,
-  SURVEY_RATING_OPTIONS,
-  TRIP_CONTEXT_TAG_OPTIONS,
-  WAS_DRIVER_OPTIONS,
-  getCalibrationMilestone,
-  getNextCalibrationMilestone,
-} from '@/lib/calibrationLabeling';
 import { formatEstimatedScore, formatScoreWithProvenance, isApproximateScoreOutput } from '@/lib/scoreDisplay';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { BETA_FEATURE_POLICIES } from '@/lib/featureGraduationPolicy';
@@ -1503,7 +1495,8 @@ export default function TripDetail() {
       >
         <TripScoreOverview trip={trip} completedTripCount={completedTripCountForBaseline} />
       </SectionErrorBoundary>
-      <PostTripCalibrationSurvey
+      <PostTripCalibrationSurveyCard
+        trip={trip}
         status={calibrationSurveyStatus}
         labelCount={calibrationLabelCount}
         sharingEnabled={settings.calibration_sharing_enabled === true}
@@ -2184,245 +2177,6 @@ function complianceSpeedLimitSourceForBucket(bucket = {}, trip = {}) {
     return 'osm';
   }
   return 'none';
-}
-
-const SCORE_ACCURACY_LABELS = {
-  accurate: 'Accurate',
-  too_high: 'Too high',
-  too_low: 'Too low',
-};
-
-const WAS_DRIVER_LABELS = {
-  yes: 'Yes',
-  no: 'No',
-  unsure: 'Unsure',
-};
-
-const CONTEXT_TAG_LABELS = {
-  traffic: 'Traffic',
-  weather: 'Weather',
-  construction: 'Construction',
-  fatigue: 'Fatigue',
-  aggressive_drivers: 'Aggressive drivers',
-  bad_road: 'Bad road',
-  gps_issue: 'GPS issue',
-  passenger: 'Passenger',
-  other: 'Other',
-};
-
-function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPending, isSkipping, error, onSubmit, onSkip }) {
-  const [draft, setDraft] = useState({
-    overallDriveRating: null,
-    scoreAccuracy: '',
-    wasDriver: 'yes',
-    tripDifficulty: '',
-    contextTags: [],
-    freeTextNote: '',
-  });
-  const submittedRating = Number(status?.rating);
-  const submitted = Number.isInteger(submittedRating) && submittedRating >= 1 && submittedRating <= 5;
-  const skipped = status?.skipped === true;
-  const normalizedLabelCount = Number.isFinite(Number(labelCount)) ? Math.max(0, Math.floor(Number(labelCount))) : 0;
-  const milestone = getCalibrationMilestone(normalizedLabelCount);
-  const nextMilestone = getNextCalibrationMilestone(normalizedLabelCount);
-  const disabled = isPending || isSkipping || submitted || skipped;
-  const canSubmit = Number.isInteger(Number(draft.overallDriveRating)) &&
-    Number(draft.overallDriveRating) >= 1 &&
-    Number(draft.overallDriveRating) <= 5 &&
-    WAS_DRIVER_OPTIONS.includes(draft.wasDriver) &&
-    !disabled;
-  const toggleContextTag = (tag) => {
-    setDraft((current) => ({
-      ...current,
-      contextTags: current.contextTags.includes(tag)
-        ? current.contextTags.filter((item) => item !== tag)
-        : [...current.contextTags, tag],
-    }));
-  };
-  const submit = () => {
-    if (!canSubmit) return;
-    onSubmit({
-      overallDriveRating: Number(draft.overallDriveRating),
-      scoreAccuracy: draft.scoreAccuracy || null,
-      wasDriver: draft.wasDriver,
-      tripDifficulty: draft.tripDifficulty ? Number(draft.tripDifficulty) : null,
-      contextTags: draft.contextTags,
-      freeTextNote: draft.freeTextNote,
-    });
-  };
-
-  if (skipped) return null;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.16 }}
-      className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-    >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="font-semibold">How did this drive feel?</h2>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Optional calibration label. It never blocks your trip results.
-          </div>
-        </div>
-        <div className="text-xs text-muted-foreground sm:text-right">
-          {milestone && (
-            <span className="mr-1 font-medium text-emerald-600 dark:text-emerald-400">
-              Reached: {milestone.label}.
-            </span>
-          )}
-          {nextMilestone
-            ? `${(nextMilestone.count - normalizedLabelCount).toLocaleString()} more labels to: ${nextMilestone.benefit}`
-            : `Fully calibrated: ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips reached`}
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-5 gap-2">
-        {SURVEY_RATING_OPTIONS.map((option) => {
-          const selected = submitted ? submittedRating === option.value : Number(draft.overallDriveRating) === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              disabled={disabled}
-              onClick={() => setDraft((current) => ({ ...current, overallDriveRating: option.value }))}
-              title={`${option.value} - ${option.label}`}
-              className={`min-h-16 rounded-xl border px-2 py-2 text-center transition-colors ${
-                selected
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
-              }`}
-            >
-              <div className="text-lg font-bold leading-none">{option.value}</div>
-              <div className="mt-1 text-[11px] font-medium leading-tight">{option.label}</div>
-            </button>
-          );
-        })}
-      </div>
-
-      {!submitted && (
-        <div className="mt-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="text-xs font-medium text-muted-foreground">
-              Score accuracy
-              <select
-                value={draft.scoreAccuracy}
-                disabled={disabled}
-                onChange={(event) => setDraft((current) => ({ ...current, scoreAccuracy: event.target.value }))}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              >
-                <option value="">Optional</option>
-                {SCORE_ACCURACY_OPTIONS.map((option) => (
-                  <option key={option} value={option}>{SCORE_ACCURACY_LABELS[option]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs font-medium text-muted-foreground">
-              Was driver
-              <select
-                value={draft.wasDriver}
-                disabled={disabled}
-                onChange={(event) => setDraft((current) => ({ ...current, wasDriver: event.target.value }))}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              >
-                {WAS_DRIVER_OPTIONS.map((option) => (
-                  <option key={option} value={option}>{WAS_DRIVER_LABELS[option]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs font-medium text-muted-foreground">
-              Trip difficulty
-              <select
-                value={draft.tripDifficulty}
-                disabled={disabled}
-                onChange={(event) => setDraft((current) => ({ ...current, tripDifficulty: event.target.value }))}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              >
-                <option value="">Optional</option>
-                {SURVEY_RATING_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.value}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div>
-            <div className="text-xs font-medium text-muted-foreground">Context tags</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {TRIP_CONTEXT_TAG_OPTIONS.map((tag) => {
-                const selected = draft.contextTags.includes(tag);
-                return (
-                  <button
-                    key={tag}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => toggleContextTag(tag)}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                      selected
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
-                    }`}
-                  >
-                    {CONTEXT_TAG_LABELS[tag]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <label className="block text-xs font-medium text-muted-foreground">
-            Note
-            <textarea
-              value={draft.freeTextNote}
-              disabled={disabled}
-              onChange={(event) => setDraft((current) => ({ ...current, freeTextNote: event.target.value }))}
-              className="mt-1 min-h-20 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              placeholder="Optional. Stored locally only."
-            />
-          </label>
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-xs text-muted-foreground">
-          {submitted
-            ? 'Rating saved for the calibration dataset.'
-            : isPending
-              ? 'Saving rating...'
-              : sharingEnabled
-                ? 'Sharing is on. Only anonymized summary features are uploaded when quality checks pass.'
-                : 'Sharing is off. This label stays local unless you opt in from Settings.'}
-        </div>
-        {!submitted && (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onSkip}
-              className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
-            >
-              {isSkipping ? 'Skipping...' : 'Skip'}
-            </button>
-            <button
-              type="button"
-              disabled={!canSubmit}
-              onClick={submit}
-              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              Save feedback
-            </button>
-          </div>
-        )}
-      </div>
-      {error && (
-        <div className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
-          {error.message || 'Could not save this rating.'}
-        </div>
-      )}
-    </motion.div>
-  );
 }
 
 function TripScoreOverview({ trip, completedTripCount = null }) {
