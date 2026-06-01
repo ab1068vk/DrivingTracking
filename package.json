@@ -23,6 +23,7 @@
     "calibration:promote": "node scripts/fit-calibration-labels.mjs --promote",
     "calibration:validate": "node scripts/fit-calibration-labels.mjs --validate",
     "calibration:dry-run": "node scripts/fit-calibration-labels.mjs --dry-run",
+    "calibration:check-promotion-blockers": "node scripts/check-promotion-blocker-jsdoc.mjs",
     "preview": "vite preview",
     "android:sync": "npm run build && npx cap sync android && node scripts/patch-android-gradle.mjs",
     "android:open": "npx cap open android"
