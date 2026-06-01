@@ -59,5 +59,6 @@ describe('scoring pipeline', () => {
       factor: 'safety',
       impact: -10,
     });
+    expect(explanation.top_factors.length).toBeGreaterThan(0);
   });
 });

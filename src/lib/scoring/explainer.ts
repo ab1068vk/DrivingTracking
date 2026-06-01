@@ -26,7 +26,7 @@ const roundImpact = (impact: number): number => {
   return Number.isFinite(value) ? Math.round(value) : 0;
 };
 
-const scoreImpact = (score: unknown, weight: unknown = 1): number | null => {
+const scoreImpact = (score: unknown, weight: unknown): number | null => {
   const value = Number(score);
   const factor = Number(weight);
   if (!Number.isFinite(value) || !Number.isFinite(factor) || factor <= 0) return null;
@@ -61,6 +61,13 @@ const scoreFactor = (
   const impact = scoreImpact(score, weight);
   return impact == null ? null : factor(factorName, label, impact, { score });
 };
+
+const topFactors = (...groups: ScoreExplanationFactor[][]): ScoreExplanationFactor[] => (
+  groups
+    .flat()
+    .sort((a, b) => a.impact - b.impact)
+    .slice(0, 3)
+);
 
 export function explainScores(pipelineCtx: ExplainablePipelineContext = {}): ScoreExplanation {
   const stages = pipelineCtx.stages || {};
@@ -175,5 +182,5 @@ export function explainScores(pipelineCtx: ExplainablePipelineContext = {}): Sco
     ),
   ]);
 
-  return { overall, safety, smoothness, eco };
+  return { top_factors: topFactors(overall, safety, smoothness, eco), overall, safety, smoothness, eco };
 }

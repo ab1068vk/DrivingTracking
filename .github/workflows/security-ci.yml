@@ -3,8 +3,6 @@ name: Security CI
 on:
   pull_request:
   push:
-    branches:
-      - main
   workflow_dispatch:
   schedule:
     - cron: '0 12 * * 1'
@@ -26,8 +24,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit production and development dependencies
-        run: npm audit --audit-level=moderate
+      - name: Audit high and critical CVEs
+        run: npm audit --audit-level=high
+
+      - name: Audit high CVEs with better-npm-audit
+        run: npx --yes better-npm-audit audit --level high
 
       - name: Block react-quill source imports
         run: |

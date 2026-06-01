@@ -60,6 +60,7 @@ export interface ScoreExplanationFactor {
 }
 
 export interface ScoreExplanation {
+  top_factors: ScoreExplanationFactor[];
   overall: ScoreExplanationFactor[];
   safety: ScoreExplanationFactor[];
   smoothness: ScoreExplanationFactor[];
