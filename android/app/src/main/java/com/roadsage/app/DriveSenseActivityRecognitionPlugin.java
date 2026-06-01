@@ -70,7 +70,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             getContext(),
             42,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE
+            PendingIntentCompat.mutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
     }
 
@@ -350,6 +350,30 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             call.resolve();
         } catch (JSONException error) {
             call.reject("Privacy zones must be a valid zone array.", error);
+        }
+    }
+
+    @PluginMethod
+    public void getSettings(PluginCall call) {
+        JSObject payload = new JSObject();
+        payload.put("settingsJson", NativeSettingsStore.getSettingsJson(getContext()));
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void saveSettings(PluginCall call) {
+        String settingsJson = call.getString("settingsJson");
+        if (settingsJson == null || settingsJson.trim().isEmpty()) {
+            call.reject("settingsJson is required.");
+            return;
+        }
+
+        try {
+            new JSONObject(settingsJson);
+            NativeSettingsStore.saveSettingsJson(getContext(), settingsJson);
+            call.resolve();
+        } catch (JSONException error) {
+            call.reject("settingsJson must be valid JSON.", error);
         }
     }
 

@@ -274,7 +274,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             PendingIntent pendingIntent = ageUpdatePendingIntent(
                 context,
                 offsetMs,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
             );
             if (offsetMs <= 3_600_000L) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
@@ -296,7 +296,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             PendingIntent pendingIntent = ageUpdatePendingIntent(
                 context,
                 offsetMs,
-                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+                PendingIntentCompat.immutableFlags(PendingIntent.FLAG_NO_CREATE)
             );
             if (pendingIntent != null) alarmManager.cancel(pendingIntent);
         }
@@ -351,7 +351,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             context,
             widgetId + 50_000,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
         views.setOnClickPendingIntent(R.id.btn_clear_parking, pendingIntent);
     }
@@ -379,7 +379,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             context,
             widgetId,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
         views.setOnClickPendingIntent(R.id.btn_navigate, pendingIntent);
         views.setContentDescription(R.id.btn_navigate, navigateDescription(address, parkedMs));
@@ -400,7 +400,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             context,
             requestCode,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
         views.setOnClickPendingIntent(R.id.widget_root, pendingIntent);
     }
@@ -421,7 +421,9 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         if (isPrivate) return;
 
         if (isBatteryLow(context)) {
-            Log.d(TAG, "Map fetch skipped — battery low");
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Map fetch skipped — battery low");
+            }
             return;
         }
 

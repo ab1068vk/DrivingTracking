@@ -31,8 +31,6 @@ import java.util.Locale;
 public class MapTileFetchWorker extends Worker {
     private static final String TAG = "MapTileFetchWorker";
     private static final String KEY_LAST_PARKED = "last_parked_location";
-    private static final String CAPACITOR_PREFS = "CapacitorStorage";
-    private static final String CAPACITOR_LAST_PARKED_KEY = "road_sage_last_parked";
     private static final Object GEOCODE_LOCK = new Object();
 
     static final String KEY_WIDGET_ID = "widget_id";
@@ -206,7 +204,9 @@ public class MapTileFetchWorker extends Worker {
                     mgr.partiallyUpdateAppWidget(widgetId, rv);
                 }
             } catch (Exception e) {
-                Log.w(TAG, "Geocode silent fail: " + e.getMessage());
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Geocode silent fail: " + e.getMessage());
+                }
             }
         }
     }
@@ -226,7 +226,9 @@ public class MapTileFetchWorker extends Worker {
             if (body == null || body.trim().isEmpty()) return null;
             return new JSONObject(body);
         } catch (JSONException e) {
-            Log.w(TAG, "Geocode parse failed");
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Geocode parse failed");
+            }
             return null;
         }
     }
@@ -273,21 +275,12 @@ public class MapTileFetchWorker extends Worker {
             addr,
             false
         );
-        updateJsonAddress(
-            context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE),
-            CAPACITOR_LAST_PARKED_KEY,
-            addr,
-            false
-        );
     }
 
     private static boolean hasStoredAddress(Context context) {
         return hasAddress(
             DriveSenseNativeTripStore.prefs(context),
             KEY_LAST_PARKED
-        ) || hasAddress(
-            context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE),
-            CAPACITOR_LAST_PARKED_KEY
         );
     }
 
@@ -311,7 +304,9 @@ public class MapTileFetchWorker extends Worker {
             parked.put("address", addr);
             prefs.edit().putString(key, parked.toString()).apply();
         } catch (JSONException e) {
-            Log.w(TAG, "Stored address update failed: " + e.getMessage());
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Stored address update failed: " + e.getMessage());
+            }
         }
     }
 }

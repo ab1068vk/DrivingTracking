@@ -28,37 +28,15 @@ class DriveSenseNativeTripStore {
     static SharedPreferences migratePlaintextPrefsIfNeeded(Context context) {
         SharedPreferences encryptedPrefs = EncryptedPreferenceStore.open(context, PREFS_ENCRYPTED);
         if (!encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_PLAINTEXT, false)) {
-            SharedPreferences oldPrefs = EncryptedPreferenceStore.plaintext(context, PREFS_OLD);
-            SharedPreferences currentPrefs = EncryptedPreferenceStore.plaintext(context, PREFS);
             SharedPreferences.Editor editor = encryptedPrefs.edit();
-            EncryptedPreferenceStore.copyEntries(oldPrefs, editor);
-            EncryptedPreferenceStore.copyEntries(currentPrefs, editor);
-            String parked = newestParkedLocation(
-                currentPrefs.getString(KEY_LAST_PARKED, null),
-                oldPrefs.getString(KEY_LAST_PARKED, null)
-            );
-            if (parked != null) editor.putString(KEY_LAST_PARKED, parked);
             editor.putBoolean(KEY_MIGRATED_FROM_V1, true);
             editor.putBoolean(KEY_MIGRATED_FROM_PLAINTEXT, true);
             editor.commit();
         }
 
-        if (EncryptedPreferenceStore.hasEntries(context, PREFS)) {
-            EncryptedPreferenceStore.deletePlaintext(context, PREFS);
-        }
-        if (EncryptedPreferenceStore.hasEntries(context, PREFS_OLD)) {
-            EncryptedPreferenceStore.deletePlaintext(context, PREFS_OLD);
-        }
+        EncryptedPreferenceStore.deletePlaintext(context, PREFS);
+        EncryptedPreferenceStore.deletePlaintext(context, PREFS_OLD);
         return encryptedPrefs;
-    }
-
-    private static String newestParkedLocation(String first, String second) {
-        ParkedLocationRecord firstRecord = ParkedLocationRecord.parse(first);
-        ParkedLocationRecord secondRecord = ParkedLocationRecord.parse(second);
-        if (ParkedLocationRecord.isNewerThan(secondRecord, firstRecord)) {
-            return second;
-        }
-        return firstRecord != null ? first : second;
     }
 
     static boolean isServiceEnabled(Context context) {

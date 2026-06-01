@@ -1,35 +1,27 @@
 package com.roadsage.app;
 
-import android.content.Context;
 import android.content.SharedPreferences;
 
 import org.json.JSONObject;
 
 final class ParkedLocationPreferenceSource {
-    private final String prefsName;
     private final String key;
+    private final SharedPreferences prefs;
 
-    ParkedLocationPreferenceSource(String prefsName, String key) {
-        this.prefsName = prefsName;
+    ParkedLocationPreferenceSource(SharedPreferences prefs, String key) {
+        this.prefs = prefs;
         this.key = key;
     }
 
-    String read(Context context) {
-        return prefs(context).getString(key, null);
+    String read() {
+        return prefs.getString(key, null);
     }
 
-    void write(Context context, JSONObject value) {
-        prefs(context).edit().putString(key, value.toString()).apply();
+    void write(JSONObject value) {
+        prefs.edit().putString(key, value.toString()).apply();
     }
 
-    void clear(Context context) {
-        prefs(context).edit().remove(key).apply();
-    }
-
-    private SharedPreferences prefs(Context context) {
-        if ("road_sage_native_tracking".equals(prefsName)) {
-            return DriveSenseNativeTripStore.prefs(context);
-        }
-        return context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
+    void clear() {
+        prefs.edit().remove(key).apply();
     }
 }

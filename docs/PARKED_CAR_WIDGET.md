@@ -299,7 +299,7 @@ Parked-location storage keys:
 - Native prefs name: `road_sage_native_tracking`
 - Old native prefs name: `drivesense_native_tracking`
 - Native key: `last_parked_location`
-- Capacitor prefs name: `CapacitorStorage`
+- Native settings and parked-location records are stored in encrypted Android SharedPreferences; Android production paths do not read parked coordinates from `CapacitorStorage`.
 - Current Capacitor fallback key: `road_sage_last_parked`
 - Legacy Capacitor fallback key: `drivesense_last_parked`
 
@@ -435,12 +435,17 @@ Cache is cleared when:
 
 ## Privacy And Network Behavior
 
-The widget may disclose the saved parked coordinate to `staticmap.openstreetmap.de` when it needs a refreshed map preview. This happens only when:
+The widget may disclose the saved parked coordinate to `staticmap.openstreetmap.de` only when it needs a refreshed map preview and the coordinate is outside all configured privacy zones. Before building the static-map URL, `MapTileFetchWorker` checks `PrivacyZoneStore.findMatchingZone(...)`; private parked locations use the local privacy placeholder instead of fetching a map tile.
+
+External static-map fetches happen only when:
 
 - A widget instance exists.
 - A valid saved parked coordinate exists.
+- The coordinate is outside all privacy zones, including the guard buffer.
 - The cached map image is missing or stale.
 - Network is connected.
+
+Reverse geocoding follows the same privacy gate. Parked coordinates inside privacy zones are not sent to Nominatim for address lookup.
 
 The navigation button sends the parked coordinate to the user's chosen Android maps/navigation app through a `geo:` intent.
 

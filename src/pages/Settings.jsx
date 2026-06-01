@@ -978,6 +978,22 @@ export default function Settings() {
   const backupPasswordStrong = backupExportPassword.length >= 12;
   const backupPasswordsMatch = backupExportPassword === backupExportConfirm;
   const backupExportReady = backupPlaintextOptOut || (backupPasswordStrong && backupPasswordsMatch);
+  const backupPasswordStrengthScore = backupExportPassword
+    ? [
+      backupExportPassword.length >= 12,
+      /[a-z]/.test(backupExportPassword) && /[A-Z]/.test(backupExportPassword),
+      /\d/.test(backupExportPassword),
+      /[^A-Za-z0-9]/.test(backupExportPassword),
+    ].filter(Boolean).length
+    : 0;
+  const backupPasswordStrengthLabel = backupPasswordStrengthScore >= 4
+    ? 'Strong'
+    : backupPasswordStrengthScore >= 3
+      ? 'Good'
+      : backupPasswordStrengthScore >= 2
+        ? 'Fair'
+        : 'Weak';
+  const pendingBackupImportIsEncrypted = /\.rsbackup$/i.test(pendingBackupImportFile?.name || '');
 
   const showBackupExportToast = (result) => {
     toast({
@@ -1032,7 +1048,9 @@ export default function Settings() {
     if (result?.error === BACKUP_INTEGRITY_ERROR) {
       toast({
         title: 'Backup integrity check failed',
-        description: 'The file may have been modified or exported from another Road Sage install.',
+        description: /\.rsbackup$/i.test(file?.name || '')
+          ? 'This backup file appears to be corrupted.'
+          : 'The file may have been modified or exported from another Road Sage install.',
         variant: 'destructive',
       });
       return null;
@@ -1091,14 +1109,19 @@ export default function Settings() {
       });
       return;
     }
-    if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
+    const legacyPlaintextWarning = /\.json$/i.test(file.name || '')
+      ? 'This backup is unencrypted. Anyone with this file can read your driving history.\n\n'
+      : '';
+    if (!confirm(`${legacyPlaintextWarning}Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.`)) return;
 
     try {
       await finishImportBackup(file);
     } catch (error) {
       toast({
         title: 'Could not import backup',
-        description: error.message || 'Make sure the file is a Road Sage backup JSON file.',
+        description: /\.rsbackup$/i.test(file.name || '')
+          ? 'This backup file appears to be corrupted.'
+          : error.message || 'Make sure the file is a Road Sage backup JSON file.',
         variant: 'destructive',
       });
     }
@@ -1195,7 +1218,7 @@ export default function Settings() {
       }}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Encrypt Backup</DialogTitle>
+            <DialogTitle>Export Backup</DialogTitle>
             <DialogDescription>
               Protect trip history, routes, vehicles, and settings with a password before saving the backup file.
             </DialogDescription>
@@ -1224,12 +1247,28 @@ export default function Settings() {
               />
             </label>
             {!backupPlaintextOptOut && (
-              <div className={`text-xs font-medium ${backupPasswordStrong && backupPasswordsMatch ? 'text-green-600' : 'text-amber-600'}`}>
-                {backupPasswordStrong
-                  ? backupPasswordsMatch
-                    ? 'Password ready'
-                    : 'Passwords must match'
-                  : 'Use at least 12 characters'}
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-4 gap-1" aria-hidden="true">
+                  {[1, 2, 3, 4].map((level) => (
+                    <div
+                      key={level}
+                      className={`h-1.5 rounded-full ${
+                        backupPasswordStrengthScore >= level
+                          ? backupPasswordStrong
+                            ? 'bg-green-500'
+                            : 'bg-amber-500'
+                          : 'bg-secondary'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className={`text-xs font-medium ${backupPasswordStrong && backupPasswordsMatch ? 'text-green-600' : 'text-amber-600'}`}>
+                  {backupPasswordStrong
+                    ? backupPasswordsMatch
+                      ? `${backupPasswordStrengthLabel} password`
+                      : 'Passwords must match'
+                    : `Use at least 12 characters. Current strength: ${backupPasswordStrengthLabel}`}
+                </div>
               </div>
             )}
             <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
@@ -1238,7 +1277,7 @@ export default function Settings() {
                 onCheckedChange={(checked) => setBackupPlaintextOptOut(checked === true)}
                 className="mt-0.5"
               />
-              <span>Export without a password. Your backup will be readable by anyone who accesses the file.</span>
+              <span>No password. Export an unencrypted backup that anyone with this file can read.</span>
             </label>
           </div>
           <DialogFooter>
@@ -1256,7 +1295,7 @@ export default function Settings() {
               disabled={!backupExportReady || backupExportBusy}
               className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
-              {backupExportBusy ? 'Saving...' : backupPlaintextOptOut ? 'Save Plaintext' : 'Save Encrypted'}
+              {backupExportBusy ? 'Exporting...' : 'Export Backup'}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -1273,15 +1312,17 @@ export default function Settings() {
       }}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Unlock Backup</DialogTitle>
+            <DialogTitle>Import Backup</DialogTitle>
             <DialogDescription>
-              Enter the password used when this Road Sage backup was exported.
+              {pendingBackupImportIsEncrypted
+                ? 'Enter the password used when this backup was created.'
+                : 'Enter the password used when this Road Sage backup was exported.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             {backupImportError === 'wrong_password' && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-                Wrong password. Try again.
+                Wrong password. Check the password and try again.
               </div>
             )}
             {backupImportError === 'password_required' && (

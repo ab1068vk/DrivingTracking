@@ -93,7 +93,7 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
+    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather when all candidates are private or the origin, midpoint, or destination is inside the expanded weather privacy guard.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');

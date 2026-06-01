@@ -18,30 +18,15 @@ public final class PrivacyZoneStore {
     private static final String NATIVE_PREFS = "road_sage_privacy_zones";
     private static final String ENCRYPTED_PREFS = "road_sage_privacy_zones_v2";
     private static final String NATIVE_KEY = "zones_json";
-    private static final String CAPACITOR_PREFS = "CapacitorStorage";
-    private static final String CAPACITOR_KEY = "road_sage_privacy_zones";
 
     private PrivacyZoneStore() {}
 
     public static void migratePlaintextPrefsIfNeeded(Context context) {
         SharedPreferences encrypted = encryptedPrefs(context);
-        String nativeJson = EncryptedPreferenceStore.plaintext(context, NATIVE_PREFS).getString(NATIVE_KEY, null);
-        String capacitorJson = EncryptedPreferenceStore.plaintext(context, CAPACITOR_PREFS).getString(CAPACITOR_KEY, null);
-        String migratedJson = nativeJson != null ? nativeJson : capacitorJson;
-
-        if (migratedJson != null && !encrypted.contains(NATIVE_KEY)) {
-            encrypted.edit().putString(NATIVE_KEY, migratedJson).commit();
+        if (!encrypted.contains(NATIVE_KEY)) {
+            encrypted.edit().putString(NATIVE_KEY, "[]").commit();
         }
-
-        if (EncryptedPreferenceStore.hasEntries(context, NATIVE_PREFS)) {
-            EncryptedPreferenceStore.deletePlaintext(context, NATIVE_PREFS);
-        }
-        if (capacitorJson != null) {
-            EncryptedPreferenceStore.plaintext(context, CAPACITOR_PREFS)
-                .edit()
-                .remove(CAPACITOR_KEY)
-                .commit();
-        }
+        EncryptedPreferenceStore.deletePlaintext(context, NATIVE_PREFS);
     }
 
     public static List<PrivacyZone> getZones(Context context) {
@@ -57,12 +42,16 @@ public final class PrivacyZoneStore {
                 try {
                     zones.add(PrivacyZone.fromJson(array.getJSONObject(i)));
                 } catch (JSONException e) {
-                    Log.w(TAG, "Skipping invalid privacy zone", e);
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "Skipping invalid privacy zone", e);
+                    }
                 }
             }
             return zones;
         } catch (JSONException e) {
-            Log.w(TAG, "Failed to parse privacy zones", e);
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Failed to parse privacy zones", e);
+            }
             return new ArrayList<>();
         }
     }
@@ -92,7 +81,9 @@ public final class PrivacyZoneStore {
             }
             saveZonesJson(context, array.toString());
         } catch (JSONException e) {
-            Log.w(TAG, "Failed to save privacy zones", e);
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Failed to save privacy zones", e);
+            }
         }
     }
 
@@ -109,10 +100,6 @@ public final class PrivacyZoneStore {
         }
         encryptedPrefs(context).edit().putString(NATIVE_KEY, normalized.toString()).apply();
         EncryptedPreferenceStore.deletePlaintext(context, NATIVE_PREFS);
-        EncryptedPreferenceStore.plaintext(context, CAPACITOR_PREFS)
-            .edit()
-            .remove(CAPACITOR_KEY)
-            .apply();
     }
 
     private static SharedPreferences encryptedPrefs(Context context) {

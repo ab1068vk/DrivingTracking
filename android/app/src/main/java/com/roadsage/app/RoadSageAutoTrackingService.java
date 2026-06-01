@@ -45,7 +45,6 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Locale;
-import java.util.Map;
 
 public class RoadSageAutoTrackingService extends Service implements SensorEventListener {
     static final String ACTION_START = "com.roadsage.app.action.START_NATIVE_AUTO";
@@ -101,11 +100,9 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     private static final long CANDIDATE_MAX_REVIEW_MS = 180_000L;
     private static final String SAFETY_ALERTS_CHANNEL_ID = "road_sage_safety_alerts";
     private static final String SUMMARY_CHANNEL_ID = "road_sage_summary";
-    private static final String CAPACITOR_PREFS = "CapacitorStorage";
-    private static final String SETTINGS_KEY_OLD = "drivesense_settings";
-    private static final String SETTINGS_KEY = "road_sage_settings";
     private static final String NOTIFICATION_PREFS_OLD = "drivesense_native_notification_state";
     private static final String NOTIFICATION_PREFS = "road_sage_native_notification_state";
+    private static final String NOTIFICATION_PREFS_ENCRYPTED = "road_sage_native_notification_state_v2";
     private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
@@ -192,7 +189,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             this,
             ACTIVITY_RECOGNITION_REQUEST_CODE,
             new Intent(this, DriveSenseActivityReceiver.class),
-            PendingIntent.FLAG_UPDATE_CURRENT | mutableFlag()
+            PendingIntentCompat.mutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
         locationCallback = new LocationCallback() {
             @Override
@@ -296,7 +293,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             context,
             3,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, AUTO_STATUS_CHANNEL_ID)
@@ -1321,7 +1318,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             this,
             0,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, SAFETY_ALERTS_CHANNEL_ID)
@@ -1360,7 +1357,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             this,
             1,
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
         );
 
         String body = String.format(
@@ -1431,7 +1428,12 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     private Notification buildNotification(String text) {
         ensureChannel();
         Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag());
+        PendingIntent contentIntent = PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
+        );
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
             .setContentTitle("Road Sage ready")
@@ -1455,7 +1457,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
                 this,
                 2,
                 stopIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+                PendingIntentCompat.immutableFlags(PendingIntent.FLAG_UPDATE_CURRENT)
             );
             builder
                 .setContentTitle("Road Sage trip live")
@@ -1516,7 +1518,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
 
     private boolean isSettingEnabled(String key, boolean defaultValue) {
         try {
-            String raw = getCapacitorPreference(SETTINGS_KEY, SETTINGS_KEY_OLD);
+            String raw = NativeSettingsStore.getSettingsJson(this);
             if (raw == null || raw.trim().isEmpty()) return defaultValue;
             JSONObject settings = new JSONObject(raw);
             if (!settings.has(key) || settings.isNull(key)) return defaultValue;
@@ -1527,35 +1529,10 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     }
 
     private SharedPreferences notificationPrefs() {
-        SharedPreferences oldPrefs = getSharedPreferences(NOTIFICATION_PREFS_OLD, Context.MODE_PRIVATE);
-        SharedPreferences currentPrefs = getSharedPreferences(NOTIFICATION_PREFS, Context.MODE_PRIVATE);
-        if (!currentPrefs.contains("migrated_from_drivesense_v1") && oldPrefs.getAll().size() > 0) {
-            SharedPreferences.Editor editor = currentPrefs.edit();
-            for (Map.Entry<String, ?> entry : oldPrefs.getAll().entrySet()) {
-                Object value = entry.getValue();
-                String key = entry.getKey();
-                if (value instanceof String) editor.putString(key, (String) value);
-                else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
-                else if (value instanceof Integer) editor.putInt(key, (Integer) value);
-                else if (value instanceof Long) editor.putLong(key, (Long) value);
-                else if (value instanceof Float) editor.putFloat(key, (Float) value);
-            }
-            editor.putBoolean("migrated_from_drivesense_v1", true);
-            editor.apply();
-        }
-        return currentPrefs;
-    }
-
-    private String getCapacitorPreference(String key, String legacyKey) {
-        SharedPreferences prefs = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
-        String raw = prefs.getString(key, null);
-        if (raw == null || raw.trim().isEmpty()) {
-            raw = prefs.getString(legacyKey, null);
-            if (raw != null && !raw.trim().isEmpty()) {
-                prefs.edit().putString(key, raw).apply();
-            }
-        }
-        return raw;
+        SharedPreferences prefs = EncryptedPreferenceStore.open(this, NOTIFICATION_PREFS_ENCRYPTED);
+        EncryptedPreferenceStore.deletePlaintext(this, NOTIFICATION_PREFS);
+        EncryptedPreferenceStore.deletePlaintext(this, NOTIFICATION_PREFS_OLD);
+        return prefs;
     }
 
     private String buildLiveTripStatus(long nowMs) {
@@ -1651,14 +1628,6 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     private static double round(double value, int digits) {
         double factor = Math.pow(10d, digits);
         return Math.round(value * factor) / factor;
-    }
-
-    private static int mutableFlag() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0;
-    }
-
-    private static int immutableFlag() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0;
     }
 
     private static class TripStats {

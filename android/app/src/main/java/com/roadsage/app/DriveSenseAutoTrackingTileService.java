@@ -1,8 +1,6 @@
 package com.roadsage.app;
 
 import android.Manifest;
-import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.service.quicksettings.Tile;
@@ -13,10 +11,6 @@ import androidx.core.content.ContextCompat;
 import org.json.JSONObject;
 
 public class DriveSenseAutoTrackingTileService extends TileService {
-    private static final String CAPACITOR_PREFS = "CapacitorStorage";
-    private static final String SETTINGS_KEY_OLD = "drivesense_settings";
-    private static final String SETTINGS_KEY = "road_sage_settings";
-
     @Override
     public void onStartListening() {
         super.onStartListening();
@@ -57,14 +51,7 @@ public class DriveSenseAutoTrackingTileService extends TileService {
     }
 
     private JSONObject getSettings() {
-        SharedPreferences prefs = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
-        String raw = prefs.getString(SETTINGS_KEY, null);
-        if (raw == null || raw.trim().isEmpty()) {
-            raw = prefs.getString(SETTINGS_KEY_OLD, null);
-            if (raw != null && !raw.trim().isEmpty()) {
-                prefs.edit().putString(SETTINGS_KEY, raw).apply();
-            }
-        }
+        String raw = NativeSettingsStore.getSettingsJson(this);
         if (raw == null || raw.trim().isEmpty()) return new JSONObject();
         try {
             return new JSONObject(raw);
@@ -80,10 +67,7 @@ public class DriveSenseAutoTrackingTileService extends TileService {
             settings.put("auto_tracking_enabled", true);
             settings.put("background_tracking_enabled", true);
             settings.put("tracking_paused", false);
-            getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(SETTINGS_KEY, settings.toString())
-                .apply();
+            NativeSettingsStore.saveSettingsJson(this, settings.toString());
         } catch (Exception ignored) {}
     }
 
@@ -94,10 +78,7 @@ public class DriveSenseAutoTrackingTileService extends TileService {
             settings.put("auto_tracking_enabled", true);
             settings.put("background_tracking_enabled", true);
             settings.put("tracking_paused", true);
-            getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(SETTINGS_KEY, settings.toString())
-                .apply();
+            NativeSettingsStore.saveSettingsJson(this, settings.toString());
         } catch (Exception ignored) {}
     }
 

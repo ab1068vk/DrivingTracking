@@ -119,6 +119,15 @@ const androidNativeDriveSensePlugin = async () => {
   }
 };
 
+const isAndroidNativePlatform = async () => {
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    return Capacitor.getPlatform?.() === 'android';
+  } catch {
+    return false;
+  }
+};
+
 const distanceMetersBetweenLatLng = (lat, lng, zone) => {
   const zoneLat = Number(zone?.lat);
   const zoneLng = Number(zone?.lng);
@@ -213,6 +222,8 @@ export async function getPrivacyZones() {
     }
   }
 
+  if (await isAndroidNativePlatform()) return [];
+
   try {
     const { Preferences } = await preferencesModule();
     const { value } = await Preferences.get({ key: PRIVACY_ZONES_KEY });
@@ -231,6 +242,8 @@ export async function savePrivacyZones(zones) {
     });
     return;
   }
+
+  if (await isAndroidNativePlatform()) return;
 
   const { Preferences } = await preferencesModule();
   await Preferences.set({
@@ -257,11 +270,11 @@ const syncSettingsForNative = (settings) => {
   import('@capacitor/core')
     .then(({ Capacitor }) => {
       if (!Capacitor.isNativePlatform()) return null;
-      return import('@capacitor/preferences');
+      return androidNativeDriveSensePlugin();
     })
-    .then((module) => {
-      if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized }).catch((err) => {
+    .then((nativePlugin) => {
+      if (!nativePlugin?.saveSettings) return;
+      nativePlugin.saveSettings({ settingsJson: serialized }).catch((err) => {
         logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
       });
     })
@@ -779,6 +792,24 @@ export const localSettings = {
       const { Capacitor } = await import('@capacitor/core');
       if (!Capacitor.isNativePlatform()) return this.get();
 
+      const nativePlugin = await androidNativeDriveSensePlugin();
+      if (nativePlugin?.getSettings) {
+        const native = await nativePlugin.getSettings();
+        if (native?.settingsJson) {
+          const parsed = JSON.parse(native.settingsJson);
+          const { settings: merged, changed } = migrateDefaultSettings(parsed);
+          const serialized = JSON.stringify(merged);
+          localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+          if (changed && nativePlugin.saveSettings) {
+            await nativePlugin.saveSettings({ settingsJson: serialized });
+          }
+          lastNativeSettingsSync = serialized;
+          return merged;
+        }
+      }
+
+      if (await isAndroidNativePlatform()) return this.get();
+
       const { Preferences } = await import('@capacitor/preferences');
       let { value } = await Preferences.get({ key: SETTINGS_STORAGE_KEY });
       for (const legacyKey of legacyStorageKeysFor(SETTINGS_KEY)) {
@@ -795,6 +826,9 @@ export const localSettings = {
       localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
       if (changed) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
+      if (nativePlugin?.saveSettings) {
+        await nativePlugin.saveSettings({ settingsJson: serialized });
+      }
       return merged;
     } catch {
       return this.get();

@@ -85,71 +85,23 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
-    public void lastParkedLocationFallsBackToSharedCapacitorStorage() throws Exception {
-        JSONObject parked = new JSONObject();
-        parked.put("lat", 43.65);
-        parked.put("lng", -79.38);
-        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
-            .edit()
-            .putString("drivesense_last_parked", parked.toString())
-            .commit();
-
-        JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
-
-        assertNotNull(restored);
-        assertEquals(43.65, restored.getDouble("lat"), 0.0001);
-        assertEquals(-79.38, restored.getDouble("lng"), 0.0001);
-    }
-
-    @Test
-    public void newestParkedLocationWinsLegacyNativeRace() throws Exception {
-        JSONObject older = parkedLocation(43.65, -79.38, 1_000L);
-        JSONObject newer = parkedLocation(43.66, -79.39, 2_000L);
-
-        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
-            .edit()
-            .putString("last_parked_location", older.toString())
-            .commit();
-        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
-            .edit()
-            .putString("last_parked_location", newer.toString())
-            .commit();
-
-        JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
-
-        assertNotNull(restored);
-        assertEquals(43.66, restored.getDouble("lat"), 0.0001);
-        assertEquals(2_000L, restored.getLong("timestamp_ms"));
-        assertFalse(context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
-            .contains("last_parked_location"));
-        assertEquals(
-            2_000L,
-            new JSONObject(DriveSenseNativeTripStore.prefs(context)
-                .getString("last_parked_location", "{}")).getLong("timestamp_ms")
-        );
-    }
-
-    @Test
-    public void currentParkedLocationWinsWhenNewerThanLegacyNative() throws Exception {
-        JSONObject newer = parkedLocation(43.67, -79.40, 3_000L);
-        JSONObject older = parkedLocation(43.65, -79.38, 1_000L);
-
-        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
-            .edit()
-            .putString("last_parked_location", newer.toString())
-            .commit();
-        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
-            .edit()
-            .putString("last_parked_location", older.toString())
-            .commit();
+    public void lastParkedLocationUsesEncryptedNativeStorageOnly() throws Exception {
+        JSONObject parked = parkedLocation(43.67, -79.40, 3_000L);
+        DriveSenseNativeTripStore.saveLastParkedLocation(context, parked);
 
         JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
 
         assertNotNull(restored);
         assertEquals(43.67, restored.getDouble("lat"), 0.0001);
         assertEquals(3_000L, restored.getLong("timestamp_ms"));
-        assertFalse(context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
-            .contains("last_parked_location"));
+    }
+
+    @Test
+    public void plaintextLegacyPreferenceFilesAreDeleteOnlyCleanupTargets() {
+        DriveSenseNativeTripStore.prefs(context);
+
+        assertFalse(context.deleteSharedPreferences("road_sage_native_tracking"));
+        assertFalse(context.deleteSharedPreferences("drivesense_native_tracking"));
     }
 
     @Test
@@ -241,9 +193,9 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
     private void clearTrackingPrefs() {
         DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
-        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE).edit().clear().commit();
-        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE).edit().clear().commit();
-        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
+        context.deleteSharedPreferences("road_sage_native_tracking");
+        context.deleteSharedPreferences("drivesense_native_tracking");
+        context.deleteSharedPreferences("CapacitorStorage");
     }
 
     private static JSONObject parkedLocation(double lat, double lng, long timestampMs) throws Exception {
