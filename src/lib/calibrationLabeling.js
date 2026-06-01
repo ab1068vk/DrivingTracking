@@ -20,7 +20,7 @@ export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
 export const SURVEY_RATING_OPTIONS = Object.freeze([
   { value: 5, label: 'Careful drive', shortLabel: 'Careful' },
   { value: 4, label: 'Normal drive', shortLabel: 'Normal' },
-  { value: 2, label: 'Rushed/stressed', shortLabel: 'Rushed' },
+  { value: 3, label: 'Rushed/stressed', shortLabel: 'Rushed' },
   { value: 1, label: 'Something happened', shortLabel: 'Something happened' },
 ]);
 export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'too_low']);

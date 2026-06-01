@@ -48,6 +48,59 @@ const completedTrip = {
   },
 };
 
+const ratingForBucket = {
+  careful: 5,
+  normal: 4,
+  rushed: 3,
+  incident: 1,
+};
+
+const targetForBucket = {
+  careful: 100,
+  normal: 75,
+  rushed: 50,
+  incident: 0,
+};
+
+const syntheticCalibrationLabel = (bucket, index = 0, overrides = {}) => ({
+  schemaVersion: 1,
+  scoringModelVersion: SCORING_VERSION,
+  createdAt: '2026-05-26T18:00:00.000Z',
+  dataQualityFlags: [],
+  eligibleForCalibration: true,
+  surveyLabel: {
+    overallDriveRating: ratingForBucket[bucket],
+    rating: ratingForBucket[bucket],
+    targetScore: targetForBucket[bucket],
+    target_score: targetForBucket[bucket],
+    wasDriver: 'yes',
+    scoreAccuracy: null,
+    contextTags: [],
+  },
+  tripFeatureSummary: {
+    distanceKm: 5 + (index % 6),
+    durationMin: bucket === 'incident' ? 75 : 35,
+    fatigueRisk: bucket === 'incident' ? 70 : 0,
+    nightDrive: bucket === 'incident',
+    gpsQualityScore: 1,
+    sampleCount: 60,
+  },
+  scoreOutput: {
+    overall: targetForBucket[bucket],
+    safety: targetForBucket[bucket],
+    calibrationStatus: 'approximate',
+  },
+  calibration_features: {
+    penalty_rate_per_km: (100 - targetForBucket[bucket]) / 40,
+    fatigue_risk_score: bucket === 'incident' ? 70 : 0,
+  },
+  ...overrides,
+});
+
+const labelsFromDistribution = (distribution) => Object.entries(distribution).flatMap(([bucket, count]) => (
+  Array.from({ length: count }, (_, index) => syntheticCalibrationLabel(bucket, index))
+));
+
 describe('calibration labeling pipeline', () => {
   it('reports intermediate calibration milestones before full calibration', () => {
     expect(getCalibrationMilestone(5)).toBeNull();
@@ -202,7 +255,27 @@ describe('calibration labeling pipeline', () => {
       overallDriveRating: (index % 5) + 1,
       scoreAccuracy: index % 7 === 0 ? 'too_high' : 'accurate',
       wasDriver: 'yes',
-    }));
+    })).map((label) => {
+      const target = label.surveyLabel.targetScore;
+      return {
+        ...label,
+        surveyLabel: {
+          ...label.surveyLabel,
+          scoreAccuracy: null,
+          targetScore: surveyRatingToTargetScore(label.surveyLabel.overallDriveRating),
+          target_score: surveyRatingToTargetScore(label.surveyLabel.overallDriveRating),
+        },
+        calibration_features: {
+          penalty_rate_per_km: (100 - surveyRatingToTargetScore(label.surveyLabel.overallDriveRating)) / 40,
+          fatigue_risk_score: 0,
+        },
+        scoreOutput: {
+          ...label.scoreOutput,
+          overall: target,
+          safety: target,
+        },
+      };
+    });
 
     const result = fitCalibrationDataset(labels, { targetCount: 2000, datasetId: 'test-dataset' });
 
@@ -218,5 +291,38 @@ describe('calibration labeling pipeline', () => {
       eligible_trip_count: 2000,
       status: 'calibrated',
     });
+  });
+
+  it('fits stratified synthetic labels with confidence intervals and confusion matrix counts', () => {
+    const labels = labelsFromDistribution({ normal: 25, careful: 10, rushed: 10, incident: 5 });
+
+    const result = fitCalibrationDataset(labels, { targetCount: 50, bootstrapIterations: 100 });
+
+    Object.values(result.constants).forEach((value) => {
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThan(0);
+    });
+    expect(result.confidenceIntervals.PENALTY_SCALE_FACTOR.low95)
+      .toBeLessThan(result.confidenceIntervals.PENALTY_SCALE_FACTOR.high95);
+    for (const [bucket, expectedCount] of Object.entries(result.validation.labelDistribution)) {
+      const rowTotal = Object.values(result.validation.confusionMatrix[bucket])
+        .reduce((sum, count) => sum + count, 0);
+      expect(rowTotal).toBe(expectedCount);
+    }
+  });
+
+  it('throws a minimum-label error when no labels are eligible', () => {
+    expect(() => fitCalibrationDataset([])).toThrow(/MIN_CALIBRATION_LABEL_COUNT/);
+  });
+
+  it('does not make imbalanced incident labels look artificially better than balanced labels', () => {
+    const balanced = labelsFromDistribution({ careful: 10, normal: 10, rushed: 10, incident: 10 });
+    const imbalanced = labelsFromDistribution({ careful: 10, normal: 10, rushed: 10, incident: 13 });
+
+    const balancedResult = fitCalibrationDataset(balanced, { targetCount: 100, bootstrapIterations: 100 });
+    const imbalancedResult = fitCalibrationDataset(imbalanced, { targetCount: 100, bootstrapIterations: 100 });
+
+    expect(imbalancedResult.validation.crossValidationMAE)
+      .toBeGreaterThanOrEqual(balancedResult.validation.crossValidationMAE - 5);
   });
 });
