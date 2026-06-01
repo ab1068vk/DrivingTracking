@@ -5,6 +5,9 @@ import traverseModule from '@babel/traverse';
 
 const traverse = traverseModule.default || traverseModule;
 const ROOT = process.cwd();
+const DOCS_DIR = path.join(ROOT, 'docs');
+const TECHNICAL_REFERENCE_RELATIVE = 'docs/TECHNICAL_REFERENCE.md';
+const TECHNICAL_REFERENCE_PATH = path.join(ROOT, TECHNICAL_REFERENCE_RELATIVE);
 const now = new Date().toISOString();
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.gradle-home', '.codex-smoke', '.idea', 'test-results', 'playwright-report']);
@@ -15,7 +18,7 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.java']);
 const APP_CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs']);
-const EXCLUDE_GENERATED_DOCS = new Set(['TECHNICAL_REFERENCE.md']);
+const EXCLUDE_GENERATED_DOCS = new Set(['TECHNICAL_REFERENCE.md', TECHNICAL_REFERENCE_RELATIVE]);
 
 function rel(file) {
   return path.relative(ROOT, file).replaceAll(path.sep, '/');
@@ -1153,7 +1156,7 @@ function buildReadme() {
     '',
     '## Documentation',
     '',
-    'The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:',
+    'The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:',
     '',
     '- source/module inventory, import/export map, and function/method catalogue',
     '- actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking',
@@ -1268,9 +1271,10 @@ function buildReadme() {
   ].join('\n');
 }
 
-fs.writeFileSync(path.join(ROOT, 'TECHNICAL_REFERENCE.md'), buildDoc(), 'utf8');
+fs.mkdirSync(DOCS_DIR, { recursive: true });
+fs.writeFileSync(TECHNICAL_REFERENCE_PATH, buildDoc(), 'utf8');
 fs.writeFileSync(path.join(ROOT, 'README.md'), buildReadme(), 'utf8');
 
-console.log(`Wrote TECHNICAL_REFERENCE.md and README.md`);
+console.log(`Wrote ${TECHNICAL_REFERENCE_RELATIVE} and README.md`);
 console.log(`Production calculations indexed: ${productionCalculations.length}`);
 console.log(`Hard-coded literals indexed: ${literals.length}`);

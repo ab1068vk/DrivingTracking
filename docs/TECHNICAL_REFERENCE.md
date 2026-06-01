@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-06-01T01:10:20.829Z
+Updated: 2026-06-01T01:21:24.266Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -207,12 +207,12 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | docs/ios-widgetkit/README.md | Human entry-point documentation. | none | none | 0 | 0 | 0 |
 | docs/ios-widgetkit/storage-contract.md | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | docs/ios-widgetkit/widget-extension.md | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
+| docs/PARKED_CAR_WIDGET.md | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | e2e/app-smoke.spec.js | Playwright browser smoke test for the built application shell. | @playwright/test | none | 0 | 0 | 0 |
 | eslint.config.js | Project configuration or static asset metadata. | globals, @eslint/js, eslint-plugin-react, eslint-plugin-react-hooks, eslint-plugin-unused-imports | ArrayExpression | 0 | 0 | 0 |
 | index.html | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | package-lock.json | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | package.json | Node package metadata, scripts, and dependency declarations. | none | none | 0 | 0 | 0 |
-| PARKED_CAR_WIDGET.md | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
 | playwright.config.js | Project configuration or static asset metadata. | @playwright/test | CallExpression | 0 | 0 | 0 |
 | postcss.config.js | Project configuration or static asset metadata. | none | ObjectExpression | 0 | 0 | 0 |
 | README.md | Human entry-point documentation. | none | none | 0 | 0 | 0 |
@@ -550,7 +550,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/utils/index.ts | Project configuration or static asset metadata. | none | createPageUrl | 1 | 0 | 2 |
 | tailwind.config.js | Project configuration or static asset metadata. | tailwindcss-animate | ObjectExpression | 0 | 0 | 0 |
 | tsconfig.json | Project configuration or static asset metadata. | none | none | 0 | 0 | 0 |
-| vite.config.js | Project configuration or static asset metadata. | @vitejs/plugin-react, vitest/config, node:path, node:url, ./scripts/content-security-policy.mjs | CallExpression | 2 | 0 | 0 |
+| vite.config.js | Project configuration or static asset metadata. | @vitejs/plugin-react, vitest/config, vite, node:path, node:url, ./scripts/content-security-policy.mjs | CallExpression | 2 | 0 | 0 |
 
 ---
 ## Import Export Map
@@ -5160,12 +5160,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 ### vite.config.js
 
 - vite.config.js:1 imports `react` from `@vitejs/plugin-react`
-- vite.config.js:2 imports `configDefaults as configDefaults, defineConfig as defineConfig, loadEnv as loadEnv` from `vitest/config`
-- vite.config.js:3 imports `path` from `node:path`
-- vite.config.js:4 imports `fileURLToPath as fileURLToPath` from `node:url`
-- vite.config.js:5 imports `buildContentSecurityPolicy as buildContentSecurityPolicy` from `./scripts/content-security-policy.mjs`
+- vite.config.js:2 imports `configDefaults as configDefaults, defineConfig as defineConfig` from `vitest/config`
+- vite.config.js:3 imports `loadEnv as loadEnv` from `vite`
+- vite.config.js:4 imports `path` from `node:path`
+- vite.config.js:5 imports `fileURLToPath as fileURLToPath` from `node:url`
+- vite.config.js:6 imports `buildContentSecurityPolicy as buildContentSecurityPolicy` from `./scripts/content-security-policy.mjs`
 
-- vite.config.js:19 exports `CallExpression` (default export)
+- vite.config.js:20 exports `CallExpression` (default export)
 
 ---
 ## Function And Method Catalogue
@@ -5572,68 +5573,68 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 20 | function | `rel(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 24 | function | `walk(dir, out = out = [])` | mutation | Time: O(n) candidate; Space: context dependent |
-| 57 | function | `read(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 61 | function | `linesOf(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 65 | function | `lineAt(lines, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 69 | function | `escapeCell(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 75 | function | `mdLink(file, line = line = null)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 80 | function | `headingId(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 84 | function | `parseJs(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 110 | function | `nodeName(node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 123 | function | `paramsOf(node, sourceLines)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 135 | function | `nearestFunction(functions, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 139 | function | `collectJsFacts(file)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 153 | object method | `ImportDeclaration(p)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 161 | object method | `ExportNamedDeclaration(p)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 172 | object method | `ExportDefaultDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 175 | object method | `FunctionDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 178 | object method | `VariableDeclarator(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 183 | object method | `ObjectMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 186 | object method | `ClassMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 189 | object method | `CallExpression(p)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 199 | object method | `JSXOpeningElement(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 205 | object method | `MemberExpression(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 216 | function | `sourceText(lines, node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 224 | function | `stripComments(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 230 | function | `functionFact(file, sourceLines, node, name, kind)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 255 | function | `collectJavaFacts(file)` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
-| 285 | function | `calculationKind(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 296 | function | `extractFormula(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 312 | function | `isCalculationLine(line)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 322 | function | `collectCalculations(includeTests = includeTests = false)` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 348 | function | `literalKind(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 358 | function | `semanticName(code, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 367 | function | `collectLiterals()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 397 | function | `collectEnv()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 411 | function | `collectTests()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 425 | function | `packageFacts()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 440 | function | `purposeFor(file)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 459 | function | `table(headers, rows)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 467 | function | `groupedDetails(title, rows, renderRow, empty = empty = 'None found.')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 472 | function | `codeBlock(code, lang = lang = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 476 | function | `extractSnippet(file, start, end)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 481 | function | `calcRowsByKind(kind)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 485 | function | `renderCalcIndex(rows)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 493 | function | `moduleMap()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 506 | function | `importExportMap()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 520 | function | `functionCatalog()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 530 | function | `literalRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 548 | function | `reasonForLiteral(row)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 561 | function | `constantsRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 590 | function | `collectDerivedNamedConstants()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 613 | function | `dependencyTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 631 | function | `testCoverage()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 638 | function | `envTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 673 | function | `routeReference()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 687 | function | `apiReference()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 699 | function | `functionSnippet(title, file, functionName, lang = lang = 'js')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 705 | function | `topCalculationSnippets()` | mutation | Time: O(n^2) candidate; Space: context dependent |
-| 731 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 743 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
-| 766 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
-| 1043 | function | `buildReadme()` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 23 | function | `rel(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 27 | function | `walk(dir, out = out = [])` | mutation | Time: O(n) candidate; Space: context dependent |
+| 60 | function | `read(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 64 | function | `linesOf(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 68 | function | `lineAt(lines, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 72 | function | `escapeCell(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 78 | function | `mdLink(file, line = line = null)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 83 | function | `headingId(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 87 | function | `parseJs(file)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 113 | function | `nodeName(node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 126 | function | `paramsOf(node, sourceLines)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 138 | function | `nearestFunction(functions, line)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 142 | function | `collectJsFacts(file)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 156 | object method | `ImportDeclaration(p)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 164 | object method | `ExportNamedDeclaration(p)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 175 | object method | `ExportDefaultDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 178 | object method | `FunctionDeclaration(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 181 | object method | `VariableDeclarator(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 186 | object method | `ObjectMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 189 | object method | `ClassMethod(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 192 | object method | `CallExpression(p)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 202 | object method | `JSXOpeningElement(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 208 | object method | `MemberExpression(p)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 219 | function | `sourceText(lines, node)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 227 | function | `stripComments(text)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 233 | function | `functionFact(file, sourceLines, node, name, kind)` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 258 | function | `collectJavaFacts(file)` | storage/network/native I/O, mutation | Time: O(n) candidate; Space: context dependent |
+| 288 | function | `calculationKind(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 299 | function | `extractFormula(code)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 315 | function | `isCalculationLine(line)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 325 | function | `collectCalculations(includeTests = includeTests = false)` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 351 | function | `literalKind(value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 361 | function | `semanticName(code, value)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 370 | function | `collectLiterals()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 400 | function | `collectEnv()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 414 | function | `collectTests()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 428 | function | `packageFacts()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 443 | function | `purposeFor(file)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 462 | function | `table(headers, rows)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 470 | function | `groupedDetails(title, rows, renderRow, empty = empty = 'None found.')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 475 | function | `codeBlock(code, lang = lang = '')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 479 | function | `extractSnippet(file, start, end)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 484 | function | `calcRowsByKind(kind)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 488 | function | `renderCalcIndex(rows)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 496 | function | `moduleMap()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 509 | function | `importExportMap()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 523 | function | `functionCatalog()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 533 | function | `literalRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 551 | function | `reasonForLiteral(row)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 564 | function | `constantsRegistry()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 593 | function | `collectDerivedNamedConstants()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 616 | function | `dependencyTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 634 | function | `testCoverage()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 641 | function | `envTable()` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 676 | function | `routeReference()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 690 | function | `apiReference()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 702 | function | `functionSnippet(title, file, functionName, lang = lang = 'js')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 708 | function | `topCalculationSnippets()` | mutation | Time: O(n^2) candidate; Space: context dependent |
+| 734 | function | `storageCatalogue()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 746 | function | `errorCatalogue()` | mutation, throws | Time: O(n^2) candidate; Space: context dependent |
+| 769 | function | `buildDoc()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
+| 1046 | function | `buildReadme()` | none detected | Time: O(n^2) candidate; Space: context dependent |
 
 ### scripts/patch-android-gradle.mjs
 
@@ -8325,8 +8326,8 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 9 | arrow function | `cspPlugin(policy)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 11 | object method | `transformIndexHtml(html)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 10 | arrow function | `cspPlugin(policy)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 12 | object method | `transformIndexHtml(html)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ---
 ## Calculation Deep Dives With Actual Code

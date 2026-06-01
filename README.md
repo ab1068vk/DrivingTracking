@@ -108,7 +108,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 
 ## Documentation
 
-The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:
+The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:
 
 - source/module inventory, import/export map, and function/method catalogue
 - actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking
