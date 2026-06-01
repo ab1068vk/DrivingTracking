@@ -9,6 +9,7 @@ import {
   migrateBackup,
   parseDriveSenseBackup,
 } from '@/lib/dataBackup';
+import { encryptBackup } from '@/lib/backupEncryption';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 vi.mock('@/api/trips', () => ({
@@ -321,6 +322,26 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
     expect(imported.trips).toBe(1);
+  });
+
+  it('prompts for a password before importing encrypted backups', async () => {
+    const encrypted = await encryptBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [],
+    }), 'correct horse battery');
+    const file = {
+      size: encrypted.length,
+      text: vi.fn(async () => encrypted),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: 'password_required' });
+    await expect(importDriveSenseBackup(file, { password: 'wrong horse battery' })).resolves.toEqual({ error: 'wrong_password' });
+    await expect(importDriveSenseBackup(file, { password: 'correct horse battery' })).resolves.toMatchObject({
+      trips: 0,
+      vehicles: 0,
+    });
   });
 });
 

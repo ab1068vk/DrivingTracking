@@ -260,6 +260,16 @@ export default function Settings() {
   const [osrmConsentOpen, setOsrmConsentOpen] = useState(false);
   const [osrmConsentChecked, setOsrmConsentChecked] = useState(false);
   const [osrmPendingEndpoint, setOsrmPendingEndpoint] = useState('');
+  const [backupExportOpen, setBackupExportOpen] = useState(false);
+  const [backupExportPassword, setBackupExportPassword] = useState('');
+  const [backupExportConfirm, setBackupExportConfirm] = useState('');
+  const [backupPlaintextOptOut, setBackupPlaintextOptOut] = useState(false);
+  const [backupExportBusy, setBackupExportBusy] = useState(false);
+  const [backupImportOpen, setBackupImportOpen] = useState(false);
+  const [backupImportPassword, setBackupImportPassword] = useState('');
+  const [backupImportError, setBackupImportError] = useState('');
+  const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
+  const [backupImportBusy, setBackupImportBusy] = useState(false);
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
@@ -964,14 +974,13 @@ export default function Settings() {
     });
   };
 
-  const handleExportBackup = async () => {
-    const result = await exportDriveSenseBackup({
-      trips: allTrips,
-      vehicles: allVehicles,
-      settings: cfg,
-    });
+  const backupPasswordStrong = backupExportPassword.length >= 12;
+  const backupPasswordsMatch = backupExportPassword === backupExportConfirm;
+  const backupExportReady = backupPlaintextOptOut || (backupPasswordStrong && backupPasswordsMatch);
+
+  const showBackupExportToast = (result) => {
     toast({
-      title: 'Backup saved',
+      title: result?.encrypted ? 'Encrypted backup saved' : 'Backup saved',
       description: result?.nativeFallback
         ? `Could not save to Downloads. ${result?.filename || 'Road Sage backup'} is downloading in the browser instead.`
         : result?.native
@@ -979,6 +988,86 @@ export default function Settings() {
         : `${result?.filename || 'Road Sage backup'} is downloading.`,
       variant: result?.nativeFallback ? 'destructive' : undefined,
     });
+  };
+
+  const handleExportBackup = () => {
+    setBackupExportPassword('');
+    setBackupExportConfirm('');
+    setBackupPlaintextOptOut(false);
+    setBackupExportOpen(true);
+  };
+
+  const performExportBackup = async () => {
+    if (!backupExportReady || backupExportBusy) return;
+    setBackupExportBusy(true);
+    try {
+      const result = await exportDriveSenseBackup({
+        trips: allTrips,
+        vehicles: allVehicles,
+        settings: cfg,
+        password: backupPlaintextOptOut ? null : backupExportPassword,
+      });
+      setBackupExportOpen(false);
+      showBackupExportToast(result);
+    } catch (error) {
+      toast({
+        title: 'Could not export backup',
+        description: error.message || 'Try again with a different backup password.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupExportBusy(false);
+    }
+  };
+
+  const finishImportBackup = async (file, { password = null, acknowledgeTruncation = false } = {}) => {
+    const result = await importDriveSenseBackup(file, { password, acknowledgeTruncation });
+    if (result?.error === 'password_required' || result?.error === 'wrong_password') {
+      setPendingBackupImportFile(file);
+      setBackupImportError(result.error);
+      setBackupImportOpen(true);
+      return null;
+    }
+    if (result.requiresAcknowledgement) {
+      const affected = result.truncatedNoteTripCount;
+      if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
+      return finishImportBackup(file, { password, acknowledgeTruncation: true });
+    }
+    setCfg(localSettings.get());
+    applyThemeMode(localSettings.get().dark_mode);
+    await qc.invalidateQueries();
+    toast({
+      title: 'Import complete',
+      description: result.truncatedFields
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
+        : !result.savedFiltersRestored && result.savedFilters
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
+        : result.privacy_zones_need_reconfiguration
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
+        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
+      variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
+    });
+    setBackupImportOpen(false);
+    setPendingBackupImportFile(null);
+    setBackupImportPassword('');
+    setBackupImportError('');
+    return result;
+  };
+
+  const handleImportPasswordSubmit = async () => {
+    if (!pendingBackupImportFile || backupImportPassword.length < 12 || backupImportBusy) return;
+    setBackupImportBusy(true);
+    try {
+      await finishImportBackup(pendingBackupImportFile, { password: backupImportPassword });
+    } catch (error) {
+      toast({
+        title: 'Could not import backup',
+        description: error.message || 'Make sure the file is a Road Sage backup file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupImportBusy(false);
+    }
   };
 
   const handleImportBackup = async (event) => {
@@ -996,26 +1085,7 @@ export default function Settings() {
     if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
 
     try {
-      let result = await importDriveSenseBackup(file);
-      if (result.requiresAcknowledgement) {
-        const affected = result.truncatedNoteTripCount;
-        if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return;
-        result = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
-      }
-      setCfg(localSettings.get());
-      applyThemeMode(localSettings.get().dark_mode);
-      await qc.invalidateQueries();
-      toast({
-        title: 'Import complete',
-        description: result.truncatedFields
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
-          : !result.savedFiltersRestored && result.savedFilters
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
-          : result.privacy_zones_need_reconfiguration
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
-          : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
-        variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
-      });
+      await finishImportBackup(file);
     } catch (error) {
       toast({
         title: 'Could not import backup',
@@ -1105,10 +1175,145 @@ export default function Settings() {
       <input
         ref={importInputRef}
         type="file"
-        accept="application/json,.json"
+        accept="application/json,application/octet-stream,.json,.rsbackup"
         className="hidden"
         onChange={handleImportBackup}
       />
+
+      <Dialog open={backupExportOpen} onOpenChange={(open) => {
+        if (backupExportBusy) return;
+        setBackupExportOpen(open);
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Encrypt Backup</DialogTitle>
+            <DialogDescription>
+              Protect trip history, routes, vehicles, and settings with a password before saving the backup file.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="block text-sm font-medium">
+              Password
+              <input
+                type="password"
+                value={backupExportPassword}
+                onChange={(event) => setBackupExportPassword(event.target.value)}
+                disabled={backupPlaintextOptOut}
+                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
+                autoComplete="new-password"
+              />
+            </label>
+            <label className="block text-sm font-medium">
+              Confirm password
+              <input
+                type="password"
+                value={backupExportConfirm}
+                onChange={(event) => setBackupExportConfirm(event.target.value)}
+                disabled={backupPlaintextOptOut}
+                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
+                autoComplete="new-password"
+              />
+            </label>
+            {!backupPlaintextOptOut && (
+              <div className={`text-xs font-medium ${backupPasswordStrong && backupPasswordsMatch ? 'text-green-600' : 'text-amber-600'}`}>
+                {backupPasswordStrong
+                  ? backupPasswordsMatch
+                    ? 'Password ready'
+                    : 'Passwords must match'
+                  : 'Use at least 12 characters'}
+              </div>
+            )}
+            <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              <Checkbox
+                checked={backupPlaintextOptOut}
+                onCheckedChange={(checked) => setBackupPlaintextOptOut(checked === true)}
+                className="mt-0.5"
+              />
+              <span>Export without a password. Your backup will be readable by anyone who accesses the file.</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setBackupExportOpen(false)}
+              disabled={backupExportBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={performExportBackup}
+              disabled={!backupExportReady || backupExportBusy}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {backupExportBusy ? 'Saving...' : backupPlaintextOptOut ? 'Save Plaintext' : 'Save Encrypted'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={backupImportOpen} onOpenChange={(open) => {
+        if (backupImportBusy) return;
+        setBackupImportOpen(open);
+        if (!open) {
+          setPendingBackupImportFile(null);
+          setBackupImportPassword('');
+          setBackupImportError('');
+        }
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Unlock Backup</DialogTitle>
+            <DialogDescription>
+              Enter the password used when this Road Sage backup was exported.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {backupImportError === 'wrong_password' && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                Wrong password. Try again.
+              </div>
+            )}
+            {backupImportError === 'password_required' && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                This backup is encrypted.
+              </div>
+            )}
+            <label className="block text-sm font-medium">
+              Password
+              <input
+                type="password"
+                value={backupImportPassword}
+                onChange={(event) => setBackupImportPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') handleImportPasswordSubmit();
+                }}
+                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
+                autoComplete="current-password"
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setBackupImportOpen(false)}
+              disabled={backupImportBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleImportPasswordSubmit}
+              disabled={backupImportPassword.length < 12 || backupImportBusy}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {backupImportBusy ? 'Importing...' : 'Import'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={osrmConsentOpen} onOpenChange={(open) => {
         setOsrmConsentOpen(open);

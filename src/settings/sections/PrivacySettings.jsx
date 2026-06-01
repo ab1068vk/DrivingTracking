@@ -200,7 +200,7 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                 <SettingRow
                   icon={Download}
                   label="Export Full Backup"
-                  sublabel="JSON with trips, GPS route points, events, vehicles, and settings"
+                  sublabel="Encrypted backup with trips, GPS route points, events, vehicles, and settings"
                   onClick={handleExportBackup}
                 >
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -208,7 +208,7 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                 <SettingRow
                   icon={Upload}
                   label="Import Backup"
-                  sublabel="Restore a Road Sage JSON backup into local storage"
+                  sublabel="Restore a Road Sage backup into local storage"
                   onClick={() => importInputRef.current?.click()}
                 >
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />

@@ -5,6 +5,7 @@ import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
+import { decryptBackup, encryptBackup, isEncryptedBackup } from '@/lib/backupEncryption';
 
 /*
  * Backup schema history:
@@ -493,13 +494,17 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
 }
 
 /**
- * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string}} options
+ * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,password?:string|null}} options
  */
-export async function exportDriveSenseBackup({ trips, vehicles, settings, filename } = {}) {
+export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, password = null } = {}) {
   const savedFilters = await getJson(SAVED_FILTERS_KEY, []);
   const backup = buildDriveSenseBackup({ trips, vehicles, settings, savedFilters });
-  const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
-  const content = JSON.stringify(backup, null, 2);
+  const baseName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
+  const encrypted = typeof password === 'string' && password.length > 0;
+  const outputName = encrypted ? baseName.replace(/\.json$/i, '') + '.rsbackup' : baseName;
+  const json = JSON.stringify(backup, null, 2);
+  const content = encrypted ? await encryptBackup(json, password) : json;
+  const mimeType = encrypted ? 'application/octet-stream' : 'application/json';
   let nativeFallbackError = null;
 
   try {
@@ -508,16 +513,16 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
       const result = await saveExportToDownloads({
         filename: outputName,
         data: content,
-        mimeType: 'application/json',
+        mimeType,
       });
-      return { native: true, filename: outputName, uri: result.uri, backup };
+      return { native: true, filename: outputName, uri: result.uri, backup, encrypted };
     }
   } catch (error) {
     nativeFallbackError = error?.message || 'Native export failed.';
     console.warn('Native JSON export failed, falling back to browser download.', error);
   }
 
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8;' });
+  const blob = new Blob([content], { type: encrypted ? 'application/octet-stream' : 'application/json;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -527,7 +532,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  return { native: false, filename: outputName, backup, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+  return { native: false, filename: outputName, backup, encrypted, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
 }
 
 export const BACKUP_MIGRATIONS = Object.freeze([
@@ -693,11 +698,22 @@ export function parseDriveSenseBackup(text) {
   };
 }
 
-export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false } = {}) {
+export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false, password = null } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
-  const text = await file.text();
+  let text = await file.text();
+  if (isEncryptedBackup(text)) {
+    if (!password) return { error: 'password_required' };
+    try {
+      text = await decryptBackup(text, password);
+    } catch (error) {
+      if (error?.name === 'OperationError') {
+        return { error: 'wrong_password' };
+      }
+      throw error;
+    }
+  }
   const backup = parseDriveSenseBackup(text);
   if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {
     return {
