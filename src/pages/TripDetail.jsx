@@ -2219,7 +2219,7 @@ function TripScoreOverview({ trip, completedTripCount = null }) {
       transition={{ delay: 0.15 }}
       className="bg-card border border-border rounded-3xl p-5 shadow-sm"
     >
-      <div className="flex items-center gap-6">
+      <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
         <ScoreRing
           score={overallScore.value}
           size={100}
@@ -2230,7 +2230,7 @@ function TripScoreOverview({ trip, completedTripCount = null }) {
           scoreProvenance={scoreProvenance}
           tripCount={completedTripCount}
         />
-        <div className="grid flex-1 grid-cols-3 gap-3">
+        <div className="grid w-full min-w-0 flex-1 grid-cols-3 gap-2 sm:gap-3">
           {headlineScores.map(({ label, key, component }) => {
             const unavailable = component.value == null || component.evidence === 'unavailable';
             const { color: c } = unavailable ? { color: 'text-muted-foreground' } : getScoreColor(component.value || 0);
@@ -2238,24 +2238,24 @@ function TripScoreOverview({ trip, completedTripCount = null }) {
             return (
               <div
                 key={label}
-                className={`min-w-0 rounded-xl border px-2 py-2 text-center ${unavailable ? 'border-border bg-secondary/40' : 'border-border/60 bg-background/50'}`}
+                className={`min-w-0 overflow-hidden rounded-xl border px-1.5 py-2 text-center sm:px-2 ${unavailable ? 'border-border bg-secondary/40' : 'border-border/60 bg-background/50'}`}
                 title={component.note || buildScoreExplanation(trip, `score_${key}`)}
               >
-                <div className={`font-grotesk text-xl font-bold ${c}`}>
+                <div className={`truncate font-grotesk text-lg font-bold leading-none sm:text-xl ${c}`}>
                   {unavailable ? '-' : formatScoreWithProvenance(component.value, scoreProvenance)}
                 </div>
-                <div className="text-xs font-medium text-muted-foreground">{label}</div>
+                <div className="mt-1 truncate text-xs font-medium text-muted-foreground">{label}</div>
                 {shouldShowComponentEvidenceBadge(component.evidence) && (
-                  <div className="mt-0.5 text-[11px] capitalize text-muted-foreground">{componentEvidenceText(component.evidence)}</div>
+                  <div className="mt-0.5 break-words text-[10px] capitalize leading-tight text-muted-foreground sm:text-[11px]">{componentEvidenceText(component.evidence)}</div>
                 )}
                 <span
                   tabIndex={0}
                   title={sourceDetails.title}
                   aria-label={sourceDetails.title}
-                  className="mx-auto mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                  className="mx-auto mt-1 inline-flex max-w-full items-center justify-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground sm:px-2"
                 >
-                  <Info className="h-3 w-3" />
-                  Sources
+                  <Info className="h-3 w-3 shrink-0" />
+                  <span className="truncate">Sources</span>
                 </span>
               </div>
             );
