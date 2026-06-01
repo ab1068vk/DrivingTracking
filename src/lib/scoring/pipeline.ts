@@ -1,4 +1,20 @@
-export const SCORING_PIPELINE = Object.freeze([
+type ScoringStageResult = Record<string, unknown>;
+
+export interface ScoringPipelineContext {
+  routePoints: unknown[];
+  events: unknown[];
+  settings: Record<string, unknown>;
+  externalContext: Record<string, unknown>;
+  stages: Record<string, ScoringStageResult>;
+  [key: string]: unknown;
+}
+
+export interface ScoringPipelineStage {
+  name: string;
+  fn?: (ctx: ScoringPipelineContext) => ScoringStageResult;
+}
+
+export const SCORING_PIPELINE: readonly ScoringPipelineStage[] = Object.freeze([
   Object.freeze({ name: 'safety_base' }),
   Object.freeze({ name: 'braking_efficiency' }),
   Object.freeze({ name: 'speed_compliance' }),
@@ -19,14 +35,24 @@ export const SCORING_PIPELINE = Object.freeze([
   Object.freeze({ name: 'overall_blend' }),
 ]);
 
-export function runScoringPipeline(routePoints, events, settings, externalContext = {}, stages = SCORING_PIPELINE) {
+const recordOrEmpty = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+);
+
+export function runScoringPipeline(
+  routePoints: unknown[],
+  events: unknown[],
+  settings: Record<string, unknown>,
+  externalContext: Record<string, unknown> = {},
+  stages: readonly ScoringPipelineStage[] = SCORING_PIPELINE
+): ScoringPipelineContext {
   let ctx = {
     routePoints: Array.isArray(routePoints) ? routePoints : [],
     events: Array.isArray(events) ? events : [],
-    settings: settings || {},
-    externalContext: externalContext || {},
-    stages: {},
-  };
+    settings: recordOrEmpty(settings),
+    externalContext: recordOrEmpty(externalContext),
+    stages: {} as Record<string, ScoringStageResult>,
+  } satisfies ScoringPipelineContext;
 
   for (const stage of stages || []) {
     const name = stage?.name;
@@ -58,12 +84,12 @@ export function createScoringPipelineContext({
   settings = {},
   externalContext = {},
   stages = {},
-} = {}) {
+}: Partial<ScoringPipelineContext> = {}): ScoringPipelineContext {
   return {
     routePoints: Array.isArray(routePoints) ? routePoints : [],
     events: Array.isArray(events) ? events : [],
-    settings: settings || {},
-    externalContext: externalContext || {},
-    stages: Object.freeze({ ...(stages || {}) }),
+    settings: recordOrEmpty(settings),
+    externalContext: recordOrEmpty(externalContext),
+    stages: Object.freeze({ ...recordOrEmpty(stages) }) as Record<string, ScoringStageResult>,
   };
 }

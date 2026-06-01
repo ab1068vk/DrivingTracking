@@ -7,7 +7,7 @@
  * @returns {number} The constrained value.
  * @example clamp(120, 0, 100)
  */
-export function clamp(value, min, max) {
+export function clamp(value: number, min: number, max: number): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return min;
   return Math.min(max, Math.max(min, numeric));
@@ -20,8 +20,8 @@ export function clamp(value, min, max) {
  * @param {number[]} ys
  * @returns {number} Correlation in [-1, 1], or 0 when insufficient/flat.
  */
-export function pearsonCorrelation(xs = [], ys = []) {
-  const pairs = [];
+export function pearsonCorrelation(xs: number[] = [], ys: number[] = []): number {
+  const pairs: Array<readonly [number, number]> = [];
   const count = Math.min(xs.length, ys.length);
   for (let i = 0; i < count; i++) {
     const x = Number(xs[i]);
@@ -30,12 +30,13 @@ export function pearsonCorrelation(xs = [], ys = []) {
   }
   if (pairs.length < 2) return 0;
 
-  const meanX = pairs.reduce((sum, [x]) => sum + x, 0) / pairs.length;
-  const meanY = pairs.reduce((sum, [, y]) => sum + y, 0) / pairs.length;
+  const meanX = pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length;
+  const meanY = pairs.reduce((sum, pair) => sum + pair[1], 0) / pairs.length;
   let numerator = 0;
   let denomX = 0;
   let denomY = 0;
-  pairs.forEach(([x, y]) => {
+  pairs.forEach((pair) => {
+    const [x, y] = pair;
     const dx = x - meanX;
     const dy = y - meanY;
     numerator += dx * dy;

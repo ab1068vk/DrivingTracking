@@ -170,8 +170,28 @@ import {
   vehicleSpeedKmh,
   zoneFromP85
 } from '../route/osmLookup.js';
+import type { RoutePoint, TripStats } from '@/types';
 
-export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DEFAULT_THRESHOLDS) {
+type DrivingThresholds = Record<string, unknown>;
+type ScoreFields = Record<string, unknown>;
+
+interface SviSample {
+  index: number;
+  speed: number;
+}
+
+interface SviGroup {
+  multiplier: number;
+  samples: SviSample[];
+  deviation?: number;
+  distanceKm?: number;
+  score?: number;
+}
+
+export function calculateJerkScore(
+  cleanPoints: RoutePoint[] = [],
+  distanceKmOrThresholds: number | DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const thresholds = typeof distanceKmOrThresholds === 'number'
     ? DEFAULT_THRESHOLDS
     : distanceKmOrThresholds || DEFAULT_THRESHOLDS;
@@ -246,9 +266,12 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DE
   };
 }
 
-export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateHillDrivingScore(
+  cleanPoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const maxAltitudeAccuracy = thresholds.MAX_ALTITUDE_ACCURACY_M ?? DEFAULT_THRESHOLDS.MAX_ALTITUDE_ACCURACY_M;
-  const hasReliableAltitude = (point) => (
+  const hasReliableAltitude = (point: RoutePoint | null | undefined): boolean => (
     Number.isFinite(point?.altitude) &&
     (!Number.isFinite(point?.altitude_accuracy) || point.altitude_accuracy <= maxAltitudeAccuracy)
   );
@@ -363,7 +386,11 @@ export function calculateHillDrivingScore(cleanPoints = [], thresholds = DEFAULT
   };
 }
 
-export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, thresholds = DEFAULT_THRESHOLDS) {
+export function calculateEcoDrivingScore(
+  cleanPoints: RoutePoint[] = [],
+  stats: TripStats = {},
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const ecoConfig = resolveEcoScoringConfig(thresholds);
   const obdEco = calculateObdEcoSignals(cleanPoints, thresholds);
   if (ecoConfig.invalid) {
@@ -428,7 +455,7 @@ export function calculateEcoDrivingScore(cleanPoints = [], stats = {}, threshold
   };
 }
 
-export function unavailableSvi(sampleCount) {
+export function unavailableSvi(sampleCount: number): ScoreFields {
   return {
     speed_variability_index: null,
     svi_score: null,
@@ -438,12 +465,15 @@ export function unavailableSvi(sampleCount) {
   };
 }
 
-export function standardDeviation(samples) {
+export function standardDeviation(samples: number[]): number {
   const mean = average(samples);
   return Math.sqrt(average(samples.map((speed) => (speed - mean) ** 2)));
 }
 
-export function calculateObdEcoSignals(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateObdEcoSignals(
+  cleanPoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   let obdPowertrainSampleCount = 0;
   let obdIdleSeconds = 0;
   let obdOverRevCount = 0;
@@ -489,7 +519,11 @@ export function calculateObdEcoSignals(cleanPoints = [], thresholds = DEFAULT_TH
   };
 }
 
-export function sviDistanceKm(samples, cleanPoints, thresholds) {
+export function sviDistanceKm(
+  samples: SviSample[],
+  cleanPoints: RoutePoint[],
+  thresholds: DrivingThresholds
+): number {
   return samples.reduce((distance, sample) => {
     if (sample.index === 0) return distance;
     const segment = calculateSegmentMetrics(cleanPoints[sample.index - 1], cleanPoints[sample.index], thresholds);
@@ -497,7 +531,10 @@ export function sviDistanceKm(samples, cleanPoints, thresholds) {
   }, 0);
 }
 
-export function calculateSpeedVariabilityIndex(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateSpeedVariabilityIndex(
+  cleanPoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const samples = cleanPoints
     .map((_, index) => ({ index, speed: reliablePointSpeed(cleanPoints, index, thresholds) }))
     .filter((sample) => Number.isFinite(sample.speed) && sample.speed > SVI_DEFAULTS.MOVING_SPEED_FLOOR_KMH);
@@ -530,7 +567,7 @@ export function calculateSpeedVariabilityIndex(cleanPoints = [], thresholds = DE
 
   const scoredDistanceKm = scorableGroups.reduce((sum, group) => sum + group.distanceKm, 0);
   const scoredSampleCount = scorableGroups.reduce((sum, group) => sum + group.samples.length, 0);
-  const weightFor = (group) => (
+  const weightFor = (group: SviGroup): number => (
     scoredDistanceKm > 0 ? group.distanceKm / scoredDistanceKm : group.samples.length / scoredSampleCount
   );
   const svi = round1(scorableGroups.reduce((sum, group) => sum + group.deviation * weightFor(group), 0));
@@ -555,7 +592,10 @@ export function calculateSpeedVariabilityIndex(cleanPoints = [], thresholds = DE
   };
 }
 
-export function calculateFuelBandScore(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateFuelBandScore(
+  cleanPoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   let totalMovingSeconds = 0;
   let optimalBandSeconds = 0;
   let highSpeedSeconds = 0;

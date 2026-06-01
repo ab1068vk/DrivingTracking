@@ -46,6 +46,14 @@ import {
 import {
   explainScores
 } from '../../lib/scoring/explainer.js';
+import type {
+  ComponentScores,
+  DrivingEvent,
+  RoutePoint,
+  ScoreProvenance,
+  TripRecord,
+  TripStats,
+} from '@/types';
 
 import {
   CLOSE_PROXIMITY_DECAY_BASE,
@@ -277,7 +285,17 @@ import {
   summarizePhoneUseEvents
 } from '../detection/harshBraking.js';
 
-export function calculateRouteSummary(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
+type DrivingThresholds = Record<string, unknown>;
+type ScoreFields = Record<string, unknown>;
+type TimeInput = string | number | Date | null | undefined;
+type ScoringContext = Record<string, unknown>;
+
+export function calculateRouteSummary(
+  points: RoutePoint[],
+  startTime: TimeInput,
+  endTime: TimeInput,
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const cleaned = cleanRoutePoints(points, thresholds);
   const stats = calculateTripStats(cleaned, startTime, endTime, thresholds, {
     raw_route_points: points,
@@ -287,12 +305,16 @@ export function calculateRouteSummary(points, startTime, endTime, thresholds = D
   return { points: cleaned, stats, events, scores };
 }
 
-export function generatedTripId(prefix = 'trip') {
+export function generatedTripId(prefix = 'trip'): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}_${crypto.randomUUID()}`;
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_THRESHOLDS) {
+export function splitTripAtStops(
+  trip: TripRecord,
+  minParkMinutes = 5,
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): TripRecord[] {
   const routePoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
   if (routePoints.length < 2) return [];
 
@@ -367,7 +389,7 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
   });
 }
 
-export function calculateFatigueScore(durationSeconds, routePoints = []) {
+export function calculateFatigueScore(durationSeconds: number, routePoints: RoutePoint[] = []): ScoreFields {
   const durationMinutes = (durationSeconds || 0) / 60;
   const durationScore = Math.min(5, durationMinutes / 30);
   const points = Array.isArray(routePoints) ? routePoints : [];
@@ -397,7 +419,7 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
   return Math.round(riskOnTenPointScale * 10);
 }
 
-export function parseClockMinutes(value, fallbackHour) {
+export function parseClockMinutes(value: unknown, fallbackHour: number): number {
   if (typeof value === 'string') {
     const [hour, minute = '0'] = value.split(':');
     const h = Number(hour);
@@ -407,7 +429,7 @@ export function parseClockMinutes(value, fallbackHour) {
   return fallbackHour * 60;
 }
 
-export function isWithinClockWindow(minutes, startMinutes, endMinutes) {
+export function isWithinClockWindow(minutes: number, startMinutes: number, endMinutes: number): boolean {
   const dayMinutes = 24 * 60;
   const normalized = ((minutes % dayMinutes) + dayMinutes) % dayMinutes;
   const start = ((startMinutes % dayMinutes) + dayMinutes) % dayMinutes;
@@ -418,17 +440,17 @@ export function isWithinClockWindow(minutes, startMinutes, endMinutes) {
     : normalized >= start || normalized < end;
 }
 
-export function localDateKey(date) {
+export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
-export function dayOfYear(date) {
+export function dayOfYear(date: Date): number {
   const start = Date.UTC(date.getFullYear(), 0, 0);
   const current = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
   return Math.floor((current - start) / 86400000);
 }
 
-export function sunEventMinutes(date, lat, lng, isSunrise) {
+export function sunEventMinutes(date: Date, lat: number, lng: number, isSunrise: boolean): number {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 89.8) return null;
 
   const zenith = 90.833;
@@ -461,7 +483,10 @@ export function sunEventMinutes(date, lat, lng, isSunrise) {
   return ((utcMinutes - date.getTimezoneOffset()) % (24 * 60) + (24 * 60)) % (24 * 60);
 }
 
-export function createTripNightChecker(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function createTripNightChecker(
+  routePoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): (point: RoutePoint) => boolean {
   const fallbackStart = parseClockMinutes(
     thresholds.NIGHT_START_TIME,
     thresholds.NIGHT_START_HOUR ?? DEFAULT_THRESHOLDS.NIGHT_START_HOUR
@@ -518,7 +543,10 @@ export function createTripNightChecker(routePoints = [], thresholds = DEFAULT_TH
   };
 }
 
-export function isNightDrivingTime(point, thresholds = DEFAULT_THRESHOLDS) {
+export function isNightDrivingTime(
+  point: RoutePoint,
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): boolean {
   if (!point?.timestamp) return false;
 
   const date = new Date(point.timestamp);
@@ -544,7 +572,10 @@ export function isNightDrivingTime(point, thresholds = DEFAULT_THRESHOLDS) {
   );
 }
 
-export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateNightPenalty(
+  routePoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   if (!routePoints || routePoints.length === 0) return 0;
 
   const isNightForTrip = createTripNightChecker(routePoints, thresholds);
@@ -572,7 +603,7 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
  * @param {string} endTime - ISO timestamp
  * @returns {Object} Trip statistics
  */
-export function permissionLossEventTimesMs(context = {}) {
+export function permissionLossEventTimesMs(context: ScoringContext = {}): number[] {
   const timeline = Array.isArray(context?.native_tracking_timeline)
     ? context.native_tracking_timeline
     : Array.isArray(context?.timeline)
@@ -584,7 +615,11 @@ export function permissionLossEventTimesMs(context = {}) {
     .filter(Number.isFinite);
 }
 
-export function gapContainsPermissionLoss(startPoint, endPoint, permissionLossTimes = []) {
+export function gapContainsPermissionLoss(
+  startPoint: RoutePoint,
+  endPoint: RoutePoint,
+  permissionLossTimes: number[] = []
+): boolean {
   if (!permissionLossTimes.length) return false;
   const startMs = timestampMs(startPoint);
   const endMs = timestampMs(endPoint);
@@ -592,7 +627,7 @@ export function gapContainsPermissionLoss(startPoint, endPoint, permissionLossTi
   return permissionLossTimes.some((eventMs) => eventMs >= startMs && eventMs <= endMs);
 }
 
-export function intersectionScoringPoints(points = [], context = {}) {
+export function intersectionScoringPoints(points: RoutePoint[] = [], context: ScoringContext = {}): RoutePoint[] {
   const candidates = [
     context?.intersection_scoring_points,
     context?.raw_route_points,
@@ -602,7 +637,7 @@ export function intersectionScoringPoints(points = [], context = {}) {
   return candidates.find((candidate) => Array.isArray(candidate) && candidate.length) || points || [];
 }
 
-export function sanitizePrivateIntersectionStats(stats = {}, removeCoordinates = false) {
+export function sanitizePrivateIntersectionStats(stats: ScoreFields = {}, removeCoordinates = false): ScoreFields {
   if (!removeCoordinates || !Array.isArray(stats.intersection_events)) return stats;
   return {
     ...stats,
@@ -613,7 +648,7 @@ export function sanitizePrivateIntersectionStats(stats = {}, removeCoordinates =
   };
 }
 
-export function canUseSimpleLongRouteStats(points = []) {
+export function canUseSimpleLongRouteStats(points: RoutePoint[] = []): boolean {
   if (!Array.isArray(points) || points.length < 1500) return false;
   let firstSpeed = null;
   for (const point of points) {
@@ -636,7 +671,12 @@ export function canUseSimpleLongRouteStats(points = []) {
   return true;
 }
 
-export function calculateSimpleLongRouteStats(points = [], startTime, endTime, thresholds = DEFAULT_THRESHOLDS) {
+export function calculateSimpleLongRouteStats(
+  points: RoutePoint[] = [],
+  startTime: TimeInput,
+  endTime: TimeInput,
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): TripStats {
   let totalDistance = 0;
   let maxSpeed = 0;
   for (let i = 1; i < points.length; i++) {
@@ -709,7 +749,13 @@ export function calculateSimpleLongRouteStats(points = [], startTime, endTime, t
   };
 }
 
-export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS, context = {}) {
+export function calculateTripStats(
+  points: RoutePoint[],
+  startTime: TimeInput,
+  endTime: TimeInput,
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds,
+  context: ScoringContext = {}
+): TripStats {
   if (!context?.raw_route_points && canUseSimpleLongRouteStats(points)) {
     return calculateSimpleLongRouteStats(points, startTime, endTime, thresholds);
   }
@@ -932,9 +978,14 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
  * @param {Object} stats - Trip statistics (distance, duration, etc.)
  * @returns {Object} { overall, safety, smoothness, eco }
  */
-export function calculateEngineStressScore(events = [], stats = {}, routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateEngineStressScore(
+  events: DrivingEvent[] = [],
+  stats: TripStats = {},
+  routePoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const basePenalty = { low: 2, medium: 5, high: 10 };
-  const speedMultiplier = (speedKmh) => (
+  const speedMultiplier = (speedKmh: number): number => (
     speedKmh >= 100 ? 3.0 : speedKmh >= 70 ? 2.0 : speedKmh >= 40 ? 1.3 : 1.0
   );
   let engineStressRaw = 0;
@@ -959,11 +1010,11 @@ export function calculateEngineStressScore(events = [], stats = {}, routePoints 
   };
 }
 
-export function calculateTireWearUnits(events = []) {
+export function calculateTireWearUnits(events: DrivingEvent[] = []): ScoreFields {
   const severityBase = { low: 1, medium: 2.5, high: 5 };
   let units = 0;
   let missingSpeedEventCount = 0;
-  const speedFactor = (event, referenceSpeed) => {
+  const speedFactor = (event: DrivingEvent, referenceSpeed: number): number => {
     const speed = Number(event.speed_kmh);
     if (event.speed_kmh == null || event.speed_kmh === '' || !Number.isFinite(speed) || speed < 0) {
       missingSpeedEventCount++;
@@ -986,7 +1037,7 @@ export function calculateTireWearUnits(events = []) {
   };
 }
 
-export function calculateAggressiveDrivingScore(events = [], stats = {}) {
+export function calculateAggressiveDrivingScore(events: DrivingEvent[] = [], stats: TripStats = {}): number {
   const aggressiveEventTypes = new Set([
     EVENT_TYPES.HARSH_BRAKE,
     EVENT_TYPES.RAPID_ACCELERATION,
@@ -1011,7 +1062,7 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
   };
 }
 
-export function calculateDefensiveDrivingScore(scores = {}) {
+export function calculateDefensiveDrivingScore(scores: ScoreFields = {}): number | null {
   const blend = scoringValue('DEFENSIVE_SCORE_BLEND_WEIGHTS');
   const stopStartSampleCount = Number(
     scores.stop_start_pattern_sample_count ?? scores.stop_start_pattern_count ?? 0
@@ -1040,17 +1091,23 @@ export function calculateDefensiveDrivingScore(scores = {}) {
   };
 }
 
-export function stopStartScoreForContext(patternCount, distanceKm, minDistanceKm) {
+export function stopStartScoreForContext(patternCount: number, distanceKm: number, minDistanceKm: number): number | null {
   if (distanceKm < minDistanceKm) return null;
   const maxObservedPatternCycles = (distanceKm / STOP_START_NORMALISATION_WINDOW_KM) * STOP_START_MAX_CYCLES_PER_5_KM;
   return Math.round(100 - clamp((patternCount / Math.max(1, maxObservedPatternCycles)) * 100, 0, 100));
 }
 
-export function highwayEvidenceDistanceKm(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function highwayEvidenceDistanceKm(
+  routePoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): number {
   return stopStartEvidenceDistances(routePoints, thresholds).highwayDistanceKm;
 }
 
-export function stopStartEvidenceDistances(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
+export function stopStartEvidenceDistances(
+  routePoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds
+): ScoreFields {
   const points = routePoints || [];
   if (points.length < 2) {
     return {
@@ -1080,14 +1137,14 @@ export function stopStartEvidenceDistances(routePoints = [], thresholds = DEFAUL
 }
 
 export function calculateTripScores(
-  events,
-  stats,
-  routePoints = [],
-  thresholds = DEFAULT_THRESHOLDS,
-  durationSeconds = stats?.duration_seconds || 0,
-  phoneUseOrOptions = {},
-  maybeOptions = {}
-) {
+  events: DrivingEvent[] | { events?: DrivingEvent[]; phoneUse?: ScoreFields },
+  stats: TripStats,
+  routePoints: RoutePoint[] = [],
+  thresholds: DrivingThresholds = DEFAULT_THRESHOLDS as DrivingThresholds,
+  durationSeconds = Number(stats?.duration_seconds) || 0,
+  phoneUseOrOptions: ScoreFields = {},
+  maybeOptions: ScoringContext = {}
+): ScoreFields & { component_scores?: ComponentScores; score_provenance?: ScoreProvenance } {
   setRoadTypeSegmentScorer(calculateTripScores);
   const phoneUseFromEvents = events?.phoneUse || {};
   const options = phoneUseOrOptions?.includeRoadTypeSegments != null
@@ -1245,7 +1302,7 @@ export function calculateTripScores(
     : 0;
   const SCORE_FLOOR = 0;
   const MAX_DEDUCTION = 100;
-  const normalize = (totalPenalty) => {
+  const normalize = (totalPenalty: number): number => {
     const penaltyRate = totalPenalty / distKm;
     const deduction = Math.min(penaltyRate * PENALTY_SCALE_FACTOR, MAX_DEDUCTION);
     return Math.max(SCORE_FLOOR, Math.round(100 - deduction));
@@ -1356,7 +1413,7 @@ export function calculateTripScores(
   const altitudeSampleCount = routePoints.filter((point) => (
     Number.isFinite(Number(point?.altitude ?? point?.altitude_m))
   )).length;
-  const evidenceFor = (componentKey, sampleCount, value, distanceKm = tripDistanceKm) => (
+  const evidenceFor = (componentKey: string, sampleCount: number, value: unknown, distanceKm = tripDistanceKm) => (
     registeredComponentConfidence(componentKey, distanceKm, sampleCount, value)
   );
 
@@ -1464,7 +1521,7 @@ export function calculateTripScores(
   const distractionConfidence = componentEvidence.distraction;
   const overallConfidenceLevel = componentEvidence.overall;
   const scoreConfidence = confidenceNumericValue(overallConfidenceLevel);
-  const scoreOrNull = (value, evidence) => (
+  const scoreOrNull = (value: unknown, evidence: unknown): unknown => (
     evidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : value
   );
   const overallScoreValue = scoreOrNull(overall, componentEvidence.overall);
@@ -1598,7 +1655,9 @@ export function calculateTripScores(
   const phoneSources = confirmedPhoneScoreAvailable
     ? [...new Set(phoneUseResult.data_sources?.length ? phoneUseResult.data_sources : ['android_usage_access'])]
     : [];
-  const combinedSources = (...sources) => [...new Set(sources.flat().filter(Boolean))];
+  const combinedSources = (...sources: Array<string[] | string | null | undefined>): string[] => [
+    ...new Set(sources.flat().filter((source): source is string => Boolean(source))),
+  ];
   const vehicleSpeedSources = combinedSources(gpsSources, obdSpeedObserved ? ['obd_bluetooth'] : []);
   const laneChangingSources = laneChanging.lane_changing_confidence === 'imu_calibrated'
     ? combinedSources(gpsSources, ['device_motion_imu'])
@@ -1608,7 +1667,7 @@ export function calculateTripScores(
   const inferredSpeedLimitNote = inferredSpeedLimitScoring
     ? 'Speed-limit compliance used inferred road-type limits because no posted OpenStreetMap maxspeed was available; speeding penalties are half-weighted.'
     : undefined;
-  const joinedNote = (...notes) => notes.filter(Boolean).join(' ') || undefined;
+  const joinedNote = (...notes: Array<string | undefined>): string | undefined => notes.filter(Boolean).join(' ') || undefined;
   const component_scores = {
     overall: createComponentScore(overallScoreValue, componentEvidence.overall, combinedSources(vehicleSpeedSources, phoneSources, speedLimitSources), {
       sampleCount: routeSampleCount,
