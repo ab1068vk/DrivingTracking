@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, test } from 'vitest';
 import {
   CALIBRATION_STATUSES,
   DEFAULT_HOURLY_RISK_PROFILE,
@@ -33,6 +34,16 @@ describe('scoring constants registry', () => {
       expect(entry.calibration_note, key).toEqual(expect.any(String));
       expect(validStatuses.has(entry.calibration_status), key).toBe(true);
     });
+  });
+
+  test('every constant with @promotionBlocker has a calibrationRequirement comment', () => {
+    const source = readFileSync(new URL('../scoringConstants.js', import.meta.url), 'utf8');
+    const promotionBlockerBlocks = source.match(/\/\*\*[\s\S]*?@promotionBlocker true[\s\S]*?\*\//g) ?? [];
+
+    expect(promotionBlockerBlocks.length).toBeGreaterThan(0);
+    for (const block of promotionBlockerBlocks) {
+      expect(block).toContain('@calibrationRequirement');
+    }
   });
 
   it('drives existing scoring exports from the central values', () => {
