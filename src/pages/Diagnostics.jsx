@@ -42,6 +42,7 @@ import {
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
 import { logError } from '@/lib/errorReporting';
+import PageNotFound from '@/lib/PageNotFound';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -142,7 +143,7 @@ function motionEvidenceLabel(status) {
   return labels[status] || labels.none;
 }
 
-export default function Diagnostics() {
+function DiagnosticsContent() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
@@ -530,4 +531,12 @@ export default function Diagnostics() {
       </section>
     </div>
   );
+}
+
+export default function Diagnostics() {
+  if (!import.meta.env.DEV) {
+    return <PageNotFound />;
+  }
+
+  return <DiagnosticsContent />;
 }

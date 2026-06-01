@@ -1,8 +1,10 @@
-import { cleanRoutePoints, haversineDistance } from '@/lib/gps/math';
-import { ROUTE_RISK_SNAP_DISTANCE_M } from '@/lib/routeRisk/constants';
+import { cleanRoutePoints } from '@/lib/gps/math';
+import { ROUTE_RISK_PRIVACY_ZONE_GUARD_M, ROUTE_RISK_SNAP_DISTANCE_M } from '@/lib/routeRisk/constants';
 import {
   boundsForPoint,
   boundsForSegment,
+  cellBoundsFromKey,
+  cellCenterFromKey,
   cellKeyForPoint,
   cellKeysForBounds,
   expandBounds,
@@ -10,6 +12,7 @@ import {
 } from '@/lib/routeRisk/grid';
 import { finiteCoord, isNearPrivacyZone } from '@/lib/routeRisk/privacy';
 import { dominantEventType, scoreRouteRiskCell } from '@/lib/routeRisk/scoring';
+import { isRouteRiskHash, routeRiskLookupPrefixForHash } from '@/lib/routeRisk/segmentKey';
 import { buildRouteRiskCellsForTrip } from '@/lib/routeRisk/tripCells';
 
 export const createRouteRiskIndexMap = (entries = [], metadata = {}) => {
@@ -34,22 +37,69 @@ const mergeEventTypes = (left = {}, right = {}) => {
   return merged;
 };
 
+const routeRiskKeyForCell = (cell = {}, fallbackKey = '') => {
+  const explicitKey = cell.key || fallbackKey;
+  if (isRouteRiskHash(explicitKey)) return String(explicitKey);
+
+  const lat = finiteCoord(cell.lat);
+  const lng = finiteCoord(cell.lng);
+  if (lat != null && lng != null) return cellKeyForPoint(lat, lng);
+
+  const legacyCenter = cellCenterFromKey(explicitKey);
+  return legacyCenter ? cellKeyForPoint(legacyCenter.lat, legacyCenter.lng) : String(explicitKey || '');
+};
+
+export const sanitizeRouteRiskCellForStorage = (cell = {}, fallbackKey = '') => {
+  const key = routeRiskKeyForCell(cell, fallbackKey);
+  const {
+    lat,
+    lng,
+    bounds,
+    segmentKeys,
+    ...rest
+  } = cell;
+  return {
+    ...rest,
+    key,
+    cellHash: key,
+    lookupHash: isRouteRiskHash(key) ? routeRiskLookupPrefixForHash(key) : undefined,
+  };
+};
+
+const cellOverlapsPrivacyZone = (cell = {}, privacyZones = []) => {
+  const lat = finiteCoord(cell.lat);
+  const lng = finiteCoord(cell.lng);
+  if (lat != null && lng != null && isNearPrivacyZone(lat, lng, privacyZones)) return true;
+
+  const cellBounds = cell.bounds || cellBoundsFromKey(cell.key);
+  if (!cellBounds) return false;
+
+  return (privacyZones || []).some((zone) => {
+    const zoneLat = finiteCoord(zone?.lat);
+    const zoneLng = finiteCoord(zone?.lng);
+    const radiusM = Number(zone?.radius_m);
+    if (zoneLat == null || zoneLng == null || !Number.isFinite(radiusM) || radiusM <= 0) return false;
+    const zoneBounds = boundsForPoint(zoneLat, zoneLng, radiusM + ROUTE_RISK_PRIVACY_ZONE_GUARD_M);
+    return zoneBounds ? intersectsBounds(cellBounds, zoneBounds) : false;
+  });
+};
+
 export const mergeCellIntoIndex = (index, cell) => {
   if (!cell?.key) return index;
-  const existing = index.get(cell.key);
+  const normalized = sanitizeRouteRiskCellForStorage(cell);
+  const existing = index.get(normalized.key);
   if (!existing) {
-    index.set(cell.key, scoreRouteRiskCell({ ...cell }));
+    index.set(normalized.key, scoreRouteRiskCell({ ...normalized }));
     return index;
   }
 
-  index.set(cell.key, scoreRouteRiskCell({
+  index.set(normalized.key, scoreRouteRiskCell({
     ...existing,
-    tripCount: (existing.tripCount || 0) + (cell.tripCount || 0),
-    totalEvents: (existing.totalEvents || 0) + (cell.totalEvents || 0),
-    harshCount: (existing.harshCount || 0) + (cell.harshCount || 0),
-    speedSum: (existing.speedSum || 0) + (cell.speedSum || 0),
-    eventTypes: mergeEventTypes(existing.eventTypes, cell.eventTypes),
-    segmentKeys: mergeEventTypes(existing.segmentKeys, cell.segmentKeys),
+    tripCount: (existing.tripCount || 0) + (normalized.tripCount || 0),
+    totalEvents: (existing.totalEvents || 0) + (normalized.totalEvents || 0),
+    harshCount: (existing.harshCount || 0) + (normalized.harshCount || 0),
+    speedSum: (existing.speedSum || 0) + (normalized.speedSum || 0),
+    eventTypes: mergeEventTypes(existing.eventTypes, normalized.eventTypes),
   }));
   return index;
 };
@@ -87,17 +137,11 @@ export function buildRouteRiskIndexFromTrips(trips = [], privacyZones = []) {
 export function compactRouteRiskIndex(index = createRouteRiskIndexMap(), privacyZones = []) {
   const compacted = createRouteRiskIndexMap([], index.metadata || {});
   for (const [key, item] of index.entries()) {
-    const hasCenter = Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lng));
-    if (hasCenter && isNearPrivacyZone(item.lat, item.lng, privacyZones)) continue;
-    const cellKey = item.key || key;
-    const nearby = hasCenter && !item.bounds && !String(cellKey).includes(':')
-      ? [...compacted.values()].find((candidate) => (
-        Number.isFinite(Number(candidate?.lat)) &&
-        Number.isFinite(Number(candidate?.lng)) &&
-        haversineDistance(item.lat, item.lng, candidate.lat, candidate.lng) * 1000 <= ROUTE_RISK_SNAP_DISTANCE_M
-      ))
-      : null;
-    mergeCellIntoIndex(compacted, { ...item, key: nearby?.key || cellKey });
+    const keyedItem = { ...item, key: item?.key || key };
+    if (cellOverlapsPrivacyZone(keyedItem, privacyZones)) continue;
+
+    const cellKey = routeRiskKeyForCell(item, key);
+    mergeCellIntoIndex(compacted, sanitizeRouteRiskCellForStorage({ ...item, key: cellKey }));
   }
   return compacted;
 }
@@ -108,10 +152,19 @@ export function getRouteRiskCellsForBounds(index = new Map(), bounds = {}) {
 
   const seen = new Set();
   const cells = [];
-  for (const key of cellKeysForBounds(queryBounds)) {
-    const cell = index.get(key);
+  const lookupKeys = cellKeysForBounds(queryBounds);
+  for (const [key, cell] of index.entries()) {
     if (!cell || seen.has(key)) continue;
-    if (cell.bounds && !intersectsBounds(cell.bounds, queryBounds)) continue;
+    const cellKey = cell.key || key;
+    const matchesLookup = lookupKeys.some((lookupKey) => (
+      cellKey === lookupKey ||
+      String(cellKey).startsWith(String(lookupKey)) ||
+      String(lookupKey).startsWith(String(cellKey))
+    ));
+    if (!matchesLookup) continue;
+
+    const cellBounds = cell.bounds || cellBoundsFromKey(cellKey);
+    if (cellBounds && !intersectsBounds(cellBounds, queryBounds)) continue;
     seen.add(key);
     cells.push(cell);
   }

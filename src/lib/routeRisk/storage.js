@@ -17,6 +17,7 @@ import {
   compactRouteRiskIndex,
   createRouteRiskIndexMap,
   mergeRouteRiskTripIntoIndexMap,
+  sanitizeRouteRiskCellForStorage,
 } from '@/lib/routeRisk/aggregate';
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -63,7 +64,11 @@ const transactionDone = (tx) => new Promise((resolve, reject) => {
 });
 
 const indexRecordFromMap = (index = new Map()) => {
-  let entries = [...index.entries()].map(([key, value]) => [key, { ...value, key: value.key || key }]);
+  const compacted = compactRouteRiskIndex(index);
+  let entries = [...compacted.entries()].map(([key, value]) => {
+    const cell = sanitizeRouteRiskCellForStorage(value, key);
+    return [cell.key || key, cell];
+  });
   if (JSON.stringify(entries).length > MAX_SERIALIZED_LENGTH) {
     entries = entries
       .sort((a, b) => (b[1].tripCount || 0) - (a[1].tripCount || 0))

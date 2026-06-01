@@ -216,18 +216,23 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                 <SettingRow
                   icon={Info}
                   label="Data Retention"
-                  sublabel="Keep local trip history on this device"
+                  sublabel="Older completed trips are permanently deleted from this device"
                 >
                   <select
-                    value={cfg.data_retention_days}
+                    value={cfg.data_retention_months}
                     onChange={e => updateRetention(Number(e.target.value))}
                     className="bg-card border border-border rounded-lg text-xs px-2 py-1"
                   >
-                    <option value={90}>90 days</option>
-                    <option value={365}>1 year</option>
-                    <option value={0}>Forever</option>
+                    <option value={6}>6 months</option>
+                    <option value={12}>1 year</option>
+                    <option value={24}>2 years (default)</option>
+                    <option value={36}>3 years</option>
+                    <option value={0}>Never</option>
                   </select>
                 </SettingRow>
+                <div className="px-12 pb-3 text-xs leading-relaxed text-muted-foreground">
+                  Export a backup before shortening this setting.
+                </div>
                 <SettingRow
                   icon={Trash2}
                   label="Delete All Trips"

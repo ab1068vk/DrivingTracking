@@ -113,7 +113,7 @@ function routeRiskCellsNearCurrentLocation(routeRiskIndex, currentLocation, radi
  * @param {number|null} [params.weatherRiskScore] - Weather risk score from 0 to 100, or null when unavailable.
  * @param {{lat:number,lng:number}|null} [params.currentLocation] - Current GPS coordinate.
  * @param {object|null} [params.habitProfile] - Optional learned profile returned by buildHabitProfile.
- * @param {Map|null} [params.routeRiskIndex] - Optional pre-built 15m route-risk cell index.
+ * @param {Map|null} [params.routeRiskIndex] - Optional pre-built coarse-geohash route-risk cell index.
  * @param {Date|string|number|null} [params.now] - Optional clock for deterministic risk estimates.
  * @returns {object} Historical context risk estimate, or an insufficient-history state without a score.
  * @example estimatePredictiveRouteRisk({ trips, dangerZones, habitProfile })

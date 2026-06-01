@@ -5,9 +5,11 @@ export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
 export const ROUTE_RISK_CELL_SIZE_M = ROUTE_RISK_SNAP_DISTANCE_M;
 export const ROUTE_RISK_PRIVACY_ZONE_GUARD_M = 50;
 export const GRID_PRECISION = 3;
+export const ROUTE_RISK_GEOHASH_PRECISION = 5;
+export const ROUTE_RISK_GEOHASH_LOOKUP_PRECISION = 4;
 export const MAX_SERIALIZED_LENGTH = 2_000_000;
 export const MAX_STORED_CELLS = 5000;
-export const ROUTE_RISK_INDEX_SCHEMA_VERSION = 2;
+export const ROUTE_RISK_INDEX_SCHEMA_VERSION = 3;
 
 export const HARSH_EVENT_TYPES = new Set(['harsh_brake']);
 export const EXCLUDED_PROXY_EVENT_TYPES = new Set([

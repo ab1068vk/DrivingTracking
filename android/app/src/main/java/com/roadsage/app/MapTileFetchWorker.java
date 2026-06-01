@@ -32,6 +32,9 @@ public class MapTileFetchWorker extends Worker {
     private static final String TAG = "MapTileFetchWorker";
     private static final String KEY_LAST_PARKED = "last_parked_location";
     private static final Object GEOCODE_LOCK = new Object();
+    private static final String MAP_CACHE_PREFIX = "widget_map_";
+    private static final String LEGACY_MAP_CACHE_PREFIX = "parked_map_widget_";
+    private static final String MAP_CACHE_SUFFIX = ".png";
 
     static final String KEY_WIDGET_ID = "widget_id";
     static final String KEY_LAT = "lat";
@@ -60,6 +63,7 @@ public class MapTileFetchWorker extends Worker {
             getInputData().getBoolean(KEY_PRIVACY_ZONE, false) ||
             PrivacyZoneStore.findMatchingZone(lat, lng, context) != null
         ) {
+            deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);
             showPrivacyPlaceholder(context, widgetId);
             return Result.success();
         }
@@ -79,7 +83,7 @@ public class MapTileFetchWorker extends Worker {
         raw.recycle();
         drawParkedPin(pinned, tileW);
 
-        File cacheFile = getCacheFile(context, widgetId);
+        File cacheFile = getCacheFile(context, widgetId, lat, lng);
         try (FileOutputStream output = new FileOutputStream(cacheFile)) {
             pinned.compress(Bitmap.CompressFormat.PNG, 90, output);
             output.flush();
@@ -102,7 +106,39 @@ public class MapTileFetchWorker extends Worker {
     }
 
     static File getCacheFile(Context context, int widgetId) {
-        return new File(context.getFilesDir(), "parked_map_widget_" + widgetId + ".png");
+        return new File(context.getFilesDir(), LEGACY_MAP_CACHE_PREFIX + widgetId + MAP_CACHE_SUFFIX);
+    }
+
+    static File getCacheFile(Context context, int widgetId, double lat, double lng) {
+        if (!Double.isFinite(lat) || !Double.isFinite(lng)) return getCacheFile(context, widgetId);
+        return new File(
+            context.getFilesDir(),
+            String.format(Locale.US, MAP_CACHE_PREFIX + "%.4f_%.4f" + MAP_CACHE_SUFFIX, lat, lng)
+        );
+    }
+
+    static void deleteCacheForWidgetAndLocation(Context context, int widgetId, double lat, double lng) {
+        File legacyFile = getCacheFile(context, widgetId);
+        if (legacyFile.exists()) legacyFile.delete();
+
+        File locationFile = getCacheFile(context, widgetId, lat, lng);
+        if (locationFile.exists()) locationFile.delete();
+    }
+
+    static void clearWidgetMapCache(Context context) {
+        File[] cacheFiles = context.getFilesDir().listFiles((dir, name) -> (
+            name.endsWith(MAP_CACHE_SUFFIX) &&
+                (name.startsWith(MAP_CACHE_PREFIX) || name.startsWith(LEGACY_MAP_CACHE_PREFIX))
+        ));
+        if (cacheFiles == null) return;
+
+        for (File file : cacheFiles) {
+            if (!file.isFile()) continue;
+            boolean deleted = file.delete();
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Cleared widget cache file: " + file.getName() + " deleted=" + deleted);
+            }
+        }
     }
 
     private static void showPrivacyPlaceholder(Context context, int widgetId) {

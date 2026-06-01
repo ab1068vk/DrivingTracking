@@ -1,16 +1,13 @@
 import { calculateSegmentMetrics, cleanRoutePoints } from '@/lib/gps/math';
-import { GRID_PRECISION, HARSH_EVENT_TYPES, EXCLUDED_PROXY_EVENT_TYPES } from '@/lib/routeRisk/constants';
+import { HARSH_EVENT_TYPES, EXCLUDED_PROXY_EVENT_TYPES } from '@/lib/routeRisk/constants';
 import {
   boundsForPoint,
-  boundsForSegment,
-  cellBoundsFromKey,
-  cellCenterFromKey,
   cellKeyForPoint,
   cellKeysForBounds,
-  expandBounds,
 } from '@/lib/routeRisk/grid';
 import { finiteCoord, isNearPrivacyZone, isPrivacyMaskedPoint } from '@/lib/routeRisk/privacy';
 import { scoreRouteRiskCell } from '@/lib/routeRisk/scoring';
+import { isRouteRiskHash, routeRiskLookupPrefixForHash, segmentKey } from '@/lib/routeRisk/segmentKey';
 
 const pointMetadataKey = (point) => {
   const lat = finiteCoord(point?.lat ?? point?.coords?.latitude);
@@ -40,21 +37,11 @@ const cleanRoutePointsWithPrivacyMetadata = (routePoints = []) => {
   });
 };
 
-const roundCoord = (value) => Number(value).toFixed(GRID_PRECISION);
-
-export function segmentKey(lat1, lng1, lat2, lng2) {
-  const a = `${roundCoord(lat1)},${roundCoord(lng1)}`;
-  const b = `${roundCoord(lat2)},${roundCoord(lng2)}`;
-  return a <= b ? `${a}|${b}` : `${b}|${a}`;
-}
+export { segmentKey };
 
 const createCell = (key) => {
-  const center = cellCenterFromKey(key) || { lat: null, lng: null };
   return {
     key,
-    lat: center.lat,
-    lng: center.lng,
-    bounds: cellBoundsFromKey(key),
     tripCount: 0,
     totalEvents: 0,
     eventTypes: {},
@@ -74,7 +61,26 @@ const touchCell = (cells, key) => {
   return cell;
 };
 
-const addSegmentToCells = (cells, prev, curr, privacyZones) => {
+const sanitizePrecomputedCell = (cell = {}) => {
+  const key = isRouteRiskHash(cell.key)
+    ? cell.key
+    : cellKeyForPoint(cell.lat, cell.lng) || String(cell.key || '');
+  const {
+    lat,
+    lng,
+    bounds,
+    segmentKeys,
+    ...rest
+  } = cell;
+  return {
+    ...rest,
+    key,
+    cellHash: key,
+    lookupHash: isRouteRiskHash(key) ? routeRiskLookupPrefixForHash(key) : undefined,
+  };
+};
+
+const addSegmentToCells = (cells, prev, curr, privacyZones, visitedSegmentCells) => {
   const prevLat = finiteCoord(prev?.lat);
   const prevLng = finiteCoord(prev?.lng);
   const currLat = finiteCoord(curr?.lat);
@@ -90,13 +96,12 @@ const addSegmentToCells = (cells, prev, curr, privacyZones) => {
 
   const segment = calculateSegmentMetrics(prev, curr);
   const key = segmentKey(prevLat, prevLng, currLat, currLng);
-  const bounds = expandBounds(boundsForSegment(prevLat, prevLng, currLat, currLng), 1);
-  for (const cellKey of cellKeysForBounds(bounds)) {
-    const cell = touchCell(cells, cellKey);
+  if (!key) return;
+  const cell = touchCell(cells, key);
+  if (!visitedSegmentCells.has(key)) {
+    visitedSegmentCells.add(key);
     cell.tripCount += 1;
     cell.speedSum += Number(segment.reliableSpeedKmh) || 0;
-    cell.segmentKeys = cell.segmentKeys || {};
-    cell.segmentKeys[key] = (cell.segmentKeys[key] || 0) + 1;
   }
 };
 
@@ -117,15 +122,16 @@ const addEventToCells = (cells, event) => {
 export function buildRouteRiskCellsForTrip(trip = {}, privacyZones = [], options = {}) {
   if (trip?.status !== 'completed') return [];
   if (options.preferExisting !== false && Array.isArray(trip.route_risk_cells) && trip.route_risk_cells.length) {
-    return trip.route_risk_cells;
+    return trip.route_risk_cells.map(sanitizePrecomputedCell).filter((cell) => cell.key);
   }
 
   const points = cleanRoutePointsWithPrivacyMetadata(trip.route_points || []);
   if (points.length < 2) return [];
 
   const cells = new Map();
+  const visitedSegmentCells = new Set();
   for (let index = 1; index < points.length; index++) {
-    addSegmentToCells(cells, points[index - 1], points[index], privacyZones);
+    addSegmentToCells(cells, points[index - 1], points[index], privacyZones, visitedSegmentCells);
   }
   for (const event of trip.driving_events || []) {
     addEventToCells(cells, event);

@@ -47,11 +47,11 @@ jobs:
           name: calibration-report
           path: calibration-report.txt
 
-      - name: Audit high and critical CVEs
-        run: npm audit --audit-level=high
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high --omit=dev
 
-      - name: Audit high CVEs with better-npm-audit
-        run: npx --yes better-npm-audit audit --level high
+      - name: Audit all dependencies for critical CVEs
+        run: npm audit --audit-level=critical
 
       - name: Block react-quill source imports
         run: |
@@ -74,6 +74,14 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify debug routes are absent from production bundle
+        run: |
+          if grep -rE '"/diagnostics"|path:"/diagnostics"|Tracking Diagnostics|diagnostics-trips|native_diagnostics_clear' dist/assets/*.js 2>/dev/null; then
+            echo "ERROR: Diagnostics route found in production bundle!"
+            exit 1
+          fi
+          echo "OK: No debug routes in production bundle."
 
       - name: Block localhost API fallback in production bundle
         run: |

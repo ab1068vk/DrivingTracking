@@ -100,6 +100,8 @@ public final class PrivacyZoneStore {
         }
         encryptedPrefs(context).edit().putString(NATIVE_KEY, normalized.toString()).apply();
         EncryptedPreferenceStore.deletePlaintext(context, NATIVE_PREFS);
+        MapTileFetchWorker.clearWidgetMapCache(context);
+        ParkedCarWidgetProvider.refreshAll(context);
     }
 
     private static SharedPreferences encryptedPrefs(Context context) {

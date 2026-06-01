@@ -24,6 +24,7 @@ import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/scoring/component
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
+  enforceDataRetention,
   RESCORE_PROGRESS_EVENT,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
@@ -600,8 +601,12 @@ export default function Settings() {
     await refreshPermissions();
   };
 
-  const updateRetention = async (days) => {
-    updateCfg({ data_retention_days: days });
+  const updateRetention = async (months) => {
+    const updated = updateCfg({ data_retention_months: months });
+    const deleted = await enforceDataRetention(updated.data_retention_months);
+    if (deleted > 0) {
+      logError('data_retention_pruned', new Error('Retention pruning'), { deleted });
+    }
     await qc.invalidateQueries();
   };
 

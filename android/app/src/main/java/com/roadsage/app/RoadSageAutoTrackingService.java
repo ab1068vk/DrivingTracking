@@ -302,6 +302,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             .setContentText("Road Sage will not start trips until auto tracking is turned back on.")
             .setStyle(new NotificationCompat.BigTextStyle().bigText("Road Sage will not start trips until auto tracking is turned back on."))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent);
@@ -321,6 +322,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             NotificationManager.IMPORTANCE_DEFAULT
         );
         channel.setDescription("Status updates when Road Sage auto tracking is turned on or off.");
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.createNotificationChannel(channel);
@@ -1326,6 +1328,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             .setContentTitle("Eyes on the Road")
             .setContentText("Possible distracted driving detected. Stay focused.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
@@ -1374,6 +1377,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent);
@@ -1392,6 +1396,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             NotificationManager.IMPORTANCE_HIGH
         );
         channel.setDescription("Urgent warnings while driving");
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         channel.enableVibration(true);
         channel.setLightColor(Color.RED);
         channel.enableLights(true);
@@ -1410,6 +1415,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             NotificationManager.IMPORTANCE_DEFAULT
         );
         channel.setDescription("Trip completion and driving summary notifications.");
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.createNotificationChannel(channel);
@@ -1437,18 +1443,19 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
             .setContentTitle("Road Sage ready")
-            .setContentText(text)
+            .setContentText("Tracking active")
             .setOngoing(true)
             .setContentIntent(contentIntent)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setPriority(NotificationCompat.PRIORITY_LOW);
 
         if (isTripActive() && candidateTrip) {
             builder
                 .setContentTitle("Road Sage checking movement")
-                .setContentText(text)
+                .setContentText("Tracking active")
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(text));
         } else if (isTripActive()) {
             Intent stopIntent = new Intent(this, RoadSageAutoTrackingService.class);
@@ -1461,6 +1468,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             );
             builder
                 .setContentTitle("Road Sage trip live")
+                .setContentText("Tracking active")
                 .setUsesChronometer(true)
                 .setWhen(activeStartMs > 0L ? activeStartMs : System.currentTimeMillis())
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
@@ -1601,6 +1609,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             NotificationManager.IMPORTANCE_LOW
         );
         channel.setDescription("Keeps Road Sage ready to detect and record driving trips.");
+        channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.createNotificationChannel(channel);

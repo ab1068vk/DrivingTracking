@@ -6,6 +6,10 @@ import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
 import { activeTripStore } from '@/lib/trackingStore';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 
+const debugNavItems = import.meta.env.DEV
+  ? [{ path: '/diagnostics', label: 'Diagnostics', icon: Activity }]
+  : [];
+
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/trips', label: 'Trips', icon: History },
@@ -14,7 +18,7 @@ const navItems = [
   { path: '/insights', label: 'Insights', icon: TrendingUp },
   { path: '/achievements', label: 'Awards', icon: Award },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
-  { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
+  ...debugNavItems,
   { path: '/vehicles', label: 'Vehicles', icon: Car },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];

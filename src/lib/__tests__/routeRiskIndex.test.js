@@ -28,6 +28,7 @@ const trip = (events = []) => ({
 describe('routeRiskIndex', () => {
   it('segmentKey is commutative', () => {
     expect(segmentKey(1, 2, 3, 4)).toBe(segmentKey(3, 4, 1, 2));
+    expect(segmentKey(43.6532, -79.3832, 43.6542, -79.3832)).toMatch(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/);
   });
 
   it('empty trips return empty Map', () => {
@@ -84,16 +85,22 @@ describe('routeRiskIndex', () => {
     expect(Math.max(...[...index.values()].map((cell) => cell.riskScore))).toBe(0);
   });
 
-  it('does not persist segment midpoints inside the privacy-zone guard', () => {
+  it('does not persist exact segment coordinates in route-risk cells', () => {
     const index = buildRouteRiskIndex([trip()], [{
       id: 'home',
       lat: 43.6537,
       lng: -79.3832,
       radius_m: 40,
     }]);
-    const midpoints = [...index.values()].map((item) => [item.lat, item.lng]);
+    const cells = [...index.values()];
 
-    expect(midpoints).not.toContainEqual([43.6537, -79.3832]);
+    expect(cells.every((item) => item.key === item.cellHash)).toBe(true);
+    expect(cells.every((item) => item.lookupHash === item.key.slice(0, 4))).toBe(true);
+    expect(cells.every((item) => item.lat == null && item.lng == null)).toBe(true);
+    expect(cells.every((item) => item.bounds == null)).toBe(true);
+    expect(cells.every((item) => item.segmentKeys == null)).toBe(true);
+    expect(JSON.stringify(cells)).not.toContain('43.6537');
+    expect(JSON.stringify(cells)).not.toContain('-79.3832');
     expect(index.size).toBeGreaterThan(0);
   });
 
@@ -119,7 +126,7 @@ describe('routeRiskIndex', () => {
     expect(getSegmentsForTrip(trip(), buildRouteRiskIndex([trip(), trip()])).length).toBeGreaterThan(0);
   });
 
-  it('pre-computes per-trip 15m cells for direct bounding-box lookup', () => {
+  it('pre-computes per-trip hashed cells for direct bounding-box lookup', () => {
     const routeRiskCells = buildRouteRiskCellsForTrip(trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]));
     const index = buildRouteRiskIndex([{ ...trip(), route_risk_cells: routeRiskCells }]);
     const matches = getRouteRiskCellsForBounds(index, {
@@ -130,6 +137,7 @@ describe('routeRiskIndex', () => {
     });
 
     expect(routeRiskCells.length).toBeGreaterThan(0);
+    expect(routeRiskCells.every((cell) => cell.lat == null && cell.lng == null)).toBe(true);
     expect(matches.some((cell) => cell.totalEvents > 0)).toBe(true);
   });
 
@@ -138,9 +146,12 @@ describe('routeRiskIndex', () => {
     await saveRouteRiskIndex(index);
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(index.size);
+    expect([...loaded.values()].every((cell) => cell.lat == null && cell.lng == null)).toBe(true);
+    expect(JSON.stringify([...loaded.values()])).not.toContain('43.6537');
+    expect(JSON.stringify([...loaded.values()])).not.toContain('-79.3832');
   });
 
-  it('merges stored risk cells whose midpoints are within GPS-noise distance', async () => {
+  it('migrates nearby legacy midpoint cells into the same coarse hash', async () => {
     await saveRouteRiskIndex(new Map([
       ['a', { lat: 43.6532, lng: -79.3832, tripCount: 1, totalEvents: 1, harshCount: 1, speedSum: 40, eventTypes: { harsh_brake: 1 }, riskScore: 50, riskLevel: 'moderate' }],
       ['b', { lat: 43.65327, lng: -79.3832, tripCount: 1, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
@@ -148,12 +159,14 @@ describe('routeRiskIndex', () => {
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(1);
     expect([...loaded.values()][0].tripCount).toBe(2);
+    expect(JSON.stringify([...loaded.values()])).not.toContain('43.6532');
+    expect(JSON.stringify([...loaded.values()])).not.toContain('-79.3832');
   });
 
   it('filters stored risk cells inside the privacy-zone guard', async () => {
     await saveRouteRiskIndex(new Map([
       ['private', { lat: 43.6537, lng: -79.3832, tripCount: 2, totalEvents: 1, harshCount: 1, speedSum: 40, eventTypes: { harsh_brake: 1 }, riskScore: 60, riskLevel: 'high' }],
-      ['public', { lat: 43.6567, lng: -79.3832, tripCount: 2, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
+      ['public', { lat: 43.7567, lng: -79.1832, tripCount: 2, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
     ]));
 
     const loaded = await loadRouteRiskIndex([{
@@ -163,8 +176,10 @@ describe('routeRiskIndex', () => {
       radius_m: 50,
     }]);
 
-    expect(loaded.has('private')).toBe(false);
-    expect(loaded.has('public')).toBe(true);
+    expect(loaded.size).toBe(1);
+    expect([...loaded.values()][0].totalEvents).toBe(0);
+    expect(JSON.stringify([...loaded.values()])).not.toContain('43.6537');
+    expect(JSON.stringify([...loaded.values()])).not.toContain('-79.3832');
   });
 
   it('trims storage when serialized index exceeds 2 MB', async () => {

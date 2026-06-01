@@ -12,6 +12,7 @@ export {
   getRouteRiskCellsNearPoint,
   getSegmentsForTrip,
   mergeRouteRiskTripIntoIndexMap,
+  sanitizeRouteRiskCellForStorage,
 } from '@/lib/routeRisk/aggregate';
 export {
   buildRouteRiskCellsForTrip,

@@ -14,6 +14,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
+import { enforceDataRetention } from '@/lib/localTripRepository';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
 
@@ -21,7 +22,10 @@ import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import { PageSkeleton } from '@/components/PageSkeleton';
 
-const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
+// Debug routes are only available in Vite development mode.
+// import.meta.env.DEV is a compile-time constant set to true by the Vite dev
+// server and false in every npm run build output.
+const showDebugRoutes = import.meta.env.DEV;
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const TripHistory = lazy(() => import('@/pages/TripHistory'));
@@ -34,7 +38,7 @@ const AndroidReference = showDebugRoutes ? lazy(() => import('@/pages/AndroidRef
 const Vehicles = lazy(() => import('@/pages/Vehicles'));
 const Achievements = lazy(() => import('@/pages/Achievements'));
 const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
-const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
+const Diagnostics = showDebugRoutes ? lazy(() => import('@/pages/Diagnostics')) : null;
 const Insights = lazy(() => import('@/pages/Insights'));
 
 function AppLoading() {
@@ -61,6 +65,13 @@ const AuthenticatedApp = () => {
         logError('notification_channel_configure', err);
       });
       const settings = await localSettings.hydrateFromNative();
+      enforceDataRetention(settings.data_retention_months).then((count) => {
+        if (count > 0) {
+          logError('data_retention_pruned', new Error('Retention pruning'), { deleted: count });
+        }
+      }).catch((err) => {
+        logError('data_retention_prune_failed', err);
+      });
       reverifyConfiguredOsrmEndpoint(settings).then(({ result }) => {
         if (result && !result.ok) {
           toast({
@@ -146,7 +157,7 @@ const AuthenticatedApp = () => {
         <Route path="/insights" element={<Insights />} />
         <Route path="/achievements" element={<Achievements />} />
         <Route path="/reports" element={<Reports />} />
-        <Route path="/diagnostics" element={<Diagnostics />} />
+        {showDebugRoutes && Diagnostics && <Route path="/diagnostics" element={<Diagnostics />} />}
         <Route path="/settings" element={<Settings />} />
         {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
         <Route path="/vehicles" element={<Vehicles />} />

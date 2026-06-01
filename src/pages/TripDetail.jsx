@@ -1444,6 +1444,8 @@ export default function TripDetail() {
             {trip.notes ? (
               <div className="flex gap-2 rounded-2xl bg-secondary/50 p-3 text-sm">
                 <StickyNote className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                {/* SECURITY: trip.notes is user-controlled and may be imported from a backup file.
+                   Keep this as React text. Do not render it through raw HTML or rehype-raw. */}
                 <div>{trip.notes}</div>
               </div>
             ) : (

@@ -14,6 +14,10 @@ export const ACHIEVEMENT_CHANNEL_ID = 'road_sage_achievements';
 export const SAFETY_ALERTS_CHANNEL_ID = 'road_sage_safety_alerts';
 export const COACHING_CHANNEL_ID = 'road_sage_coaching';
 export const VEHICLE_CHANNEL_ID = 'road_sage_vehicle';
+export const ANDROID_NOTIFICATION_VISIBILITY = Object.freeze({
+  SECRET: -1,
+  PRIVATE: 0,
+});
 const LEGACY_NOTIFICATION_CHANNEL_IDS = [
   'drivesense_tracking',
   'drivesense_summary',
@@ -100,6 +104,23 @@ const notificationsEnabled = (key) => {
   const settings = localSettings.get();
   return settings.notifications_enabled !== false && settings[key] !== false;
 };
+
+const lockScreenVisibilityForChannel = (channelId) => (
+  channelId === TRACKING_CHANNEL_ID
+    ? ANDROID_NOTIFICATION_VISIBILITY.SECRET
+    : ANDROID_NOTIFICATION_VISIBILITY.PRIVATE
+);
+
+const withLockScreenVisibility = (notification) => (
+  notification
+    ? {
+      ...notification,
+      visibility: notification.visibility ?? lockScreenVisibilityForChannel(notification.channelId),
+    }
+    : notification
+);
+
+const withLockScreenVisibilityAll = (notifications = []) => notifications.map(withLockScreenVisibility);
 
 const readLocalString = (key) => {
   const current = localStorage.getItem(key);
@@ -201,15 +222,16 @@ const scheduleNotification = async (
 ) => {
   if (!notification) return null;
   if (wasRecentlySent(dedupeKey, cooldownMs)) return null;
-  if (isNativePlatform()) await cancelNotificationIds([notification.id, ...replaceIds]);
-  if (!isNativePlatform()) return notification;
+  const securedNotification = withLockScreenVisibility(notification);
+  if (isNativePlatform()) await cancelNotificationIds([securedNotification.id, ...replaceIds]);
+  if (!isNativePlatform()) return securedNotification;
 
   const permission = await LocalNotifications.checkPermissions();
   const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
   if (!granted) return null;
-  await LocalNotifications.schedule({ notifications: [notification] });
+  await LocalNotifications.schedule({ notifications: [securedNotification] });
   markSent(dedupeKey);
-  return notification;
+  return securedNotification;
 };
 
 function scoreOf(trip = {}) {
@@ -360,7 +382,7 @@ export async function configureNotificationChannels() {
     name: 'Trip Tracking',
     description: 'Shown while Road Sage is actively tracking a trip.',
     importance: 2,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.SECRET,
     vibration: false,
   });
 
@@ -369,7 +391,7 @@ export async function configureNotificationChannels() {
     name: 'Trip Summaries',
     description: 'Trip completion and driving summary notifications.',
     importance: 3,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
   });
 
   await LocalNotifications.createChannel({
@@ -377,7 +399,7 @@ export async function configureNotificationChannels() {
     name: 'Achievements',
     description: 'Achievement unlock notifications.',
     importance: 3,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
   });
 
   await LocalNotifications.createChannel({
@@ -385,7 +407,7 @@ export async function configureNotificationChannels() {
     name: 'Safety Alerts',
     description: 'Urgent warnings while driving',
     importance: 5,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
     sound: 'default',
     vibration: true,
     lights: true,
@@ -397,7 +419,7 @@ export async function configureNotificationChannels() {
     name: 'Coaching & Milestones',
     description: 'Driving improvement tips and personal milestones',
     importance: 3,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
     sound: 'default',
     vibration: false,
   });
@@ -407,7 +429,7 @@ export async function configureNotificationChannels() {
     name: 'Vehicle & Maintenance',
     description: 'Maintenance reminders and vehicle updates',
     importance: 2,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
     sound: null,
     vibration: false,
   });
@@ -432,13 +454,13 @@ export async function scheduleLongTripReminder(startTime) {
     : Date.now() + 2 * 60 * 60 * 1000;
 
   await LocalNotifications.schedule({
-    notifications: [{
+    notifications: withLockScreenVisibilityAll([{
       id: LONG_TRIP_REMINDER_ID,
       title: 'Road Sage is still tracking',
       body: 'Your trip has been active for a while. Stop tracking when you are done driving.',
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { at: new Date(reminderAt), allowWhileIdle: true },
-    }],
+    }]),
   });
 }
 
@@ -947,7 +969,7 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
     });
   }
 
-  if (notifications.length) await LocalNotifications.schedule({ notifications });
+  if (notifications.length) await LocalNotifications.schedule({ notifications: withLockScreenVisibilityAll(notifications) });
 
   if (settings.notif_inactive_nudge_enabled && lastTripTimestamp) {
     const daysSince = (Date.now() - new Date(lastTripTimestamp).getTime()) / 86400000;
@@ -997,7 +1019,7 @@ export async function syncAchievementNotifications(achievements = [], { requestP
       extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },
     }];
 
-  await LocalNotifications.schedule({ notifications });
+  await LocalNotifications.schedule({ notifications: withLockScreenVisibilityAll(notifications) });
 
   newAchievements.forEach((achievement) => notifiedIds.add(achievement.id));
   writeNotifiedAchievementIds(notifiedIds);

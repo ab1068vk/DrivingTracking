@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
 import { importDriveSenseBackup, MAX_BACKUP_BYTES, parseDriveSenseBackup } from '@/lib/dataBackup';
@@ -50,6 +50,21 @@ const expectNullGuardedTripScores = (value) => {
     value: value.score_overall ?? null,
     evidence: expect.any(String),
   });
+};
+
+const readNonTestSourceFiles = (dirUrl) => {
+  const files = [];
+  for (const entry of readdirSync(dirUrl, { withFileTypes: true })) {
+    if (entry.name === '__tests__') continue;
+    const childUrl = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, dirUrl);
+    if (entry.isDirectory()) {
+      files.push(...readNonTestSourceFiles(childUrl));
+      continue;
+    }
+    if (!/\.(js|jsx)$/.test(entry.name)) continue;
+    if (statSync(childUrl).isFile()) files.push(childUrl);
+  }
+  return files;
 };
 
 describe('release blocker regressions', () => {
@@ -131,6 +146,100 @@ describe('release blocker regressions', () => {
     expect(clientSource).toContain('credentials: "include"');
     expect(clientSource).not.toContain('Authorization');
     expect(clientSource).not.toContain('Bearer');
+  });
+
+  it('keeps diagnostics routes development-only without an environment escape hatch', () => {
+    const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
+    const layoutSource = readFileSync(new URL('../../components/Layout.jsx', import.meta.url), 'utf8');
+    const diagnosticsSource = readFileSync(new URL('../../pages/Diagnostics.jsx', import.meta.url), 'utf8');
+    const workflowSource = readFileSync(new URL('../../../.github/workflows/security-ci.yml', import.meta.url), 'utf8');
+
+    expect(`${appSource}\n${layoutSource}`).not.toContain('VITE_SHOW_DEBUG_ROUTES');
+    expect(appSource).toContain('const showDebugRoutes = import.meta.env.DEV;');
+    expect(appSource).toContain('{showDebugRoutes && Diagnostics && <Route path="/diagnostics"');
+    expect(layoutSource).toContain('const debugNavItems = import.meta.env.DEV');
+    expect(diagnosticsSource).toContain('if (!import.meta.env.DEV)');
+    expect(diagnosticsSource).toContain('return <PageNotFound />');
+    expect(workflowSource).toContain('Verify debug routes are absent from production bundle');
+  });
+
+  it('clears parked-widget map caches when privacy zones change', () => {
+    const privacyZoneStoreSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/PrivacyZoneStore.java', import.meta.url),
+      'utf8'
+    );
+    const mapWorkerSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java', import.meta.url),
+      'utf8'
+    );
+    const widgetSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/ParkedCarWidgetProvider.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(privacyZoneStoreSource).toContain('MapTileFetchWorker.clearWidgetMapCache(context);');
+    expect(privacyZoneStoreSource).toContain('ParkedCarWidgetProvider.refreshAll(context);');
+    expect(mapWorkerSource).toContain('private static final String MAP_CACHE_PREFIX = "widget_map_"');
+    expect(mapWorkerSource).toContain('private static final String LEGACY_MAP_CACHE_PREFIX = "parked_map_widget_"');
+    expect(mapWorkerSource).toContain('static void clearWidgetMapCache(Context context)');
+    expect(mapWorkerSource).toContain('deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
+    expect(widgetSource).toContain('MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
+  });
+
+  it('stores route-risk history as coarse hashes instead of GPS coordinates', () => {
+    const constantsSource = readFileSync(new URL('../routeRisk/constants.js', import.meta.url), 'utf8');
+    const segmentKeySource = readFileSync(new URL('../routeRisk/segmentKey.js', import.meta.url), 'utf8');
+    const aggregateSource = readFileSync(new URL('../routeRisk/aggregate.js', import.meta.url), 'utf8');
+    const storageSource = readFileSync(new URL('../routeRisk/storage.js', import.meta.url), 'utf8');
+    const tripCellsSource = readFileSync(new URL('../routeRisk/tripCells.js', import.meta.url), 'utf8');
+    const repositorySource = readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8');
+
+    expect(constantsSource).toContain('ROUTE_RISK_GEOHASH_PRECISION = 5');
+    expect(constantsSource).toContain('ROUTE_RISK_INDEX_SCHEMA_VERSION = 3');
+    expect(segmentKeySource).toContain('geohashEncode');
+    expect(segmentKeySource).toContain('not exact endpoint coordinates');
+    expect(aggregateSource).toContain('sanitizeRouteRiskCellForStorage');
+    expect(aggregateSource).toContain('lat,');
+    expect(aggregateSource).toContain('lng,');
+    expect(aggregateSource).toContain('segmentKeys,');
+    expect(storageSource).toContain('sanitizeRouteRiskCellForStorage(value, key)');
+    expect(tripCellsSource).not.toContain('cell.segmentKeys');
+    expect(repositorySource).toContain('sanitizeTripRouteRiskCells');
+    expect(repositorySource).toContain('route_risk_cells: trip.route_risk_cells');
+  });
+
+  it('keeps html2canvas out of direct PDF export capture paths without sanitizer coverage', () => {
+    const exportPdfSource = readFileSync(new URL('../../engine/export/pdf.js', import.meta.url), 'utf8');
+    const pdfExportSource = readFileSync(new URL('../pdfExport.js', import.meta.url), 'utf8');
+    const sanitizerSource = readFileSync(new URL('../pdfSanitize.js', import.meta.url), 'utf8');
+
+    expect(`${exportPdfSource}\n${pdfExportSource}`).not.toMatch(/import\s+html2canvas\s+from\s+['"]html2canvas['"]/);
+    expect(`${exportPdfSource}\n${pdfExportSource}`).not.toContain('html2canvas(');
+    expect(exportPdfSource).toContain('SECURITY-HOLD: html2canvas is pinned');
+    expect(sanitizerSource).toContain('foreignObject');
+    expect(sanitizerSource).toContain('cloneForCapture');
+    expect(sanitizerSource).toContain('javascript:');
+  });
+
+  it('blocks raw HTML markdown plugins from trip-note rendering paths', () => {
+    const eslintSource = readFileSync(new URL('../../../eslint.config.js', import.meta.url), 'utf8');
+    const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
+    const sourceFiles = [
+      tripDetailSource,
+      readFileSync(new URL('../../components/TripCard.jsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../pages/DrivingCoach.jsx', import.meta.url), 'utf8'),
+    ].join('\n');
+
+    expect(eslintSource).toContain('"no-restricted-imports"');
+    expect(eslintSource).toContain('name: "rehype-raw"');
+    expect(eslintSource).toContain('rehype-raw is banned');
+    expect(sourceFiles).not.toContain('rehypeRaw');
+    expect(sourceFiles).not.toContain('remarkHtml');
+    expect(sourceFiles).not.toContain('dangerouslySetInnerHTML');
+    expect(tripDetailSource).toContain('trip.notes is user-controlled');
+    expect(tripDetailSource).toContain('Do not render it through raw HTML or rehype-raw');
+    expect(tripDetailSource).toContain('<div>{trip.notes}</div>');
   });
 
   it('reports malformed backup JSON with a clear parse error', () => {
@@ -455,6 +564,28 @@ describe('release blocker regressions', () => {
       tripId: 'trip-1',
     });
     expect(events[0]).toMatchObject(diagnostic);
+  });
+
+  it('keeps logError extra objects free of raw location-bearing keys', () => {
+    const forbiddenKeys = /\b(lat|lng|lon|latitude|longitude|coordinates|coords|route_points|routePoints|raw_route_points|address|geocode|reverse_geocode|reverseGeocode)\s*:/;
+    const offenders = [];
+
+    for (const fileUrl of readNonTestSourceFiles(new URL('../../', import.meta.url))) {
+      const source = readFileSync(fileUrl, 'utf8');
+      let searchFrom = 0;
+      while (true) {
+        const start = source.indexOf('logError(', searchFrom);
+        if (start === -1) break;
+        const end = source.indexOf(');', start);
+        const call = source.slice(start, end === -1 ? start + 600 : end);
+        if (/logError\s*\([\s\S]*?,[\s\S]*?,\s*\{/.test(call) && forbiddenKeys.test(call)) {
+          offenders.push(`${fileUrl.pathname}: ${call.slice(0, 180)}`);
+        }
+        searchFrom = start + 'logError('.length;
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 
   it('keeps critical post-trip, odometer, and coach persistence failures diagnostically logged', () => {

@@ -1,9 +1,11 @@
+import { webcrypto } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createIndexedDbMigrationRunner,
   DB_NAME,
   DB_NAME_META_KEY,
   DB_VERSION,
+  enforceDataRetention,
   localTripRepository,
   migrateIndexedDbName,
   normalizeRetiredTripEventTypes,
@@ -13,10 +15,24 @@ import {
 } from '@/lib/localTripRepository';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import { DEFAULT_THRESHOLDS, buildScoreConstantsSnapshot } from '@/lib/tripEngine';
+import { DEFAULT_SETTINGS, localSettings } from '@/lib/trackingStore';
 
 const makeDomStringList = (items) => ({
   contains: (item) => items.has(item),
 });
+
+const stubBrowserCryptoStorage = () => {
+  const values = new Map();
+  vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('btoa', (value) => Buffer.from(value, 'binary').toString('base64'));
+  vi.stubGlobal('atob', (value) => Buffer.from(value, 'base64').toString('binary'));
+  vi.stubGlobal('localStorage', {
+    getItem: vi.fn((key) => values.get(key) ?? null),
+    setItem: vi.fn((key, value) => values.set(key, value)),
+    removeItem: vi.fn((key) => values.delete(key)),
+  });
+  return values;
+};
 
 const makeIdbRequest = (run) => {
   const request = {
@@ -73,6 +89,7 @@ class FakeObjectStore {
   delete(id) {
     return makeIdbRequest(() => {
       this.state.records.delete(id);
+      queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
       return undefined;
     });
   }
@@ -188,6 +205,7 @@ class FakeIndexedDb {
 describe('localTripRepository IndexedDB migrations', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -210,6 +228,100 @@ describe('localTripRepository IndexedDB migrations', () => {
     expect(trips.indexKeyPaths.get('start_time')).toBe('start_time');
     expect(trips.indexes.has('status')).toBe(true);
     expect(trips.indexKeyPaths.get('status')).toBe('status');
+  });
+
+  it('encrypts sensitive trip fields in raw IndexedDB records and decrypts them on read', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    stubBrowserCryptoStorage();
+
+    const saved = await localTripRepository.create({
+      id: 'private-trip',
+      status: 'draft',
+      start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38, timestamp: '2026-05-22T10:00:00.000Z' }],
+      driving_events: [{ type: 'hard_brake', lat: 43.65, lng: -79.38 }],
+      notes: 'Parked near home',
+    });
+
+    const rawTrip = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records.get(saved.id);
+
+    expect(rawTrip.route_points).toMatchObject({ _enc: true });
+    expect(rawTrip.driving_events).toMatchObject({ _enc: true });
+    expect(rawTrip.notes).toMatchObject({ _enc: true });
+    expect(JSON.stringify(rawTrip)).not.toContain('43.65');
+    expect(JSON.stringify(rawTrip)).not.toContain('Parked near home');
+
+    const trip = await localTripRepository.getById('private-trip');
+    expect(trip.route_points).toEqual(saved.route_points);
+    expect(trip.driving_events).toEqual(saved.driving_events);
+    expect(trip.notes).toBe('Parked near home');
+  });
+
+  it('stores precomputed route-risk cells as hashes without exact coordinates', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    stubBrowserCryptoStorage();
+
+    const saved = await localTripRepository.create({
+      id: 'route-risk-trip',
+      status: 'completed',
+      start_time: '2026-05-22T10:00:00.000Z',
+      end_time: '2026-05-22T10:01:00.000Z',
+      route_points: [
+        { lat: 43.6532, lng: -79.3832, speed_kmh: 35, accuracy: 5, timestamp: '2026-05-22T10:00:00.000Z' },
+        { lat: 43.6542, lng: -79.3832, speed_kmh: 35, accuracy: 5, timestamp: '2026-05-22T10:01:00.000Z' },
+      ],
+      driving_events: [{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }],
+      notes: 'Route risk cell test',
+    });
+
+    const rawTrip = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records.get(saved.id);
+
+    expect(rawTrip.route_risk_cells.length).toBeGreaterThan(0);
+    expect(rawTrip.route_risk_cells.every((cell) => cell.key === cell.cellHash)).toBe(true);
+    expect(JSON.stringify(rawTrip.route_risk_cells)).not.toContain('43.653');
+    expect(JSON.stringify(rawTrip.route_risk_cells)).not.toContain('-79.383');
+    expect(rawTrip.route_risk_cells.every((cell) => cell.lat == null && cell.lng == null)).toBe(true);
+    expect(rawTrip.route_risk_cells.every((cell) => cell.bounds == null && cell.segmentKeys == null)).toBe(true);
+  });
+
+  it('prunes only completed trips older than the configured retention window', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-06-01T12:00:00.000Z').getTime());
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    stubBrowserCryptoStorage();
+    localSettings.set({ ...DEFAULT_SETTINGS, data_retention_months: 0 });
+
+    await localTripRepository.create({
+      id: 'old-completed',
+      status: 'completed',
+      start_time: '2023-01-01T12:00:00.000Z',
+      end_time: '2023-01-01T12:30:00.000Z',
+      route_points: [],
+      driving_events: [],
+    });
+    await localTripRepository.create({
+      id: 'old-draft',
+      status: 'draft',
+      start_time: '2023-01-01T12:00:00.000Z',
+    });
+    await localTripRepository.create({
+      id: 'recent-completed',
+      status: 'completed',
+      start_time: '2026-01-01T12:00:00.000Z',
+      end_time: '2026-01-01T12:30:00.000Z',
+      route_points: [],
+      driving_events: [],
+    });
+
+    await expect(enforceDataRetention(24)).resolves.toBe(1);
+
+    const records = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records;
+    expect(records.has('old-completed')).toBe(false);
+    expect(records.has('old-draft')).toBe(true);
+    expect(records.has('recent-completed')).toBe(true);
+    await expect(enforceDataRetention(0)).resolves.toBe(0);
   });
 
   it('runs only migrations newer than the existing IndexedDB version', () => {

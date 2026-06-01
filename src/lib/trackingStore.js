@@ -34,7 +34,7 @@ const PRIVACY_ZONE_RADIUS_MAX_M = 500;
 const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
 
 const settingsStorage = () => {
   try {
@@ -300,7 +300,9 @@ export const DEFAULT_SETTINGS = {
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
   activity_permission_granted: false,
-  data_retention_days: 365,
+  // PRIVACY: auto-delete completed trips older than this many months.
+  // 0 = never delete automatically.
+  data_retention_months: 24,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -463,18 +465,28 @@ export function migrateDefaultSettings(parsed = {}) {
   if (parsed.notif_heading_drift_alert_enabled == null && parsed.notif_drowsy_alert_enabled != null) {
     merged.notif_heading_drift_alert_enabled = parsed.notif_drowsy_alert_enabled;
   }
+  if (parsed.data_retention_months == null && parsed.data_retention_days != null) {
+    const days = Number(parsed.data_retention_days);
+    merged.data_retention_months = Number.isFinite(days) && days > 0
+      ? Math.max(1, Math.round(days / 30.44))
+      : 0;
+  }
+  delete merged.data_retention_days;
   legacyProxyKeys.forEach((key) => delete merged[key]);
   const ecoSettingsRepaired = repairEcoScoringSettings(merged, 'default_settings_migration');
 
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: ecoSettingsRepaired ||
+      version < CURRENT_SETTINGS_DEFAULTS_VERSION ||
+      Object.prototype.hasOwnProperty.call(parsed, 'data_retention_days') ||
+      legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
 const IMPORT_NUMBER_RANGES = {
-  data_retention_days: [1, 3650],
+  data_retention_months: [0, 120],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_stop_start_decel_ms2: [0.5, 15],
@@ -612,6 +624,12 @@ export function sanitizeImportedSettings(raw = {}) {
   }
   if (normalizedRaw.notif_heading_drift_alert_enabled == null) {
     normalizedRaw.notif_heading_drift_alert_enabled = raw.notif_drowsy_alert_enabled;
+  }
+  if (normalizedRaw.data_retention_months == null && raw.data_retention_days != null) {
+    const days = Number(raw.data_retention_days);
+    normalizedRaw.data_retention_months = Number.isFinite(days) && days > 0
+      ? Math.max(1, Math.round(days / 30.44))
+      : 0;
   }
 
   const sanitized = {};

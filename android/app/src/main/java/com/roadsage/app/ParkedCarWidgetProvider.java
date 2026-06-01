@@ -85,9 +85,8 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         cancelAgeAlarms(context);
         for (int widgetId : widgetIds) {
             WorkManager.getInstance(context).cancelUniqueWork(mapWorkName(widgetId));
-            File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
-            if (cacheFile.exists()) cacheFile.delete();
         }
+        MapTileFetchWorker.clearWidgetMapCache(context);
         scheduleAgeAlarmsForCurrentParking(context);
     }
 
@@ -98,8 +97,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         int widgetId,
         Bundle newOptions
     ) {
-        File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
-        if (cacheFile.exists()) cacheFile.delete();
+        MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, Double.NaN, Double.NaN);
 
         JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(context);
         if (parked == null) {
@@ -113,6 +111,8 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             updateWidget(context, manager, widgetId);
             return;
         }
+
+        MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);
 
         if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) {
             updateWidget(context, manager, widgetId);
@@ -134,9 +134,8 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         int[] widgetIds = manager.getAppWidgetIds(new ComponentName(context, ParkedCarWidgetProvider.class));
         if (widgetIds == null || widgetIds.length == 0) return;
 
+        MapTileFetchWorker.clearWidgetMapCache(context);
         for (int widgetId : widgetIds) {
-            File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
-            if (cacheFile.exists()) cacheFile.delete();
             updateWidget(context, manager, widgetId);
         }
         scheduleAgeAlarmsForCurrentParking(context);
@@ -175,6 +174,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         views.setViewVisibility(R.id.iv_privacy_badge, isPrivate ? View.VISIBLE : View.GONE);
 
         if (isPrivate) {
+            MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);
             views.setTextViewText(R.id.tv_parked_status, buildParkedStatusText(matchedZone, timestampMs, System.currentTimeMillis()));
             views.setImageViewResource(R.id.iv_map, R.drawable.widget_map_placeholder);
             views.setContentDescription(R.id.iv_map, context.getString(R.string.widget_privacy_map_hidden_description));
@@ -190,7 +190,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
                 views.setViewVisibility(R.id.tv_parked_address, View.GONE);
             }
 
-            File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId);
+            File cacheFile = MapTileFetchWorker.getCacheFile(context, widgetId, lat, lng);
             if (cacheFile.exists() && cacheFile.lastModified() >= timestampMs) {
                 Bitmap cached = BitmapFactory.decodeFile(cacheFile.getAbsolutePath());
                 if (cached != null) {

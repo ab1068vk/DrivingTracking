@@ -469,7 +469,7 @@ For readiness, nearby repeated-event count is converted to signal risk as `count
 
 Trip readiness avoids using the current location for repeated-event-area context when the current point is inside a privacy zone. Dashboard sets the current location passed to the readiness panel to `null` in that case.
 
-The route-risk index migration also receives privacy zones. The route-risk system filters stored risk cells inside privacy-zone guards, so private locations should not become repeated route-risk cells.
+The route-risk index migration also receives privacy zones. The route-risk system stores repeated-route cells as coarse geohashes rather than exact GPS coordinates, filters cells that overlap privacy-zone guards, and rewrites legacy precomputed cells without midpoint coordinates when trips are read or saved.
 
 Weather context and external road-context behavior follow the app-wide privacy rules documented elsewhere: unavailable weather remains unavailable instead of becoming low risk, and private route points are skipped before external context is requested.
 

@@ -1,4 +1,9 @@
-import { ROUTE_RISK_CELL_SIZE_M } from '@/lib/routeRisk/constants';
+import {
+  ROUTE_RISK_CELL_SIZE_M,
+  ROUTE_RISK_GEOHASH_LOOKUP_PRECISION,
+  ROUTE_RISK_GEOHASH_PRECISION,
+} from '@/lib/routeRisk/constants';
+import { geohashBounds, geohashCenter, geohashEncode, isRouteRiskHash } from '@/lib/routeRisk/segmentKey';
 
 const EARTH_M_PER_DEG = 111320;
 const MIN_LNG_COS = 0.01;
@@ -53,7 +58,7 @@ const cellSteps = (lat, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   return { latStep, lngStep };
 };
 
-export const cellKeyForPoint = (lat, lng, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
+export const legacyCellKeyForPoint = (lat, lng, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   const pointLat = Number(lat);
   const pointLng = Number(lng);
   if (!Number.isFinite(pointLat) || !Number.isFinite(pointLng)) return null;
@@ -61,7 +66,7 @@ export const cellKeyForPoint = (lat, lng, cellSizeM = ROUTE_RISK_CELL_SIZE_M) =>
   return `${Math.floor(pointLat / latStep)}:${Math.floor(pointLng / lngStep)}`;
 };
 
-export const cellCenterFromKey = (key, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
+export const legacyCellCenterFromKey = (key, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   const [rowRaw, colRaw] = String(key || '').split(':');
   const row = Number(rowRaw);
   const col = Number(colRaw);
@@ -72,7 +77,7 @@ export const cellCenterFromKey = (key, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   return { lat, lng: (col + 0.5) * lngStep };
 };
 
-export const cellBoundsFromKey = (key, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
+export const legacyCellBoundsFromKey = (key, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   const [rowRaw, colRaw] = String(key || '').split(':');
   const row = Number(rowRaw);
   const col = Number(colRaw);
@@ -90,7 +95,7 @@ export const cellBoundsFromKey = (key, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   };
 };
 
-export const cellKeysForBounds = (bounds, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
+export const legacyCellKeysForBounds = (bounds, cellSizeM = ROUTE_RISK_CELL_SIZE_M) => {
   const normalized = normalizeBounds(bounds);
   if (!normalized) return [];
   const centerLat = (normalized.minLat + normalized.maxLat) / 2;
@@ -106,6 +111,40 @@ export const cellKeysForBounds = (bounds, cellSizeM = ROUTE_RISK_CELL_SIZE_M) =>
     }
   }
   return keys;
+};
+
+export const cellKeyForPoint = (lat, lng, precision = ROUTE_RISK_GEOHASH_PRECISION) => (
+  geohashEncode(lat, lng, precision)
+);
+
+export const cellCenterFromKey = (key) => {
+  if (isRouteRiskHash(key, String(key || '').length)) return geohashCenter(key);
+  return legacyCellCenterFromKey(key);
+};
+
+export const cellBoundsFromKey = (key) => {
+  if (isRouteRiskHash(key, String(key || '').length)) return geohashBounds(key);
+  return legacyCellBoundsFromKey(key);
+};
+
+export const cellKeysForBounds = (bounds, precision = ROUTE_RISK_GEOHASH_LOOKUP_PRECISION) => {
+  const normalized = normalizeBounds(bounds);
+  if (!normalized) return [];
+  const boundsCenter = {
+    lat: (normalized.minLat + normalized.maxLat) / 2,
+    lng: (normalized.minLng + normalized.maxLng) / 2,
+  };
+  const candidates = [
+    [normalized.minLat, normalized.minLng],
+    [normalized.minLat, normalized.maxLng],
+    [normalized.maxLat, normalized.minLng],
+    [normalized.maxLat, normalized.maxLng],
+    [boundsCenter.lat, boundsCenter.lng],
+  ]
+    .map(([lat, lng]) => geohashEncode(lat, lng, precision))
+    .filter(Boolean);
+
+  return [...new Set(candidates)];
 };
 
 export const intersectsBounds = (a, b) => {

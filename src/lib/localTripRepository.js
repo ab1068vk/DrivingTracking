@@ -1,6 +1,7 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import { decryptTripFields, encryptTripFields } from '@/lib/tripFieldEncryption';
 import {
   buildDrivingThresholds,
   calculateTripScores,
@@ -19,6 +20,7 @@ import {
   invalidateRouteRiskIndex,
   mergeRouteRiskTripIntoIndex,
   rebuildRouteRiskIndex,
+  sanitizeRouteRiskCellForStorage,
 } from '@/lib/routeRiskIndex';
 import {
   buildPhoneUsageAccessProvenance,
@@ -212,11 +214,28 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
   tx.onabort = () => reject(tx.error);
 });
 
+const sanitizeTripRouteRiskCells = (trip) => {
+  if (!Array.isArray(trip?.route_risk_cells)) return trip;
+  return {
+    ...trip,
+    route_risk_cells: trip.route_risk_cells
+      .map((cell) => sanitizeRouteRiskCellForStorage(cell))
+      .filter((cell) => cell.key),
+  };
+};
+
+const decryptStoredTrip = async (trip) => sanitizeTripRouteRiskCells(await decryptTripFields(trip));
+
+const routeRiskCellsChanged = (before, after) => (
+  JSON.stringify(before?.route_risk_cells || null) !== JSON.stringify(after?.route_risk_cells || null)
+);
+
 const readTripsFromDb = async (dbName) => {
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readonly');
-    return await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    return Promise.all(trips.map(decryptStoredTrip));
   } finally {
     db.close();
   }
@@ -224,11 +243,12 @@ const readTripsFromDb = async (dbName) => {
 
 const writeTripsToDb = async (dbName, trips) => {
   if (!trips.length) return;
+  const encryptedTrips = await Promise.all(trips.map(sanitizeTripRouteRiskCells).map(encryptTripFields));
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
-    trips.forEach((trip) => store.put(trip));
+    encryptedTrips.forEach((trip) => store.put(trip));
     await idbTransactionDone(tx);
   } finally {
     db.close();
@@ -303,39 +323,50 @@ const getAllTrips = async () => {
     const tx = db.transaction(TRIP_STORE, 'readonly');
     const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
     db.close();
-    return trips;
+    const decrypted = await Promise.all(trips.map(decryptTripFields));
+    const sanitized = decrypted.map(sanitizeTripRouteRiskCells);
+    const changed = sanitized.filter((trip, index) => routeRiskCellsChanged(decrypted[index], trip));
+    if (changed.length) await putTrips(changed).catch(() => {});
+    return sanitized;
   } catch {
-    return getJson(TRIPS_KEY, []);
+    const trips = await getJson(TRIPS_KEY, []);
+    const decrypted = await Promise.all(trips.map(decryptTripFields));
+    const sanitized = decrypted.map(sanitizeTripRouteRiskCells);
+    const changed = sanitized.filter((trip, index) => routeRiskCellsChanged(decrypted[index], trip));
+    if (changed.length) await putTrips(changed).catch(() => {});
+    return sanitized;
   }
 };
 
 const putTrip = async (trip) => {
+  const encryptedTrip = await encryptTripFields(sanitizeTripRouteRiskCells(trip));
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).put(trip));
+    await idbRequest(tx.objectStore(TRIP_STORE).put(encryptedTrip));
     db.close();
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
-    const next = [trip, ...trips.filter((item) => String(item.id) !== String(trip.id))];
+    const next = [encryptedTrip, ...trips.filter((item) => String(item.id) !== String(trip.id))];
     await setJson(TRIPS_KEY, next);
   }
 };
 
 const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
+  const encryptedIncomingTrips = await Promise.all(incomingTrips.map(sanitizeTripRouteRiskCells).map(encryptTripFields));
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
-    incomingTrips.forEach((trip) => store.put(trip));
+    encryptedIncomingTrips.forEach((trip) => store.put(trip));
     await idbTransactionDone(tx);
     db.close();
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
-    const incomingIds = new Set(incomingTrips.map((trip) => String(trip.id)));
+    const incomingIds = new Set(encryptedIncomingTrips.map((trip) => String(trip.id)));
     const next = [
-      ...incomingTrips,
+      ...encryptedIncomingTrips,
       ...trips.filter((item) => !incomingIds.has(String(item.id))),
     ];
     await setJson(TRIPS_KEY, next);
@@ -764,21 +795,26 @@ const deleteTrip = async (id) => {
   }
 };
 
-const pruneExpiredTrips = async () => {
-  const retentionDays = Number(localSettings.get().data_retention_days || 0);
-  if (!retentionDays) return;
+export async function enforceDataRetention(retentionMonths = localSettings.get().data_retention_months) {
+  const months = Number(retentionMonths);
+  if (!Number.isFinite(months) || months <= 0) return 0;
 
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - months * 30.44 * 24 * 60 * 60 * 1000;
   const trips = await getAllTrips();
   const expired = trips.filter((trip) => {
-    const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
-    return Number.isFinite(when) && when > 0 && when < cutoff;
+    if (trip?.status !== 'completed') return false;
+    const startedAt = new Date(trip.start_time || 0).getTime();
+    return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;
   });
 
   for (const trip of expired) {
     await deleteTrip(trip.id);
   }
-};
+  if (expired.length) await invalidateTripDerivedCaches();
+  return expired.length;
+}
+
+const pruneExpiredTrips = async () => enforceDataRetention(localSettings.get().data_retention_months);
 
 const sortTrips = (trips, sort) => {
   const field = sort?.replace('-', '') || 'start_time';
