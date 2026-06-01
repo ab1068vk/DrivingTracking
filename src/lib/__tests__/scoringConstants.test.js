@@ -142,6 +142,7 @@ describe('scoring constants registry', () => {
     });
     expect(hasProvisionalCalibration(['score_overall'])).toBe(true);
     expect(hasProvisionalCalibration(['ubi_score'])).toBe(true);
+    expect(hasProvisionalCalibration()).toBe(true);
     expect(calibrationStatusForMetrics(['score_overall'])).toBe(SCORE_OUTPUT_CALIBRATION_STATUSES.APPROXIMATE);
   });
 

@@ -1,10 +1,6 @@
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
 import { OsrmEndpointPanel } from '@/settings/osrm/OsrmEndpointPanel';
-import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import { calibrationLabelService } from '@/api/calibrationLabels';
-import { tripService } from '@/api/trips';
-import { getCompletionRate } from '@/lib/calibrationLabeling';
+import { CalibrationSettings } from './CalibrationSettings';
 
 export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -14,40 +10,14 @@ export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
-  const navigate = useNavigate();
-  const { data: calibrationTrips = [] } = useQuery({
-    queryKey: ['calibration-completion-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
-  });
-  const { data: calibrationMarkers = {} } = useQuery({
-    queryKey: ['calibration-survey-markers'],
-    queryFn: () => calibrationLabelService.listTripSurveyMarkers(),
-  });
-  const completionRate = getCompletionRate(calibrationTrips, calibrationMarkers);
-  const completionPct = Math.round(completionRate.rate * 100);
 
   return (
     <>
-      {sectionVisible('settings-calibration') && (
-        <>
-          <SectionTitle id="settings-calibration">Calibration</SectionTitle>
-          <div className="rounded-2xl bg-secondary/40 p-3">
-            <SettingRow
-              icon={Target}
-              label={`${completionRate.labeled.toLocaleString()} of ${completionRate.total.toLocaleString()} trips rated (${completionPct}%)`}
-              sublabel={`${completionRate.unlabeled_recent_30d.toLocaleString()} trips from the last 30 days need a rating`}
-            >
-              <button
-                type="button"
-                onClick={() => navigate('/trips?filter=unlabeled')}
-                className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground"
-              >
-                Rate recent trips
-              </button>
-            </SettingRow>
-          </div>
-        </>
-      )}
+      <CalibrationSettings
+        cfg={cfg}
+        updateCfg={updateCfg}
+        visible={sectionVisible('settings-calibration')}
+      />
 
       {sectionVisible('settings-advanced-models') && (
         <>

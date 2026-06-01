@@ -573,7 +573,7 @@ export function calibrationEntryForSetting(settingKey) {
 
 export function hasProvisionalCalibration(metricKeys = [], constants = SCORING_CONSTANTS) {
   const metrics = new Set(Array.isArray(metricKeys) ? metricKeys : [metricKeys]);
-  if (metrics.size === 0) return false;
+  if (metrics.size === 0) return getProvisionalScoringConstants(constants).length > 0;
   return getProvisionalScoringConstants(constants).some((entry) => (
     Array.isArray(entry.affected_metrics) && entry.affected_metrics.some((metric) => metrics.has(metric))
   ));
