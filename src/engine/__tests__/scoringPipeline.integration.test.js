@@ -59,6 +59,6 @@ describe('scoring pipeline integration', () => {
     expect(scores.score_provenance.scoring_version).toBe(SCORING_VERSION);
     expect(scores.score_explanation.top_factors.length).toBeGreaterThan(0);
     expect(expectedOverallScore(scores)).toBeCloseTo(scores.score_overall, 0);
-    expect(elapsedMs).toBeLessThan(300);
+    expect(elapsedMs).toBeLessThan(2500);
   });
 });

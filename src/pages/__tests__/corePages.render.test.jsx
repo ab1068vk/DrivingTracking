@@ -383,10 +383,9 @@ describe('core page component renders', () => {
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const html = renderToStaticMarkup(<TripDetail />);
 
-    expect(html).toContain('Heading Events (Beta)');
+    expect(html).toContain('Heading Events (Diagnostic)');
     expect(html).toContain('Enable Advanced Safety to include this in your score');
-    expect(html).toContain('Diagnostic &amp; Beta Data');
-    expect(html).toContain('Beta');
+    expect(html).toContain('Diagnostic Data');
     expect(html).toContain('not scored');
   });
 

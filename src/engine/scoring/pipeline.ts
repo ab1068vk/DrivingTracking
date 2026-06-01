@@ -1149,37 +1149,6 @@ export function calculateTripScores(
   const options = phoneUseOrOptions?.includeRoadTypeSegments != null
     ? phoneUseOrOptions
     : maybeOptions;
-  const eventsListForFastPath = Array.isArray(events) ? events : events?.events || [];
-  if (
-    options.includeRoadTypeSegments === false &&
-    routePoints.length >= 1500 &&
-    eventsListForFastPath.length === 0 &&
-    stats?.speed_zones?.length === 1 &&
-    canUseSimpleLongRouteStats(routePoints)
-  ) {
-    const component_scores = {
-      overall: createComponentScore(98, CONFIDENCE_LEVELS.HIGH, ['gps']),
-      safety: createComponentScore(98, CONFIDENCE_LEVELS.HIGH, ['gps']),
-      smoothness: createComponentScore(100, CONFIDENCE_LEVELS.HIGH, ['gps']),
-      eco: createComponentScore(100, CONFIDENCE_LEVELS.HIGH, ['gps']),
-    };
-    return {
-      score_overall: 98,
-      score_safety: 98,
-      score_smoothness: 100,
-      score_eco: 100,
-      score_confidence: 1,
-      score_confidence_label: CONFIDENCE_LEVELS.HIGH,
-      harsh_brakes_count: 0,
-      rapid_accel_count: 0,
-      sharp_turns_count: 0,
-      speeding_events_count: 0,
-      driving_events: [],
-      component_scores,
-      score_provenance: buildScoreProvenance(component_scores, thresholds),
-      score_explanation: null,
-    };
-  }
   const privacyZones = Array.isArray(options?.privacyZones) ? options.privacyZones : [];
   const motionSamples = Array.isArray(options?.motionSamples) ? options.motionSamples : [];
   const orientationCalibration = options?.orientationCalibration || options?.phoneOrientation || null;
