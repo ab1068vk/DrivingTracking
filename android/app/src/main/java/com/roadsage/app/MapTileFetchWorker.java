@@ -29,7 +29,6 @@ import java.util.Locale;
 
 public class MapTileFetchWorker extends Worker {
     private static final String TAG = "MapTileFetchWorker";
-    private static final String NATIVE_PREFS = "road_sage_native_tracking";
     private static final String KEY_LAST_PARKED = "last_parked_location";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String CAPACITOR_LAST_PARKED_KEY = "road_sage_last_parked";
@@ -241,7 +240,7 @@ public class MapTileFetchWorker extends Worker {
 
     private static void updateStoredAddress(Context context, String addr) {
         updateJsonAddress(
-            context.getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE),
+            DriveSenseNativeTripStore.prefs(context),
             KEY_LAST_PARKED,
             addr,
             false
@@ -256,7 +255,7 @@ public class MapTileFetchWorker extends Worker {
 
     private static boolean hasStoredAddress(Context context) {
         return hasAddress(
-            context.getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE),
+            DriveSenseNativeTripStore.prefs(context),
             KEY_LAST_PARKED
         ) || hasAddress(
             context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE),

@@ -32,6 +32,7 @@ import com.google.android.gms.location.DetectedActivity;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -330,6 +331,56 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     @PluginMethod
     public void clearNativeCompletedTrips(PluginCall call) {
         DriveSenseNativeTripStore.clearCompletedTrips(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getPrivacyZones(PluginCall call) {
+        JSObject payload = new JSObject();
+        String zonesJson = PrivacyZoneStore.getZonesJson(getContext());
+        payload.put("zonesJson", zonesJson == null ? "[]" : zonesJson);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void savePrivacyZones(PluginCall call) {
+        String zonesJson = call.getString("zonesJson", "[]");
+        try {
+            PrivacyZoneStore.saveZonesJson(getContext(), zonesJson);
+            call.resolve();
+        } catch (JSONException error) {
+            call.reject("Privacy zones must be a valid zone array.", error);
+        }
+    }
+
+    @PluginMethod
+    public void getLastParkedLocation(PluginCall call) {
+        JSONObject parked = DriveSenseNativeTripStore.getLastParkedLocation(getContext());
+        JSObject payload = new JSObject();
+        payload.put("parkedJson", parked == null ? null : parked.toString());
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void saveLastParkedLocation(PluginCall call) {
+        String parkedJson = call.getString("parkedJson");
+        if (parkedJson == null || parkedJson.trim().isEmpty()) {
+            call.reject("parkedJson is required.");
+            return;
+        }
+
+        try {
+            JSONObject parked = new JSONObject(parkedJson);
+            DriveSenseNativeTripStore.saveLastParkedLocation(getContext(), parked);
+            call.resolve();
+        } catch (JSONException error) {
+            call.reject("Parked location must be valid JSON.", error);
+        }
+    }
+
+    @PluginMethod
+    public void clearLastParkedLocation(PluginCall call) {
+        DriveSenseNativeTripStore.clearLastParkedLocation(getContext());
         call.resolve();
     }
 

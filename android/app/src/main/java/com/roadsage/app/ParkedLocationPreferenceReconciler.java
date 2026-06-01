@@ -45,6 +45,7 @@ final class ParkedLocationPreferenceReconciler {
 
     private static void clearLegacy(Context context) {
         LEGACY_NATIVE.clear(context);
+        CURRENT_SHARED.clear(context);
         LEGACY_SHARED.clear(context);
     }
 }

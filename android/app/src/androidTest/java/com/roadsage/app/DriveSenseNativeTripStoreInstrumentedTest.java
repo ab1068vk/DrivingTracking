@@ -124,7 +124,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             .contains("last_parked_location"));
         assertEquals(
             2_000L,
-            new JSONObject(context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
+            new JSONObject(DriveSenseNativeTripStore.prefs(context)
                 .getString("last_parked_location", "{}")).getLong("timestamp_ms")
         );
     }
@@ -240,6 +240,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     private void clearTrackingPrefs() {
+        DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
         context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE).edit().clear().commit();
         context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE).edit().clear().commit();
         context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();

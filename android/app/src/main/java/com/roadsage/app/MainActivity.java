@@ -8,6 +8,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(DriveSenseActivityRecognitionPlugin.class);
+        PrivacyZoneStore.migratePlaintextPrefsIfNeeded(this);
+        DriveSenseNativeTripStore.migratePlaintextPrefsIfNeeded(this);
         super.onCreate(savedInstanceState);
     }
 }

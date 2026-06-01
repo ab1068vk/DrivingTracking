@@ -108,6 +108,17 @@ const preferencesModule = async () => {
   return { Preferences };
 };
 
+const androidNativeDriveSensePlugin = async () => {
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor.getPlatform?.() !== 'android') return null;
+    const { default: DriveSenseActivityRecognition } = await import('@/lib/driveSenseNativePlugin');
+    return DriveSenseActivityRecognition;
+  } catch {
+    return null;
+  }
+};
+
 const distanceMetersBetweenLatLng = (lat, lng, zone) => {
   const zoneLat = Number(zone?.lat);
   const zoneLng = Number(zone?.lng);
@@ -192,6 +203,16 @@ const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
 };
 
 export async function getPrivacyZones() {
+  const nativePrivacyZones = await androidNativeDriveSensePlugin();
+  if (nativePrivacyZones?.getPrivacyZones) {
+    try {
+      const result = await nativePrivacyZones.getPrivacyZones();
+      return normalizePreferencePrivacyZones(JSON.parse(result?.zonesJson || '[]'));
+    } catch {
+      return [];
+    }
+  }
+
   try {
     const { Preferences } = await preferencesModule();
     const { value } = await Preferences.get({ key: PRIVACY_ZONES_KEY });
@@ -202,10 +223,19 @@ export async function getPrivacyZones() {
 }
 
 export async function savePrivacyZones(zones) {
+  const normalizedZones = normalizePreferencePrivacyZones(zones);
+  const nativePrivacyZones = await androidNativeDriveSensePlugin();
+  if (nativePrivacyZones?.savePrivacyZones) {
+    await nativePrivacyZones.savePrivacyZones({
+      zonesJson: JSON.stringify(normalizedZones),
+    });
+    return;
+  }
+
   const { Preferences } = await preferencesModule();
   await Preferences.set({
     key: PRIVACY_ZONES_KEY,
-    value: JSON.stringify(normalizePreferencePrivacyZones(zones)),
+    value: JSON.stringify(normalizedZones),
   });
 }
 
@@ -661,6 +691,21 @@ export function validateSettingsPatch(patch = {}) {
 }
 
 export async function getLastParkedLocation() {
+  const nativeDriveSense = await androidNativeDriveSensePlugin();
+  if (nativeDriveSense?.getLastParkedLocation) {
+    try {
+      const result = await nativeDriveSense.getLastParkedLocation();
+      const parkedLocation = result?.parkedJson ? JSON.parse(result.parkedJson) : null;
+      if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
+        await nativeDriveSense.clearLastParkedLocation?.();
+        return null;
+      }
+      return parkedLocation;
+    } catch {
+      return null;
+    }
+  }
+
   const parkedLocation = await getJson(LAST_PARKED_KEY, null);
   if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
     await removeJson(LAST_PARKED_KEY);
@@ -675,7 +720,9 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
   const preferenceZoneMatch = await isInPrivacyZone(parsedLat, parsedLng);
   if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng }) || preferenceZoneMatch.inZone) {
-    await removeJson(LAST_PARKED_KEY);
+    const nativeDriveSense = await androidNativeDriveSensePlugin();
+    if (nativeDriveSense?.clearLastParkedLocation) await nativeDriveSense.clearLastParkedLocation();
+    else await removeJson(LAST_PARKED_KEY);
     return null;
   }
 
@@ -690,6 +737,14 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
     address: resolvedAddress,
     source,
   };
+  const nativeDriveSense = await androidNativeDriveSensePlugin();
+  if (nativeDriveSense?.saveLastParkedLocation) {
+    await nativeDriveSense.saveLastParkedLocation({
+      parkedJson: JSON.stringify(parkedLocation),
+    });
+    return parkedLocation;
+  }
+
   await setJson(LAST_PARKED_KEY, parkedLocation);
   return parkedLocation;
 }

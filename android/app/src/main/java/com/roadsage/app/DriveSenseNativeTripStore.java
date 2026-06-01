@@ -7,38 +7,58 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.Map;
 import java.util.UUID;
 
 class DriveSenseNativeTripStore {
     private static final String PREFS_OLD = "drivesense_native_tracking";
     private static final String PREFS = "road_sage_native_tracking";
+    private static final String PREFS_ENCRYPTED = "road_sage_native_tracking_v2";
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
     private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
     private static final String KEY_LAST_PARKED = "last_parked_location";
     private static final String KEY_MIGRATED_FROM_V1 = "migrated_from_drivesense_v1";
+    private static final String KEY_MIGRATED_FROM_PLAINTEXT = "migrated_from_plaintext";
     private static final int MAX_DIAGNOSTIC_EVENTS = 120;
 
     static SharedPreferences prefs(Context context) {
-        SharedPreferences oldPrefs = context.getSharedPreferences(PREFS_OLD, Context.MODE_PRIVATE);
-        SharedPreferences currentPrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!currentPrefs.contains(KEY_MIGRATED_FROM_V1) && oldPrefs.getAll().size() > 0) {
-            SharedPreferences.Editor editor = currentPrefs.edit();
-            for (Map.Entry<String, ?> entry : oldPrefs.getAll().entrySet()) {
-                Object value = entry.getValue();
-                String key = entry.getKey();
-                if (KEY_LAST_PARKED.equals(key) && currentPrefs.contains(KEY_LAST_PARKED)) continue;
-                if (value instanceof String) editor.putString(key, (String) value);
-                else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
-                else if (value instanceof Integer) editor.putInt(key, (Integer) value);
-                else if (value instanceof Long) editor.putLong(key, (Long) value);
-                else if (value instanceof Float) editor.putFloat(key, (Float) value);
-            }
+        return migratePlaintextPrefsIfNeeded(context);
+    }
+
+    static SharedPreferences migratePlaintextPrefsIfNeeded(Context context) {
+        SharedPreferences encryptedPrefs = EncryptedPreferenceStore.open(context, PREFS_ENCRYPTED);
+        if (!encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_PLAINTEXT, false)) {
+            SharedPreferences oldPrefs = EncryptedPreferenceStore.plaintext(context, PREFS_OLD);
+            SharedPreferences currentPrefs = EncryptedPreferenceStore.plaintext(context, PREFS);
+            SharedPreferences.Editor editor = encryptedPrefs.edit();
+            EncryptedPreferenceStore.copyEntries(oldPrefs, editor);
+            EncryptedPreferenceStore.copyEntries(currentPrefs, editor);
+            String parked = newestParkedLocation(
+                currentPrefs.getString(KEY_LAST_PARKED, null),
+                oldPrefs.getString(KEY_LAST_PARKED, null)
+            );
+            if (parked != null) editor.putString(KEY_LAST_PARKED, parked);
             editor.putBoolean(KEY_MIGRATED_FROM_V1, true);
-            editor.apply();
+            editor.putBoolean(KEY_MIGRATED_FROM_PLAINTEXT, true);
+            editor.commit();
         }
-        return currentPrefs;
+
+        if (EncryptedPreferenceStore.hasEntries(context, PREFS)) {
+            EncryptedPreferenceStore.deletePlaintext(context, PREFS);
+        }
+        if (EncryptedPreferenceStore.hasEntries(context, PREFS_OLD)) {
+            EncryptedPreferenceStore.deletePlaintext(context, PREFS_OLD);
+        }
+        return encryptedPrefs;
+    }
+
+    private static String newestParkedLocation(String first, String second) {
+        ParkedLocationRecord firstRecord = ParkedLocationRecord.parse(first);
+        ParkedLocationRecord secondRecord = ParkedLocationRecord.parse(second);
+        if (ParkedLocationRecord.isNewerThan(secondRecord, firstRecord)) {
+            return second;
+        }
+        return firstRecord != null ? first : second;
     }
 
     static boolean isServiceEnabled(Context context) {
@@ -108,6 +128,14 @@ class DriveSenseNativeTripStore {
             parked.put("source", source);
             ParkedLocationPreferenceReconciler.writeCurrent(context, parked);
         } catch (JSONException ignored) {}
+    }
+
+    static void saveLastParkedLocation(Context context, JSONObject parked) {
+        ParkedLocationPreferenceReconciler.writeCurrent(context, parked);
+    }
+
+    static void clearLastParkedLocation(Context context) {
+        ParkingLocationClearer.clear(context);
     }
 
     static String newTripId() {

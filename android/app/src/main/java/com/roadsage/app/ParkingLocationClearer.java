@@ -28,10 +28,17 @@ final class ParkingLocationClearer {
 
     private static void clearNativePrefs(Context context) {
         for (String prefName : NATIVE_PREFS) {
-            context.getSharedPreferences(prefName, Context.MODE_PRIVATE)
-                .edit()
-                .remove(KEY_LAST_PARKED)
-                .apply();
+            if ("road_sage_native_tracking".equals(prefName)) {
+                DriveSenseNativeTripStore.prefs(context)
+                    .edit()
+                    .remove(KEY_LAST_PARKED)
+                    .apply();
+            } else {
+                context.getSharedPreferences(prefName, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(KEY_LAST_PARKED)
+                    .apply();
+            }
         }
     }
 

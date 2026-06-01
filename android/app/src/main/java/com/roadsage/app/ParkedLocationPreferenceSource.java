@@ -27,6 +27,9 @@ final class ParkedLocationPreferenceSource {
     }
 
     private SharedPreferences prefs(Context context) {
+        if ("road_sage_native_tracking".equals(prefsName)) {
+            return DriveSenseNativeTripStore.prefs(context);
+        }
         return context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
     }
 }
