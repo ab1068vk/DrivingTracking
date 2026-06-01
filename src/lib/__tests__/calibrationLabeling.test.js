@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
+  shouldAskFatigueSelfReport,
   getCalibrationMilestone,
   getCompletionRate,
   getNextCalibrationMilestone,
 } from '@/lib/calibrationLabeling';
-import { fitCalibrationDataset, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
+import { fitCalibrationDataset, fitFatigueConstants, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
 import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
 
@@ -46,6 +47,12 @@ const completedTrip = {
     provisional_constants: ['PENALTY_SCALE_FACTOR'],
     constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
   },
+};
+
+const fatigueEligibleTrip = {
+  ...completedTrip,
+  duration_seconds: 60 * 60,
+  end_time: '2026-01-01T22:15:00',
 };
 
 const ratingForBucket = {
@@ -184,6 +191,32 @@ describe('calibration labeling pipeline', () => {
     expect(serialized).not.toContain('-79.38');
   });
 
+  it('adds optional fatigue self-report only for long late or overnight trips', () => {
+    expect(shouldAskFatigueSelfReport(fatigueEligibleTrip)).toBe(true);
+    expect(shouldAskFatigueSelfReport({
+      ...fatigueEligibleTrip,
+      duration_seconds: 45 * 60,
+    })).toBe(false);
+    expect(shouldAskFatigueSelfReport({
+      ...fatigueEligibleTrip,
+      end_time: '2026-01-01T14:15:00',
+    })).toBe(false);
+
+    const eligiblePayload = buildCalibrationLabelPayload(fatigueEligibleTrip, {
+      overallDriveRating: 4,
+      wasDriver: 'yes',
+      fatigue_self_report: 'very_tired',
+    });
+    const ordinaryPayload = buildCalibrationLabelPayload(completedTrip, {
+      overallDriveRating: 4,
+      wasDriver: 'yes',
+      fatigue_self_report: 'very_tired',
+    });
+
+    expect(eligiblePayload.surveyLabel.fatigue_self_report).toBe('very_tired');
+    expect(ordinaryPayload.surveyLabel.fatigue_self_report).toBeNull();
+  });
+
   it('marks passenger and low-quality trips as ineligible', () => {
     const passenger = buildCalibrationLabelPayload(completedTrip, {
       overallDriveRating: 4,
@@ -233,7 +266,7 @@ describe('calibration labeling pipeline', () => {
       status: 'insufficient_labels',
     });
     expect(result.suggested_constants.PENALTY_SCALE_FACTOR.calibration_status).toBe('heuristic_beta');
-    expect(result.suggested_constants.FATIGUE_SAFETY_PENALTY_SCALE.calibration_status).toBe('heuristic_beta');
+    expect(result.suggested_constants.FATIGUE_SAFETY_PENALTY_SCALE).toBeUndefined();
     expect(result.constants_metadata).toMatchObject({
       calibration_status: 'heuristic_beta',
       warning: 'Calibration pending: not enough labeled trips yet.',
@@ -309,6 +342,67 @@ describe('calibration labeling pipeline', () => {
         .reduce((sum, count) => sum + count, 0);
       expect(rowTotal).toBe(expectedCount);
     }
+  });
+
+  it('fits fatigue constants from fatigue-specific self reports', () => {
+    const reports = ['alert', 'normal', 'tired', 'very_tired'];
+    const targetByReport = {
+      alert: 90,
+      normal: 82,
+      tired: 68,
+      very_tired: 50,
+    };
+    const riskByReport = {
+      alert: 5,
+      normal: 25,
+      tired: 55,
+      very_tired: 85,
+    };
+    const labels = Array.from({ length: 200 }, (_, index) => {
+      const report = reports[index % reports.length];
+      return syntheticCalibrationLabel('normal', index, {
+        surveyLabel: {
+          overallDriveRating: 4,
+          rating: 4,
+          targetScore: targetByReport[report],
+          target_score: targetByReport[report],
+          wasDriver: 'yes',
+          scoreAccuracy: null,
+          contextTags: [],
+          fatigue_self_report: report,
+        },
+        scoreOutput: {
+          overall: targetByReport[report],
+          safety: targetByReport[report],
+          calibrationStatus: 'approximate',
+        },
+        tripFeatureSummary: {
+          distanceKm: 12,
+          durationMin: 70,
+          fatigueRisk: riskByReport[report],
+          nightDrive: true,
+          gpsQualityScore: 1,
+          sampleCount: 100,
+        },
+        calibration_features: {
+          penalty_rate_per_km: 0,
+          fatigue_risk_score: riskByReport[report],
+          non_fatigue_safety_score: 92,
+        },
+      });
+    });
+
+    const result = fitFatigueConstants(labels);
+
+    expect(result.FATIGUE_SAFETY_PENALTY_SCALE).toBeGreaterThan(0);
+    expect(result.FATIGUE_SAFETY_MAX_PENALTY).toBeGreaterThan(0);
+    expect(result.validation).toMatchObject({
+      minSampleSize: 200,
+      fatigueCorrelation: expect.any(Number),
+      alertVsTiredMeanScoreDiff: expect.any(Number),
+    });
+    expect(result.validation.fatigueCorrelation).toBeGreaterThan(0.9);
+    expect(result.validation.alertVsTiredMeanScoreDiff).toBeGreaterThan(20);
   });
 
   it('throws a minimum-label error when no labels are eligible', () => {

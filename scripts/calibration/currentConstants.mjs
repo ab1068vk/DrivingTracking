@@ -2,10 +2,18 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { scoringConstantsPath } from './paths.mjs';
 
-export const PROMOTABLE_CONSTANT_KEYS = Object.freeze([
+export const GENERAL_PROMOTABLE_CONSTANT_KEYS = Object.freeze([
   'PENALTY_SCALE_FACTOR',
+]);
+
+export const FATIGUE_PROMOTABLE_CONSTANT_KEYS = Object.freeze([
   'FATIGUE_SAFETY_PENALTY_SCALE',
   'FATIGUE_SAFETY_MAX_PENALTY',
+]);
+
+export const PROMOTABLE_CONSTANT_KEYS = Object.freeze([
+  ...GENERAL_PROMOTABLE_CONSTANT_KEYS,
+  ...FATIGUE_PROMOTABLE_CONSTANT_KEYS,
 ]);
 
 export async function loadCurrentConstants() {

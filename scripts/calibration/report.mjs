@@ -41,6 +41,18 @@ function constantsText(result, currentConstants = {}) {
   }).join('\n');
 }
 
+function fatigueText(result) {
+  const fatigue = result.fatigueCalibration;
+  if (!fatigue) return '';
+  if (fatigue.status !== 'refitted') return fatigue.note || '';
+
+  return [
+    `Fatigue labels: ${fatigue.eligibleCount.toLocaleString()} eligible`,
+    `Fatigue correlation: ${fmt(fatigue.validation.fatigueCorrelation, 3)}`,
+    `Alert vs very tired mean Safety gap: ${fmt(fatigue.validation.alertVsTiredMeanScoreDiff, 2)} points`,
+  ].join('\n');
+}
+
 function warningsText(result, currentConstants = {}) {
   const warnings = [];
   const fitted = Number(result.constants.PENALTY_SCALE_FACTOR);
@@ -70,6 +82,12 @@ export function printFitReport({ result, loadedCount, labelsFile, currentConstan
   console.log('');
   console.log('SUGGESTED CONSTANTS vs. CURRENT');
   console.log(constantsText(result, currentConstants));
+  const fatigue = fatigueText(result);
+  if (fatigue) {
+    console.log('');
+    console.log('FATIGUE-SPECIFIC CALIBRATION');
+    console.log(fatigue);
+  }
   console.log('');
   console.log(warningsText(result, currentConstants));
   console.log(line);

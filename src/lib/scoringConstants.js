@@ -190,6 +190,7 @@ export const SCORING_CONSTANTS = Object.freeze({
    * @calibrationRequirement Labeled trips with fatigue exposure features, post-trip fatigue labels, time-on-task context, and safety outcome or expert risk labels.
    * @calibrationMethod Regression against labeled Safety risk with cross-validation and subgroup error checks by drive duration and time of day.
    * @externalReference Williamson & Feyer, Occupational and Environmental Medicine, 2000
+   * @literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655): 18-hour wakefulness → impairment equivalent to BAC 0.05%. Current deduction rate maps maximum fatigue to ~15 Safety points assuming a proportional linear relationship (not validated by the original study). Recalibration against fatigue self-reports may update this anchor.
    * @promotionBlocker true
    */
   FATIGUE_SAFETY_PENALTY_SCALE: constant(0.15, {
@@ -208,6 +209,7 @@ export const SCORING_CONSTANTS = Object.freeze({
    * @calibrationRequirement Labeled trips spanning low to extreme fatigue proxy values with Safety outcome labels and enough high-fatigue examples to estimate saturation.
    * @calibrationMethod Threshold search over cap candidates with cross-validation and calibration-curve inspection.
    * @externalReference Williamson & Feyer, Occupational and Environmental Medicine, 2000
+   * @literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655): 18-hour wakefulness → impairment equivalent to BAC 0.05%. Current deduction rate maps maximum fatigue to ~15 Safety points assuming a proportional linear relationship (not validated by the original study). Recalibration against fatigue self-reports may update this anchor.
    * @promotionBlocker true
    */
   FATIGUE_SAFETY_MAX_PENALTY: constant(15, {

@@ -3,12 +3,15 @@ import { motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle2, Gauge, ShieldCheck } from 'lucide-react';
 import {
   CALIBRATION_LABEL_TARGET_COUNT,
+  FATIGUE_SELF_REPORT_OPTIONS,
+  FATIGUE_SELF_REPORT_QUESTION,
   SCORE_ACCURACY_OPTIONS,
   SURVEY_RATING_OPTIONS,
   TRIP_CONTEXT_TAG_OPTIONS,
   WAS_DRIVER_OPTIONS,
   getCalibrationMilestone,
   getNextCalibrationMilestone,
+  shouldAskFatigueSelfReport,
 } from '@/lib/calibrationLabeling';
 
 const SCORE_ACCURACY_LABELS = {
@@ -21,6 +24,13 @@ const WAS_DRIVER_LABELS = {
   yes: 'I was driving',
   no: 'I was a passenger',
   unsure: 'Not sure',
+};
+
+const FATIGUE_SELF_REPORT_LABELS = {
+  alert: 'Alert',
+  normal: 'Normal',
+  tired: 'Tired',
+  very_tired: 'Very tired',
 };
 
 const CONTEXT_TAG_LABELS = {
@@ -95,6 +105,7 @@ export default function PostTripCalibrationSurvey({
     scoreAccuracy: '',
     wasDriver: 'yes',
     contextTags: [],
+    fatigue_self_report: null,
     freeTextNote: '',
   });
   const submittedRating = Number(status?.rating);
@@ -108,6 +119,7 @@ export default function PostTripCalibrationSurvey({
   const selectedRating = submitted ? submittedRating : Number(draft.overallDriveRating);
   const somethingHappened = selectedRating === 1;
   const askDriver = useMemo(() => shouldAskWasDriver(trip), [trip]);
+  const askFatigueSelfReport = useMemo(() => shouldAskFatigueSelfReport(trip), [trip]);
   const scoreMismatch = useMemo(() => {
     const score = scoreValue(trip);
     return fullSurvey && Number.isFinite(score) && Number.isInteger(selectedRating) && Math.abs(score - targetScoreForRating(selectedRating)) >= 20;
@@ -132,6 +144,7 @@ export default function PostTripCalibrationSurvey({
       scoreAccuracy: fullSurvey && draft.scoreAccuracy ? draft.scoreAccuracy : null,
       wasDriver: askDriver ? draft.wasDriver : 'yes',
       contextTags: somethingHappened ? draft.contextTags : [],
+      fatigue_self_report: askFatigueSelfReport ? draft.fatigue_self_report : null,
       freeTextNote: fullSurvey ? draft.freeTextNote : '',
     });
   };
@@ -272,6 +285,42 @@ export default function PostTripCalibrationSurvey({
             placeholder="Optional. Stored locally only."
           />
         </label>
+      )}
+
+      {!submitted && askFatigueSelfReport && (
+        <div className="mt-4">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">{FATIGUE_SELF_REPORT_QUESTION}</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {FATIGUE_SELF_REPORT_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                disabled={disabled}
+                onClick={() => setDraft((current) => ({
+                  ...current,
+                  fatigue_self_report: current.fatigue_self_report === option ? null : option,
+                }))}
+                className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                  draft.fatigue_self_report === option
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                }`}
+              >
+                {FATIGUE_SELF_REPORT_LABELS[option]}
+              </button>
+            ))}
+          </div>
+          {draft.fatigue_self_report && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setDraft((current) => ({ ...current, fatigue_self_report: null }))}
+              className="mt-2 text-xs font-semibold text-muted-foreground"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
       )}
 
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

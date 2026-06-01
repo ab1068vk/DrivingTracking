@@ -25,6 +25,8 @@ export const SURVEY_RATING_OPTIONS = Object.freeze([
 ]);
 export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'too_low']);
 export const WAS_DRIVER_OPTIONS = Object.freeze(['yes', 'no', 'unsure']);
+export const FATIGUE_SELF_REPORT_QUESTION = 'How alert did you feel during this drive?';
+export const FATIGUE_SELF_REPORT_OPTIONS = Object.freeze(['alert', 'normal', 'tired', 'very_tired']);
 export const TRIP_CONTEXT_TAG_OPTIONS = Object.freeze([
   'traffic',
   'weather',
@@ -158,12 +160,40 @@ function normalizeRating(value, { optional = false } = {}) {
   return normalized;
 }
 
+function normalizeFatigueSelfReport(value) {
+  if (value == null || value === '') return null;
+  if (!FATIGUE_SELF_REPORT_OPTIONS.includes(value)) {
+    throw new Error(`fatigue_self_report must be one of: ${FATIGUE_SELF_REPORT_OPTIONS.join(', ')}.`);
+  }
+  return value;
+}
+
+function tripEndTimeMs(trip = {}) {
+  const value = trip.end_time ?? trip.endTime ?? trip.completed_at ?? trip.completedAt;
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+}
+
+function tripEndHour(trip = {}) {
+  const time = tripEndTimeMs(trip);
+  if (time == null) return null;
+  return new Date(time).getHours();
+}
+
+export function shouldAskFatigueSelfReport(trip = {}) {
+  const durationMin = Math.max(0, numberOrNull(trip.duration_seconds) || 0) / 60;
+  const hour = tripEndHour(trip);
+
+  return durationMin > 45 && hour != null && (hour >= 20 || hour < 8);
+}
+
 function normalizeSurveyLabel(input = {}) {
   const source = typeof input === 'number' ? { overallDriveRating: input } : input || {};
   const overallDriveRating = normalizeRating(source.overallDriveRating ?? source.rating);
   const scoreAccuracy = source.scoreAccuracy || null;
   const wasDriver = source.wasDriver || 'unsure';
   const tripDifficulty = normalizeRating(source.tripDifficulty, { optional: true });
+  const fatigueSelfReport = normalizeFatigueSelfReport(source.fatigue_self_report ?? source.fatigueSelfReport);
 
   if (scoreAccuracy != null && !SCORE_ACCURACY_OPTIONS.includes(scoreAccuracy)) {
     throw new Error(`scoreAccuracy must be one of: ${SCORE_ACCURACY_OPTIONS.join(', ')}.`);
@@ -185,6 +215,7 @@ function normalizeSurveyLabel(input = {}) {
     wasDriver,
     tripDifficulty,
     contextTags,
+    fatigue_self_report: fatigueSelfReport,
   };
 }
 
@@ -333,7 +364,10 @@ export async function getAnonymousInstallIdHash() {
 }
 
 export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {}) {
-  const surveyLabel = normalizeSurveyLabel(surveyInput);
+  const normalizedSurveyLabel = normalizeSurveyLabel(surveyInput);
+  const surveyLabel = shouldAskFatigueSelfReport(trip)
+    ? normalizedSurveyLabel
+    : { ...normalizedSurveyLabel, fatigue_self_report: null };
   const tripFeatureSummary = buildTripFeatureSummary(trip);
   const scoreOutput = buildScoreOutputSummary(trip);
   const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabel, tripFeatureSummary);

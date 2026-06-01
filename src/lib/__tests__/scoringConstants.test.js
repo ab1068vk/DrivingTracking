@@ -46,6 +46,14 @@ describe('scoring constants registry', () => {
     }
   });
 
+  test('fatigue promotion blockers keep their literature anchor explicit', () => {
+    const source = readFileSync(new URL('../scoringConstants.js', import.meta.url), 'utf8');
+
+    expect(source).toContain('@literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655)');
+    expect(source).toContain('18-hour wakefulness → impairment equivalent to BAC 0.05%');
+    expect(source).toContain('Recalibration against fatigue self-reports may update this anchor.');
+  });
+
   it('drives existing scoring exports from the central values', () => {
     expect(PENALTY_SCALE_FACTOR).toBe(scoringValue('PENALTY_SCALE_FACTOR'));
     expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(scoringValue('FATIGUE_SAFETY_PENALTY_SCALE'));

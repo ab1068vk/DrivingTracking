@@ -1,6 +1,16 @@
 import { SCORING_VERSION } from './scoringVersion.generated.js';
+import {
+  MIN_FATIGUE_CALIBRATION_LABEL_COUNT,
+  countFatigueCalibrationLabels,
+  fitFatigueConstants,
+} from './calibration/fatigueConstants.js';
 
 export const MIN_CALIBRATION_LABEL_COUNT = 2000;
+export {
+  MIN_FATIGUE_CALIBRATION_LABEL_COUNT,
+  countFatigueCalibrationLabels,
+  fitFatigueConstants,
+};
 export const CALIBRATION_PENDING_MESSAGE = 'Calibration pending: not enough labeled trips yet.';
 
 export class CalibrationQualityError extends Error {
@@ -245,10 +255,6 @@ function classBalanceWeight(row, distribution, total) {
   return total / (LABEL_BUCKETS.length * count);
 }
 
-function highFatigue(row) {
-  return finiteNumber(row.features.duration_min, 0) > 60 || row.features.night_drive === true;
-}
-
 function fitPenaltyScale(rows, distribution = labelDistribution(rows)) {
   const total = Math.max(1, rows.length);
   const solutions = rows
@@ -265,42 +271,12 @@ function fitPenaltyScale(rows, distribution = labelDistribution(rows)) {
   return round(weightedMedian(solutions, DEFAULT_CONSTANTS.PENALTY_SCALE_FACTOR), 2);
 }
 
-function fitFatigueScale(rows, penaltyScale, distribution = labelDistribution(rows)) {
-  const total = Math.max(1, rows.length);
-  const solutions = rows
-    .filter((row) => highFatigue(row) && ['rushed', 'incident'].includes(row.actualBucket))
-    .map((row) => {
-      const fatigue = finiteNumber(row.features.fatigue_risk_score, 0);
-      if (fatigue <= 0) return null;
-      const eventReduction = finiteNumber(row.features.penalty_rate_per_km, 0) * penaltyScale;
-      const requiredReduction = Math.max(0, 100 - row.target - eventReduction);
-      return {
-        value: clamp(requiredReduction / fatigue, 0.001, 1),
-        weight: Math.max(1, finiteNumber(row.features.distance_km, 1)) * classBalanceWeight(row, distribution, total),
-      };
-    })
-    .filter(Boolean);
-  return round(weightedMedian(solutions, DEFAULT_CONSTANTS.FATIGUE_SAFETY_PENALTY_SCALE), 3);
-}
-
-function fitFatigueMaxPenalty(rows, fatigueScale) {
-  const deductions = rows
-    .filter((row) => highFatigue(row) && row.actualBucket === 'incident')
-    .map((row) => finiteNumber(row.features.fatigue_risk_score, 0) * fatigueScale)
-    .filter((value) => value > 0);
-  return round(clamp(percentile(deductions, 0.95, DEFAULT_CONSTANTS.FATIGUE_SAFETY_MAX_PENALTY), 1, 20), 2);
-}
-
 function fitConstants(rows) {
   if (!rows.length) return { ...DEFAULT_CONSTANTS };
   const distribution = labelDistribution(rows);
   const penaltyScale = fitPenaltyScale(rows, distribution);
-  const fatigueScale = fitFatigueScale(rows, penaltyScale, distribution);
-  const fatigueMax = fitFatigueMaxPenalty(rows, fatigueScale);
   return {
     PENALTY_SCALE_FACTOR: penaltyScale,
-    FATIGUE_SAFETY_PENALTY_SCALE: fatigueScale,
-    FATIGUE_SAFETY_MAX_PENALTY: fatigueMax,
   };
 }
 
@@ -458,8 +434,6 @@ export function fitCalibrationDataset(labels = [], options = {}) {
   const constants = fitConstants(rows);
   const confidenceIntervals = {
     PENALTY_SCALE_FACTOR: bootstrapInterval(rows, (fit) => fit.PENALTY_SCALE_FACTOR, options.bootstrapIterations ?? 1000, 17),
-    FATIGUE_SAFETY_PENALTY_SCALE: bootstrapInterval(rows, (fit) => fit.FATIGUE_SAFETY_PENALTY_SCALE, options.bootstrapIterations ?? 1000, 29),
-    FATIGUE_SAFETY_MAX_PENALTY: bootstrapInterval(rows, (fit) => fit.FATIGUE_SAFETY_MAX_PENALTY, options.bootstrapIterations ?? 1000, 41),
   };
   const cv = crossValidate(rows, options.kFold || 5);
   const validation = {
@@ -491,6 +465,7 @@ export function fitCalibrationDataset(labels = [], options = {}) {
 
   return {
     constants,
+    fittedConstantKeys: ['PENALTY_SCALE_FACTOR'],
     confidenceIntervals,
     validation,
     metadata,
@@ -510,18 +485,6 @@ export function fitCalibrationDataset(labels = [], options = {}) {
         value: constants.PENALTY_SCALE_FACTOR,
         confidence_interval: confidenceIntervals.PENALTY_SCALE_FACTOR,
         fitted_sample_count: rows.length,
-        calibration_status: proposalStatus,
-      },
-      FATIGUE_SAFETY_PENALTY_SCALE: {
-        value: constants.FATIGUE_SAFETY_PENALTY_SCALE,
-        confidence_interval: confidenceIntervals.FATIGUE_SAFETY_PENALTY_SCALE,
-        fitted_sample_count: rows.filter(highFatigue).length,
-        calibration_status: proposalStatus,
-      },
-      FATIGUE_SAFETY_MAX_PENALTY: {
-        value: constants.FATIGUE_SAFETY_MAX_PENALTY,
-        confidence_interval: confidenceIntervals.FATIGUE_SAFETY_MAX_PENALTY,
-        fitted_sample_count: rows.filter((row) => highFatigue(row) && row.actualBucket === 'incident').length,
         calibration_status: proposalStatus,
       },
     },

@@ -44,7 +44,8 @@ async function runVersionBuild() {
 
 export async function promoteCalibration({ result, loadedCount }) {
   const originalSource = await readFile(scoringConstantsPath, 'utf8');
-  const nextSource = PROMOTABLE_CONSTANT_KEYS.reduce(
+  const keysToPromote = result.fittedConstantKeys || PROMOTABLE_CONSTANT_KEYS;
+  const nextSource = keysToPromote.reduce(
     (source, key) => replaceConstantValue(source, key, result.constants[key]),
     originalSource
   );
@@ -61,7 +62,9 @@ export async function promoteCalibration({ result, loadedCount }) {
     fittedAt: result.metadata.fittedAt,
     promotedAt: new Date().toISOString(),
     constants: result.constants,
+    promotedConstantKeys: keysToPromote,
     validation: result.validation,
+    fatigueCalibration: result.fatigueCalibration || null,
     labelCount: {
       loaded: loadedCount,
       eligible: result.validation.eligibleCount,
