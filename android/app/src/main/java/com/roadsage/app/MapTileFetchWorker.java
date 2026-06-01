@@ -14,6 +14,7 @@ import android.util.Log;
 import android.widget.RemoteViews;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
@@ -190,16 +191,8 @@ public class MapTileFetchWorker extends Worker {
             if (hasStoredAddress(context)) return;
 
             try {
-                String geoUrl = String.format(
-                    Locale.US,
-                    "https://nominatim.openstreetmap.org/reverse?format=json&lat=%.6f&lon=%.6f&zoom=17&addressdetails=0",
-                    lat,
-                    lng
-                );
-                String body = fetchText(geoUrl);
-                if (body == null || body.trim().isEmpty()) return;
-
-                JSONObject geo = new JSONObject(body);
+                JSONObject geo = reverseGeocodeIfPermitted(context, lat, lng);
+                if (geo == null) return;
                 String shortAddr = shortenAddress(geo.optString("display_name", ""));
                 if (shortAddr.isEmpty()) return;
 
@@ -215,6 +208,26 @@ public class MapTileFetchWorker extends Worker {
             } catch (Exception e) {
                 Log.w(TAG, "Geocode silent fail: " + e.getMessage());
             }
+        }
+    }
+
+    @Nullable
+    private static JSONObject reverseGeocodeIfPermitted(Context context, double lat, double lng) {
+        if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) return null;
+
+        try {
+            String geoUrl = String.format(
+                Locale.US,
+                "https://nominatim.openstreetmap.org/reverse?format=json&lat=%.6f&lon=%.6f&zoom=17&addressdetails=0",
+                lat,
+                lng
+            );
+            String body = fetchText(geoUrl);
+            if (body == null || body.trim().isEmpty()) return null;
+            return new JSONObject(body);
+        } catch (JSONException e) {
+            Log.w(TAG, "Geocode parse failed");
+            return null;
         }
     }
 

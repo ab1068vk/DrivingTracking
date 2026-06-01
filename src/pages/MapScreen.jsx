@@ -10,6 +10,7 @@ import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
+import { reverseGeocodeIfPermitted } from '@/lib/geocoding';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { ensureRouteRiskIndexMigration, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
@@ -249,15 +250,15 @@ export default function MapScreen() {
 
     let next = stored;
     if (!stored.address) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const data = await response.json();
-          next = { ...stored, address: data.display_name || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-          await saveLastParkedLocation(next);
-        }
-      } catch {
+      const inPrivacyZone = isPointInPrivacyZone(stored, privacyZones);
+      if (inPrivacyZone) {
+        next = { ...stored, address: 'Private location' };
+      } else {
+        const address = await reverseGeocodeIfPermitted(stored.lat, stored.lng, { privacyZones });
+        next = { ...stored, address: address || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+        if (address) await saveLastParkedLocation(next);
+      }
+      if (!next.address) {
         next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
       }
     }

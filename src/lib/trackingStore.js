@@ -239,9 +239,9 @@ export async function savePrivacyZones(zones) {
   });
 }
 
-export async function isInPrivacyZone(lat, lng) {
-  const zones = await getPrivacyZones();
-  for (const zone of zones) {
+export async function isInPrivacyZone(lat, lng, zones = null) {
+  const privacyZones = Array.isArray(zones) ? zones : await getPrivacyZones();
+  for (const zone of privacyZones) {
     if (distanceMetersBetweenLatLng(lat, lng, zone) <= zone.radius) {
       return { inZone: true, zoneName: zone.name };
     }
@@ -718,8 +718,10 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
-  const preferenceZoneMatch = await isInPrivacyZone(parsedLat, parsedLng);
-  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng }) || preferenceZoneMatch.inZone) {
+  const settings = localSettings.get();
+  const preferenceZones = await getPrivacyZones();
+  const preferenceZoneMatch = await isInPrivacyZone(parsedLat, parsedLng, preferenceZones);
+  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng }, settings) || preferenceZoneMatch.inZone) {
     const nativeDriveSense = await androidNativeDriveSensePlugin();
     if (nativeDriveSense?.clearLastParkedLocation) await nativeDriveSense.clearLastParkedLocation();
     else await removeJson(LAST_PARKED_KEY);
@@ -727,7 +729,13 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
   }
 
   const resolvedAddress = shortenParkedAddress(address) ||
-    await reverseGeocodeParkedLocation(parsedLat, parsedLng);
+    await reverseGeocodeParkedLocation(parsedLat, parsedLng, {
+      guardM: PARKED_LOCATION_PRIVACY_GUARD_M,
+      privacyZones: [
+        ...(Array.isArray(settings?.privacy_zones) ? settings.privacy_zones : []),
+        ...preferenceZones,
+      ],
+    });
 
   const parkedLocation = {
     lat: parsedLat,
