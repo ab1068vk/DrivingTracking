@@ -11,6 +11,7 @@
     "test": "vitest run",
     "scoring:version": "node scripts/generate-scoring-version.mjs",
     "scoring:version:check": "node scripts/generate-scoring-version.mjs --check",
+    "build:version": "npm run scoring:version",
     "test:contracts:live": "node scripts/run-live-contracts.mjs",
     "test:e2e": "node ./node_modules/vite/bin/vite.js build && node ./node_modules/playwright/cli.js test",
     "postinstall": "node scripts/patch-android-gradle.mjs",
@@ -19,6 +20,9 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./tsconfig.json",
     "calibration:fit": "node scripts/fit-calibration-labels.mjs",
+    "calibration:promote": "node scripts/fit-calibration-labels.mjs --promote",
+    "calibration:validate": "node scripts/fit-calibration-labels.mjs --validate",
+    "calibration:dry-run": "node scripts/fit-calibration-labels.mjs --dry-run",
     "preview": "vite preview",
     "android:sync": "npm run build && npx cap sync android && node scripts/patch-android-gradle.mjs",
     "android:open": "npx cap open android"

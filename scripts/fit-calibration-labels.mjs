@@ -1,41 +1,34 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
-import { fitCalibrationDataset, MIN_CALIBRATION_LABEL_COUNT } from '../src/lib/calibrationFitting.js';
+import { fitCalibrationDataset, CalibrationQualityError, MIN_CALIBRATION_LABEL_COUNT } from '../src/lib/calibrationFitting.js';
+import { parseArgs } from './calibration/args.mjs';
+import { loadCurrentConstants } from './calibration/currentConstants.mjs';
+import { loadLabels } from './calibration/labels.mjs';
+import { promoteCalibration } from './calibration/promotion.mjs';
+import { printFitReport } from './calibration/report.mjs';
+import { validateCalibration } from './calibration/validation.mjs';
 
-const usage = () => {
-  console.error('Usage: npm run calibration:fit -- <labels.json> [--target=2000]');
-  process.exit(1);
-};
-
-const args = process.argv.slice(2);
-const filePath = args.find((arg) => !arg.startsWith('--'));
-if (!filePath) usage();
-
-const targetArg = args.find((arg) => arg.startsWith('--target='));
-const targetCount = targetArg ? Number(targetArg.split('=')[1]) : MIN_CALIBRATION_LABEL_COUNT;
-
-const raw = await readFile(filePath, 'utf8');
-const parsed = JSON.parse(raw);
-const labels = Array.isArray(parsed)
-  ? parsed
-  : Array.isArray(parsed.labels)
-    ? parsed.labels
-    : Array.isArray(parsed.calibration_labels)
-      ? parsed.calibration_labels
-      : null;
-
-if (!labels) {
-  throw new Error('Label file must be an array or contain a labels/calibration_labels array.');
+async function fit(options) {
+  const { labels, labelsFile } = await loadLabels(options.labelsFile);
+  const result = fitCalibrationDataset(labels, {
+    verbose: true,
+    targetCount: options.targetCount || MIN_CALIBRATION_LABEL_COUNT,
+    enforcePromotionGuards: options.promote === true || options.validate === true,
+  });
+  const currentConstants = await loadCurrentConstants();
+  printFitReport({ result, loadedCount: labels.length, labelsFile, currentConstants });
+  return { result, labels };
 }
 
-const result = fitCalibrationDataset(labels, { targetCount });
+try {
+  const options = parseArgs();
+  const { result, labels } = await fit(options);
 
-console.log(JSON.stringify({
-  dataset_provenance: {
-    source_file: basename(filePath),
-    generated_at: new Date().toISOString(),
-    label_schema: 'post_trip_survey_v1',
-  },
-  ...result,
-}, null, 2));
+  if (options.validate) {
+    await validateCalibration(result);
+  } else if (options.promote) {
+    await promoteCalibration({ result, loadedCount: labels.length });
+  }
+} catch (error) {
+  console.error(error?.message || error);
+  process.exit(error instanceof CalibrationQualityError ? 2 : 1);
+}
