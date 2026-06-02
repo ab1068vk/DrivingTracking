@@ -221,18 +221,27 @@ const sanitizeTripRouteRiskCells = (trip) => {
   if (!Array.isArray(next?.route_risk_cells)) return next;
   return {
     ...next,
+    motion_samples: undefined,
     route_risk_cells: trip.route_risk_cells
       .map((cell) => sanitizeRouteRiskCellForStorage(cell))
       .filter((cell) => cell.key),
   };
 };
 
-const decryptStoredTrip = async (trip) => sanitizeTripRouteRiskCells(await decryptTripFields(trip));
+const sanitizeTripForStorage = (trip) => {
+  const next = sanitizeTripRouteRiskCells(truncateTripCoordinates(trip));
+  if (!next || typeof next !== 'object') return next;
+  const { motion_samples: _motionSamples, ...withoutMotionSamples } = next;
+  return withoutMotionSamples;
+};
+
+const decryptStoredTrip = async (trip) => sanitizeTripForStorage(await decryptTripFields(trip));
 
 const storageSanitizationChanged = (before, after) => (
   JSON.stringify(before?.route_points || null) !== JSON.stringify(after?.route_points || null) ||
   JSON.stringify(before?.raw_route_points || null) !== JSON.stringify(after?.raw_route_points || null) ||
-  JSON.stringify(before?.route_risk_cells || null) !== JSON.stringify(after?.route_risk_cells || null)
+  JSON.stringify(before?.route_risk_cells || null) !== JSON.stringify(after?.route_risk_cells || null) ||
+  Boolean(before && Object.prototype.hasOwnProperty.call(before, 'motion_samples')) !== Boolean(after && Object.prototype.hasOwnProperty.call(after, 'motion_samples'))
 );
 
 const readTripsFromDb = async (dbName) => {
@@ -248,7 +257,7 @@ const readTripsFromDb = async (dbName) => {
 
 const writeTripsToDb = async (dbName, trips) => {
   if (!trips.length) return;
-  const encryptedTrips = await Promise.all(trips.map(sanitizeTripRouteRiskCells).map(encryptTripFields));
+  const encryptedTrips = await Promise.all(trips.map(sanitizeTripForStorage).map(encryptTripFields));
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readwrite');
@@ -329,14 +338,14 @@ const getAllTrips = async () => {
     const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
     db.close();
     const decrypted = await Promise.all(trips.map(decryptTripFields));
-    const sanitized = decrypted.map(sanitizeTripRouteRiskCells);
+    const sanitized = decrypted.map(sanitizeTripForStorage);
     const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
     if (changed.length) await putTrips(changed).catch(() => {});
     return sanitized;
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
     const decrypted = await Promise.all(trips.map(decryptTripFields));
-    const sanitized = decrypted.map(sanitizeTripRouteRiskCells);
+    const sanitized = decrypted.map(sanitizeTripForStorage);
     const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
     if (changed.length) await putTrips(changed).catch(() => {});
     return sanitized;
@@ -344,7 +353,7 @@ const getAllTrips = async () => {
 };
 
 const putTrip = async (trip) => {
-  const encryptedTrip = await encryptTripFields(sanitizeTripRouteRiskCells(trip));
+  const encryptedTrip = await encryptTripFields(sanitizeTripForStorage(trip));
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
@@ -359,7 +368,7 @@ const putTrip = async (trip) => {
 
 const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
-  const encryptedIncomingTrips = await Promise.all(incomingTrips.map(sanitizeTripRouteRiskCells).map(encryptTripFields));
+  const encryptedIncomingTrips = await Promise.all(incomingTrips.map(sanitizeTripForStorage).map(encryptTripFields));
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');

@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-06-02T05:00:24.187Z
+Updated: 2026-06-02T05:23:33.308Z
 
 This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.
 
@@ -27,13 +27,13 @@ This document is generated from the current repository. It keeps the reference r
 ---
 ## Coverage And Reading Guide
 
-- Text/code files scanned: 495
-- App/source files scanned: 432
+- Text/code files scanned: 496
+- App/source files scanned: 433
 - Machine-local files excluded from scanning: `android/local.properties`
-- Production calculation lines indexed: 2285
+- Production calculation lines indexed: 2286
 - Test calculation/assertion lines indexed separately: 358
-- Hard-coded production literals indexed: 22180
-- Functions/methods catalogued: 2305
+- Hard-coded production literals indexed: 22226
+- Functions/methods catalogued: 2317
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -170,8 +170,8 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | android/app/src/main/java/com/roadsage/app/DriveSenseNativeTripStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences, org.json.JSONArray, org.json.JSONException, org.json.JSONObject, java.util.UUID | none | 22 | 1 | 35 |
 | android/app/src/main/java/com/roadsage/app/DriveSensePhoneUsageTracker.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.app.AppOpsManager, android.app.usage.UsageEvents, android.app.usage.UsageStatsManager, android.content.Context, android.os.Build, android.os.Process, org.json.JSONArray, org.json.JSONException | none | 7 | 3 | 50 |
 | android/app/src/main/java/com/roadsage/app/EncryptedCapacitorPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.SharedPreferences, com.getcapacitor.JSObject, com.getcapacitor.Plugin, com.getcapacitor.PluginCall, com.getcapacitor.PluginMethod, com.getcapacitor.annotation.CapacitorPlugin | none | 5 | 0 | 11 |
-| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences, android.os.Build, android.security.keystore.KeyInfo, android.security.keystore.KeyProperties, androidx.security.crypto.EncryptedSharedPreferences, androidx.security.crypto.MasterKey, java.io.IOException | none | 12 | 0 | 14 |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Intent, android.net.Uri, android.os.Build, android.os.Bundle, android.util.Log, android.view.View, android.view.WindowManager, android.webkit.CookieManager | none | 22 | 3 | 82 |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences, android.os.Build, android.security.keystore.KeyInfo, android.security.keystore.KeyProperties, androidx.security.crypto.EncryptedSharedPreferences, androidx.security.crypto.MasterKey, java.io.IOException | none | 16 | 0 | 26 |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Intent, android.net.Uri, android.os.Build, android.os.Bundle, android.util.Log, android.view.View, android.view.WindowManager, android.webkit.CookieManager | none | 23 | 3 | 82 |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.appwidget.AppWidgetManager, android.content.Context, android.content.SharedPreferences, android.graphics.Bitmap, android.graphics.BitmapFactory, android.graphics.Canvas, android.graphics.Color, android.graphics.ColorMatrixColorFilter | none | 23 | 11 | 67 |
 | android/app/src/main/java/com/roadsage/app/NativeSettingsStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences | none | 5 | 0 | 2 |
 | android/app/src/main/java/com/roadsage/app/ParkedCarWidgetProvider.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.app.AlarmManager, android.app.PendingIntent, android.appwidget.AppWidgetManager, android.appwidget.AppWidgetProvider, android.os.Build, android.os.BatteryManager, android.os.Bundle, android.content.ComponentName | none | 24 | 5 | 63 |
@@ -180,13 +180,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | android/app/src/main/java/com/roadsage/app/ParkedLocationRecord.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | org.json.JSONException, org.json.JSONObject, java.time.Instant, java.time.format.DateTimeParseException | none | 5 | 0 | 5 |
 | android/app/src/main/java/com/roadsage/app/ParkingLocationClearer.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, androidx.work.WorkManager | none | 2 | 0 | 3 |
 | android/app/src/main/java/com/roadsage/app/PendingIntentCompat.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.app.PendingIntent, android.os.Build | none | 3 | 0 | 0 |
-| android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | com.getcapacitor.JSObject, com.getcapacitor.Plugin, com.getcapacitor.PluginCall, com.getcapacitor.PluginMethod, com.getcapacitor.annotation.CapacitorPlugin | none | 1 | 0 | 12 |
+| android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | com.getcapacitor.JSObject, com.getcapacitor.Plugin, com.getcapacitor.PluginCall, com.getcapacitor.PluginMethod, com.getcapacitor.annotation.CapacitorPlugin, com.google.android.play.core.integrity.IntegrityManager, com.google.android.play.core.integrity.IntegrityManagerFactory, com.google.android.play.core.integrity.IntegrityTokenRequest | none | 2 | 0 | 25 |
 | android/app/src/main/java/com/roadsage/app/PrivacyZone.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | org.json.JSONException, org.json.JSONObject | none | 4 | 0 | 13 |
 | android/app/src/main/java/com/roadsage/app/PrivacyZoneStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences, android.util.Log, androidx.annotation.Nullable, org.json.JSONArray, org.json.JSONException, java.util.ArrayList, java.util.List | none | 10 | 0 | 13 |
-| android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.Manifest, android.app.Notification, android.app.NotificationChannel, android.app.NotificationManager, android.app.PendingIntent, android.app.Service, android.content.Context, android.content.Intent | none | 81 | 39 | 520 |
+| android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.Manifest, android.app.Notification, android.app.NotificationChannel, android.app.NotificationManager, android.app.PendingIntent, android.app.Service, android.content.Context, android.content.Intent | none | 81 | 39 | 519 |
 | android/app/src/main/java/com/roadsage/app/RuntimeIntegrityCheck.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.os.Build, android.os.Debug, android.provider.Settings, java.io.File, java.util.Locale | none | 7 | 0 | 33 |
 | android/app/src/main/java/com/roadsage/app/SecureDelete.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.util.Log, java.io.File, java.io.IOException, java.io.RandomAccessFile, java.security.SecureRandom, java.util.Arrays | none | 6 | 0 | 26 |
-| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.os.Build, android.security.keystore.KeyGenParameterSpec, android.security.keystore.KeyInfo, android.security.keystore.KeyProperties, android.util.Base64, com.getcapacitor.JSObject, com.getcapacitor.Plugin, com.getcapacitor.PluginCall | none | 8 | 0 | 34 |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.os.Build, android.security.keystore.KeyGenParameterSpec, android.security.keystore.KeyInfo, android.security.keystore.KeyProperties, android.util.Base64, com.getcapacitor.JSObject, com.getcapacitor.Plugin, com.getcapacitor.PluginCall | none | 9 | 0 | 38 |
 | android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/app/src/main/res/drawable/btn_navigate_bg.xml | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
 | android/app/src/main/res/drawable/ic_launcher_background.xml | Android Capacitor shell, native service, resource, Gradle, or manifest file. | none | none | 0 | 0 | 0 |
@@ -275,7 +275,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | scripts/scoring-constant-docs/promotionBlockerDocs.test.mjs | Repository automation script. | vitest, ./promotionBlockerDocs.mjs | none | 0 | 0 | 0 |
 | src/api/__tests__/clientFallback.test.js | API service adapter with local-first fallback behavior. | vitest, @/api/client, @/api/trips, @/api/vehicles | none | 0 | 0 | 0 |
 | src/api/auth.js | API service adapter with local-first fallback behavior. | @/api/client | migrateLegacyAuthTokens, consumeLegacyAuthTokenMigration, authService | 2 | 0 | 9 |
-| src/api/calibrationLabels.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/calibrationLabeling, @/lib/localCalibrationLabelRepository, @/lib/nativePlatform, @/lib/trackingStore | calibrationLabelService | 7 | 0 | 9 |
+| src/api/calibrationLabels.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/calibrationLabeling, @/lib/localCalibrationLabelRepository, @/lib/nativePlatform, @/lib/nativePlayIntegrity, @/lib/trackingStore | calibrationLabelService | 7 | 0 | 11 |
 | src/api/client.js | API service adapter with local-first fallback behavior. | none | API_BASE_URL, ApiError, getAuthToken, apiClient | 5 | 0 | 20 |
 | src/api/trips.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/ephemeralTripMode, @/lib/localTripRepository, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripMetadata | shouldUseLocalStore, tripService | 2 | 4 | 41 |
 | src/api/vehicles.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/localVehicleRepository, @/lib/nativePlatform | shouldUseLocalStore, vehicleService | 2 | 1 | 9 |
@@ -507,7 +507,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/encryptedCapacitorStorage.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | encryptedCapacitorStorage | 4 | 0 | 1 |
 | src/lib/ephemeralTripMode.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/storageKeyMigration | subscribeEphemeralTripMode, getEphemeralTripModeState, setStealthNextTrip, isStealthNextTripEnabled, activateEphemeralMode, consumeStealthNextTrip, isEphemeralModeActive, clearEphemeralStorageArtifacts, wipeTripObject, endEphemeralTrip | 13 | 1 | 28 |
 | src/lib/errorReporting.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/trackingDiagnostics | scrubDiagnosticText, sanitizeError, logError, initializeErrorReporting | 6 | 2 | 52 |
-| src/lib/exportEncryption.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/backupEncryption | encryptedExportFilename, buildEncryptedExport | 2 | 0 | 12 |
+| src/lib/exportEncryption.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/backupEncryption, @/lib/nativePlayIntegrity | encryptedExportFilename, buildEncryptedExport | 2 | 0 | 13 |
 | src/lib/featureGraduationPolicy.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | FEATURE_STATUSES, LANE_CHANGING_GRADUATION_CRITERIA, BETA_FEATURE_POLICIES | 0 | 0 | 13 |
 | src/lib/geocoding.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | isReverseGeocodePrivatePoint, reverseGeocodeIfPermitted | 6 | 5 | 28 |
 | src/lib/gps/formatting.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | formatDate, formatDateTime, formatDistance, formatDuration, formatSpeed, formatTime, getScoreColor, getScoreGradient | 0 | 0 | 1 |
@@ -523,7 +523,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/localCalibrationLabelRepository.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage | CALIBRATION_LABELS_KEY, CALIBRATION_SURVEY_MARKERS_KEY, localCalibrationLabelRepository | 8 | 1 | 9 |
 | src/lib/localDbConfig.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | DB_NAME_META_KEY, DB_NAME, DB_VERSION, TRIP_STORE, ROUTE_RISK_STORE, ROUTE_RISK_RECORD_ID, LOCAL_DB_LEGACY_DEFAULT_NAME | 0 | 0 | 7 |
 | src/lib/localTestTrips.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | LOCAL_TEST_TRIP_PREFIX, assertLocalFeatureTestTripsAllowed, buildLocalFeatureTestTrips | 4 | 19 | 159 |
-| src/lib/localTripRepository.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/activityRecognition, @/lib/ephemeralTripMode, @/lib/nativePlatform, @/lib/tripFieldEncryption, @/lib/gps/sanitize, @/lib/scoring/componentScores, @/lib/gps/routeSummary | TRIP_SCHEMA_VERSION, TRIP_EVENT_MIGRATION_VERSION, TRIP_EVENT_MIGRATION_KEY, TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, RESCORE_PROGRESS_EVENT, AUTO_RESCORE_RECENT_WINDOW_DAYS, AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, createIndexedDbMigrationRunner, DB_NAME, DB_NAME_META_KEY | 61 | 21 | 178 |
+| src/lib/localTripRepository.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/activityRecognition, @/lib/ephemeralTripMode, @/lib/nativePlatform, @/lib/tripFieldEncryption, @/lib/gps/sanitize, @/lib/scoring/componentScores, @/lib/gps/routeSummary | TRIP_SCHEMA_VERSION, TRIP_EVENT_MIGRATION_VERSION, TRIP_EVENT_MIGRATION_KEY, TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, RESCORE_PROGRESS_EVENT, AUTO_RESCORE_RECENT_WINDOW_DAYS, AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, createIndexedDbMigrationRunner, DB_NAME, DB_NAME_META_KEY | 62 | 21 | 181 |
 | src/lib/localVehicleRepository.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/tripInsights | localVehicleRepository | 11 | 7 | 35 |
 | src/lib/mapDefaults.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | isValidLatLng, getBestMapCenter | 5 | 4 | 11 |
 | src/lib/mapMatching.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/retry, @/lib/osrmPrivacy, @/lib/errorReporting, @/lib/osrmEndpointTrust | checkOsrmEndpointHealth, DEFAULT_OSRM_TIMEOUT_MS, OSRM_TIMEOUT_MS, mapMatchRoute | 14 | 18 | 100 |
@@ -537,6 +537,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/nativeBiometricGate.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | authenticateBiometricGate | 1 | 0 | 5 |
 | src/lib/nativeDownloads.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/driveSenseNativePlugin | saveExportToDownloads, openExportLocation | 2 | 0 | 0 |
 | src/lib/nativePlatform.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | isNativePlatform, isAndroid, openNativeSettings | 3 | 0 | 4 |
+| src/lib/nativePlayIntegrity.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @/lib/nativePlatform | createIntegrityNonce, requestPlayIntegrityAttestation, assertPlayIntegrityForSensitiveAction | 4 | 1 | 13 |
 | src/lib/nativeSecureKey.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core | SecureKey | 0 | 0 | 1 |
 | src/lib/notificationService.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/local-notifications, @/lib/nativePlatform, @/lib/permissions, @/lib/trackingStore, @/lib/tripInsights, @/lib/currency, @/lib/scoreDisplay, @/lib/storageKeyMigration | TRACKING_CHANNEL_ID, SUMMARY_CHANNEL_ID, ACHIEVEMENT_CHANNEL_ID, SAFETY_ALERTS_CHANNEL_ID, COACHING_CHANNEL_ID, VEHICLE_CHANNEL_ID, ANDROID_NOTIFICATION_VISIBILITY, NOTIFICATION_IDS, MAX_ACHIEVEMENT_NOTIF_IDS, isQuietHours | 53 | 28 | 477 |
 | src/lib/obdBluetooth.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | OBD_ROUTE_POINT_FIELDS, parseObdPidResponse, normalizeObdMeasurement, buildObdRoutePointPatch, annotateRoutePointWithObd, getObdBluetoothSupport, getObdBluetoothPermissionStatus, connectObdBleAdapter | 7 | 5 | 76 |
@@ -581,7 +582,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/scoringVersion.generated.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | SCORING_VERSION | 0 | 0 | 1 |
 | src/lib/sensorFusionModel.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/scoring/componentScores, @/lib/mathUtils | getMotionSensorSupport, requestMotionSensorPermission, normalizeMotionSample, calibratePhoneOrientation, buildSensorFusionSummary, buildMotionSensorDiagnostics, enrichEventsWithSensorContext, detectCrashIncident, createMotionSensorFusion | 24 | 27 | 155 |
 | src/lib/speedLimitSource.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/gps/math, @/lib/retry, @/lib/privacyZones | DEFAULT_SPEED_LIMIT_COUNTRY, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS, OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH, parseMaxspeedKmh, speedLimitDefaultCountryKey, speedLimitDefaultsForCountry, defaultSpeedLimitKmhForOsmHighway, loadOsmSpeedLimitWays, annotateRouteSpeedLimits | 25 | 38 | 175 |
-| src/lib/storageKeyMigration.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | STORAGE_KEY_MIGRATION_DONE_KEY, STORAGE_KEY_RENAMES, resolveStorageKey, legacyStorageKeysFor, runStorageKeyMigration | 6 | 1 | 43 |
+| src/lib/storageKeyMigration.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | STORAGE_KEY_MIGRATION_DONE_KEY, STORAGE_KEY_RENAMES, resolveStorageKey, legacyStorageKeysFor, runStorageKeyMigration | 6 | 1 | 42 |
 | src/lib/thresholdCalibration.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/mathUtils, @/lib/gps/math, @/lib/scoringConstants | CALIBRATION_PROFILE_KEY, computeCalibrationProfile, applyCalibrationProfile, saveCalibrationProfile, loadCalibrationProfile, clearCalibrationProfile | 11 | 14 | 102 |
 | src/lib/trackingDiagnostics.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/activityRecognition, @/lib/ephemeralTripMode, @/lib/storageKeyMigration | getTrackingDiagnostics, recordTrackingDiagnostic, clearTrackingDiagnostics, normalizeNativeDiagnosticEvents, buildParkingTimeline, buildTrackingHealth, buildDashboardTrackingExplanation | 13 | 6 | 262 |
 | src/lib/trackingService.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @capacitor/geolocation, @/lib/gps/math, @/lib/gps/sanitize, @/lib/nativePlatform, @/lib/permissions | getCurrentLocation, createDrivingTrackingService | 10 | 0 | 26 |
@@ -839,12 +840,14 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - android/app/src/main/java/com/roadsage/app/MainActivity.java:14 imports `Java import` from `android.webkit.WebView`
 - android/app/src/main/java/com/roadsage/app/MainActivity.java:16 imports `Java import` from `com.getcapacitor.BridgeActivity`
 - android/app/src/main/java/com/roadsage/app/MainActivity.java:17 imports `Java import` from `com.getcapacitor.BridgeWebViewClient`
-- android/app/src/main/java/com/roadsage/app/MainActivity.java:19 imports `Java import` from `java.util.Arrays`
-- android/app/src/main/java/com/roadsage/app/MainActivity.java:20 imports `Java import` from `java.util.HashSet`
-- android/app/src/main/java/com/roadsage/app/MainActivity.java:21 imports `Java import` from `java.util.HashMap`
-- android/app/src/main/java/com/roadsage/app/MainActivity.java:22 imports `Java import` from `java.util.Map`
-- android/app/src/main/java/com/roadsage/app/MainActivity.java:23 imports `Java import` from `java.util.Set`
-- android/app/src/main/java/com/roadsage/app/MainActivity.java:24 imports `Java import` from `java.util.regex.Pattern`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:18 imports `Java import` from `com.getcapacitor.Plugin`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:20 imports `Java import` from `java.util.Arrays`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:21 imports `Java import` from `java.util.HashSet`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:22 imports `Java import` from `java.util.HashMap`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:23 imports `Java import` from `java.util.List`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:24 imports `Java import` from `java.util.Map`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:25 imports `Java import` from `java.util.Set`
+- android/app/src/main/java/com/roadsage/app/MainActivity.java:26 imports `Java import` from `java.util.regex.Pattern`
 
 - No exports.
 
@@ -961,6 +964,9 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java:5 imports `Java import` from `com.getcapacitor.PluginCall`
 - android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java:6 imports `Java import` from `com.getcapacitor.PluginMethod`
 - android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java:7 imports `Java import` from `com.getcapacitor.annotation.CapacitorPlugin`
+- android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java:8 imports `Java import` from `com.google.android.play.core.integrity.IntegrityManager`
+- android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java:9 imports `Java import` from `com.google.android.play.core.integrity.IntegrityManagerFactory`
+- android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java:10 imports `Java import` from `com.google.android.play.core.integrity.IntegrityTokenRequest`
 
 - No exports.
 
@@ -1424,9 +1430,10 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/api/calibrationLabels.js:2 imports `CALIBRATION_LABEL_COLLECTION as CALIBRATION_LABEL_COLLECTION, buildCalibrationUploadPayload as buildCalibrationUploadPayload, buildLocalSurveyRecord as buildLocalSurveyRecord` from `@/lib/calibrationLabeling`
 - src/api/calibrationLabels.js:7 imports `localCalibrationLabelRepository as localCalibrationLabelRepository` from `@/lib/localCalibrationLabelRepository`
 - src/api/calibrationLabels.js:8 imports `isNativePlatform as isNativePlatform` from `@/lib/nativePlatform`
-- src/api/calibrationLabels.js:9 imports `localSettings as localSettings` from `@/lib/trackingStore`
+- src/api/calibrationLabels.js:9 imports `requestPlayIntegrityAttestation as requestPlayIntegrityAttestation` from `@/lib/nativePlayIntegrity`
+- src/api/calibrationLabels.js:10 imports `localSettings as localSettings` from `@/lib/trackingStore`
 
-- src/api/calibrationLabels.js:13 exports `calibrationLabelService` (named const)
+- src/api/calibrationLabels.js:14 exports `calibrationLabelService` (named const)
 
 ### src/api/client.js
 
@@ -3208,7 +3215,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 - No imports.
 
-- src/global.d.ts:21 exports `App` (named const)
+- src/global.d.ts:22 exports `App` (named const)
 
 ### src/hooks/__tests__/usePermissionMonitor.test.js
 
@@ -4247,9 +4254,10 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 ### src/lib/exportEncryption.js
 
 - src/lib/exportEncryption.js:1 imports `encryptBackup as encryptBackup` from `@/lib/backupEncryption`
+- src/lib/exportEncryption.js:2 imports `assertPlayIntegrityForSensitiveAction as assertPlayIntegrityForSensitiveAction` from `@/lib/nativePlayIntegrity`
 
-- src/lib/exportEncryption.js:3 exports `encryptedExportFilename` (FunctionDeclaration)
-- src/lib/exportEncryption.js:10 exports `buildEncryptedExport` (FunctionDeclaration)
+- src/lib/exportEncryption.js:4 exports `encryptedExportFilename` (FunctionDeclaration)
+- src/lib/exportEncryption.js:11 exports `buildEncryptedExport` (FunctionDeclaration)
 
 ### src/lib/featureGraduationPolicy.js
 
@@ -4430,11 +4438,11 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/localTripRepository.js:178 exports `DB_NAME` (named export)
 - src/lib/localTripRepository.js:178 exports `DB_NAME_META_KEY` (named export)
 - src/lib/localTripRepository.js:178 exports `DB_VERSION` (named export)
-- src/lib/localTripRepository.js:277 exports `migrateIndexedDbName` (named const)
-- src/lib/localTripRepository.js:506 exports `normalizeRetiredTripEventTypes` (named const)
-- src/lib/localTripRepository.js:565 exports `applyEventFeedbackToEvents` (named const)
-- src/lib/localTripRepository.js:819 exports `enforceDataRetention` (FunctionDeclaration)
-- src/lib/localTripRepository.js:859 exports `localTripRepository` (named const)
+- src/lib/localTripRepository.js:286 exports `migrateIndexedDbName` (named const)
+- src/lib/localTripRepository.js:515 exports `normalizeRetiredTripEventTypes` (named const)
+- src/lib/localTripRepository.js:574 exports `applyEventFeedbackToEvents` (named const)
+- src/lib/localTripRepository.js:828 exports `enforceDataRetention` (FunctionDeclaration)
+- src/lib/localTripRepository.js:868 exports `localTripRepository` (named const)
 
 ### src/lib/localVehicleRepository.js
 
@@ -4567,6 +4575,15 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/lib/nativePlatform.js:6 exports `isNativePlatform` (named const)
 - src/lib/nativePlatform.js:8 exports `isAndroid` (named const)
 - src/lib/nativePlatform.js:10 exports `openNativeSettings` (named const)
+
+### src/lib/nativePlayIntegrity.js
+
+- src/lib/nativePlayIntegrity.js:1 imports `registerPlugin as registerPlugin` from `@capacitor/core`
+- src/lib/nativePlayIntegrity.js:2 imports `isNativePlatform as isNativePlatform` from `@/lib/nativePlatform`
+
+- src/lib/nativePlayIntegrity.js:15 exports `createIntegrityNonce` (FunctionDeclaration)
+- src/lib/nativePlayIntegrity.js:22 exports `requestPlayIntegrityAttestation` (FunctionDeclaration)
+- src/lib/nativePlayIntegrity.js:32 exports `assertPlayIntegrityForSensitiveAction` (FunctionDeclaration)
 
 ### src/lib/nativeSecureKey.js
 
@@ -6243,40 +6260,45 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 35 | java method | `package throw new IllegalStateException("Encrypted preferences are unavailable.", e)` | none detected | Time: inspect method body; Space: inspect method body |
 | 39 | java method | `package static String keyBacking(Context context)` | none detected | Time: inspect method body; Space: inspect method body |
 | 59 | java method | `private static MasterKey buildHardwareMasterKey(Context context, boolean preferStrongBox)` | none detected | Time: inspect method body; Space: inspect method body |
-| 73 | java method | `package return buildHardwareMasterKey(context, false)` | none detected | Time: inspect method body; Space: inspect method body |
-| 79 | java method | `package static void put(SharedPreferences.Editor editor, String key, Object value)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
-| 81 | java method | `package else if(value instanceof Boolean)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
-| 82 | java method | `package else if(value instanceof Integer)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
-| 83 | java method | `package else if(value instanceof Long)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
-| 84 | java method | `package else if(value instanceof Float)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
-| 87 | java method | `package static void deletePlaintext(Context context, String prefsName)` | none detected | Time: inspect method body; Space: inspect method body |
+| 73 | java method | `package throw new GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key.")` | none detected | Time: inspect method body; Space: inspect method body |
+| 78 | java method | `package return buildHardwareMasterKey(context, false)` | none detected | Time: inspect method body; Space: inspect method body |
+| 84 | java method | `private static boolean isHardwareBacked()` | none detected | Time: inspect method body; Space: inspect method body |
+| 88 | java method | `private static String keyBackingInternal()` | none detected | Time: inspect method body; Space: inspect method body |
+| 108 | java method | `private static void deleteMasterKey()` | none detected | Time: inspect method body; Space: inspect method body |
+| 118 | java method | `package static void put(SharedPreferences.Editor editor, String key, Object value)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 120 | java method | `package else if(value instanceof Boolean)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 121 | java method | `package else if(value instanceof Integer)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 122 | java method | `package else if(value instanceof Long)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 123 | java method | `package else if(value instanceof Float)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 126 | java method | `package static void deletePlaintext(Context context, String prefsName)` | none detected | Time: inspect method body; Space: inspect method body |
 
 ### android/app/src/main/java/com/roadsage/app/MainActivity.java
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 48 | java method | `public void onCreate(Bundle savedInstanceState)` | none detected | Time: inspect method body; Space: inspect method body |
-| 69 | java method | `private void suspendTrackingOnCompromisedRuntime()` | none detected | Time: inspect method body; Space: inspect method body |
-| 77 | java method | `public void onStop()` | none detected | Time: inspect method body; Space: inspect method body |
-| 83 | java method | `protected void onNewIntent(Intent intent)` | none detected | Time: inspect method body; Space: inspect method body |
-| 90 | java method | `private void sanitizeLaunchIntent(Intent intent)` | none detected | Time: inspect method body; Space: inspect method body |
-| 98 | java method | `private boolean sanitizeIncomingIntent(Intent intent, boolean launchIntent)` | none detected | Time: inspect method body; Space: inspect method body |
-| 124 | java method | `private static Uri sanitizeExternalDeepLink(Uri uri)` | none detected | Time: inspect method body; Space: inspect method body |
-| 135 | java method | `package return sanitizeUri(uri, APP_SCHEME, APP_HOST, path)` | none detected | Time: inspect method body; Space: inspect method body |
-| 138 | java method | `private static String sanitizeAppDeepLinkExtra(String raw)` | none detected | Time: inspect method body; Space: inspect method body |
-| 158 | java method | `package return sanitizeUri(uri, APP_SCHEME, APP_HOST, path)` | none detected | Time: inspect method body; Space: inspect method body |
-| 161 | java method | `private static Uri sanitizeUri(Uri uri, String scheme, String host, String path)` | none detected | Time: inspect method body; Space: inspect method body |
-| 178 | java method | `private static String normalizedPath(Uri uri)` | none detected | Time: inspect method body; Space: inspect method body |
-| 184 | java method | `private static String normalizedAppPath(Uri uri)` | none detected | Time: inspect method body; Space: inspect method body |
-| 186 | java method | `package return normalizedPath(uri)` | none detected | Time: inspect method body; Space: inspect method body |
-| 196 | java method | `private static boolean isAllowedAppPath(String path)` | none detected | Time: inspect method body; Space: inspect method body |
-| 205 | java method | `private void hardenWebView()` | none detected | Time: inspect method body; Space: inspect method body |
-| 227 | java method | `private void clearWebViewCache()` | none detected | Time: inspect method body; Space: inspect method body |
-| 236 | java method | `private void disableWebViewAutofill()` | none detected | Time: inspect method body; Space: inspect method body |
-| 243 | java method | `private void installSecurityHeaderWebViewClient()` | none detected | Time: inspect method body; Space: inspect method body |
-| 248 | java method | `public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request)` | none detected | Time: inspect method body; Space: inspect method body |
-| 258 | java method | `private Map<String, String> securityHeaders(Map<String, String> existingHeaders)` | none detected | Time: inspect method body; Space: inspect method body |
-| 270 | java method | `private String buildCsp()` | none detected | Time: inspect method body; Space: inspect method body |
+| 58 | java method | `public void onCreate(Bundle savedInstanceState)` | none detected | Time: inspect method body; Space: inspect method body |
+| 74 | java method | `private void registerRoadSagePlugins()` | none detected | Time: inspect method body; Space: inspect method body |
+| 80 | java method | `private void suspendTrackingOnCompromisedRuntime()` | none detected | Time: inspect method body; Space: inspect method body |
+| 88 | java method | `public void onStop()` | none detected | Time: inspect method body; Space: inspect method body |
+| 94 | java method | `protected void onNewIntent(Intent intent)` | none detected | Time: inspect method body; Space: inspect method body |
+| 101 | java method | `private void sanitizeLaunchIntent(Intent intent)` | none detected | Time: inspect method body; Space: inspect method body |
+| 109 | java method | `private boolean sanitizeIncomingIntent(Intent intent, boolean launchIntent)` | none detected | Time: inspect method body; Space: inspect method body |
+| 135 | java method | `private static Uri sanitizeExternalDeepLink(Uri uri)` | none detected | Time: inspect method body; Space: inspect method body |
+| 146 | java method | `package return sanitizeUri(uri, APP_SCHEME, APP_HOST, path)` | none detected | Time: inspect method body; Space: inspect method body |
+| 149 | java method | `private static String sanitizeAppDeepLinkExtra(String raw)` | none detected | Time: inspect method body; Space: inspect method body |
+| 169 | java method | `package return sanitizeUri(uri, APP_SCHEME, APP_HOST, path)` | none detected | Time: inspect method body; Space: inspect method body |
+| 172 | java method | `private static Uri sanitizeUri(Uri uri, String scheme, String host, String path)` | none detected | Time: inspect method body; Space: inspect method body |
+| 189 | java method | `private static String normalizedPath(Uri uri)` | none detected | Time: inspect method body; Space: inspect method body |
+| 195 | java method | `private static String normalizedAppPath(Uri uri)` | none detected | Time: inspect method body; Space: inspect method body |
+| 197 | java method | `package return normalizedPath(uri)` | none detected | Time: inspect method body; Space: inspect method body |
+| 207 | java method | `private static boolean isAllowedAppPath(String path)` | none detected | Time: inspect method body; Space: inspect method body |
+| 216 | java method | `private void hardenWebView()` | none detected | Time: inspect method body; Space: inspect method body |
+| 238 | java method | `private void clearWebViewCache()` | none detected | Time: inspect method body; Space: inspect method body |
+| 247 | java method | `private void disableWebViewAutofill()` | none detected | Time: inspect method body; Space: inspect method body |
+| 254 | java method | `private void installSecurityHeaderWebViewClient()` | none detected | Time: inspect method body; Space: inspect method body |
+| 259 | java method | `public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request)` | none detected | Time: inspect method body; Space: inspect method body |
+| 269 | java method | `private Map<String, String> securityHeaders(Map<String, String> existingHeaders)` | none detected | Time: inspect method body; Space: inspect method body |
+| 281 | java method | `private String buildCsp()` | none detected | Time: inspect method body; Space: inspect method body |
 
 ### android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java
 
@@ -6393,7 +6415,8 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 12 | java method | `public void getRuntimeIntegrity(PluginCall call)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 15 | java method | `public void getRuntimeIntegrity(PluginCall call)` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
+| 30 | java method | `public void requestAttestation(PluginCall call)` | none detected | Time: inspect method body; Space: inspect method body |
 
 ### android/app/src/main/java/com/roadsage/app/PrivacyZone.java
 
@@ -6538,8 +6561,9 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 79 | java method | `public void keyBacking(PluginCall call)` | none detected | Time: inspect method body; Space: inspect method body |
 | 86 | java method | `public void wipeAllFiles(PluginCall call)` | none detected | Time: inspect method body; Space: inspect method body |
 | 92 | java method | `package static SecretKey getOrCreateKey()` | native/storage I/O candidate | Time: inspect method body; Space: inspect method body |
-| 101 | java method | `package static String keyBacking()` | none detected | Time: inspect method body; Space: inspect method body |
-| 117 | java method | `private static void generateKey(boolean preferStrongBox)` | none detected | Time: inspect method body; Space: inspect method body |
+| 108 | java method | `package static String keyBacking()` | none detected | Time: inspect method body; Space: inspect method body |
+| 124 | java method | `private static void generateKey(boolean preferStrongBox)` | none detected | Time: inspect method body; Space: inspect method body |
+| 151 | java method | `private static boolean isHardwareBacked(KeyStore keyStore)` | none detected | Time: inspect method body; Space: inspect method body |
 
 ### android/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java
 
@@ -6855,13 +6879,13 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 11 | arrow function | `shouldUseRemoteLabelStore()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 14 | object method | `async submitTripSurveyLabel(trip, surveyInput)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 52 | object method | `skipTripSurvey(tripId)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 56 | object method | `getTripSurveyStatus(tripId)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 60 | object method | `countLocalLabels()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 64 | object method | `listLocalLabels()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 68 | object method | `listTripSurveyMarkers()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 12 | arrow function | `shouldUseRemoteLabelStore()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 15 | object method | `async submitTripSurveyLabel(trip, surveyInput)` | storage/network/native I/O, mutation, throws | Time: O(n^2) candidate; Space: context dependent |
+| 62 | object method | `skipTripSurvey(tripId)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 66 | object method | `getTripSurveyStatus(tripId)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 70 | object method | `countLocalLabels()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 74 | object method | `listLocalLabels()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 78 | object method | `listTripSurveyMarkers()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/api/client.js
 
@@ -8482,8 +8506,8 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 
 | Line | Kind | Signature | Side effects / I/O | Complexity |
 | --- | --- | --- | --- | --- |
-| 3 | function | `encryptedExportFilename(filename, extension = extension = '.rsexport')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 10 | function | `async buildEncryptedExport({...})` | throws | Time: O(1) candidate; Space: O(1) candidate |
+| 4 | function | `encryptedExportFilename(filename, extension = extension = '.rsexport')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 11 | function | `async buildEncryptedExport({...})` | throws | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/geocoding.js
 
@@ -8567,52 +8591,53 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 208 | arrow function | `idbRequest(request)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 213 | arrow function | `idbTransactionDone(tx)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 219 | arrow function | `sanitizeTripRouteRiskCells(trip)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 230 | arrow function | `async decryptStoredTrip(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 232 | arrow function | `storageSanitizationChanged(before, after)` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 238 | arrow function | `async readTripsFromDb(dbName)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 249 | arrow function | `async writeTripsToDb(dbName, trips)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 263 | arrow function | `deleteDbByName(dbName)` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
-| 277 | arrow function | `async migrateIndexedDbName(ObjectPattern = )` | mutation, throws | Time: O(n) candidate; Space: context dependent |
-| 315 | arrow function | `migrateConfiguredDbName()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 325 | arrow function | `async getAllTrips()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 346 | arrow function | `async putTrip(trip)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 360 | arrow function | `async putTrips(incomingTrips)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 381 | arrow function | `async invalidateTripDerivedCaches()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 391 | arrow function | `emitRescoreProgress(detail)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 398 | arrow function | `tagLegacyScoreProvenance(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 427 | arrow function | `vehicleForTrip(trip, vehicles = vehicles = [])` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 433 | arrow function | `withRouteRiskCells(trip, privacyZones = privacyZones = getPrivacyZones(localSettings.get()))` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 439 | arrow function | `async mergeCompletedTripRouteRisk(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 446 | arrow function | `async tagExistingTripsWithCurrentScoringVersion(trips = trips = [])` | none detected | Time: O(n) candidate; Space: context dependent |
-| 453 | arrow function | `recentCompletedTrips(trips = trips = [], now = now = new Date())` | none detected | Time: O(n) candidate; Space: context dependent |
-| 462 | arrow function | `autoRescoreProvenanceTripIds(trips = trips = [], thresholds = thresholds = buildDrivingThresholds(localSettings.get()))` | none detected | Time: O(n) candidate; Space: context dependent |
-| 470 | arrow function | `mergedPhoneUseForTrip(trip, routePoints, stats, detectionPhoneUse)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 474 | arrow function | `eventFeedbackKey(event, index)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 484 | arrow function | `normalizeRetiredEventType(event)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 492 | arrow function | `normalizeEventFeedbackKeys(feedback = feedback = {}, eventsBefore = eventsBefore = [], eventsAfter = eventsAfter = [])` | none detected | Time: O(n^2) candidate; Space: context dependent |
-| 506 | arrow function | `normalizeRetiredTripEventTypes(trip = trip = {})` | none detected | Time: O(n) candidate; Space: context dependent |
-| 550 | arrow function | `async migrateRetiredTripEventTypesOnce()` | mutation | Time: O(n) candidate; Space: context dependent |
-| 565 | arrow function | `applyEventFeedbackToEvents(events = events = [], feedback = feedback = {})` | none detected | Time: O(n) candidate; Space: context dependent |
-| 579 | arrow function | `rescoreTrip(trip, vehicles = vehicles = [])` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 647 | arrow function | `needsRescore(trip, thresholds = thresholds = buildDrivingThresholds(localSettings.get()), options = options = {})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 668 | arrow function | `async rescoreTripsIfNeeded(trips = trips = [])` | mutation | Time: O(n) candidate; Space: context dependent |
-| 712 | arrow function | `async importNativeCompletedTrips()` | none detected | Time: O(n) candidate; Space: context dependent |
-| 791 | arrow function | `async deleteTrip(id)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 803 | arrow function | `async deleteAllTripsFromStorage()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 819 | function | `async enforceDataRetention(retentionMonths = retentionMonths = localSettings.get().data_retention_months)` | none detected | Time: O(n) candidate; Space: context dependent |
-| 838 | arrow function | `async pruneExpiredTrips()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 840 | arrow function | `sortTrips(trips, sort)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 850 | arrow function | `withId(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 860 | object method | `async list(ObjectPattern = { sort = '-start_time', limit = 100 } = {})` | none detected | Time: O(n) candidate; Space: context dependent |
-| 869 | object method | `async listAll(ObjectPattern = { sort = '-start_time' } = {})` | none detected | Time: O(n) candidate; Space: context dependent |
-| 878 | object method | `async getById(id)` | throws | Time: O(1) candidate; Space: O(1) candidate |
-| 889 | object method | `async create(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 907 | object method | `async update(id, patch)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 916 | object method | `async delete(id)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 921 | object method | `async deleteAll()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
-| 926 | object method | `async upsertMany(trips = trips = [])` | none detected | Time: O(n) candidate; Space: context dependent |
-| 953 | object method | `async markCompletedForRescore(ObjectPattern = { onlyProvenanceMismatch = false } = {})` | none detected | Time: O(n) candidate; Space: context dependent |
-| 971 | object method | `async getScoreMigrationSummary()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 231 | arrow function | `sanitizeTripForStorage(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 238 | arrow function | `async decryptStoredTrip(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 240 | arrow function | `storageSanitizationChanged(before, after)` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 247 | arrow function | `async readTripsFromDb(dbName)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 258 | arrow function | `async writeTripsToDb(dbName, trips)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 272 | arrow function | `deleteDbByName(dbName)` | storage/network/native I/O | Time: O(n) candidate; Space: context dependent |
+| 286 | arrow function | `async migrateIndexedDbName(ObjectPattern = )` | mutation, throws | Time: O(n) candidate; Space: context dependent |
+| 324 | arrow function | `migrateConfiguredDbName()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 334 | arrow function | `async getAllTrips()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 355 | arrow function | `async putTrip(trip)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 369 | arrow function | `async putTrips(incomingTrips)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 390 | arrow function | `async invalidateTripDerivedCaches()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 400 | arrow function | `emitRescoreProgress(detail)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 407 | arrow function | `tagLegacyScoreProvenance(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 436 | arrow function | `vehicleForTrip(trip, vehicles = vehicles = [])` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 442 | arrow function | `withRouteRiskCells(trip, privacyZones = privacyZones = getPrivacyZones(localSettings.get()))` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 448 | arrow function | `async mergeCompletedTripRouteRisk(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 455 | arrow function | `async tagExistingTripsWithCurrentScoringVersion(trips = trips = [])` | none detected | Time: O(n) candidate; Space: context dependent |
+| 462 | arrow function | `recentCompletedTrips(trips = trips = [], now = now = new Date())` | none detected | Time: O(n) candidate; Space: context dependent |
+| 471 | arrow function | `autoRescoreProvenanceTripIds(trips = trips = [], thresholds = thresholds = buildDrivingThresholds(localSettings.get()))` | none detected | Time: O(n) candidate; Space: context dependent |
+| 479 | arrow function | `mergedPhoneUseForTrip(trip, routePoints, stats, detectionPhoneUse)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 483 | arrow function | `eventFeedbackKey(event, index)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 493 | arrow function | `normalizeRetiredEventType(event)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 501 | arrow function | `normalizeEventFeedbackKeys(feedback = feedback = {}, eventsBefore = eventsBefore = [], eventsAfter = eventsAfter = [])` | none detected | Time: O(n^2) candidate; Space: context dependent |
+| 515 | arrow function | `normalizeRetiredTripEventTypes(trip = trip = {})` | none detected | Time: O(n) candidate; Space: context dependent |
+| 559 | arrow function | `async migrateRetiredTripEventTypesOnce()` | mutation | Time: O(n) candidate; Space: context dependent |
+| 574 | arrow function | `applyEventFeedbackToEvents(events = events = [], feedback = feedback = {})` | none detected | Time: O(n) candidate; Space: context dependent |
+| 588 | arrow function | `rescoreTrip(trip, vehicles = vehicles = [])` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 656 | arrow function | `needsRescore(trip, thresholds = thresholds = buildDrivingThresholds(localSettings.get()), options = options = {})` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 677 | arrow function | `async rescoreTripsIfNeeded(trips = trips = [])` | mutation | Time: O(n) candidate; Space: context dependent |
+| 721 | arrow function | `async importNativeCompletedTrips()` | none detected | Time: O(n) candidate; Space: context dependent |
+| 800 | arrow function | `async deleteTrip(id)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 812 | arrow function | `async deleteAllTripsFromStorage()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 828 | function | `async enforceDataRetention(retentionMonths = retentionMonths = localSettings.get().data_retention_months)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 847 | arrow function | `async pruneExpiredTrips()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 849 | arrow function | `sortTrips(trips, sort)` | mutation | Time: O(n) candidate; Space: context dependent |
+| 859 | arrow function | `withId(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 869 | object method | `async list(ObjectPattern = { sort = '-start_time', limit = 100 } = {})` | none detected | Time: O(n) candidate; Space: context dependent |
+| 878 | object method | `async listAll(ObjectPattern = { sort = '-start_time' } = {})` | none detected | Time: O(n) candidate; Space: context dependent |
+| 887 | object method | `async getById(id)` | throws | Time: O(1) candidate; Space: O(1) candidate |
+| 898 | object method | `async create(trip)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 916 | object method | `async update(id, patch)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 925 | object method | `async delete(id)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 930 | object method | `async deleteAll()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 935 | object method | `async upsertMany(trips = trips = [])` | none detected | Time: O(n) candidate; Space: context dependent |
+| 962 | object method | `async markCompletedForRescore(ObjectPattern = { onlyProvenanceMismatch = false } = {})` | none detected | Time: O(n) candidate; Space: context dependent |
+| 980 | object method | `async getScoreMigrationSummary()` | none detected | Time: O(n) candidate; Space: context dependent |
 
 ### src/lib/localVehicleRepository.js
 
@@ -8765,6 +8790,15 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 6 | arrow function | `isNativePlatform()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 8 | arrow function | `isAndroid()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 10 | arrow function | `async openNativeSettings()` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+
+### src/lib/nativePlayIntegrity.js
+
+| Line | Kind | Signature | Side effects / I/O | Complexity |
+| --- | --- | --- | --- | --- |
+| 6 | arrow function | `textToBase64Url(text)` | none detected | Time: O(n) candidate; Space: context dependent |
+| 15 | function | `createIntegrityNonce(action = action = 'sensitive-action')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 22 | function | `async requestPlayIntegrityAttestation(action = action = 'sensitive-action')` | none detected | Time: O(1) candidate; Space: O(1) candidate |
+| 32 | function | `async assertPlayIntegrityForSensitiveAction(action = action = 'sensitive-action')` | throws | Time: O(1) candidate; Space: O(1) candidate |
 
 ### src/lib/notificationService.js
 
@@ -9248,7 +9282,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 44 | function | `resolveStorageKey(key)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 48 | function | `legacyStorageKeysFor(key)` | none detected | Time: O(1) candidate; Space: O(1) candidate |
 | 54 | function | `copyLocalStorageKey(storage, oldKey, newKey)` | mutation | Time: O(1) candidate; Space: O(1) candidate |
-| 64 | function | `async copyPreferenceKey(Preferences, oldKey, newKey)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
+| 64 | function | `async copyNativePreferenceKey(Preferences, encryptedCapacitorStorage, oldKey, newKey)` | storage/network/native I/O, mutation | Time: O(1) candidate; Space: O(1) candidate |
 | 76 | function | `async runStorageKeyMigration()` | storage/network/native I/O, mutation | Time: O(n^2) candidate; Space: context dependent |
 
 ### src/lib/thresholdCalibration.js
@@ -10887,7 +10921,7 @@ export function formatScoreWithProvenance(value, scoreProvenance = null, options
 
 ### Retired event migration for local trips
 
-Source: `src/lib/localTripRepository.js:506-548`
+Source: `src/lib/localTripRepository.js:515-557`
 
 ```js
 export const normalizeRetiredTripEventTypes = (trip = {}) => {
@@ -11180,6 +11214,7 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
 Source: `android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java:921-1115`
 
 ```java
+        points = tailTrim.points;
         endMs = tailTrim.endMs;
         if (tailTrim.removedPoints > 0) {
             recordTimeline("tail_trimmed", "Trip tail trimmed: walking detected after parking", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
@@ -11236,8 +11271,7 @@ Source: `android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.
             trip.put("idle_time_seconds", stats.idleSeconds);
             trip.put("night_driving", stats.nightDriving);
             trip.put("route_points", points);
-            trip.put("motion_samples", motionSamples);
-            trip.put("native_motion_sample_count", motionSamples.length());
+            trip.put("native_motion_sample_count", motionSampleCount);
             trip.put("driving_events", new JSONArray());
             trip.put("score_overall", JSONObject.NULL);
             trip.put("score_safety", JSONObject.NULL);
@@ -11279,6 +11313,7 @@ Source: `android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.
             trip.put("updated_at", iso(endMs));
         } catch (JSONException ignored) {}
 
+        zeroMotionSamples(motionSamples);
         DriveSenseNativeTripStore.addCompletedTrip(this, trip);
         JSONObject finalPoint = points.optJSONObject(points.length() - 1);
         if (finalPoint != null && isParkedStopReason(reason)) {
@@ -11295,7 +11330,6 @@ Source: `android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.
         candidateConfirmedMs = 0L;
         candidateNearParked = false;
         sendTripCompletedNotification(trip, stats);
-        zeroMotionSamples(motionSamples);
     }
 
     static void zeroMotionSamples(JSONArray samples) {
@@ -11693,9 +11727,9 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 447 | tagExistingTripsWithCurrentScoringVersion | next = trips.map((trip) => tagLegacyScoreProvenance(trip)) | `const next = trips.map((trip) => tagLegacyScoreProvenance(trip));` |
-| 979 | getScoreMigrationSummary | .map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) })) | `.map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) }))` |
-| 983 | getScoreMigrationSummary | .map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) })) | `.map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) }))` |
+| 456 | tagExistingTripsWithCurrentScoringVersion | next = trips.map((trip) => tagLegacyScoreProvenance(trip)) | `const next = trips.map((trip) => tagLegacyScoreProvenance(trip));` |
+| 988 | getScoreMigrationSummary | .map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) })) | `.map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) }))` |
+| 992 | getScoreMigrationSummary | .map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) })) | `.map((trip) => ({ trip, provenance: getScoreProvenanceStatus(trip, thresholds) }))` |
 
 #### src/lib/mapMatching.js
 
@@ -12196,7 +12230,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 225 | sanitizeTripRouteRiskCells | .map((cell) => sanitizeRouteRiskCellForStorage(cell)) | `.map((cell) => sanitizeRouteRiskCellForStorage(cell))` |
+| 226 | sanitizeTripRouteRiskCells | .map((cell) => sanitizeRouteRiskCellForStorage(cell)) | `.map((cell) => sanitizeRouteRiskCellForStorage(cell))` |
 
 #### src/lib/mediumInsights.js
 
@@ -12336,9 +12370,9 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 38 | (module scope) | " / map", | `"/map",` |
-| 258 | securityHeaders | private Map<String, String> securityHeaders(Map<String, String> existingHeaders) { | `private Map<String, String> securityHeaders(Map<String, String> existingHeaders) {` |
-| 259 | (module scope) | Map<String, String> headers = existingHeaders == null | `Map<String, String> headers = existingHeaders == null` |
+| 48 | (module scope) | " / map", | `"/map",` |
+| 269 | securityHeaders | private Map<String, String> securityHeaders(Map<String, String> existingHeaders) { | `private Map<String, String> securityHeaders(Map<String, String> existingHeaders) {` |
+| 270 | (module scope) | Map<String, String> headers = existingHeaders == null | `Map<String, String> headers = existingHeaders == null` |
 
 #### android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java
 
@@ -13101,19 +13135,19 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 294 | migrateIndexedDbName | destinationIds = new Set(destinationTrips.map((trip) => String(trip.id))) | `const destinationIds = new Set(destinationTrips.map((trip) => String(trip.id)));` |
-| 300 | migrateIndexedDbName | ...destinationTrips.map((trip) => String(trip.id)), | `...destinationTrips.map((trip) => String(trip.id)),` |
-| 301 | migrateIndexedDbName | ...sourceTrips.map((trip) => String(trip.id)), | `...sourceTrips.map((trip) => String(trip.id)),` |
-| 372 | putTrips | incomingIds = new Set(encryptedIncomingTrips.map((trip) => String(trip.id))) | `const incomingIds = new Set(encryptedIncomingTrips.map((trip) => String(trip.id)));` |
-| 467 | autoRescoreProvenanceTripIds | return new Set(outdated.map((trip) => trip.id)) | `return new Set(outdated.map((trip) => trip.id));` |
-| 541 | normalizeRetiredTripEventTypes | next.heading_deviations_per_10km = Math.round((modernHeadingCount / distanceKm) x 100) / 10 | `next.heading_deviations_per_10km = Math.round((modernHeadingCount / distanceKm) * 100) / 10;` |
-| 543 | normalizeRetiredTripEventTypes | next.heading_deviation_legacy_per_10km = Math.round((legacyHeadingCount / distanceKm) x 100) / 10 | `next.heading_deviation_legacy_per_10km = Math.round((legacyHeadingCount / distanceKm) * 100) / 10;` |
-| 766 | importNativeCompletedTrips | finalPoint = [...routePoints].reverse().find((point) => point?.lat != null AND point?.lng != null) | `const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);` |
-| 928 | upsertMany | return trips.map((trip, index) => ({ | `return trips.map((trip, index) => ({` |
-| 936 | upsertMany | normalized = trips.map((trip) => { | `const normalized = trips.map((trip) => {` |
-| 957 | markCompletedForRescore | updated = trips.map((trip) => ( | `const updated = trips.map((trip) => (` |
-| 962 | markCompletedForRescore | )).map((trip, index) => { | `)).map((trip, index) => {` |
-| 1000 | getScoreMigrationSummary | trips: mismatched.map(({ trip, provenance }) => ({ | `trips: mismatched.map(({ trip, provenance }) => ({` |
+| 303 | migrateIndexedDbName | destinationIds = new Set(destinationTrips.map((trip) => String(trip.id))) | `const destinationIds = new Set(destinationTrips.map((trip) => String(trip.id)));` |
+| 309 | migrateIndexedDbName | ...destinationTrips.map((trip) => String(trip.id)), | `...destinationTrips.map((trip) => String(trip.id)),` |
+| 310 | migrateIndexedDbName | ...sourceTrips.map((trip) => String(trip.id)), | `...sourceTrips.map((trip) => String(trip.id)),` |
+| 381 | putTrips | incomingIds = new Set(encryptedIncomingTrips.map((trip) => String(trip.id))) | `const incomingIds = new Set(encryptedIncomingTrips.map((trip) => String(trip.id)));` |
+| 476 | autoRescoreProvenanceTripIds | return new Set(outdated.map((trip) => trip.id)) | `return new Set(outdated.map((trip) => trip.id));` |
+| 550 | normalizeRetiredTripEventTypes | next.heading_deviations_per_10km = Math.round((modernHeadingCount / distanceKm) x 100) / 10 | `next.heading_deviations_per_10km = Math.round((modernHeadingCount / distanceKm) * 100) / 10;` |
+| 552 | normalizeRetiredTripEventTypes | next.heading_deviation_legacy_per_10km = Math.round((legacyHeadingCount / distanceKm) x 100) / 10 | `next.heading_deviation_legacy_per_10km = Math.round((legacyHeadingCount / distanceKm) * 100) / 10;` |
+| 775 | importNativeCompletedTrips | finalPoint = [...routePoints].reverse().find((point) => point?.lat != null AND point?.lng != null) | `const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);` |
+| 937 | upsertMany | return trips.map((trip, index) => ({ | `return trips.map((trip, index) => ({` |
+| 945 | upsertMany | normalized = trips.map((trip) => { | `const normalized = trips.map((trip) => {` |
+| 966 | markCompletedForRescore | updated = trips.map((trip) => ( | `const updated = trips.map((trip) => (` |
+| 971 | markCompletedForRescore | )).map((trip, index) => { | `)).map((trip, index) => {` |
+| 1009 | getScoreMigrationSummary | trips: mismatched.map(({ trip, provenance }) => ({ | `trips: mismatched.map(({ trip, provenance }) => ({` |
 
 #### src/lib/localVehicleRepository.js
 
@@ -13925,7 +13959,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 608 | (module scope) | long dtMs = Math.max(1L, location.getTime() - previousLocation.getTime()) | `long dtMs = Math.max(1L, location.getTime() - previousLocation.getTime());` |
 | 658 | (module scope) | double speedKmh = location.hasSpeed() ? Math.max(0d, location.getSpeed() x 3.6d) : 0d | `double speedKmh = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : 0d;` |
 | 660 | (module scope) | long dtMs = Math.max(1L, location.getTime() - armedPreviousLocation.getTime()) | `long dtMs = Math.max(1L, location.getTime() - armedPreviousLocation.getTime());` |
-| 916 | (module scope) | long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L | `long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;` |
+| 917 | (module scope) | long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L | `long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;` |
 | 1062 | (module scope) | stats.wallClockDurationSeconds = Math.max(0L, (endMs - startMs) / 1000L) | `stats.wallClockDurationSeconds = Math.max(0L, (endMs - startMs) / 1000L);` |
 | 1099 | (module scope) | if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt | `if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;` |
 | 1108 | (module scope) | long terminalIdleSeconds = Math.max(0L, (endMs - lastMs) / 1000L) | `long terminalIdleSeconds = Math.max(0L, (endMs - lastMs) / 1000L);` |
@@ -14398,9 +14432,9 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 458 | recentCompletedTrips | return Number.isFinite(startMs) AND startMs >= cutoff | `return Number.isFinite(startMs) && startMs >= cutoff;` |
-| 821 | enforceDataRetention | if (!Number.isFinite(months) OR months <= 0) return 0 | `if (!Number.isFinite(months) \|\| months <= 0) return 0;` |
-| 828 | enforceDataRetention | return Number.isFinite(startedAt) AND startedAt > 0 AND startedAt < cutoff | `return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;` |
+| 467 | recentCompletedTrips | return Number.isFinite(startMs) AND startMs >= cutoff | `return Number.isFinite(startMs) && startMs >= cutoff;` |
+| 830 | enforceDataRetention | if (!Number.isFinite(months) OR months <= 0) return 0 | `if (!Number.isFinite(months) \|\| months <= 0) return 0;` |
+| 837 | enforceDataRetention | return Number.isFinite(startedAt) AND startedAt > 0 AND startedAt < cutoff | `return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;` |
 
 #### src/lib/mapMatching.js
 
@@ -14933,7 +14967,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 </details>
 
 <details>
-<summary>general calculation calculations (280)</summary>
+<summary>general calculation calculations (281)</summary>
 
 #### android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java
 
@@ -15216,7 +15250,7 @@ Every production calculation-like line found by the scanner is grouped by domain
 
 | Line | Function | Formula / derived value | Exact code |
 |---|---|---|---|
-| 995 | getScoreMigrationSummary | recent_mismatch_ratio: Math.round(recentMismatchRatio x 100) / 100, | `recent_mismatch_ratio: Math.round(recentMismatchRatio * 100) / 100,` |
+| 1004 | getScoreMigrationSummary | recent_mismatch_ratio: Math.round(recentMismatchRatio x 100) / 100, | `recent_mismatch_ratio: Math.round(recentMismatchRatio * 100) / 100,` |
 
 #### src/lib/mapMatching.js
 
@@ -15263,6 +15297,12 @@ Every production calculation-like line found by the scanner is grouped by domain
 | 291 | buildGoalStatus | value: Math.round(nightKm x 10) / 10, | `value: Math.round(nightKm * 10) / 10,` |
 | 294 | buildGoalStatus | display: `${Math.round(nightKm x 10) / 10} / ${maxNightKm} km`, | `display: `${Math.round(nightKm * 10) / 10}/${maxNightKm} km`,` |
 | 371 | buildVehicleCostSummary | maintenance_reserve: Math.round(maintenanceReserve x 100) / 100, | `maintenance_reserve: Math.round(maintenanceReserve * 100) / 100,` |
+
+#### src/lib/nativePlayIntegrity.js
+
+| Line | Function | Formula / derived value | Exact code |
+|---|---|---|---|
+| 18 | createIntegrityNonce | : `${Date.now()}-${Math.random().toString(36).slice(2)}` | `: `${Date.now()}-${Math.random().toString(36).slice(2)}`;` |
 
 #### src/lib/notificationService.js
 
@@ -16454,7 +16494,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java (14)</summary>
+<summary>android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java (26)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -16471,7 +16511,19 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 56 | `"Unknown"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 63 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 | 66 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 73 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 73 | `"Road Sage requires a hardware-backed Android Keystore key."` | string literal | hardware | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 78 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 85 | `"StrongBox"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 85 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 90 | `"AndroidKeyStore"` | string literal | keyStore | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 95 | `"AndroidKeyStore"` | string literal | factory | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 98 | `"StrongBox"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 99 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 100 | `"Software"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 102 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 102 | `"Software"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 105 | `"Unknown"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 110 | `"AndroidKeyStore"` | string literal | keyStore | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -16480,88 +16532,88 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 27 | `"RoadSage"` | string literal | TAG | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 28 | `"roadsage"` | string literal | APP_SCHEME | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 29 | `"drivesense"` | string literal | LEGACY_APP_SCHEME | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 30 | `"app"` | string literal | APP_HOST | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 31 | `"deeplink"` | string literal | EXTRA_DEEPLINK | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 32 | `"[a-zA-Z0-9_-]{1,50}"` | string literal | SAFE_QUERY_VALUE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 33 | `"[a-zA-Z0-9_-]{1,80}"` | string literal | SAFE_ID_VALUE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 34 | `"action"` | string literal | SAFE_QUERY_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 34 | `"tab"` | string literal | SAFE_QUERY_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 34 | `"filter"` | string literal | SAFE_QUERY_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 36 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 37 | `"/trips"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 38 | `"/map"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 39 | `"/settings"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 40 | `"/coach"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 41 | `"/insights"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 42 | `"/achievements"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 43 | `"/reports"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 44 | `"/vehicles"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 71 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 72 | `"Runtime integrity warning: "` | string literal | warning | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 73 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 29 | `"RoadSage"` | string literal | TAG | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 30 | `"roadsage"` | string literal | APP_SCHEME | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 31 | `"drivesense"` | string literal | LEGACY_APP_SCHEME | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 32 | `"app"` | string literal | APP_HOST | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 33 | `"deeplink"` | string literal | EXTRA_DEEPLINK | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 34 | `"[a-zA-Z0-9_-]{1,50}"` | string literal | SAFE_QUERY_VALUE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 35 | `"[a-zA-Z0-9_-]{1,80}"` | string literal | SAFE_ID_VALUE | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `"action"` | string literal | SAFE_QUERY_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `"tab"` | string literal | SAFE_QUERY_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 44 | `"filter"` | string literal | SAFE_QUERY_KEYS | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 46 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 47 | `"/trips"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 48 | `"/map"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 49 | `"/settings"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 50 | `"/coach"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 51 | `"/insights"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 52 | `"/achievements"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 53 | `"/reports"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `"/vehicles"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 82 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 83 | `"Runtime integrity warning: "` | string literal | warning | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 84 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 91 | `true` | boolean flag | intent | Inline state/default flag; changing can flip behavior. |
-| 99 | `true` | boolean flag | intent | Inline state/default flag; changing can flip behavior. |
-| 105 | `"Rejected unsafe deep link intent."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 106 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 114 | `"Removed unsafe deeplink extra."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 121 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 131 | `"Rejected deep link with unexpected path: "` | string literal | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 152 | `"/dashboard"` | string constant/key | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 152 | `"/"` | string constant/key | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 154 | `"Rejected deeplink extra with unexpected path: "` | string literal | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 180 | `"/"` | string constant/key | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 181 | `"/{2,}"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 181 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 95 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 102 | `true` | boolean flag | intent | Inline state/default flag; changing can flip behavior. |
+| 110 | `true` | boolean flag | intent | Inline state/default flag; changing can flip behavior. |
+| 116 | `"Rejected unsafe deep link intent."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 117 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 125 | `"Removed unsafe deeplink extra."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 132 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 142 | `"Rejected deep link with unexpected path: "` | string literal | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 163 | `"/dashboard"` | string constant/key | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 163 | `"/"` | string constant/key | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 165 | `"Rejected deeplink extra with unexpected path: "` | string literal | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 191 | `"/"` | string constant/key | path | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 192 | `"/{2,}"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 192 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 192 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 193 | `"/"` | string constant/key | host | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 197 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 198 | `"/trips/"` | string constant/key | trips | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 198 | `"/trips/"` | string constant/key | trips | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 199 | `"/survey/"` | string constant/key | survey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 199 | `"/survey/"` | string constant/key | survey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 200 | `"/dashboard"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 200 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 201 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 204 | `"deprecation"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 210 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 211 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 203 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 203 | `"/"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 204 | `"/"` | string constant/key | host | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 208 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 209 | `"/trips/"` | string constant/key | trips | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 209 | `"/trips/"` | string constant/key | trips | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 210 | `"/survey/"` | string constant/key | survey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 210 | `"/survey/"` | string constant/key | survey | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 211 | `"/dashboard"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 211 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 | 212 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 213 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 214 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 215 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 216 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 215 | `"deprecation"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 221 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 231 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 263 | `"Content-Security-Policy"` | string literal | Content | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 264 | `"X-Content-Type-Options"` | string literal | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 264 | `"nosniff"` | string literal | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 265 | `"X-Frame-Options"` | string literal | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 265 | `"DENY"` | string constant/key | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 266 | `"Referrer-Policy"` | string literal | Referrer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 266 | `"no-referrer"` | string literal | Referrer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 271 | `"default-src 'self'; "` | string literal | default | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 272 | `"script-src 'self'; "` | string literal | script | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 273 | `"style-src 'self' 'unsafe-inline'; "` | string literal | style | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 274 | `"img-src 'self' data: blob: "` | string literal | data | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 275 | `"https://*.tile.openstreetmap.org "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 276 | `"https://*.tile.openstreetmap.fr; "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 277 | `"font-src 'self' data:; "` | string literal | data | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 278 | `"connect-src 'self' "` | string literal | connect | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 279 | `"https://nominatim.openstreetmap.org "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 280 | `"https://overpass-api.de "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 281 | `"https://overpass.kumi.systems "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 282 | `"https://api.open-meteo.com "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 283 | `"https://archive-api.open-meteo.com; "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
-| 284 | `"object-src 'none'; "` | string literal | object | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 285 | `"frame-ancestors 'none'; "` | string literal | frame | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 286 | `"base-uri 'self'; "` | string literal | base | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 287 | `"form-action 'self'; "` | string literal | form | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 288 | `"report-uri /csp-report"` | string literal | report | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 222 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 223 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 224 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 225 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 226 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 227 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 232 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 242 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 274 | `"Content-Security-Policy"` | string literal | Content | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 275 | `"X-Content-Type-Options"` | string literal | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 275 | `"nosniff"` | string literal | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 276 | `"X-Frame-Options"` | string literal | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 276 | `"DENY"` | string constant/key | X | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 277 | `"Referrer-Policy"` | string literal | Referrer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 277 | `"no-referrer"` | string literal | Referrer | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 282 | `"default-src 'self'; "` | string literal | default | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 283 | `"script-src 'self'; "` | string literal | script | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 284 | `"style-src 'self' 'unsafe-inline'; "` | string literal | style | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 285 | `"img-src 'self' data: blob: "` | string literal | data | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 286 | `"https://*.tile.openstreetmap.org "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 287 | `"https://*.tile.openstreetmap.fr; "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 288 | `"font-src 'self' data:; "` | string literal | data | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 289 | `"connect-src 'self' "` | string literal | connect | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 290 | `"https://nominatim.openstreetmap.org "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 291 | `"https://overpass-api.de "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 292 | `"https://overpass.kumi.systems "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 293 | `"https://api.open-meteo.com "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 294 | `"https://archive-api.open-meteo.com; "` | inline URL | https | External service endpoint or help text; changing may redirect data or break integration. |
+| 295 | `"object-src 'none'; "` | string literal | object | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 296 | `"frame-ancestors 'none'; "` | string literal | frame | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 297 | `"base-uri 'self'; "` | string literal | base | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 298 | `"form-action 'self'; "` | string literal | form | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 299 | `"report-uri /csp-report"` | string literal | report | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -16755,22 +16807,35 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java (12)</summary>
+<summary>android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java (25)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 9 | `"PlayIntegrity"` | string literal | name | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 15 | `"status"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 16 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 16 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 17 | `"rootLikely"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 18 | `"debuggerAttached"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 19 | `"emulatorLikely"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 20 | `"adbEnabled"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 21 | `"playIntegrityAvailable"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 21 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 22 | `"note"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 22 | `"Local runtime integrity checks are enforced; Play Integrity API requires server nonce verification."` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 12 | `"PlayIntegrity"` | string literal | name | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 18 | `"status"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 20 | `"rootLikely"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 21 | `"debuggerAttached"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 22 | `"emulatorLikely"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 23 | `"adbEnabled"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 24 | `"playIntegrityAvailable"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 24 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 25 | `"note"` | string literal | on | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 25 | `"Play Integrity tokens are requested on-device and must be decrypted and verified by a trusted backend."` | string literal | on | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 32 | `"ok"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 33 | `"Runtime integrity failed: "` | string literal | failed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 37 | `"nonce"` | string literal | nonce | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 38 | `16` | numeric literal | nonce | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 39 | `"nonce is required."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 45 | `"cloudProjectNumber"` | string literal | cloudProjectNumber | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 54 | `"token"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 55 | `"nonce"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 56 | `"runtimeStatus"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 57 | `"requiresServerVerification"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 57 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 60 | `"Play Integrity attestation failed: "` | string literal | failed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 62 | `"Play Integrity attestation could not start: "` | string literal | start | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -16817,7 +16882,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java (520)</summary>
+<summary>android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java (519)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -17057,43 +17122,42 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 894 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 | 898 | `"service_finish"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 904 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 918 | `"ending_review"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 918 | `"Ending review started."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 922 | `0` | numeric literal | removedPoints | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 923 | `"tail_trimmed"` | string literal | trimmed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 923 | `"Trip tail trimmed: walking detected after parking"` | string literal | trimmed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 919 | `"ending_review"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 919 | `"Ending review started."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 923 | `0` | numeric literal | removedPoints | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 924 | `"tail_trimmed"` | string literal | trimmed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 924 | `"Trip tail trimmed: walking detected after parking"` | string literal | trimmed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 926 | `"trip_ended"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 926 | `"Native trip ended."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 925 | `"tail_trimmed"` | string literal | trimmed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 925 | `"Trip tail trimmed: walking detected after parking"` | string literal | trimmed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 927 | `"trip_ended"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 927 | `"Native trip ended."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 931 | `false` | boolean flag | hasPermissionLoss | Inline state/default flag; changing can flip behavior. |
-| 938 | `0` | numeric literal | lastKnownSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 942 | `0` | numeric literal | maxDriftSinceStopM | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 943 | `false` | boolean flag | candidateTrip | Inline state/default flag; changing can flip behavior. |
-| 952 | `"Parked - waiting for movement"` | string literal | Parked | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 952 | `"Ready when you start moving"` | string literal | Parked | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 956 | `"trip_discarded"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 956 | `"Native trip was too short to save."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 964 | `"id"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 965 | `"start_time"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 966 | `"end_time"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 967 | `"duration_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 968 | `"wall_clock_duration_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 969 | `"gap_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 970 | `"distance_km"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 970 | `3` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 971 | `"avg_speed_kmh"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 971 | `1` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 972 | `"avg_running_speed_kmh"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 928 | `"trip_ended"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 928 | `"Native trip ended."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 932 | `false` | boolean flag | hasPermissionLoss | Inline state/default flag; changing can flip behavior. |
+| 939 | `0` | numeric literal | lastKnownSpeedKmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 943 | `0` | numeric literal | maxDriftSinceStopM | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 944 | `false` | boolean flag | candidateTrip | Inline state/default flag; changing can flip behavior. |
+| 953 | `"Parked - waiting for movement"` | string literal | Parked | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 953 | `"Ready when you start moving"` | string literal | Parked | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 957 | `"trip_discarded"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 957 | `"Native trip was too short to save."` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 965 | `"id"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 966 | `"start_time"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 967 | `"end_time"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 968 | `"duration_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 969 | `"wall_clock_duration_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 970 | `"gap_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 971 | `"distance_km"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 971 | `3` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 972 | `"avg_speed_kmh"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 972 | `1` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 973 | `"max_speed_kmh"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 973 | `"avg_running_speed_kmh"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 973 | `1` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 974 | `"idle_time_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 975 | `"night_driving"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 976 | `"route_points"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 977 | `"motion_samples"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 974 | `"max_speed_kmh"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 974 | `1` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 975 | `"idle_time_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 976 | `"night_driving"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 977 | `"route_points"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 978 | `"native_motion_sample_count"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 979 | `"driving_events"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 980 | `"score_overall"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -17153,13 +17217,13 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 1015 | `"total_seconds"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1016 | `"created_at"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1017 | `"updated_at"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1021 | `1` | numeric literal | finalPoint | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1025 | `"lat"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1026 | `"lng"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1029 | `0` | numeric literal | removedPoints | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1029 | `"native_trimmed_parked_tail"` | string literal | removedPoints | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1029 | `"native_parking_stop"` | string literal | removedPoints | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1034 | `false` | boolean flag | candidateNearParked | Inline state/default flag; changing can flip behavior. |
+| 1022 | `1` | numeric literal | finalPoint | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1026 | `"lat"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1027 | `"lng"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1030 | `0` | numeric literal | removedPoints | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1030 | `"native_trimmed_parked_tail"` | string literal | removedPoints | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1030 | `"native_parking_stop"` | string literal | removedPoints | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 1035 | `false` | boolean flag | candidateNearParked | Inline state/default flag; changing can flip behavior. |
 | 1041 | `0` | numeric literal | i | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1045 | `"timestamp"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1045 | `""` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -17420,7 +17484,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java (34)</summary>
+<summary>android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java (38)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -17445,19 +17509,23 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 81 | `"backing"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 88 | `"deleted"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 93 | `"AndroidKeyStore"` | string literal | keyStore | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 96 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 104 | `"AndroidKeyStore"` | string literal | factory | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 107 | `"StrongBox"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 108 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 109 | `"Software"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 111 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 111 | `"Software"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 113 | `"Unknown"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 118 | `"AndroidKeyStore"` | string literal | generator | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 123 | `256` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 126 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 129 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 137 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 99 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 103 | `"Road Sage requires a hardware-backed Android Keystore key."` | string literal | hardware | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 111 | `"AndroidKeyStore"` | string literal | factory | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 114 | `"StrongBox"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 115 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 116 | `"Software"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 118 | `"TEE"` | string constant/key | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 118 | `"Software"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 120 | `"Unknown"` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 125 | `"AndroidKeyStore"` | string literal | generator | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 130 | `256` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 133 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 136 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 144 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 154 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 156 | `"AndroidKeyStore"` | string literal | factory | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 164 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 
 </details>
 
@@ -17479,19 +17547,21 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/api/calibrationLabels.js (9)</summary>
+<summary>src/api/calibrationLabels.js (11)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
 | 6 | `'@/lib/calibrationLabeling'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 18 | `false` | boolean flag | includeFreeTextInUpload | Inline state/default flag; changing can flip behavior. |
-| 21 | `true` | boolean flag | sharingEnabled | Inline state/default flag; changing can flip behavior. |
-| 25 | ``/${CALIBRATION_LABEL_COLLECTION}`` | string constant/key | saved | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 32 | `'uploaded'` | string literal | upload_status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 38 | `'Upload failed'` | string literal | upload_error | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 41 | `'pending_upload'` | string literal | uploadStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 48 | `'excluded_quality'` | string literal | uploadStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 48 | `'local_only'` | string literal | uploadStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `false` | boolean flag | includeFreeTextInUpload | Inline state/default flag; changing can flip behavior. |
+| 22 | `true` | boolean flag | sharingEnabled | Inline state/default flag; changing can flip behavior. |
+| 27 | `'calibration-upload'` | string literal | calibration | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 30 | `'Play Integrity attestation is required before calibration upload.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 32 | ``/${CALIBRATION_LABEL_COLLECTION}`` | string constant/key | saved | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 42 | `'uploaded'` | string literal | upload_status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 48 | `'Upload failed'` | string literal | upload_error | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 51 | `'pending_upload'` | string literal | uploadStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 58 | `'excluded_quality'` | string literal | uploadStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 58 | `'local_only'` | string literal | uploadStatus | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -24340,7 +24410,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 20 | `'@capacitor/app'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 21 | `'@capacitor/app'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -26253,22 +26323,23 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/exportEncryption.js (12)</summary>
+<summary>src/lib/exportEncryption.js (13)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
-| 3 | `'.rsexport'` | string literal | extension | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 4 | ``road-sage-export-${new Date().toISOString().split('T')[0]}`` | string constant/key | base | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 5 | `'-'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 6 | `-9` | numeric literal | a | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 6 | `''` | string literal | a | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 7 | ``${base}${extension}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 10 | `'generic'` | string literal | kind | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 11 | `'string'` | string literal | password | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 11 | `12` | numeric literal | password | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 12 | `'Export password must be at least 12 characters.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 16 | `'Road Sage'` | string literal | app | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 17 | `1` | numeric literal | version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 4 | `'.rsexport'` | string literal | extension | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 5 | ``road-sage-export-${new Date().toISOString().split('T')[0]}`` | string constant/key | base | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 6 | `'-'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 7 | `-9` | numeric literal | a | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 7 | `''` | string literal | a | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 8 | ``${base}${extension}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 11 | `'generic'` | string literal | kind | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 12 | `'string'` | string literal | password | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 12 | `12` | numeric literal | password | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 13 | `'Export password must be at least 12 characters.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 15 | ``export:${kind}`` | string literal | export | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 18 | `'Road Sage'` | string literal | app | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | `1` | numeric literal | version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 
 </details>
 
@@ -26758,7 +26829,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/localTripRepository.js (178)</summary>
+<summary>src/lib/localTripRepository.js (181)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -26787,159 +26858,162 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 172 | `'id'` | string literal | keyPath | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 182 | `'undefined'` | string literal | localStorage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 190 | `'IndexedDB unavailable'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 241 | `'readonly'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 254 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 264 | `'function'` | string literal | deleteDatabase | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 272 | ``IndexedDB delete blocked for ${dbName}`` | string literal | onblocked | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 282 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 288 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 292 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 304 | ``IndexedDB rename migration count mismatch from ${legacyPreviousName} to ${currentName}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 312 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 328 | `'readonly'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 350 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 365 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 389 | `false` | boolean flag | importingNativeTrips | Inline state/default flag; changing can flip behavior. |
-| 392 | `'undefined'` | string literal | window | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 396 | `'Legacy score marked unknown on app launch; values were not recalculated.'` | string literal | legacyScoreProvenanceNote | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 399 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 407 | `'object'` | string literal | score_provenance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 410 | `'unknown_legacy_unrescored'` | string literal | calibration_status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 413 | `true` | boolean flag | migrated_without_rescore | Inline state/default flag; changing can flip behavior. |
-| 420 | `'legacy_tagged_without_rescore'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 434 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 435 | `false` | boolean flag | route_risk_cells | Inline state/default flag; changing can flip behavior. |
-| 440 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 454 | `86400000` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 456 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 456 | `false` | boolean flag | status | Inline state/default flag; changing can flip behavior. |
-| 457 | `0` | numeric literal | startMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 475 | `'event'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 477 | `2` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 477 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 478 | `'\|'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 481 | `'heading_deviation_legacy'` | string literal | lane_change | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 485 | `'object'` | string literal | event | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 488 | `true` | boolean flag | type | Inline state/default flag; changing can flip behavior. |
-| 493 | `'object'` | string literal | feedback | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 496 | `'lane_change'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 507 | `'object'` | string literal | trip | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 508 | `'driving_events'` | string literal | eventFields | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 508 | `'phone_proxy_events'` | string literal | eventFields | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 508 | `'phone_use_events'` | string literal | eventFields | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 509 | `false` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
-| 517 | `true` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
-| 518 | `'driving_events'` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 526 | `'heading_deviation'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 527 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 529 | `'heading_deviation_legacy'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 530 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 531 | `1` | numeric literal | distanceKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 531 | `1` | numeric literal | distanceKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 532 | `0` | numeric literal | needsCountRefresh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 541 | `100` | numeric literal | heading_deviations_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 541 | `10` | numeric literal | heading_deviations_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 543 | `100` | numeric literal | heading_deviation_legacy_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 543 | `10` | numeric literal | heading_deviation_legacy_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 544 | `true` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
-| 551 | `0` | numeric literal | version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 551 | `0` | numeric literal | version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 552 | `0` | numeric literal | changed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 552 | `true` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
-| 562 | `false` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
-| 566 | `'object'` | string literal | reviewed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 567 | `0` | numeric literal | removed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 570 | `'wrong'` | string literal | verdict | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 571 | `1` | numeric literal | removed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 572 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 574 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
-| 580 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 585 | `'boolean'` | string literal | currentPhoneUsageAccessGranted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 617 | `'missing'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 618 | `'provenance_added'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 620 | `'scoring_version_changed'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 622 | `'scoring_inputs_changed'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 623 | `'user_requested_rescore'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 640 | `false` | boolean flag | needs_rescore | Inline state/default flag; changing can flip behavior. |
-| 648 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 663 | `0` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 663 | `'phone_use'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 674 | `'-created_date'` | string literal | vehicles | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 674 | `500` | numeric literal | vehicles | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 676 | `0` | numeric literal | completed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 678 | `'running'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 681 | `'auto_provenance'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 681 | `'schema_refresh'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 688 | `1` | numeric literal | completed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 690 | `'running'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 693 | `'auto_provenance'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 693 | `'schema_refresh'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 701 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 703 | `'complete'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 706 | `'auto_provenance'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 706 | `'schema_refresh'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 715 | `true` | boolean flag | importingNativeTrips | Inline state/default flag; changing can flip behavior. |
-| 720 | `'-created_date'` | string literal | vehicles | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 720 | `500` | numeric literal | vehicles | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 758 | `true` | boolean flag | imported_from_native | Inline state/default flag; changing can flip behavior. |
-| 768 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 768 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 769 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 769 | `5` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 776 | `'native_parking_stop'` | string literal | source | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 776 | `'native_stopped_trip_end'` | string literal | source | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 787 | `false` | boolean flag | importingNativeTrips | Inline state/default flag; changing can flip behavior. |
-| 794 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 821 | `0` | numeric literal | months | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 821 | `0` | numeric literal | months | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 823 | `30.44` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 823 | `24` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 823 | `60` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 823 | `60` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 823 | `1000` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 826 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 826 | `false` | boolean flag | status | Inline state/default flag; changing can flip behavior. |
-| 827 | `0` | numeric literal | startedAt | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 828 | `0` | numeric literal | startedAt | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 841 | `'-'` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 841 | `''` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 841 | `'start_time'` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 842 | `'-'` | string literal | dir | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 842 | `-1` | numeric literal | dir | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 842 | `1` | numeric literal | dir | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 844 | `''` | string literal | av | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 845 | `''` | string literal | bv | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 846 | `0` | numeric literal | dir | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 852 | ``trip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 860 | `'-start_time'` | string literal | sort | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 860 | `100` | numeric literal | sort | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 866 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 233 | `'object'` | string literal | next | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 244 | `'motion_samples'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 244 | `'motion_samples'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 250 | `'readonly'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 263 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 273 | `'function'` | string literal | deleteDatabase | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 281 | ``IndexedDB delete blocked for ${dbName}`` | string literal | onblocked | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 291 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 297 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 301 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 313 | ``IndexedDB rename migration count mismatch from ${legacyPreviousName} to ${currentName}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 321 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 337 | `'readonly'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 359 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 374 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 398 | `false` | boolean flag | importingNativeTrips | Inline state/default flag; changing can flip behavior. |
+| 401 | `'undefined'` | string literal | window | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 405 | `'Legacy score marked unknown on app launch; values were not recalculated.'` | string literal | legacyScoreProvenanceNote | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 408 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 416 | `'object'` | string literal | score_provenance | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 419 | `'unknown_legacy_unrescored'` | string literal | calibration_status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 422 | `true` | boolean flag | migrated_without_rescore | Inline state/default flag; changing can flip behavior. |
+| 429 | `'legacy_tagged_without_rescore'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 443 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 444 | `false` | boolean flag | route_risk_cells | Inline state/default flag; changing can flip behavior. |
+| 449 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 463 | `86400000` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 465 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 465 | `false` | boolean flag | status | Inline state/default flag; changing can flip behavior. |
+| 466 | `0` | numeric literal | startMs | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 484 | `'event'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 486 | `2` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 486 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 487 | `'\|'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 490 | `'heading_deviation_legacy'` | string literal | lane_change | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 494 | `'object'` | string literal | event | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 497 | `true` | boolean flag | type | Inline state/default flag; changing can flip behavior. |
+| 502 | `'object'` | string literal | feedback | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 505 | `'lane_change'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 516 | `'object'` | string literal | trip | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 517 | `'driving_events'` | string literal | eventFields | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 517 | `'phone_proxy_events'` | string literal | eventFields | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 517 | `'phone_use_events'` | string literal | eventFields | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 518 | `false` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
+| 526 | `true` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
+| 527 | `'driving_events'` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 535 | `'heading_deviation'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 536 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 538 | `'heading_deviation_legacy'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 539 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 540 | `1` | numeric literal | distanceKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 540 | `1` | numeric literal | distanceKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 541 | `0` | numeric literal | needsCountRefresh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 550 | `100` | numeric literal | heading_deviations_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 550 | `10` | numeric literal | heading_deviations_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 552 | `100` | numeric literal | heading_deviation_legacy_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 552 | `10` | numeric literal | heading_deviation_legacy_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 553 | `true` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
+| 560 | `0` | numeric literal | version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 560 | `0` | numeric literal | version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 561 | `0` | numeric literal | changed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 561 | `true` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
+| 571 | `false` | boolean flag | changed | Inline state/default flag; changing can flip behavior. |
+| 575 | `'object'` | string literal | reviewed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 576 | `0` | numeric literal | removed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 579 | `'wrong'` | string literal | verdict | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 580 | `1` | numeric literal | removed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 581 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 583 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+| 589 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 594 | `'boolean'` | string literal | currentPhoneUsageAccessGranted | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 626 | `'missing'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 627 | `'provenance_added'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 629 | `'scoring_version_changed'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 631 | `'scoring_inputs_changed'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 632 | `'user_requested_rescore'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 649 | `false` | boolean flag | needs_rescore | Inline state/default flag; changing can flip behavior. |
+| 657 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 672 | `0` | numeric literal | type | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 672 | `'phone_use'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 683 | `'-created_date'` | string literal | vehicles | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 683 | `500` | numeric literal | vehicles | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 685 | `0` | numeric literal | completed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 687 | `'running'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 690 | `'auto_provenance'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 690 | `'schema_refresh'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 697 | `1` | numeric literal | completed | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 699 | `'running'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 702 | `'auto_provenance'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 702 | `'schema_refresh'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 710 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 712 | `'complete'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 715 | `'auto_provenance'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 715 | `'schema_refresh'` | string literal | reason | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 724 | `true` | boolean flag | importingNativeTrips | Inline state/default flag; changing can flip behavior. |
+| 729 | `'-created_date'` | string literal | vehicles | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 729 | `500` | numeric literal | vehicles | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 767 | `true` | boolean flag | imported_from_native | Inline state/default flag; changing can flip behavior. |
+| 777 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 777 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 778 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 778 | `5` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 785 | `'native_parking_stop'` | string literal | source | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 785 | `'native_stopped_trip_end'` | string literal | source | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 796 | `false` | boolean flag | importingNativeTrips | Inline state/default flag; changing can flip behavior. |
+| 803 | `'readwrite'` | string literal | tx | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 830 | `0` | numeric literal | months | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 830 | `0` | numeric literal | months | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 832 | `30.44` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 832 | `24` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 832 | `60` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 832 | `60` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 832 | `1000` | numeric literal | cutoff | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 835 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 835 | `false` | boolean flag | status | Inline state/default flag; changing can flip behavior. |
+| 836 | `0` | numeric literal | startedAt | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 837 | `0` | numeric literal | startedAt | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 850 | `'-'` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 850 | `''` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 850 | `'start_time'` | string literal | field | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 851 | `'-'` | string literal | dir | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 851 | `-1` | numeric literal | dir | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 851 | `1` | numeric literal | dir | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 853 | `''` | string literal | av | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 854 | `''` | string literal | bv | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 855 | `0` | numeric literal | dir | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 861 | ``trip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 869 | `'-start_time'` | string literal | sort | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 885 | `'Trip not found'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 893 | ``ephemeral_${Date.now()}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 894 | `true` | boolean flag | ephemeral_trip | Inline state/default flag; changing can flip behavior. |
-| 899 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 908 | `true` | boolean flag | ephemeral_trip | Inline state/default flag; changing can flip behavior. |
-| 912 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 918 | `true` | boolean flag | success | Inline state/default flag; changing can flip behavior. |
-| 923 | `true` | boolean flag | success | Inline state/default flag; changing can flip behavior. |
-| 930 | ``ephemeral_${Date.now()}_${index}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 931 | `true` | boolean flag | ephemeral_trip | Inline state/default flag; changing can flip behavior. |
-| 935 | `'-created_date'` | string literal | vehicles | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 935 | `500` | numeric literal | vehicles | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 944 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 953 | `false` | boolean flag | onlyProvenanceMismatch | Inline state/default flag; changing can flip behavior. |
-| 956 | `0` | numeric literal | count | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 958 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 960 | `true` | boolean flag | needs_rescore | Inline state/default flag; changing can flip behavior. |
-| 963 | `1` | numeric literal | trip | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 977 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 987 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 995 | `100` | numeric literal | recent_mismatch_ratio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 995 | `100` | numeric literal | recent_mismatch_ratio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 999 | `0` | numeric literal | event_migration_version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 999 | `0` | numeric literal | event_migration_version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1003 | `''` | string literal | nickname | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 869 | `100` | numeric literal | sort | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 875 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 878 | `'-start_time'` | string literal | sort | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 894 | `'Trip not found'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 902 | ``ephemeral_${Date.now()}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 903 | `true` | boolean flag | ephemeral_trip | Inline state/default flag; changing can flip behavior. |
+| 908 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 917 | `true` | boolean flag | ephemeral_trip | Inline state/default flag; changing can flip behavior. |
+| 921 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 927 | `true` | boolean flag | success | Inline state/default flag; changing can flip behavior. |
+| 932 | `true` | boolean flag | success | Inline state/default flag; changing can flip behavior. |
+| 939 | ``ephemeral_${Date.now()}_${index}`` | string literal | id | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 940 | `true` | boolean flag | ephemeral_trip | Inline state/default flag; changing can flip behavior. |
+| 944 | `'-created_date'` | string literal | vehicles | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 944 | `500` | numeric literal | vehicles | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 953 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 962 | `false` | boolean flag | onlyProvenanceMismatch | Inline state/default flag; changing can flip behavior. |
+| 965 | `0` | numeric literal | count | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 967 | `'completed'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 969 | `true` | boolean flag | needs_rescore | Inline state/default flag; changing can flip behavior. |
+| 972 | `1` | numeric literal | trip | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 986 | `'completed'` | string literal | completed | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 996 | `0` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1004 | `100` | numeric literal | recent_mismatch_ratio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1004 | `100` | numeric literal | recent_mismatch_ratio | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1008 | `0` | numeric literal | event_migration_version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1008 | `0` | numeric literal | event_migration_version | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
+| 1012 | `''` | string literal | nickname | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -28678,6 +28752,27 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 11 | `false` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 | 12 | `'@capacitor/app'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 14 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
+
+</details>
+
+<details>
+<summary>src/lib/nativePlayIntegrity.js (13)</summary>
+
+| Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
+| --- | --- | --- | --- | --- |
+| 4 | `'PlayIntegrity'` | string literal | PlayIntegrity | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 8 | `''` | string literal | binary | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 12 | `'-'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 12 | `'_'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 12 | `''` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 15 | `'sensitive-action'` | string literal | action | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `'undefined'` | string literal | random | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 16 | `'function'` | string literal | random | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 18 | ``${Date.now()}-${Math.random().toString(36).slice(2)}`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 19 | ``road-sage:${action}:${random}`` | string literal | sage | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 22 | `'sensitive-action'` | string literal | action | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 32 | `'sensitive-action'` | string literal | action | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 36 | `'Play Integrity attestation did not return a token.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -32599,7 +32694,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 </details>
 
 <details>
-<summary>src/lib/storageKeyMigration.js (43)</summary>
+<summary>src/lib/storageKeyMigration.js (42)</summary>
 
 | Line | Value | Type | Semantic name | Why hard-coded / risk if changed |
 | --- | --- | --- | --- | --- |
@@ -32638,14 +32733,13 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 61 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 | 66 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
 | 69 | `false` | boolean flag | value | Inline state/default flag; changing can flip behavior. |
-| 72 | ``${oldKey}__migrated_to__${newKey}`` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 72 | `'1'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 73 | `true` | boolean flag | inline_value | Inline state/default flag; changing can flip behavior. |
 | 80 | `false` | boolean flag | migrated | Inline state/default flag; changing can flip behavior. |
 | 85 | `'1'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 89 | `'@capacitor/core'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 92 | `'@capacitor/preferences'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 99 | `'1'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 92 | `'@/lib/encryptedCapacitorStorage'` | string literal | lib | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 93 | `'@capacitor/preferences'` | string literal | capacitor | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 100 | `'1'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 
 </details>
 
@@ -40713,16 +40807,16 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | android/app/src/main/java/com/roadsage/app/DriveSensePhoneUsageTracker.java:17 | MAX_SESSION_MS | `30` | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. | `private static final long MAX_SESSION_MS = 30 * 60_000L;` |
 | android/app/src/main/java/com/roadsage/app/EncryptedCapacitorPlugin.java:13 | PREFS_NAME | `"road_sage_capacitor_preferences_v2"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String PREFS_NAME = "road_sage_capacitor_preferences_v2";` |
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java:20 | MASTER_KEY_ALIAS | `"road_sage_master_key_v2"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String MASTER_KEY_ALIAS = "road_sage_master_key_v2";` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:27 | TAG | `"RoadSage"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String TAG = "RoadSage";` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:28 | APP_SCHEME | `"roadsage"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String APP_SCHEME = "roadsage";` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:29 | LEGACY_APP_SCHEME | `"drivesense"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String LEGACY_APP_SCHEME = "drivesense";` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:30 | APP_HOST | `"app"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String APP_HOST = "app";` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:31 | EXTRA_DEEPLINK | `"deeplink"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String EXTRA_DEEPLINK = "deeplink";` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:32 | SAFE_QUERY_VALUE | `"[a-zA-Z0-9_-]{1,50}"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Pattern SAFE_QUERY_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,50}");` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:33 | SAFE_ID_VALUE | `"[a-zA-Z0-9_-]{1,80}"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Pattern SAFE_ID_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,80}");` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:34 | SAFE_QUERY_KEYS | `"action"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:34 | SAFE_QUERY_KEYS | `"tab"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));` |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java:34 | SAFE_QUERY_KEYS | `"filter"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:29 | TAG | `"RoadSage"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String TAG = "RoadSage";` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:30 | APP_SCHEME | `"roadsage"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String APP_SCHEME = "roadsage";` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:31 | LEGACY_APP_SCHEME | `"drivesense"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String LEGACY_APP_SCHEME = "drivesense";` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:32 | APP_HOST | `"app"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String APP_HOST = "app";` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:33 | EXTRA_DEEPLINK | `"deeplink"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String EXTRA_DEEPLINK = "deeplink";` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:34 | SAFE_QUERY_VALUE | `"[a-zA-Z0-9_-]{1,50}"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Pattern SAFE_QUERY_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,50}");` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:35 | SAFE_ID_VALUE | `"[a-zA-Z0-9_-]{1,80}"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Pattern SAFE_ID_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,80}");` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:44 | SAFE_QUERY_KEYS | `"action"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:44 | SAFE_QUERY_KEYS | `"tab"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));` |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java:44 | SAFE_QUERY_KEYS | `"filter"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));` |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java:32 | TAG | `"MapTileFetchWorker"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String TAG = "MapTileFetchWorker";` |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java:33 | KEY_LAST_PARKED | `"last_parked_location"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String KEY_LAST_PARKED = "last_parked_location";` |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java:35 | MAP_CACHE_PREFIX | `"widget_map_"` | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. | `private static final String MAP_CACHE_PREFIX = "widget_map_";` |
@@ -41391,7 +41485,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 ---
 ## Data Models State And Storage
 
-Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-risk-index, motion-sample, OBD-annotated route-point, Android native event records, saved parked-location records, encrypted backup records, legacy HMAC-sealed plaintext backup import records, and widget map cache files. Sensitive trip fields such as route points, events, notes, tags, and addresses are encrypted before storage and decrypted on repository reads: native Android uses the `SecureKey` bridge with Android Keystore keys that request StrongBox and fall back to TEE/software-backed Keystore when required, while browser/test surfaces use a non-persistent in-memory session key. Route-risk storage keeps coarse geohash cells rather than exact segment midpoints, and completed trips are pruned by the configurable data-retention setting, defaulting to 24 months. Android native trip, settings, notification, privacy-zone, parked-location, and native key-value data use encrypted storage; production Java does not open plaintext SharedPreferences for native data sets, JavaScript native storage migrates legacy plaintext Capacitor Preferences into the encrypted bridge when found, and legacy native plaintext preference files are removed by name without reading them. Sensitive Android files are best-effort overwritten before deletion, delete-all invokes native file wiping, and native motion samples are zeroed after handoff or when completed native trips are cleared. Completed trips include canonical `component_scores` evidence envelopes, `score_provenance`, and `score_explanation` for scoring version/input auditing and plain-language score contributors. `src/lib/schema/tripSchema.js` documents the canonical v23 trip shape and required fields. Local trip reads run a one-time retired-event migration that converts legacy `lane_change` records to diagnostic `heading_deviation_legacy` records and remaps matching event-feedback keys. There is no ORM schema in this repo; IndexedDB schema creation lives in `src/lib/localTripRepository.js`, local/mobile storage helpers live in `src/lib/mobileStorage.js` and `src/lib/trackingStore.js`, encrypted Android preference helpers live in `EncryptedPreferenceStore.java`, native trip storage lives in `DriveSenseNativeTripStore.java`, native settings live in `NativeSettingsStore.java`, and parked-widget image cache files are stored under Android app files by `MapTileFetchWorker.java`.
+Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-risk-index, OBD-annotated route-point, Android native event records, saved parked-location records, encrypted backup records, legacy HMAC-sealed plaintext backup import records, and widget map cache files. Sensitive trip fields such as route points, events, notes, tags, and addresses are encrypted before storage and decrypted on repository reads: native Android uses the `SecureKey` bridge with Android Keystore keys that request StrongBox, accept hardware-backed TEE when StrongBox is unavailable, and reject software-backed Keystore keys; browser/test surfaces use a non-persistent in-memory session key. Route-risk storage keeps coarse geohash cells rather than exact segment midpoints, and completed trips are pruned by the configurable data-retention setting, defaulting to 24 months. Android native trip, settings, notification, privacy-zone, parked-location, and native key-value data use encrypted storage; production Java does not open plaintext SharedPreferences for native data sets, JavaScript native storage migrates legacy plaintext Capacitor Preferences into the encrypted bridge when found, and legacy native plaintext preference files are removed by name without reading them. Sensitive Android files are best-effort overwritten before deletion, delete-all invokes native file wiping, and native motion samples are zeroed before completed native trip persistence; legacy stored motion samples are stripped on repository rewrite. Completed trips include canonical `component_scores` evidence envelopes, `score_provenance`, and `score_explanation` for scoring version/input auditing and plain-language score contributors. `src/lib/schema/tripSchema.js` documents the canonical v23 trip shape and required fields. Local trip reads run a one-time retired-event migration that converts legacy `lane_change` records to diagnostic `heading_deviation_legacy` records and remaps matching event-feedback keys. There is no ORM schema in this repo; IndexedDB schema creation lives in `src/lib/localTripRepository.js`, local/mobile storage helpers live in `src/lib/mobileStorage.js` and `src/lib/trackingStore.js`, encrypted Android preference helpers live in `EncryptedPreferenceStore.java`, native trip storage lives in `DriveSenseNativeTripStore.java`, native settings live in `NativeSettingsStore.java`, and parked-widget image cache files are stored under Android app files by `MapTileFetchWorker.java`.
 
 | File | Line | Storage/native surface |
 | --- | --- | --- |
@@ -41405,7 +41499,7 @@ Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-
 | android/app/src/main/java/com/roadsage/app/EncryptedCapacitorPlugin.java | 56 | private SharedPreferences prefs() { |
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 4 | import android.content.SharedPreferences; |
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 24 | static SharedPreferences open(Context context, String prefsName) { |
-| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 79 | static void put(SharedPreferences.Editor editor, String key, Object value) { |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 118 | static void put(SharedPreferences.Editor editor, String key, Object value) { |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | 5 | import android.content.SharedPreferences; |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | 378 | private static boolean hasAddress(SharedPreferences prefs, String key) { |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | 389 | private static void updateJsonAddress(SharedPreferences prefs, String key, String addr, boolean writeWhenMissing) { |
@@ -41440,8 +41534,8 @@ Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-
 | src/lib/localTripRepository.js | 126 | const canUseIndexedDb = () => typeof indexedDB !== 'undefined'; |
 | src/lib/localTripRepository.js | 182 | return typeof localStorage !== 'undefined' ? localStorage : null; |
 | src/lib/localTripRepository.js | 194 | const request = indexedDB.open(dbName, DB_VERSION); |
-| src/lib/localTripRepository.js | 264 | if (!canUseIndexedDb() \|\| typeof indexedDB.deleteDatabase !== 'function') { |
-| src/lib/localTripRepository.js | 269 | const request = indexedDB.deleteDatabase(dbName); |
+| src/lib/localTripRepository.js | 273 | if (!canUseIndexedDb() \|\| typeof indexedDB.deleteDatabase !== 'function') { |
+| src/lib/localTripRepository.js | 278 | const request = indexedDB.deleteDatabase(dbName); |
 | src/lib/mobileStorage.js | 9 | return typeof localStorage !== 'undefined'; |
 | src/lib/mobileStorage.js | 21 | const { Preferences } = await import('@capacitor/preferences'); |
 | src/lib/mobileStorage.js | 30 | const legacyPlain = await Preferences.get({ key: currentKey }); |
@@ -41489,15 +41583,11 @@ Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-
 | src/lib/routeRisk/storage.js | 23 | const canUseIndexedDb = () => typeof indexedDB !== 'undefined'; |
 | src/lib/routeRisk/storage.js | 46 | const request = indexedDB.open(DB_NAME, DB_VERSION); |
 | src/lib/storageKeyMigration.js | 38 | return typeof localStorage !== 'undefined' ? localStorage : null; |
-| src/lib/storageKeyMigration.js | 64 | async function copyPreferenceKey(Preferences, oldKey, newKey) { |
-| src/lib/storageKeyMigration.js | 65 | const current = await Preferences.get({ key: newKey }); |
+| src/lib/storageKeyMigration.js | 64 | async function copyNativePreferenceKey(Preferences, encryptedCapacitorStorage, oldKey, newKey) { |
 | src/lib/storageKeyMigration.js | 68 | const legacy = await Preferences.get({ key: oldKey }); |
-| src/lib/storageKeyMigration.js | 71 | await Preferences.set({ key: newKey, value: legacy.value }); |
-| src/lib/storageKeyMigration.js | 72 | await Preferences.set({ key: `${oldKey}__migrated_to__${newKey}`, value: '1' }); |
-| src/lib/storageKeyMigration.js | 92 | const { Preferences } = await import('@capacitor/preferences'); |
-| src/lib/storageKeyMigration.js | 93 | const done = await Preferences.get({ key: STORAGE_KEY_MIGRATION_DONE_KEY }); |
-| src/lib/storageKeyMigration.js | 97 | migrated = await copyPreferenceKey(Preferences, oldKey, newKey) \|\| migrated; |
-| src/lib/storageKeyMigration.js | 99 | await Preferences.set({ key: STORAGE_KEY_MIGRATION_DONE_KEY, value: '1' }); |
+| src/lib/storageKeyMigration.js | 72 | await Preferences.remove({ key: oldKey }); |
+| src/lib/storageKeyMigration.js | 93 | const { Preferences } = await import('@capacitor/preferences'); |
+| src/lib/storageKeyMigration.js | 98 | migrated = await copyNativePreferenceKey(Preferences, encryptedCapacitorStorage, oldKey, newKey) \|\| migrated; |
 | src/lib/trackingDiagnostics.js | 22 | if (typeof localStorage === 'undefined') { |
 | src/lib/trackingDiagnostics.js | 25 | const raw = localStorage.getItem(resolveStorageKey(DIAGNOSTIC_EVENTS_KEY)) \|\| |
 | src/lib/trackingDiagnostics.js | 26 | legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).map((key) => localStorage.getItem(key)).find((value) => value != null); |
@@ -41587,6 +41677,7 @@ Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-
 | DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/lib/__tests__/releaseBlockers.test.js:161 `expect(diagnosticsSource).toContain('if (!import.meta.env.DEV)');` |
 | VITE_DB_NAME | Vite string | No | drivesense_mobile | IndexedDB database name for local trip storage; changed names trigger a one-time copy-and-delete migration. | src/lib/localDbConfig.js:5 `export const DB_NAME = String(import.meta.env.VITE_DB_NAME \|\| DEFAULT_DB_NAME).trim() \|\| DEFAULT_DB_NAME;` |
 | VITE_OSRM_TIMEOUT_MS | Vite string | No | 12000 | Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider. | src/lib/mapMatching.js:11 `export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) \|\| DEFAULT_OSRM_TIMEOUT_MS;` |
+| VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER | Vite string | No | false/undefined unless set | Feature/debug/build-time switch. | src/lib/nativePlayIntegrity.js:25 `const cloudProjectNumber = import.meta.env.VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER \|\| undefined;` |
 | VITE_DEFAULT_OSRM_URL | Vite string | No | blank | Optional self-hosted OSRM endpoint for deployments that operate a trusted routing server. | src/lib/trackingStore.js:150 `const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL \|\| '').trim();` |
 | VITE_OSRM_TIMEOUT_MS | Vite string | No | 12000 | Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider. | src/lib/trackingStore.js:160 `const value = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS);` |
 | DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:168 `enabled: import.meta.env.DEV,` |
@@ -41667,9 +41758,14 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 40 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 55 | } catch (Exception ignored) {} | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 69 | try { | protected operation |
-| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 71 | } catch (GeneralSecurityException \| IOException error) { | handled fallback or diagnostic logging |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java | 142 | try { | protected operation |
-| android/app/src/main/java/com/roadsage/app/MainActivity.java | 144 | } catch (Exception ignored) { | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 73 | throw new GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key."); | raises failure to caller |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 76 | } catch (GeneralSecurityException \| IOException error) { | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 89 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 104 | } catch (Exception ignored) {} | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 109 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | 115 | } catch (Exception ignored) {} | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java | 153 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/MainActivity.java | 155 | } catch (Exception ignored) { | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | 87 | try (FileOutputStream output = new FileOutputStream(cacheFile)) { | protected operation |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | 90 | } catch (Exception e) { | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | 225 | try { | protected operation |
@@ -41692,6 +41788,8 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | android/app/src/main/java/com/roadsage/app/ParkedLocationRecord.java | 24 | } catch (JSONException e) { | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/ParkedLocationRecord.java | 41 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/ParkedLocationRecord.java | 43 | } catch (DateTimeParseException ignored) {} | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java | 43 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java | 61 | } catch (Exception error) { | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/PrivacyZoneStore.java | 38 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/PrivacyZoneStore.java | 42 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/PrivacyZoneStore.java | 44 | } catch (JSONException e) { | handled fallback or diagnostic logging |
@@ -41710,7 +41808,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 575 | } catch (SecurityException ignored) {} | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 687 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 698 | } catch (JSONException ignored) {} | handled fallback or diagnostic logging |
-| android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 962 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 963 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 1018 | } catch (JSONException ignored) {} | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 1044 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java | 1056 | } catch (JSONException ignored) {} | handled fallback or diagnostic logging |
@@ -41730,13 +41828,17 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 50 | } catch (Exception error) { | handled fallback or diagnostic logging |
 | android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 64 | try { | protected operation |
 | android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 73 | } catch (Exception error) { | handled fallback or diagnostic logging |
-| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 102 | try { | protected operation |
-| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 112 | } catch (Exception ignored) { | handled fallback or diagnostic logging |
-| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 132 | try { | protected operation |
-| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 135 | } catch (Exception error) { | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 103 | throw new java.security.GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key."); | raises failure to caller |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 109 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 119 | } catch (Exception ignored) { | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 139 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 142 | } catch (Exception error) { | handled fallback or diagnostic logging |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 152 | try { | protected operation |
+| android/app/src/main/java/com/roadsage/app/SecureKeyPlugin.java | 163 | } catch (Exception ignored) { | handled fallback or diagnostic logging |
 | src/api/auth.js | 8 | try { | protected operation |
-| src/api/calibrationLabels.js | 24 | try { | protected operation |
-| src/api/calibrationLabels.js | 35 | } catch (error) { | handled fallback or diagnostic logging |
+| src/api/calibrationLabels.js | 25 | try { | protected operation |
+| src/api/calibrationLabels.js | 30 | throw new Error('Play Integrity attestation is required before calibration upload.'); | raises failure to caller |
+| src/api/calibrationLabels.js | 45 | } catch (error) { | handled fallback or diagnostic logging |
 | src/api/client.js | 21 | throw new ApiError("No backend API configured."); | raises failure to caller |
 | src/api/client.js | 41 | try { | protected operation |
 | src/api/client.js | 75 | throw new ApiError(message, { | raises failure to caller |
@@ -41860,34 +41962,34 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/errorReporting.js | 61 | export function logError(context, error, extra = {}) { | writes tracking diagnostic event |
 | src/lib/errorReporting.js | 62 | const sanitized = sanitizeError(error); | protected operation |
 | src/lib/errorReporting.js | 80 | logError(type, event, { type, title: 'App error captured' }); | writes tracking diagnostic event |
-| src/lib/exportEncryption.js | 12 | throw new Error('Export password must be at least 12 characters.'); | raises failure to caller |
+| src/lib/exportEncryption.js | 13 | throw new Error('Export password must be at least 12 characters.'); | raises failure to caller |
 | src/lib/geocoding.js | 63 | try { | protected operation |
 | src/lib/geocoding.js | 91 | try { | protected operation |
 | src/lib/localTestTrips.js | 23 | throw new Error('Synthetic local feature-test trips are only available in development builds.'); | raises failure to caller |
 | src/lib/localTripRepository.js | 181 | try { | protected operation |
 | src/lib/localTripRepository.js | 190 | reject(new Error('IndexedDB unavailable')); | raises failure to caller |
-| src/lib/localTripRepository.js | 240 | try { | protected operation |
-| src/lib/localTripRepository.js | 253 | try { | protected operation |
-| src/lib/localTripRepository.js | 272 | request.onblocked = () => reject(new Error(`IndexedDB delete blocked for ${dbName}`)); | raises failure to caller |
-| src/lib/localTripRepository.js | 304 | throw new Error(`IndexedDB rename migration count mismatch from ${legacyPreviousName} to ${currentName}`); | raises failure to caller |
-| src/lib/localTripRepository.js | 317 | dbNameMigrationPromise = migrateIndexedDbName().catch((error) => { | handled fallback or diagnostic logging |
-| src/lib/localTripRepository.js | 326 | try { | protected operation |
-| src/lib/localTripRepository.js | 334 | if (changed.length) await putTrips(changed).catch(() => {}); | silent optional fallback; verify low impact |
-| src/lib/localTripRepository.js | 341 | if (changed.length) await putTrips(changed).catch(() => {}); | silent optional fallback; verify low impact |
-| src/lib/localTripRepository.js | 348 | try { | protected operation |
-| src/lib/localTripRepository.js | 363 | try { | protected operation |
-| src/lib/localTripRepository.js | 441 | await mergeRouteRiskTripIntoIndex(trip, getPrivacyZones(localSettings.get())).catch(() => { | handled fallback or diagnostic logging |
-| src/lib/localTripRepository.js | 674 | const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []); | handled fallback or diagnostic logging |
-| src/lib/localTripRepository.js | 701 | await rebuildRouteRiskIndex(next.filter((trip) => trip.status === 'completed'), getPrivacyZones(localSettings.get())).catch(() => {}); | silent optional fallback; verify low impact |
-| src/lib/localTripRepository.js | 716 | try { | protected operation |
-| src/lib/localTripRepository.js | 720 | const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []); | handled fallback or diagnostic logging |
-| src/lib/localTripRepository.js | 792 | try { | protected operation |
-| src/lib/localTripRepository.js | 804 | try { | protected operation |
-| src/lib/localTripRepository.js | 813 | clearNativeCompletedTrips().catch(() => {}), | silent optional fallback; verify low impact |
-| src/lib/localTripRepository.js | 814 | invalidateDangerZoneCache().catch(() => {}), | silent optional fallback; verify low impact |
-| src/lib/localTripRepository.js | 815 | invalidateRouteRiskIndex().catch(() => {}), | silent optional fallback; verify low impact |
-| src/lib/localTripRepository.js | 885 | if (!trip) throw new Error('Trip not found'); | raises failure to caller |
-| src/lib/localTripRepository.js | 935 | const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []); | handled fallback or diagnostic logging |
+| src/lib/localTripRepository.js | 249 | try { | protected operation |
+| src/lib/localTripRepository.js | 262 | try { | protected operation |
+| src/lib/localTripRepository.js | 281 | request.onblocked = () => reject(new Error(`IndexedDB delete blocked for ${dbName}`)); | raises failure to caller |
+| src/lib/localTripRepository.js | 313 | throw new Error(`IndexedDB rename migration count mismatch from ${legacyPreviousName} to ${currentName}`); | raises failure to caller |
+| src/lib/localTripRepository.js | 326 | dbNameMigrationPromise = migrateIndexedDbName().catch((error) => { | handled fallback or diagnostic logging |
+| src/lib/localTripRepository.js | 335 | try { | protected operation |
+| src/lib/localTripRepository.js | 343 | if (changed.length) await putTrips(changed).catch(() => {}); | silent optional fallback; verify low impact |
+| src/lib/localTripRepository.js | 350 | if (changed.length) await putTrips(changed).catch(() => {}); | silent optional fallback; verify low impact |
+| src/lib/localTripRepository.js | 357 | try { | protected operation |
+| src/lib/localTripRepository.js | 372 | try { | protected operation |
+| src/lib/localTripRepository.js | 450 | await mergeRouteRiskTripIntoIndex(trip, getPrivacyZones(localSettings.get())).catch(() => { | handled fallback or diagnostic logging |
+| src/lib/localTripRepository.js | 683 | const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []); | handled fallback or diagnostic logging |
+| src/lib/localTripRepository.js | 710 | await rebuildRouteRiskIndex(next.filter((trip) => trip.status === 'completed'), getPrivacyZones(localSettings.get())).catch(() => {}); | silent optional fallback; verify low impact |
+| src/lib/localTripRepository.js | 725 | try { | protected operation |
+| src/lib/localTripRepository.js | 729 | const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []); | handled fallback or diagnostic logging |
+| src/lib/localTripRepository.js | 801 | try { | protected operation |
+| src/lib/localTripRepository.js | 813 | try { | protected operation |
+| src/lib/localTripRepository.js | 822 | clearNativeCompletedTrips().catch(() => {}), | silent optional fallback; verify low impact |
+| src/lib/localTripRepository.js | 823 | invalidateDangerZoneCache().catch(() => {}), | silent optional fallback; verify low impact |
+| src/lib/localTripRepository.js | 824 | invalidateRouteRiskIndex().catch(() => {}), | silent optional fallback; verify low impact |
+| src/lib/localTripRepository.js | 894 | if (!trip) throw new Error('Trip not found'); | raises failure to caller |
+| src/lib/localTripRepository.js | 944 | const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []); | handled fallback or diagnostic logging |
 | src/lib/localVehicleRepository.js | 84 | if (!existing) throw new Error('Vehicle not found'); | raises failure to caller |
 | src/lib/mapMatching.js | 154 | if (!response.ok) throw new Error(`OSRM match failed (${response.status})`); | raises failure to caller |
 | src/lib/mapMatching.js | 158 | if (!geometry.length) throw new Error(data.message \|\| 'No matched geometry returned'); | raises failure to caller |
@@ -41901,6 +42003,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/mobileStorage.js | 8 | try { | protected operation |
 | src/lib/mobileStorage.js | 18 | try { | protected operation |
 | src/lib/mobileStorage.js | 107 | throw new Error('Install hash requires Web Crypto support.'); | raises failure to caller |
+| src/lib/nativePlayIntegrity.js | 36 | throw new Error('Play Integrity attestation did not return a token.'); | raises failure to caller |
 | src/lib/notificationService.js | 137 | try { | protected operation |
 | src/lib/notificationService.js | 148 | try { | protected operation |
 | src/lib/notificationService.js | 156 | try { | protected operation |
@@ -42209,7 +42312,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 - Auth: optional backend auth relies on an httpOnly, Secure, SameSite=Strict `token` cookie set by POST `/auth/token`; frontend API calls use `credentials: "include"` and do not attach browser-readable bearer tokens.
 - Legacy auth migration: old `localStorage` token keys are cleared at startup and backend users are forced to re-login instead of copying tokens into readable browser storage.
 - Content Security Policy: Vite injects a CSP meta tag and dev/preview HTTP header with `default-src 'self'`, `script-src 'self'` with no `unsafe-inline`, restricted `connect-src` entries for self, Overpass, Open-Meteo, Nominatim, and `VITE_API_URL` when configured. Android `MainActivity` also injects a CSP HTTP response header plus `X-Content-Type-Options`, `X-Frame-Options`, and `Referrer-Policy` into Capacitor WebView local responses so header-only directives such as `frame-ancestors` are enforced.
-- Android platform hardening: app backup is disabled and backed by backup/data-extraction exclusion XML, cleartext traffic is denied by `network_security_config.xml`, system CAs are the only trusted anchors, `FLAG_SECURE` blocks task-switcher screenshots and screen recording, Android Keystore keys request StrongBox when available and fall back to Keystore-backed TEE/software storage when required, Capacitor bridge logging is disabled, `CapacitorHttp` is disabled, WebView navigation is restricted with `server.allowNavigation: []`, release builds run R8/resource shrinking and obfuscation with `android.util.Log` calls stripped, ProGuard keeps only Capacitor reflection entry points and native JSON model members needed at runtime, and app-owned PendingIntents use `FLAG_IMMUTABLE` through `PendingIntentCompat`.
+- Android platform hardening: app backup is disabled and backed by backup/data-extraction exclusion XML, cleartext traffic is denied by `network_security_config.xml`, system CAs are the only trusted anchors, `FLAG_SECURE` blocks task-switcher screenshots and screen recording, Android Keystore keys request StrongBox when available, accept hardware-backed TEE when StrongBox is unavailable, and reject software-backed Keystore storage, Capacitor bridge logging is disabled, `CapacitorHttp` is disabled, WebView navigation is restricted with `server.allowNavigation: []`, release builds run R8/resource shrinking and obfuscation with `android.util.Log` calls stripped, ProGuard keeps only Capacitor reflection entry points and native JSON model members needed at runtime, and app-owned PendingIntents use `FLAG_IMMUTABLE` through `PendingIntentCompat`.
 - Capacitor plugin surface: `capacitor.config.ts` uses `includePlugins` allowlists for the Capacitor and background-geolocation plugins Road Sage actually syncs, while custom first-party bridge names such as `SecureClipboard`, `DriveSenseActivityRecognition`, `SecureKey`, `EncryptedCapacitorPlugin`, `BiometricGate`, and `PlayIntegrity` are explicitly documented in plugin config. Native `MainActivity` registers only the Road Sage Java plugins it owns.
 - Android deep-link hardening: external deep links and app-owned deeplink extras are validated in `MainActivity` before Capacitor sees them; only allowlisted routes and safe query values are passed through.
 - Android WebView hardening: the Capacitor WebView disables file/content URI access, WebView geolocation, saved form/password data, mixed content, third-party cookies, and persistent cache use; cache, history, and form data are cleared on startup and backgrounding.
@@ -42220,7 +42323,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 - Android certificate pinning: `network_security_config.xml` pins the built-in OpenStreetMap/Nominatim, Open-Meteo, and Overpass hosts with at least two SHA-256 SPKI pins per host. Security CI runs `scripts/check_pin_expiry.py android/app/src/main/res/xml/network_security_config.xml 60` so expired, soon-expiring, missing, placeholder, or malformed pins fail before release.
 - OSRM endpoint validation: saved route-snapping endpoints must pass a 200 OPTIONS check with an exposed `X-OSRM-*` or OSRM-valued response header; launch re-verification disables snapping and notifies the user if the endpoint stops responding.
 - Authorization: no in-repo backend role matrix exists. The local app is single-user local-first; backend authorization must be enforced by the external API if configured.
-- Runtime integrity: `RuntimeIntegrityCheck` detects local root, debugger, emulator, and ADB-enabled signals. `MainActivity` suspends active tracking when a compromised status is reported, and the `PlayIntegrity` bridge exposes that local state to JavaScript. This is a local hardening signal only; full Play Integrity API server nonce verification is not implemented in this repo.
+- Runtime integrity: `RuntimeIntegrityCheck` detects local root, debugger, emulator, and ADB-enabled signals. `MainActivity` suspends active tracking when a compromised status is reported, and the `PlayIntegrity` bridge requests Play Integrity API tokens with per-action nonces so native calibration uploads and encrypted exports can be gated before sensitive data leaves the app. Tokens must still be decrypted and verified by a trusted backend.
 - User-controlled data surfaces: encrypted backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, password-protected CSV/PDF/UBI export content, and Android native intent extras.
 - Leaflet maps: `TripMap.jsx` and `TripPlayback.jsx` statically import Leaflet and `leaflet/dist/leaflet.css` from the bundled npm dependency. They do not dynamically inject Leaflet `<script>` tags or load Leaflet from a CDN, removing a third-party script execution path over decrypted trip state.
 - Leaflet popups: route labels, event metadata, speed-limit road/source data, repeated-event route segments, repeated driving-event areas, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.

@@ -15,10 +15,12 @@ import android.webkit.WebView;
 
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
+import com.getcapacitor.Plugin;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -31,6 +33,14 @@ public class MainActivity extends BridgeActivity {
     private static final String EXTRA_DEEPLINK = "deeplink";
     private static final Pattern SAFE_QUERY_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,50}");
     private static final Pattern SAFE_ID_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,80}");
+    private static final List<Class<? extends Plugin>> ROAD_SAGE_PLUGIN_ALLOWLIST = Arrays.asList(
+        DriveSenseActivityRecognitionPlugin.class,
+        ClipboardPlugin.class,
+        SecureKeyPlugin.class,
+        EncryptedCapacitorPlugin.class,
+        BiometricGatePlugin.class,
+        PlayIntegrityPlugin.class
+    );
     private static final Set<String> SAFE_QUERY_KEYS = new HashSet<>(Arrays.asList("action", "tab", "filter"));
     private static final Set<String> ALLOWED_DEEP_LINK_PATHS = new HashSet<>(Arrays.asList(
         "/",
@@ -50,12 +60,7 @@ public class MainActivity extends BridgeActivity {
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         );
-        registerPlugin(DriveSenseActivityRecognitionPlugin.class);
-        registerPlugin(ClipboardPlugin.class);
-        registerPlugin(SecureKeyPlugin.class);
-        registerPlugin(EncryptedCapacitorPlugin.class);
-        registerPlugin(BiometricGatePlugin.class);
-        registerPlugin(PlayIntegrityPlugin.class);
+        registerRoadSagePlugins();
         PrivacyZoneStore.migratePlaintextPrefsIfNeeded(this);
         DriveSenseNativeTripStore.migratePlaintextPrefsIfNeeded(this);
         suspendTrackingOnCompromisedRuntime();
@@ -64,6 +69,12 @@ public class MainActivity extends BridgeActivity {
         hardenWebView();
         disableWebViewAutofill();
         installSecurityHeaderWebViewClient();
+    }
+
+    private void registerRoadSagePlugins() {
+        for (Class<? extends Plugin> pluginClass : ROAD_SAGE_PLUGIN_ALLOWLIST) {
+            registerPlugin(pluginClass);
+        }
     }
 
     private void suspendTrackingOnCompromisedRuntime() {

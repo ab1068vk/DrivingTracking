@@ -1,4 +1,5 @@
 import { encryptBackup } from '@/lib/backupEncryption';
+import { assertPlayIntegrityForSensitiveAction } from '@/lib/nativePlayIntegrity';
 
 export function encryptedExportFilename(filename, extension = '.rsexport') {
   const base = String(filename || `road-sage-export-${new Date().toISOString().split('T')[0]}`)
@@ -11,6 +12,7 @@ export async function buildEncryptedExport({ filename, mimeType, data, password,
   if (typeof password !== 'string' || password.length < 12) {
     throw new Error('Export password must be at least 12 characters.');
   }
+  await assertPlayIntegrityForSensitiveAction(`export:${kind}`);
 
   const payload = {
     app: 'Road Sage',

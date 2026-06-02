@@ -92,8 +92,15 @@ public class SecureKeyPlugin extends Plugin {
     static SecretKey getOrCreateKey() throws Exception {
         KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
         keyStore.load(null);
+        if (keyStore.containsAlias(KEY_ALIAS) && !isHardwareBacked(keyStore)) {
+            keyStore.deleteEntry(KEY_ALIAS);
+        }
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             generateKey(true);
+        }
+        if (!isHardwareBacked(keyStore)) {
+            keyStore.deleteEntry(KEY_ALIAS);
+            throw new java.security.GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key.");
         }
         return ((KeyStore.SecretKeyEntry) keyStore.getEntry(KEY_ALIAS, null)).getSecretKey();
     }
@@ -138,6 +145,23 @@ public class SecureKeyPlugin extends Plugin {
                 return;
             }
             throw error;
+        }
+    }
+
+    private static boolean isHardwareBacked(KeyStore keyStore) {
+        try {
+            KeyStore.Entry entry = keyStore.getEntry(KEY_ALIAS, null);
+            if (!(entry instanceof KeyStore.SecretKeyEntry)) return false;
+            SecretKey key = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+            SecretKeyFactory factory = SecretKeyFactory.getInstance(key.getAlgorithm(), "AndroidKeyStore");
+            KeyInfo info = (KeyInfo) factory.getKeySpec(key, KeyInfo.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                return info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_STRONGBOX ||
+                    info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT;
+            }
+            return info.isInsideSecureHardware();
+        } catch (Exception ignored) {
+            return false;
         }
     }
 }

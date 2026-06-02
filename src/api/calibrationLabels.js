@@ -6,9 +6,10 @@ import {
 } from '@/lib/calibrationLabeling';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
 import { isNativePlatform } from '@/lib/nativePlatform';
+import { requestPlayIntegrityAttestation } from '@/lib/nativePlayIntegrity';
 import { localSettings } from '@/lib/trackingStore';
 
-const shouldUseRemoteLabelStore = () => Boolean(API_BASE_URL) && !isNativePlatform();
+const shouldUseRemoteLabelStore = () => Boolean(API_BASE_URL);
 
 export const calibrationLabelService = {
   async submitTripSurveyLabel(trip, surveyInput) {
@@ -22,7 +23,16 @@ export const calibrationLabelService = {
 
     if (sharingEnabled && payload.eligibleForCalibration && shouldUseRemoteLabelStore()) {
       try {
-        const saved = await apiClient.post(`/${CALIBRATION_LABEL_COLLECTION}`, payload);
+        const attestation = isNativePlatform()
+          ? await requestPlayIntegrityAttestation('calibration-upload')
+          : null;
+        if (isNativePlatform() && !attestation?.token) {
+          throw new Error('Play Integrity attestation is required before calibration upload.');
+        }
+        const saved = await apiClient.post(`/${CALIBRATION_LABEL_COLLECTION}`, {
+          ...payload,
+          ...(attestation ? { playIntegrity: attestation } : {}),
+        });
         await localCalibrationLabelRepository.markTripSubmitted(tripId, {
           label_id: saved?.labelId || saved?.id || payload.labelId,
           rating: payload.surveyLabel.overallDriveRating,

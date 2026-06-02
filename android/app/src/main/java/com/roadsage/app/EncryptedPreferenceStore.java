@@ -67,13 +67,52 @@ final class EncryptedPreferenceStore {
         }
 
         try {
-            return builder.build();
+            MasterKey key = builder.build();
+            if (!isHardwareBacked()) {
+                deleteMasterKey();
+                throw new GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key.");
+            }
+            return key;
         } catch (GeneralSecurityException | IOException error) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && preferStrongBox) {
                 return buildHardwareMasterKey(context, false);
             }
             throw error;
         }
+    }
+
+    private static boolean isHardwareBacked() {
+        return "StrongBox".equals(keyBackingInternal()) || "TEE".equals(keyBackingInternal());
+    }
+
+    private static String keyBackingInternal() {
+        try {
+            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            KeyStore.Entry entry = keyStore.getEntry(MASTER_KEY_ALIAS, null);
+            if (entry instanceof KeyStore.SecretKeyEntry) {
+                SecretKey key = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+                SecretKeyFactory factory = SecretKeyFactory.getInstance(key.getAlgorithm(), "AndroidKeyStore");
+                KeyInfo info = (KeyInfo) factory.getKeySpec(key, KeyInfo.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_STRONGBOX) return "StrongBox";
+                    if (info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT) return "TEE";
+                    return "Software";
+                }
+                return info.isInsideSecureHardware() ? "TEE" : "Software";
+            }
+        } catch (Exception ignored) {}
+        return "Unknown";
+    }
+
+    private static void deleteMasterKey() {
+        try {
+            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            if (keyStore.containsAlias(MASTER_KEY_ALIAS)) {
+                keyStore.deleteEntry(MASTER_KEY_ALIAS);
+            }
+        } catch (Exception ignored) {}
     }
 
     static void put(SharedPreferences.Editor editor, String key, Object value) {

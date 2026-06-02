@@ -61,15 +61,15 @@ function copyLocalStorageKey(storage, oldKey, newKey) {
   return true;
 }
 
-async function copyPreferenceKey(Preferences, oldKey, newKey) {
-  const current = await Preferences.get({ key: newKey });
+async function copyNativePreferenceKey(Preferences, encryptedCapacitorStorage, oldKey, newKey) {
+  const current = await encryptedCapacitorStorage.get({ key: newKey });
   if (current.value !== null) return false;
 
   const legacy = await Preferences.get({ key: oldKey });
   if (legacy.value === null) return false;
 
-  await Preferences.set({ key: newKey, value: legacy.value });
-  await Preferences.set({ key: `${oldKey}__migrated_to__${newKey}`, value: '1' });
+  await encryptedCapacitorStorage.set({ key: newKey, value: legacy.value });
+  await Preferences.remove({ key: oldKey });
   return true;
 }
 
@@ -89,14 +89,15 @@ export async function runStorageKeyMigration() {
     const { Capacitor } = await import('@capacitor/core');
     if (!Capacitor.isNativePlatform()) return migrated;
 
+    const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
     const { Preferences } = await import('@capacitor/preferences');
-    const done = await Preferences.get({ key: STORAGE_KEY_MIGRATION_DONE_KEY });
+    const done = await encryptedCapacitorStorage.get({ key: STORAGE_KEY_MIGRATION_DONE_KEY });
     if (done.value) return migrated;
 
     for (const [oldKey, newKey] of Object.entries(STORAGE_KEY_RENAMES)) {
-      migrated = await copyPreferenceKey(Preferences, oldKey, newKey) || migrated;
+      migrated = await copyNativePreferenceKey(Preferences, encryptedCapacitorStorage, oldKey, newKey) || migrated;
     }
-    await Preferences.set({ key: STORAGE_KEY_MIGRATION_DONE_KEY, value: '1' });
+    await encryptedCapacitorStorage.set({ key: STORAGE_KEY_MIGRATION_DONE_KEY, value: '1' });
   } catch {
     return migrated;
   }

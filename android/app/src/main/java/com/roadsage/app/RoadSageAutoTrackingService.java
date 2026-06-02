@@ -909,6 +909,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
         JSONArray motionSamples = activeMotionSamples != null ? activeMotionSamples : new JSONArray();
+        int motionSampleCount = motionSamples.length();
         long startMs = activeStartMs;
         boolean startedNearParked = candidateNearParked;
         long confirmedMs = candidateConfirmedMs;
@@ -974,8 +975,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             trip.put("idle_time_seconds", stats.idleSeconds);
             trip.put("night_driving", stats.nightDriving);
             trip.put("route_points", points);
-            trip.put("motion_samples", motionSamples);
-            trip.put("native_motion_sample_count", motionSamples.length());
+            trip.put("native_motion_sample_count", motionSampleCount);
             trip.put("driving_events", new JSONArray());
             trip.put("score_overall", JSONObject.NULL);
             trip.put("score_safety", JSONObject.NULL);
@@ -1017,6 +1017,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             trip.put("updated_at", iso(endMs));
         } catch (JSONException ignored) {}
 
+        zeroMotionSamples(motionSamples);
         DriveSenseNativeTripStore.addCompletedTrip(this, trip);
         JSONObject finalPoint = points.optJSONObject(points.length() - 1);
         if (finalPoint != null && isParkedStopReason(reason)) {
@@ -1033,7 +1034,6 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         candidateConfirmedMs = 0L;
         candidateNearParked = false;
         sendTripCompletedNotification(trip, stats);
-        zeroMotionSamples(motionSamples);
     }
 
     static void zeroMotionSamples(JSONArray samples) {
