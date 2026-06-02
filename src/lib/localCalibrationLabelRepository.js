@@ -1,4 +1,4 @@
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 
 export const CALIBRATION_LABELS_KEY = 'road_sage_calibration_labels';
 export const CALIBRATION_SURVEY_MARKERS_KEY = 'road_sage_calibration_survey_markers';
@@ -69,5 +69,13 @@ export const localCalibrationLabelRepository = {
       skipped_at: new Date().toISOString(),
       upload_status: 'skipped',
     });
+  },
+
+  async deleteAll() {
+    await Promise.all([
+      removeJson(CALIBRATION_LABELS_KEY),
+      removeJson(CALIBRATION_SURVEY_MARKERS_KEY),
+    ]);
+    return { success: true };
   },
 };

@@ -34,3 +34,13 @@ export function isLocked(settings = {}, now = Date.now()) {
 
   return Number(now) - unlockedAt > timeoutMs;
 }
+
+export function msUntilAutoLock(settings = {}, now = Date.now()) {
+  if (!biometricEnabled || !unlockedAt) return 0;
+
+  const timeoutMs = getLockTimeoutMs(settings);
+  if (timeoutMs === 0) return Number.POSITIVE_INFINITY;
+
+  const elapsedMs = Number(now) - unlockedAt;
+  return Math.max(0, timeoutMs - elapsedMs + 1);
+}

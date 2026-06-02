@@ -27,6 +27,14 @@ export const vehicleService = {
     return local ? local.delete(id) : apiClient.delete(`/vehicles/${encodeURIComponent(id)}`);
   },
 
+  deleteAll: async () => {
+    const local = repository();
+    if (local?.deleteAll) return local.deleteAll();
+    const vehicles = await apiClient.get("/vehicles", { query: { sort: "-created_date", limit: 10000 } });
+    await Promise.all(vehicles.map((vehicle) => apiClient.delete(`/vehicles/${encodeURIComponent(vehicle.id)}`)));
+    return { success: true };
+  },
+
   upsertMany: (vehicles) => {
     const local = repository();
     if (local) return local.upsertMany(vehicles);

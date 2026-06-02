@@ -1,4 +1,4 @@
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripInsights';
 
 const VEHICLES_KEY = 'road_sage_vehicles';
@@ -97,6 +97,11 @@ export const localVehicleRepository = {
   async delete(id) {
     const current = await readVehicles();
     await writeVehicles(current.filter((vehicle) => String(vehicle.id) !== String(id)));
+    return { success: true };
+  },
+
+  async deleteAll() {
+    await removeJson(VEHICLES_KEY);
     return { success: true };
   },
 

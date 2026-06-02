@@ -355,8 +355,9 @@ export default function Dashboard() {
 
   // Resume active trip from session (crash recovery)
   useEffect(() => {
-    const recovered = activeTripStore.get();
-    if (recovered) {
+    let cancelled = false;
+    activeTripStore.getAsync().then((recovered) => {
+      if (cancelled || !recovered) return;
       activeTripRef.current = recovered;
       trackingRef.current = true;
       setActiveTrip(recovered);
@@ -364,8 +365,9 @@ export default function Dashboard() {
       startTimer(new Date(recovered.start_time));
       // Re-attach GPS
       startGPS();
-    }
+    });
     return () => {
+      cancelled = true;
       stopTimer();
       locationService.current?.stop();
       activityStopRef.current?.();

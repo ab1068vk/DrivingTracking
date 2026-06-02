@@ -16,7 +16,7 @@ import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
 import { enforceDataRetention } from '@/lib/localTripRepository';
-import { isLocked, lock, markUnlocked, setBiometricLockEnabled } from '@/lib/biometricLock';
+import { isLocked, lock, markUnlocked, msUntilAutoLock, setBiometricLockEnabled } from '@/lib/biometricLock';
 import { authenticateBiometricGate } from '@/lib/nativeBiometricGate';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
@@ -198,9 +198,35 @@ function BiometricRouteGuard({ children }) {
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId = null;
+
+    const clearAutoLockTimer = () => {
+      if (timeoutId != null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const scheduleAutoLockTimer = () => {
+      clearAutoLockTimer();
+      if (!isAndroid()) return;
+
+      const delayMs = msUntilAutoLock(localSettings.get());
+      if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+      timeoutId = window.setTimeout(() => {
+        if (cancelled || document.visibilityState === 'hidden') return;
+        if (isLocked(localSettings.get())) {
+          setAuthState('checking');
+          verify();
+          return;
+        }
+        scheduleAutoLockTimer();
+      }, Math.min(delayMs, 2_147_483_647));
+    };
 
     const verify = async () => {
       if (!isAndroid()) {
+        clearAutoLockTimer();
         setBiometricLockEnabled(false);
         setAuthState('unlocked');
         return;
@@ -210,6 +236,7 @@ function BiometricRouteGuard({ children }) {
       setBiometricLockEnabled(true);
       if (!isLocked(settings)) {
         setAuthState('unlocked');
+        scheduleAutoLockTimer();
         return;
       }
 
@@ -220,9 +247,11 @@ function BiometricRouteGuard({ children }) {
         if (result?.authenticated) {
           markUnlocked();
           setAuthState('unlocked');
+          scheduleAutoLockTimer();
           return;
         }
         if (result?.unavailable) {
+          clearAutoLockTimer();
           setBiometricLockEnabled(false);
           setAuthState('unlocked');
           return;
@@ -242,6 +271,7 @@ function BiometricRouteGuard({ children }) {
     document.addEventListener('visibilitychange', verifyOnVisible);
     return () => {
       cancelled = true;
+      clearAutoLockTimer();
       document.removeEventListener('visibilitychange', verifyOnVisible);
     };
   }, []);

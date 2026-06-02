@@ -35,5 +35,11 @@ export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-
   if (!result?.token) {
     throw new Error('Play Integrity attestation did not return a token.');
   }
+  if (
+    result.requiresServerVerification === true &&
+    import.meta.env.VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY !== 'true'
+  ) {
+    throw new Error('Play Integrity attestation must be verified by a trusted backend before this native sensitive action can continue.');
+  }
   return result;
 }

@@ -1,6 +1,6 @@
 /**
  * Road Sage Tracking Store
- * Manages active trip state in memory and persists to localStorage for crash recovery.
+ * Manages active trip state in memory and persists encrypted native crash recovery.
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
@@ -13,6 +13,7 @@ import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
+import { isNativePlatform } from '@/lib/nativePlatform';
 import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
@@ -36,6 +37,7 @@ const PRIVACY_ZONE_RADIUS_MAX_M = 500;
 const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
+let activeTripMemory = null;
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
 
 const settingsStorage = () => {
@@ -930,9 +932,30 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────
 export const activeTripStore = {
   get() {
+    if (isNativePlatform()) return activeTripMemory;
     try {
       const raw = readStorageWithLegacyFallback(localStorage, ACTIVE_TRIP_KEY);
-      return raw ? JSON.parse(raw) : null;
+      activeTripMemory = raw ? JSON.parse(raw) : null;
+      return activeTripMemory;
+    } catch {
+      return null;
+    }
+  },
+  async getAsync() {
+    if (!isNativePlatform()) return this.get();
+    try {
+      const encrypted = await getJson(ACTIVE_TRIP_KEY, null);
+      if (encrypted) {
+        activeTripMemory = truncateTripCoordinates(encrypted);
+        return activeTripMemory;
+      }
+
+      const raw = readStorageWithLegacyFallback(settingsStorage(), ACTIVE_TRIP_KEY);
+      if (!raw) return null;
+      activeTripMemory = truncateTripCoordinates(JSON.parse(raw));
+      await setJson(ACTIVE_TRIP_KEY, activeTripMemory);
+      this.clearPlaintext();
+      return activeTripMemory;
     } catch {
       return null;
     }
@@ -940,14 +963,49 @@ export const activeTripStore = {
   set(trip) {
     if (isEphemeralModeActive()) return;
     try {
-      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(truncateTripCoordinates(trip)));
+      activeTripMemory = truncateTripCoordinates(trip);
+      if (isNativePlatform()) {
+        this.clearPlaintext();
+        setJson(ACTIVE_TRIP_KEY, activeTripMemory).catch((err) => {
+          logError('active_trip_encrypted_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
+        });
+        return;
+      }
+      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(activeTripMemory));
     } catch (err) {
       logError('active_trip_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
     }
   },
+  async setAsync(trip) {
+    if (isEphemeralModeActive()) return;
+    activeTripMemory = truncateTripCoordinates(trip);
+    if (isNativePlatform()) {
+      this.clearPlaintext();
+      await setJson(ACTIVE_TRIP_KEY, activeTripMemory);
+      return;
+    }
+    this.set(activeTripMemory);
+  },
   clear() {
-    localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
-    legacyStorageKeysFor(ACTIVE_TRIP_KEY).forEach((key) => localStorage.removeItem(key));
+    activeTripMemory = null;
+    this.clearPlaintext();
+    if (isNativePlatform()) {
+      removeJson(ACTIVE_TRIP_KEY).catch((err) => logError('active_trip_encrypted_clear', err));
+    }
+  },
+  async clearAsync() {
+    activeTripMemory = null;
+    this.clearPlaintext();
+    await removeJson(ACTIVE_TRIP_KEY);
+  },
+  clearPlaintext() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+      legacyStorageKeysFor(ACTIVE_TRIP_KEY).forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // Best-effort plaintext cleanup only.
+    }
   },
   addPoint(point) {
     if (isEphemeralModeActive()) return;
