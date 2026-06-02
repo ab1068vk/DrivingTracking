@@ -23,7 +23,7 @@ import javax.crypto.spec.GCMParameterSpec;
 
 @CapacitorPlugin(name = "SecureKey")
 public class SecureKeyPlugin extends Plugin {
-    private static final String KEY_ALIAS = "road_sage_js_enc_key_v2";
+    private static final String KEY_ALIAS = "road_sage_js_enc_key_v3";
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
 
@@ -92,15 +92,19 @@ public class SecureKeyPlugin extends Plugin {
     static SecretKey getOrCreateKey() throws Exception {
         KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
         keyStore.load(null);
-        if (keyStore.containsAlias(KEY_ALIAS) && !isHardwareBacked(keyStore)) {
+        if (keyStore.containsAlias(KEY_ALIAS) && !isRequiredBacking(keyStore)) {
             keyStore.deleteEntry(KEY_ALIAS);
         }
         if (!keyStore.containsAlias(KEY_ALIAS)) {
-            generateKey(true);
+            generateKey();
         }
-        if (!isHardwareBacked(keyStore)) {
+        if (!isRequiredBacking(keyStore)) {
             keyStore.deleteEntry(KEY_ALIAS);
-            throw new java.security.GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key.");
+            throw new java.security.GeneralSecurityException(
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? "Road Sage requires a StrongBox-backed Android Keystore key."
+                    : "Road Sage requires a hardware-backed Android Keystore key."
+            );
         }
         return ((KeyStore.SecretKeyEntry) keyStore.getEntry(KEY_ALIAS, null)).getSecretKey();
     }
@@ -121,7 +125,7 @@ public class SecureKeyPlugin extends Plugin {
         }
     }
 
-    private static void generateKey(boolean preferStrongBox) throws Exception {
+    private static void generateKey() throws Exception {
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
         KeyGenParameterSpec.Builder builder = new KeyGenParameterSpec.Builder(
             KEY_ALIAS,
@@ -132,23 +136,15 @@ public class SecureKeyPlugin extends Plugin {
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setUserAuthenticationRequired(false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && preferStrongBox) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             builder.setIsStrongBoxBacked(true);
         }
 
-        try {
-            generator.init(builder.build());
-            generator.generateKey();
-        } catch (Exception error) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && preferStrongBox) {
-                generateKey(false);
-                return;
-            }
-            throw error;
-        }
+        generator.init(builder.build());
+        generator.generateKey();
     }
 
-    private static boolean isHardwareBacked(KeyStore keyStore) {
+    private static boolean isRequiredBacking(KeyStore keyStore) {
         try {
             KeyStore.Entry entry = keyStore.getEntry(KEY_ALIAS, null);
             if (!(entry instanceof KeyStore.SecretKeyEntry)) return false;
@@ -156,8 +152,7 @@ public class SecureKeyPlugin extends Plugin {
             SecretKeyFactory factory = SecretKeyFactory.getInstance(key.getAlgorithm(), "AndroidKeyStore");
             KeyInfo info = (KeyInfo) factory.getKeySpec(key, KeyInfo.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                return info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_STRONGBOX ||
-                    info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT;
+                return info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_STRONGBOX;
             }
             return info.isInsideSecureHardware();
         } catch (Exception ignored) {

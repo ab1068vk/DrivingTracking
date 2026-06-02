@@ -6,7 +6,7 @@ import {
 } from '@/lib/calibrationLabeling';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
 import { isNativePlatform } from '@/lib/nativePlatform';
-import { requestPlayIntegrityAttestation } from '@/lib/nativePlayIntegrity';
+import { assertServerVerifiedPlayIntegrity, requestPlayIntegrityAttestation } from '@/lib/nativePlayIntegrity';
 import { localSettings } from '@/lib/trackingStore';
 
 const shouldUseRemoteLabelStore = () => Boolean(API_BASE_URL);
@@ -33,6 +33,7 @@ export const calibrationLabelService = {
           ...payload,
           ...(attestation ? { playIntegrity: attestation } : {}),
         });
+        assertServerVerifiedPlayIntegrity(saved, 'calibration-upload');
         await localCalibrationLabelRepository.markTripSubmitted(tripId, {
           label_id: saved?.labelId || saved?.id || payload.labelId,
           rating: payload.surveyLabel.overallDriveRating,

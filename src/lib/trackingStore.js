@@ -41,11 +41,18 @@ let activeTripMemory = null;
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
 
 const settingsStorage = () => {
+  if (isNativePlatform()) return null;
   try {
     return typeof localStorage !== 'undefined' ? localStorage : null;
   } catch {
     return null;
   }
+};
+
+const cacheSettingsForRuntime = (settings) => {
+  memorySettings = settings;
+  if (isNativePlatform()) return;
+  settingsStorage()?.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
 };
 
 const readStorageWithLegacyFallback = (storage, key) => {
@@ -829,7 +836,7 @@ export const localSettings = {
           const parsed = JSON.parse(native.settingsJson);
           const { settings: merged, changed } = migrateDefaultSettings(parsed);
           const serialized = JSON.stringify(merged);
-          localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+          cacheSettingsForRuntime(merged);
           if (changed && nativePlugin.saveSettings) {
             await nativePlugin.saveSettings({ settingsJson: serialized });
           }
@@ -853,7 +860,7 @@ export const localSettings = {
       const parsed = JSON.parse(value);
       const { settings: merged, changed } = migrateDefaultSettings(parsed);
       const serialized = JSON.stringify(merged);
-      localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+      cacheSettingsForRuntime(merged);
       if (changed) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
       if (nativePlugin?.saveSettings) {

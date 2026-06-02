@@ -17,13 +17,32 @@ import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 
 final class EncryptedPreferenceStore {
-    private static final String MASTER_KEY_ALIAS = "road_sage_master_key_v2";
+    private static final String MASTER_KEY_ALIAS = "road_sage_master_key_v3";
 
     private EncryptedPreferenceStore() {}
 
     static SharedPreferences open(Context context, String prefsName) {
+        MasterKey masterKey;
         try {
-            MasterKey masterKey = buildHardwareMasterKey(context, true);
+            masterKey = buildHardwareMasterKey(context);
+        } catch (GeneralSecurityException | IOException error) {
+            throw new IllegalStateException("Encrypted preferences are unavailable.", error);
+        }
+
+        try {
+            return openEncryptedPrefs(context, prefsName, masterKey);
+        } catch (GeneralSecurityException | IOException firstOpenError) {
+            SecureDelete.wipePlaintextPrefs(context, prefsName);
+            try {
+                return openEncryptedPrefs(context, prefsName, masterKey);
+            } catch (GeneralSecurityException | IOException secondOpenError) {
+                throw new IllegalStateException("Encrypted preferences are unavailable.", secondOpenError);
+            }
+        }
+    }
+
+    private static SharedPreferences openEncryptedPrefs(Context context, String prefsName, MasterKey masterKey)
+            throws GeneralSecurityException, IOException {
             return EncryptedSharedPreferences.create(
                 context,
                 prefsName,
@@ -31,9 +50,6 @@ final class EncryptedPreferenceStore {
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             );
-        } catch (GeneralSecurityException | IOException e) {
-            throw new IllegalStateException("Encrypted preferences are unavailable.", e);
-        }
     }
 
     static String keyBacking(Context context) {
@@ -56,33 +72,32 @@ final class EncryptedPreferenceStore {
         return "Unknown";
     }
 
-    private static MasterKey buildHardwareMasterKey(Context context, boolean preferStrongBox)
+    private static MasterKey buildHardwareMasterKey(Context context)
             throws GeneralSecurityException, IOException {
         MasterKey.Builder builder = new MasterKey.Builder(context, MASTER_KEY_ALIAS)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .setUserAuthenticationRequired(false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && preferStrongBox) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             builder.setRequestStrongBoxBacked(true);
         }
 
-        try {
-            MasterKey key = builder.build();
-            if (!isHardwareBacked()) {
-                deleteMasterKey();
-                throw new GeneralSecurityException("Road Sage requires a hardware-backed Android Keystore key.");
-            }
-            return key;
-        } catch (GeneralSecurityException | IOException error) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && preferStrongBox) {
-                return buildHardwareMasterKey(context, false);
-            }
-            throw error;
+        MasterKey key = builder.build();
+        if (!isRequiredBacking()) {
+            deleteMasterKey();
+            throw new GeneralSecurityException(
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? "Road Sage requires a StrongBox-backed Android Keystore key."
+                    : "Road Sage requires a hardware-backed Android Keystore key."
+            );
         }
+        return key;
     }
 
-    private static boolean isHardwareBacked() {
-        return "StrongBox".equals(keyBackingInternal()) || "TEE".equals(keyBackingInternal());
+    private static boolean isRequiredBacking() {
+        String backing = keyBackingInternal();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return "StrongBox".equals(backing);
+        return "TEE".equals(backing);
     }
 
     private static String keyBackingInternal() {

@@ -1,4 +1,5 @@
 import { registerPlugin } from '@capacitor/core';
+import { isNativePlatform } from '@/lib/nativePlatform';
 
 const FIELDS_TO_ENCRYPT = ['route_points', 'driving_events', 'notes'];
 const ENCRYPTION_ALGORITHM = 'AES-GCM';
@@ -76,20 +77,28 @@ async function encryptBytes(bytes) {
     try {
       const { iv, ct, backing } = await SecureKey.encrypt({ data: bytesToBase64(bytes) });
       return { iv, ct, _key: backing || 'android-keystore' };
-    } catch {
-      // Browser and test environments intentionally fall back to an in-memory key.
+    } catch (error) {
+      if (isNativePlatform()) {
+        throw new Error(`Native trip encryption key unavailable: ${error?.message || 'SecureKey failed'}`);
+      }
     }
   }
   return encryptWithWebSessionKey(bytes);
 }
 
 async function decryptBytes(value) {
+  if (isNativePlatform() && value._key === 'web-session') {
+    throw new Error('Web-session encrypted trip data is not readable on native Android.');
+  }
+
   if (value._key !== 'web-session' && canEncode()) {
     try {
       const { data } = await SecureKey.decrypt({ iv: value.iv, ct: value.ct });
       return base64ToBytes(data);
-    } catch {
-      // Device-bound keys may be unavailable after restore or when reading web-only data.
+    } catch (error) {
+      if (isNativePlatform()) {
+        throw new Error(`Native trip decryption key unavailable: ${error?.message || 'SecureKey failed'}`);
+      }
     }
   }
   return decryptWithWebSessionKey(value);

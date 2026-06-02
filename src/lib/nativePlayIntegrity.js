@@ -2,6 +2,7 @@ import { registerPlugin } from '@capacitor/core';
 import { isNativePlatform } from '@/lib/nativePlatform';
 
 const PlayIntegrity = registerPlugin('PlayIntegrity');
+const ALLOW_UNVERIFIED_PLAY_INTEGRITY = import.meta.env.VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY === 'true';
 
 const textToBase64Url = (text) => {
   const bytes = new TextEncoder().encode(text);
@@ -31,7 +32,7 @@ export async function requestPlayIntegrityAttestation(action = 'sensitive-action
 
 export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-action', options = {}) {
   if (!isNativePlatform()) return null;
-  const requireServerVerification = options.requireServerVerification === true;
+  const requireServerVerification = options.requireServerVerification !== false;
   const result = await requestPlayIntegrityAttestation(action);
   if (!result?.token) {
     throw new Error('Play Integrity attestation did not return a token.');
@@ -39,9 +40,22 @@ export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-
   if (
     requireServerVerification &&
     result.requiresServerVerification === true &&
-    import.meta.env.VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY !== 'true'
+    ALLOW_UNVERIFIED_PLAY_INTEGRITY !== true
   ) {
     throw new Error('Play Integrity attestation must be verified by a trusted backend before this native sensitive action can continue.');
   }
   return result;
+}
+
+export function assertServerVerifiedPlayIntegrity(response, action = 'sensitive-action') {
+  if (!isNativePlatform()) return true;
+  if (ALLOW_UNVERIFIED_PLAY_INTEGRITY) return true;
+
+  const verified = response?.playIntegrityVerified === true ||
+    response?.playIntegrity?.verified === true ||
+    response?.integrity?.playIntegrityVerified === true;
+  if (!verified) {
+    throw new Error(`Server did not verify Play Integrity for ${action}.`);
+  }
+  return true;
 }
