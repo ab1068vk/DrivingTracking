@@ -1,7 +1,10 @@
-const KEY_STORAGE_KEY = 'road_sage_db_enc_key_v1';
+import { registerPlugin } from '@capacitor/core';
+
 const FIELDS_TO_ENCRYPT = ['route_points', 'driving_events', 'notes'];
 const ENCRYPTION_ALGORITHM = 'AES-GCM';
 const IV_LENGTH_BYTES = 12;
+
+const SecureKey = registerPlugin('SecureKey');
 
 const hasWebCrypto = () => (
   typeof crypto !== 'undefined' &&
@@ -11,13 +14,7 @@ const hasWebCrypto = () => (
   typeof TextDecoder !== 'undefined'
 );
 
-const keyStorage = () => {
-  try {
-    return typeof localStorage !== 'undefined' ? localStorage : null;
-  } catch {
-    return null;
-  }
-};
+let webSessionKeyPromise = null;
 
 const bytesToBase64 = (bytes) => {
   const chunkSize = 0x8000;
@@ -30,7 +27,7 @@ const bytesToBase64 = (bytes) => {
 
 const base64ToBytes = (value) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 
-const canEncryptAtRest = () => hasWebCrypto() && keyStorage() && typeof btoa === 'function' && typeof atob === 'function';
+const canEncode = () => typeof btoa === 'function' && typeof atob === 'function';
 
 const isEncryptedValue = (value) => (
   value &&
@@ -41,47 +38,77 @@ const isEncryptedValue = (value) => (
   typeof value.ct === 'string'
 );
 
-async function getOrCreateDbKey() {
-  const storage = keyStorage();
-  if (!storage) throw new Error('Trip field encryption key storage unavailable.');
-
-  const stored = storage.getItem(KEY_STORAGE_KEY);
-  if (stored) {
-    return crypto.subtle.importKey(
-      'raw',
-      base64ToBytes(stored),
-      { name: ENCRYPTION_ALGORITHM },
+async function getWebSessionKey() {
+  if (!hasWebCrypto() || !canEncode()) throw new Error('WebCrypto unavailable.');
+  if (!webSessionKeyPromise) {
+    webSessionKeyPromise = crypto.subtle.generateKey(
+      { name: ENCRYPTION_ALGORITHM, length: 256 },
       false,
       ['encrypt', 'decrypt']
     );
   }
+  return webSessionKeyPromise;
+}
 
-  const key = await crypto.subtle.generateKey(
-    { name: ENCRYPTION_ALGORITHM, length: 256 },
-    true,
-    ['encrypt', 'decrypt']
+async function encryptWithWebSessionKey(bytes) {
+  const key = await getWebSessionKey();
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH_BYTES));
+  const ciphertext = await crypto.subtle.encrypt({ name: ENCRYPTION_ALGORITHM, iv }, key, bytes);
+  return {
+    iv: bytesToBase64(iv),
+    ct: bytesToBase64(new Uint8Array(ciphertext)),
+    _key: 'web-session',
+  };
+}
+
+async function decryptWithWebSessionKey(value) {
+  const key = await getWebSessionKey();
+  const plaintext = await crypto.subtle.decrypt(
+    { name: ENCRYPTION_ALGORITHM, iv: base64ToBytes(value.iv) },
+    key,
+    base64ToBytes(value.ct)
   );
-  const exported = await crypto.subtle.exportKey('raw', key);
-  storage.setItem(KEY_STORAGE_KEY, bytesToBase64(new Uint8Array(exported)));
-  return key;
+  return new Uint8Array(plaintext);
+}
+
+async function encryptBytes(bytes) {
+  if (canEncode()) {
+    try {
+      const { iv, ct, backing } = await SecureKey.encrypt({ data: bytesToBase64(bytes) });
+      return { iv, ct, _key: backing || 'android-keystore' };
+    } catch {
+      // Browser and test environments intentionally fall back to an in-memory key.
+    }
+  }
+  return encryptWithWebSessionKey(bytes);
+}
+
+async function decryptBytes(value) {
+  if (value._key !== 'web-session' && canEncode()) {
+    try {
+      const { data } = await SecureKey.decrypt({ iv: value.iv, ct: value.ct });
+      return base64ToBytes(data);
+    } catch {
+      // Device-bound keys may be unavailable after restore or when reading web-only data.
+    }
+  }
+  return decryptWithWebSessionKey(value);
 }
 
 export async function encryptTripFields(trip) {
-  if (!trip || typeof trip !== 'object' || !canEncryptAtRest()) return trip;
+  if (!trip || typeof trip !== 'object' || !canEncode()) return trip;
 
-  const key = await getOrCreateDbKey();
   const result = { ...trip };
-
   for (const field of FIELDS_TO_ENCRYPT) {
     if (result[field] == null || isEncryptedValue(result[field])) continue;
 
-    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH_BYTES));
     const plaintext = new TextEncoder().encode(JSON.stringify(result[field]));
-    const ciphertext = await crypto.subtle.encrypt({ name: ENCRYPTION_ALGORITHM, iv }, key, plaintext);
+    const encrypted = await encryptBytes(plaintext);
     result[field] = {
       _enc: true,
-      iv: bytesToBase64(iv),
-      ct: bytesToBase64(new Uint8Array(ciphertext)),
+      iv: encrypted.iv,
+      ct: encrypted.ct,
+      _key: encrypted._key,
     };
   }
 
@@ -95,32 +122,10 @@ export async function decryptTripFields(trip) {
   if (!encryptedFields.length) return trip;
 
   const result = { ...trip };
-  if (!canEncryptAtRest()) {
-    encryptedFields.forEach((field) => {
-      result[field] = null;
-    });
-    return result;
-  }
-
-  let key;
-  try {
-    key = await getOrCreateDbKey();
-  } catch {
-    encryptedFields.forEach((field) => {
-      result[field] = null;
-    });
-    return result;
-  }
-
   for (const field of encryptedFields) {
-    const value = result[field];
     try {
-      const plaintext = await crypto.subtle.decrypt(
-        { name: ENCRYPTION_ALGORITHM, iv: base64ToBytes(value.iv) },
-        key,
-        base64ToBytes(value.ct)
-      );
-      result[field] = JSON.parse(new TextDecoder().decode(plaintext));
+      const bytes = await decryptBytes(result[field]);
+      result[field] = JSON.parse(new TextDecoder().decode(bytes));
     } catch {
       result[field] = null;
     }

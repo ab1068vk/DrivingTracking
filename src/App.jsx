@@ -16,7 +16,8 @@ import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
 import { enforceDataRetention } from '@/lib/localTripRepository';
-import { lock } from '@/lib/biometricLock';
+import { isLocked, lock, markUnlocked, setBiometricLockEnabled } from '@/lib/biometricLock';
+import { authenticateBiometricGate } from '@/lib/nativeBiometricGate';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
 
@@ -162,7 +163,7 @@ const AuthenticatedApp = () => {
       {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
 
       {/* Main App with shared Layout */}
-      <Route element={<Layout />}>
+      <Route element={<BiometricRouteGuard><Layout /></BiometricRouteGuard>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/trips" element={<TripHistory />} />
         <Route path="/survey/:tripId" element={<SurveyPage />} />
@@ -191,6 +192,75 @@ const AuthenticatedApp = () => {
     </Suspense>
   );
 };
+
+function BiometricRouteGuard({ children }) {
+  const [authState, setAuthState] = useState(() => (isAndroid() ? 'checking' : 'unlocked'));
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const verify = async () => {
+      if (!isAndroid()) {
+        setBiometricLockEnabled(false);
+        setAuthState('unlocked');
+        return;
+      }
+
+      const settings = localSettings.get();
+      setBiometricLockEnabled(true);
+      if (!isLocked(settings)) {
+        setAuthState('unlocked');
+        return;
+      }
+
+      setAuthState('checking');
+      try {
+        const result = await authenticateBiometricGate();
+        if (cancelled) return;
+        if (result?.authenticated) {
+          markUnlocked();
+          setAuthState('unlocked');
+          return;
+        }
+        if (result?.unavailable) {
+          setBiometricLockEnabled(false);
+          setAuthState('unlocked');
+          return;
+        }
+        setAuthState('locked');
+      } catch (err) {
+        logError('biometric_gate_authenticate', err);
+        if (!cancelled) setAuthState('locked');
+      }
+    };
+
+    const verifyOnVisible = () => {
+      if (document.visibilityState === 'visible') verify();
+    };
+
+    verify();
+    document.addEventListener('visibilitychange', verifyOnVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', verifyOnVisible);
+    };
+  }, []);
+
+  if (authState === 'unlocked') return children;
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-background px-4">
+      <div className="max-w-sm rounded-2xl border border-border bg-card p-5 text-center shadow">
+        <div className="mb-2 font-semibold">{authState === 'locked' ? 'Road Sage is locked' : 'Unlocking Road Sage...'}</div>
+        <div className="text-sm text-muted-foreground">
+          {authState === 'locked'
+            ? 'Close and reopen the app, then confirm your device credential to continue.'
+            : 'Confirm your device credential to access trip data.'}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function App() {
   return (

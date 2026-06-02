@@ -63,7 +63,15 @@ class DriveSenseNativeTripStore {
     }
 
     static void clearCompletedTrips(Context context) {
-        prefs(context).edit().putString(KEY_COMPLETED_TRIPS, "[]").apply();
+        SharedPreferences storage = prefs(context);
+        JSONArray trips = getCompletedTrips(context);
+        for (int i = 0; i < trips.length(); i++) {
+            JSONObject trip = trips.optJSONObject(i);
+            if (trip == null) continue;
+            RoadSageAutoTrackingService.zeroMotionSamples(trip.optJSONArray("motion_samples"));
+        }
+        storage.edit().putString(KEY_COMPLETED_TRIPS, trips.toString()).commit();
+        storage.edit().putString(KEY_COMPLETED_TRIPS, "[]").apply();
     }
 
     static JSONArray getDiagnosticEvents(Context context) {

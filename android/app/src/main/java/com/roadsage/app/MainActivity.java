@@ -52,13 +52,25 @@ public class MainActivity extends BridgeActivity {
         );
         registerPlugin(DriveSenseActivityRecognitionPlugin.class);
         registerPlugin(ClipboardPlugin.class);
+        registerPlugin(SecureKeyPlugin.class);
+        registerPlugin(EncryptedCapacitorPlugin.class);
+        registerPlugin(BiometricGatePlugin.class);
+        registerPlugin(PlayIntegrityPlugin.class);
         PrivacyZoneStore.migratePlaintextPrefsIfNeeded(this);
         DriveSenseNativeTripStore.migratePlaintextPrefsIfNeeded(this);
+        suspendTrackingOnCompromisedRuntime();
         sanitizeLaunchIntent(getIntent());
         super.onCreate(savedInstanceState);
         hardenWebView();
         disableWebViewAutofill();
         installSecurityHeaderWebViewClient();
+    }
+
+    private void suspendTrackingOnCompromisedRuntime() {
+        String status = RuntimeIntegrityCheck.status(this);
+        if ("ok".equals(status)) return;
+        Log.w(TAG, "Runtime integrity warning: " + status);
+        DriveSenseNativeTripStore.setServiceEnabled(this, false);
     }
 
     @Override

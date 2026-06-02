@@ -119,10 +119,10 @@ public class MapTileFetchWorker extends Worker {
 
     static void deleteCacheForWidgetAndLocation(Context context, int widgetId, double lat, double lng) {
         File legacyFile = getCacheFile(context, widgetId);
-        if (legacyFile.exists()) legacyFile.delete();
+        if (legacyFile.exists()) SecureDelete.wipeAndDelete(legacyFile);
 
         File locationFile = getCacheFile(context, widgetId, lat, lng);
-        if (locationFile.exists()) locationFile.delete();
+        if (locationFile.exists()) SecureDelete.wipeAndDelete(locationFile);
     }
 
     static void clearWidgetMapCache(Context context) {
@@ -134,7 +134,7 @@ public class MapTileFetchWorker extends Worker {
 
         for (File file : cacheFiles) {
             if (!file.isFile()) continue;
-            boolean deleted = file.delete();
+            boolean deleted = SecureDelete.wipeAndDelete(file);
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "Cleared widget cache file: " + file.getName() + " deleted=" + deleted);
             }
@@ -143,7 +143,7 @@ public class MapTileFetchWorker extends Worker {
 
     private static void showPrivacyPlaceholder(Context context, int widgetId) {
         File cacheFile = getCacheFile(context, widgetId);
-        if (cacheFile.exists()) cacheFile.delete();
+        if (cacheFile.exists()) SecureDelete.wipeAndDelete(cacheFile);
 
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_parked_car);
         views.setImageViewResource(R.id.iv_map, R.drawable.widget_map_placeholder);

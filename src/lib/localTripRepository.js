@@ -800,6 +800,22 @@ const deleteTrip = async (id) => {
   }
 };
 
+const deleteAllTripsFromStorage = async () => {
+  try {
+    await deleteDbByName(DB_NAME);
+    await deleteDbByName(LOCAL_DB_LEGACY_DEFAULT_NAME);
+  } catch {}
+  await Promise.all([
+    removeJson(TRIPS_KEY),
+    removeJson(DRIVER_SIGNATURE_KEY),
+    removeJson(TRIP_EVENT_MIGRATION_KEY),
+    removeJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY),
+    clearNativeCompletedTrips().catch(() => {}),
+    invalidateDangerZoneCache().catch(() => {}),
+    invalidateRouteRiskIndex().catch(() => {}),
+  ]);
+};
+
 export async function enforceDataRetention(retentionMonths = localSettings.get().data_retention_months) {
   const months = Number(retentionMonths);
   if (!Number.isFinite(months) || months <= 0) return 0;
@@ -899,6 +915,11 @@ export const localTripRepository = {
 
   async delete(id) {
     await deleteTrip(id);
+    return { success: true };
+  },
+
+  async deleteAll() {
+    await deleteAllTripsFromStorage();
     return { success: true };
   },
 

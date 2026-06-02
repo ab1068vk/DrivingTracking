@@ -271,7 +271,6 @@ export default function Settings() {
   const [backupExportOpen, setBackupExportOpen] = useState(false);
   const [backupExportPassword, setBackupExportPassword] = useState('');
   const [backupExportConfirm, setBackupExportConfirm] = useState('');
-  const [backupPlaintextOptOut, setBackupPlaintextOptOut] = useState(false);
   const [backupExportBusy, setBackupExportBusy] = useState(false);
   const [backupImportOpen, setBackupImportOpen] = useState(false);
   const [backupImportPassword, setBackupImportPassword] = useState('');
@@ -976,23 +975,30 @@ export default function Settings() {
 
   const handleDeleteAllTrips = async () => {
     if (!confirm('Delete ALL trips? This cannot be undone.')) return;
-    const trips = allTrips;
-    for (const t of trips) {
-      await tripService.delete(t.id);
+    if (tripService.deleteAll) await tripService.deleteAll();
+    else {
+      const trips = allTrips;
+      for (const t of trips) {
+        await tripService.delete(t.id);
+      }
     }
+    const { SecureKey } = await import('@/lib/nativeSecureKey');
+    await SecureKey.wipeAllFiles().catch(() => {});
     qc.invalidateQueries();
     toast({
       title: 'Trips deleted',
-      description: 'All local trip history was removed from this device.',
+      description: 'All local trip history and sensitive native cache files were removed from this device.',
     });
   };
 
   const handleExportAll = async () => {
     const completed = allTrips.filter(t => t.status === 'completed');
     const csv = tripsToCSV(completed);
-    const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
+    const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`, { password });
     toast({
-      title: 'Export saved',
+      title: 'Encrypted export saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'Trip CSV'} is downloading.`,
@@ -1001,7 +1007,7 @@ export default function Settings() {
 
   const backupPasswordStrong = backupExportPassword.length >= 12;
   const backupPasswordsMatch = backupExportPassword === backupExportConfirm;
-  const backupExportReady = backupPlaintextOptOut || (backupPasswordStrong && backupPasswordsMatch);
+  const backupExportReady = backupPasswordStrong && backupPasswordsMatch;
   const backupPasswordStrengthScore = backupExportPassword
     ? [
       backupExportPassword.length >= 12,
@@ -1034,7 +1040,6 @@ export default function Settings() {
   const handleExportBackup = () => {
     setBackupExportPassword('');
     setBackupExportConfirm('');
-    setBackupPlaintextOptOut(false);
     setBackupExportOpen(true);
   };
 
@@ -1046,7 +1051,7 @@ export default function Settings() {
         trips: allTrips,
         vehicles: allVehicles,
         settings: cfg,
-        password: backupPlaintextOptOut ? null : backupExportPassword,
+        password: backupExportPassword,
       });
       setBackupExportOpen(false);
       showBackupExportToast(result);
@@ -1254,7 +1259,6 @@ export default function Settings() {
                 type="password"
                 value={backupExportPassword}
                 onChange={(event) => setBackupExportPassword(event.target.value)}
-                disabled={backupPlaintextOptOut}
                 className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
                 autoComplete="new-password"
               />
@@ -1265,44 +1269,33 @@ export default function Settings() {
                 type="password"
                 value={backupExportConfirm}
                 onChange={(event) => setBackupExportConfirm(event.target.value)}
-                disabled={backupPlaintextOptOut}
                 className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
                 autoComplete="new-password"
               />
             </label>
-            {!backupPlaintextOptOut && (
-              <div className="space-y-1.5">
-                <div className="grid grid-cols-4 gap-1" aria-hidden="true">
-                  {[1, 2, 3, 4].map((level) => (
-                    <div
-                      key={level}
-                      className={`h-1.5 rounded-full ${
-                        backupPasswordStrengthScore >= level
-                          ? backupPasswordStrong
-                            ? 'bg-green-500'
-                            : 'bg-amber-500'
-                          : 'bg-secondary'
-                      }`}
-                    />
-                  ))}
-                </div>
-                <div className={`text-xs font-medium ${backupPasswordStrong && backupPasswordsMatch ? 'text-green-600' : 'text-amber-600'}`}>
-                  {backupPasswordStrong
-                    ? backupPasswordsMatch
-                      ? `${backupPasswordStrengthLabel} password`
-                      : 'Passwords must match'
-                    : `Use at least 12 characters. Current strength: ${backupPasswordStrengthLabel}`}
-                </div>
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-4 gap-1" aria-hidden="true">
+                {[1, 2, 3, 4].map((level) => (
+                  <div
+                    key={level}
+                    className={`h-1.5 rounded-full ${
+                      backupPasswordStrengthScore >= level
+                        ? backupPasswordStrong
+                          ? 'bg-green-500'
+                          : 'bg-amber-500'
+                        : 'bg-secondary'
+                    }`}
+                  />
+                ))}
               </div>
-            )}
-            <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-              <Checkbox
-                checked={backupPlaintextOptOut}
-                onCheckedChange={(checked) => setBackupPlaintextOptOut(checked === true)}
-                className="mt-0.5"
-              />
-              <span>No password. Export an unencrypted backup that anyone with this file can read.</span>
-            </label>
+              <div className={`text-xs font-medium ${backupPasswordStrong && backupPasswordsMatch ? 'text-green-600' : 'text-amber-600'}`}>
+                {backupPasswordStrong
+                  ? backupPasswordsMatch
+                    ? `${backupPasswordStrengthLabel} password`
+                    : 'Passwords must match'
+                  : `Use at least 12 characters. Current strength: ${backupPasswordStrengthLabel}`}
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <button

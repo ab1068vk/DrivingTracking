@@ -1033,6 +1033,28 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         candidateConfirmedMs = 0L;
         candidateNearParked = false;
         sendTripCompletedNotification(trip, stats);
+        zeroMotionSamples(motionSamples);
+    }
+
+    static void zeroMotionSamples(JSONArray samples) {
+        if (samples == null) return;
+        for (int i = 0; i < samples.length(); i++) {
+            JSONObject sample = samples.optJSONObject(i);
+            if (sample == null) continue;
+            try {
+                sample.put("timestamp", "");
+                sample.put("timestamp_ms", 0L);
+                sample.put("ax", 0d);
+                sample.put("ay", 0d);
+                sample.put("az", 0d);
+                sample.put("gx", 0d);
+                sample.put("gy", 0d);
+                sample.put("gz", 0d);
+                sample.put("gz_deg_s", 0d);
+                sample.put("linear_magnitude_ms2", 0d);
+                sample.put("rotation_magnitude_deg_s", 0d);
+            } catch (JSONException ignored) {}
+        }
     }
 
     private TripStats calculateStats(JSONArray points, long startMs, long endMs) {

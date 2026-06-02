@@ -107,4 +107,8 @@ public final class PrivacyZoneStore {
     private static SharedPreferences encryptedPrefs(Context context) {
         return EncryptedPreferenceStore.open(context, ENCRYPTED_PREFS);
     }
+
+    public static String keyBacking(Context context) {
+        return EncryptedPreferenceStore.keyBacking(context);
+    }
 }

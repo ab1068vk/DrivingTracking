@@ -60,6 +60,14 @@ export const tripService = {
     return local ? local.delete(id) : apiClient.delete(`/trips/${encodeURIComponent(id)}`);
   },
 
+  deleteAll: async () => {
+    const local = repository();
+    if (local?.deleteAll) return local.deleteAll();
+    const trips = await apiClient.get("/trips", { query: { sort: "-start_time", limit: 10000 } });
+    await Promise.all(trips.map((trip) => apiClient.delete(`/trips/${encodeURIComponent(trip.id)}`)));
+    return { success: true };
+  },
+
   upsertMany: (trips) => {
     if (isEphemeralModeActive()) {
       return Promise.resolve(trips.map((trip, index) => ({

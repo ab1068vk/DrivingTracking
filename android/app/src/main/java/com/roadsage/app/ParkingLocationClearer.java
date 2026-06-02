@@ -12,6 +12,7 @@ final class ParkingLocationClearer {
         EncryptedPreferenceStore.deletePlaintext(context, "road_sage_native_tracking");
         EncryptedPreferenceStore.deletePlaintext(context, "drivesense_native_tracking");
         MapTileFetchWorker.clearWidgetMapCache(context);
+        SecureDelete.wipeSensitiveFiles(context);
         WorkManager.getInstance(context).cancelAllWorkByTag("parked_map");
     }
 }

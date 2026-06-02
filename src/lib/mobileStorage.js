@@ -17,13 +17,27 @@ export async function getJson(key, fallback) {
   const legacyKeys = legacyStorageKeysFor(key);
   try {
     if (isNativePlatform()) {
+      const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
       const { Preferences } = await import('@capacitor/preferences');
-      let { value } = await Preferences.get({ key: currentKey });
+      let { value } = await encryptedCapacitorStorage.get({ key: currentKey });
       for (const legacyKey of legacyKeys) {
         if (value !== null) break;
-        const legacy = await Preferences.get({ key: legacyKey });
+        const legacy = await encryptedCapacitorStorage.get({ key: legacyKey });
         value = legacy.value;
-        if (value !== null) await Preferences.set({ key: currentKey, value });
+        if (value !== null) await encryptedCapacitorStorage.set({ key: currentKey, value });
+      }
+      if (value === null) {
+        const legacyPlain = await Preferences.get({ key: currentKey });
+        value = legacyPlain.value;
+        for (const legacyKey of legacyKeys) {
+          if (value !== null) break;
+          const legacy = await Preferences.get({ key: legacyKey });
+          value = legacy.value;
+        }
+        if (value !== null) {
+          await encryptedCapacitorStorage.set({ key: currentKey, value });
+          await Promise.all([currentKey, ...legacyKeys].map((storageKey) => Preferences.remove({ key: storageKey })));
+        }
       }
       return value ? JSON.parse(value) : fallback;
     }
@@ -49,8 +63,8 @@ export async function setJson(key, value) {
   const serialized = JSON.stringify(value);
 
   if (isNativePlatform()) {
-    const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.set({ key: currentKey, value: serialized });
+    const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
+    await encryptedCapacitorStorage.set({ key: currentKey, value: serialized });
     return;
   }
 
@@ -66,8 +80,12 @@ export async function removeJson(key) {
   const currentKey = resolveStorageKey(key);
   const keys = [currentKey, ...legacyStorageKeysFor(key)];
   if (isNativePlatform()) {
+    const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
     const { Preferences } = await import('@capacitor/preferences');
-    await Promise.all(keys.map((storageKey) => Preferences.remove({ key: storageKey })));
+    await Promise.all([
+      ...keys.map((storageKey) => encryptedCapacitorStorage.remove({ key: storageKey })),
+      ...keys.map((storageKey) => Preferences.remove({ key: storageKey })),
+    ]);
     return;
   }
 

@@ -578,12 +578,12 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   const savedFilters = await getJson(SAVED_FILTERS_KEY, []);
   const backup = buildDriveSenseBackup({ trips, vehicles, settings, savedFilters });
   const baseName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
-  const encrypted = typeof password === 'string' && password.length > 0;
-  const outputName = encrypted ? baseName.replace(/\.json$/i, '') + '.rsbackup' : baseName;
-  const exportBackup = encrypted ? backup : await sealPlaintextBackup(backup);
+  const encrypted = true;
+  const outputName = baseName.replace(/\.json$/i, '') + '.rsbackup';
+  const exportBackup = backup;
   const json = JSON.stringify(exportBackup, null, 2);
-  const content = encrypted ? await encryptBackup(json, password) : json;
-  const mimeType = encrypted ? 'application/octet-stream' : 'application/json';
+  const content = await encryptBackup(json, password);
+  const mimeType = 'application/octet-stream';
   let nativeFallbackError = null;
 
   try {

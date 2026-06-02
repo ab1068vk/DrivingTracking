@@ -214,9 +214,11 @@ export default function Reports() {
 
   const handleExport = async () => {
     const csv = tripsToCSV(trips);
-    const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
+    const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`, { password });
     toast({
-      title: 'Export saved',
+      title: 'Encrypted export saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'CSV report'} is downloading.`,
@@ -225,7 +227,7 @@ export default function Reports() {
       await notifyExportSaved({
         filename: result.filename,
         uri: result.uri,
-        mimeType: 'text/csv',
+        mimeType: 'application/octet-stream',
         label: 'CSV export',
       }).catch((err) => {
         logError('export_saved_notification', err, { filename: result.filename, label: 'CSV export' });
@@ -234,9 +236,11 @@ export default function Reports() {
   };
 
   const handlePdfExport = async () => {
-    const result = await exportMonthlyReportPDF(trips, period, settings);
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
+    const result = await exportMonthlyReportPDF(trips, period, settings, { password });
     toast({
-      title: 'PDF saved',
+      title: 'Encrypted PDF saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'Monthly PDF report'} is downloading.`,
@@ -245,7 +249,7 @@ export default function Reports() {
       await notifyExportSaved({
         filename: result.filename,
         uri: result.uri,
-        mimeType: 'application/pdf',
+        mimeType: 'application/octet-stream',
         label: 'PDF report',
       }).catch((err) => {
         logError('export_saved_notification', err, { filename: result.filename, label: 'PDF report' });
@@ -254,11 +258,13 @@ export default function Reports() {
   };
 
   const handleUbiExport = async () => {
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
     setUbiLoading(true);
-    const result = await exportUBIReportPDF(ubiReport, settings);
+    const result = await exportUBIReportPDF(ubiReport, settings, { password });
     setUbiLoading(false);
     toast({
-      title: 'Score card saved',
+      title: 'Encrypted score card saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'Score card PDF'} is downloading.`,
@@ -267,7 +273,7 @@ export default function Reports() {
       await notifyExportSaved({
         filename: result.filename,
         uri: result.uri,
-        mimeType: 'application/pdf',
+        mimeType: 'application/octet-stream',
         label: 'Score card',
       }).catch((err) => {
         logError('export_saved_notification', err, { filename: result.filename, label: 'Score card' });

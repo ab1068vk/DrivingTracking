@@ -607,32 +607,42 @@ export function tripsToCSV(trips) {
   return [headers, metricMetadata, ...rows].map(r => r.map(escape).join(',')).join('\n');
 }
 
-export async function downloadCSV(content, filename) {
+export async function downloadCSV(content, filename, { password } = {}) {
   const safeFilename = filename.replace(/[\\/:*?"<>|]+/g, '-');
+  const { buildEncryptedExport, encryptedExportFilename } = await import('@/lib/exportEncryption');
+  const exportContent = await buildEncryptedExport({
+    filename: safeFilename,
+    data: content,
+    mimeType: 'text/csv',
+    password,
+    kind: 'csv',
+  });
+  const exportFilename = encryptedExportFilename(safeFilename);
 
   try {
     const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.isNativePlatform()) {
       const result = await saveExportToDownloads({
-        filename: safeFilename,
-        data: content,
-        mimeType: 'text/csv',
+        filename: exportFilename,
+        data: exportContent,
+        mimeType: 'application/octet-stream',
       });
       return {
         native: true,
         uri: result.uri,
-        filename: safeFilename,
+        filename: exportFilename,
+        encrypted: true,
       };
     }
   } catch (error) {
-    console.warn('Native CSV export failed, falling back to browser download.', error);
+    console.warn('Native encrypted CSV export failed, falling back to browser download.', error);
   }
 
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob([exportContent], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = safeFilename;
+  a.download = exportFilename;
   a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
@@ -640,6 +650,7 @@ export async function downloadCSV(content, filename) {
   URL.revokeObjectURL(url);
   return {
     native: false,
-    filename: safeFilename,
+    filename: exportFilename,
+    encrypted: true,
   };
 }

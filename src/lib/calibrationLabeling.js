@@ -18,6 +18,7 @@ export const CALIBRATION_MILESTONES = Object.freeze([
 ]);
 export const POST_TRIP_SURVEY_QUESTION = 'How did this drive feel? (1 risky - 5 excellent)';
 export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
+const ANONYMOUS_UPLOAD_ROTATION_MS = 30 * 24 * 60 * 60 * 1000;
 export const SURVEY_RATING_OPTIONS = Object.freeze([
   { value: 5, label: 'Careful drive', shortLabel: 'Careful' },
   { value: 4, label: 'Normal drive', shortLabel: 'Normal' },
@@ -398,10 +399,20 @@ function noisyRoundedCreatedAt(trip = {}, options = {}) {
 }
 
 export async function getAnonymousInstallIdHash() {
+  const now = Date.now();
+  const bucket = Math.floor(now / ANONYMOUS_UPLOAD_ROTATION_MS);
   const existing = await getJson(ANONYMOUS_INSTALL_ID_KEY, null);
-  const installId = typeof existing === 'string' && existing ? existing : await getOrCreateInstallHash();
-  if (!existing) await setJson(ANONYMOUS_INSTALL_ID_KEY, installId);
-  const input = `road-sage-calibration:${installId}`;
+  const existingBucket = existing && typeof existing === 'object' ? existing.bucket : null;
+  const existingSeed = existing && typeof existing === 'object' ? existing.seed : null;
+  const seed = existingBucket === bucket && typeof existingSeed === 'string' && existingSeed
+    ? existingSeed
+    : `${await getOrCreateInstallHash()}:${bucket}:${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+
+  if (existingBucket !== bucket || existingSeed !== seed) {
+    await setJson(ANONYMOUS_INSTALL_ID_KEY, { bucket, seed, rotated_at: new Date(now).toISOString() });
+  }
+
+  const input = `road-sage-calibration:${seed}`;
 
   if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
