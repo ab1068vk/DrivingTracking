@@ -13,7 +13,7 @@ export const SETTINGS_SECTIONS = [
   { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },
   { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },
   { label: 'Privacy zones', section: 'Privacy Zones', sectionId: 'settings-privacy-zones', detail: 'Add, edit, and delete parked-location privacy zones for Android widget privacy.', keywords: 'privacy zones home work gym parked location widget external map gps coordinates' },
-  { label: 'Privacy, legal, and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', detail: 'Legal disclaimers, safety notices, backup, import, export, saved filters, and feedback data.', keywords: 'privacy legal disclaimer safety personal use insurance navigation emergency maintenance compliance export import backup retention delete data saved filters event feedback' },
+  { label: 'Privacy, legal, and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', detail: 'Legal disclaimers, safety notices, backup, import, export, saved filters, auto-lock, and feedback data.', keywords: 'privacy legal disclaimer safety personal use insurance navigation emergency maintenance compliance export import backup retention delete data saved filters event feedback biometric lock auto-lock timeout session' },
 ];
 
 export function getSettingsSearchResults(query, sections = SETTINGS_SECTIONS) {

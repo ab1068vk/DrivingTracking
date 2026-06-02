@@ -1,3 +1,5 @@
+// @ts-nocheck
+// TODO: remove once the scoring migration no longer depends on loosely typed JS helpers.
 import {
   saveExportToDownloads
 } from '../../lib/nativeDownloads.js';

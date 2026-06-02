@@ -1,4 +1,5 @@
 import { API_BASE_URL, apiClient } from "@/api/client";
+import { isEphemeralModeActive } from "@/lib/ephemeralTripMode";
 import { localTripRepository } from "@/lib/localTripRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
@@ -25,6 +26,13 @@ export const tripService = {
   },
 
   create: (trip) => {
+    if (isEphemeralModeActive()) {
+      return Promise.resolve({
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}`,
+        ephemeral_trip: true,
+      });
+    }
     const local = repository();
     const suggestion = suggestTripTag(trip);
     const withSuggestion = {
@@ -42,6 +50,7 @@ export const tripService = {
   },
 
   update: (id, patch) => {
+    if (isEphemeralModeActive()) return Promise.resolve({ id, ...patch, ephemeral_trip: true });
     const local = repository();
     return local ? local.update(id, patch) : apiClient.patch(`/trips/${encodeURIComponent(id)}`, patch);
   },
@@ -52,6 +61,13 @@ export const tripService = {
   },
 
   upsertMany: (trips) => {
+    if (isEphemeralModeActive()) {
+      return Promise.resolve(trips.map((trip, index) => ({
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}_${index}`,
+        ephemeral_trip: true,
+      })));
+    }
     const local = repository();
     if (local) return local.upsertMany(trips);
     return Promise.all(trips.map((trip) => (

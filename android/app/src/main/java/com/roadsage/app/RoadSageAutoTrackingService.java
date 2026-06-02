@@ -685,18 +685,22 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     private JSONObject locationToJson(Location location, double speedKmh) {
         JSONObject point = new JSONObject();
         try {
-            point.put("lat", location.getLatitude());
-            point.put("lng", location.getLongitude());
+            point.put("lat", truncateCoordinate(location.getLatitude()));
+            point.put("lng", truncateCoordinate(location.getLongitude()));
             point.put("speed_kmh", Math.max(0d, speedKmh));
             if (location.hasBearing()) point.put("heading", location.getBearing());
             else point.put("heading", JSONObject.NULL);
             if (location.hasAccuracy()) point.put("accuracy", location.getAccuracy());
             else point.put("accuracy", JSONObject.NULL);
-            if (location.hasAltitude()) point.put("altitude", location.getAltitude());
+            if (location.hasAltitude()) point.put("altitude", Math.round(location.getAltitude()));
             else point.put("altitude", JSONObject.NULL);
             point.put("timestamp", iso(location.getTime() > 0L ? location.getTime() : System.currentTimeMillis()));
         } catch (JSONException ignored) {}
         return point;
+    }
+
+    private static double truncateCoordinate(double value) {
+        return round(value, 5);
     }
 
     private boolean keepServiceArmed() {

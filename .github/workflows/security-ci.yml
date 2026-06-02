@@ -63,6 +63,9 @@ jobs:
       - name: Check repository hygiene
         run: npm run check:repo-hygiene
 
+      - name: Check certificate pin expiry dates
+        run: python3 scripts/check_pin_expiry.py android/app/src/main/res/xml/network_security_config.xml 60
+
       - name: Test
         run: npm test
 

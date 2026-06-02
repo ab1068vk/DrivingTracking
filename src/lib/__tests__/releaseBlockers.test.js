@@ -186,6 +186,74 @@ describe('release blocker regressions', () => {
     expect(widgetSource).toContain('MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
   });
 
+  it('hardens the Android Capacitor WebView against file, content, geolocation, form, cache, and cookie leakage', () => {
+    const mainActivitySource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/MainActivity.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(mainActivitySource).toContain('settings.setAllowFileAccess(false);');
+    expect(mainActivitySource).toContain('settings.setAllowContentAccess(false);');
+    expect(mainActivitySource).toContain('settings.setAllowFileAccessFromFileURLs(false);');
+    expect(mainActivitySource).toContain('settings.setAllowUniversalAccessFromFileURLs(false);');
+    expect(mainActivitySource).toContain('settings.setGeolocationEnabled(false);');
+    expect(mainActivitySource).toContain('settings.setSaveFormData(false);');
+    expect(mainActivitySource).toContain('settings.setSavePassword(false);');
+    expect(mainActivitySource).toContain('settings.setCacheMode(WebSettings.LOAD_NO_CACHE);');
+    expect(mainActivitySource).toContain('settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);');
+    expect(mainActivitySource).toContain('CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);');
+    expect(mainActivitySource).toContain('webView.clearCache(true);');
+    expect(mainActivitySource).toContain('webView.clearHistory();');
+    expect(mainActivitySource).toContain('webView.clearFormData();');
+    expect(mainActivitySource).toContain('public void onStop()');
+    expect(mainActivitySource).toContain('clearWebViewCache();');
+  });
+
+  it('bundles Leaflet and keeps Capacitor plugins/navigation allowlisted', () => {
+    const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
+    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
+    const capacitorConfigSource = readFileSync(new URL('../../../capacitor.config.ts', import.meta.url), 'utf8');
+    const mapSources = `${tripMapSource}\n${tripPlaybackSource}`;
+
+    expect(mapSources).toContain("import L from 'leaflet';");
+    expect(mapSources).toContain("import 'leaflet/dist/leaflet.css';");
+    expect(mapSources).not.toContain("document.createElement('script')");
+    expect(mapSources).not.toContain('document.createElement("script")');
+    expect(mapSources).not.toContain('unpkg.com/leaflet');
+    expect(mapSources).not.toContain('leaflet@1.9.4/dist/leaflet.js');
+
+    expect(capacitorConfigSource).toContain("loggingBehavior: 'none'");
+    expect(capacitorConfigSource).toContain('includePlugins: [');
+    expect(capacitorConfigSource).toContain("'@capacitor/app'");
+    expect(capacitorConfigSource).toContain("'@capacitor-community/background-geolocation'");
+    expect(capacitorConfigSource).toContain('allowNavigation: []');
+    expect(capacitorConfigSource).toContain('CapacitorHttp:');
+    expect(capacitorConfigSource).toContain('enabled: false');
+    expect(capacitorConfigSource).toContain('SecureClipboard: {}');
+    expect(capacitorConfigSource).toContain('DriveSenseActivityRecognition: {}');
+  });
+
+  it('keeps stealth trip mode RAM-only and wipes active trip artifacts', () => {
+    const ephemeralModeSource = readFileSync(new URL('../ephemeralTripMode.js', import.meta.url), 'utf8');
+    const trackingStoreSource = readFileSync(new URL('../trackingStore.js', import.meta.url), 'utf8');
+    const diagnosticsSource = readFileSync(new URL('../trackingDiagnostics.js', import.meta.url), 'utf8');
+    const repositorySource = readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8');
+    const tripsApiSource = readFileSync(new URL('../../api/trips.js', import.meta.url), 'utf8');
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+
+    expect(ephemeralModeSource).toContain('export async function consumeStealthNextTrip()');
+    expect(ephemeralModeSource).toContain('await clearEphemeralStorageArtifacts();');
+    expect(ephemeralModeSource).toContain("point.lat = 0;");
+    expect(ephemeralModeSource).toContain("event.lng = 0;");
+    expect(trackingStoreSource).toContain('if (isEphemeralModeActive()) return;');
+    expect(trackingStoreSource).toContain('if (isEphemeralModeActive()) return null;');
+    expect(diagnosticsSource).toContain('if (isEphemeralModeActive()) return null;');
+    expect(repositorySource).toContain('if (isEphemeralModeActive())');
+    expect(tripsApiSource).toContain('if (isEphemeralModeActive())');
+    expect(dashboardSource).toContain('const shouldAutoFetchExternalContext = !stealthTripEnding && isExternalContextAutoFetchEnabled(cfg);');
+    expect(dashboardSource).toContain('await endEphemeralTrip(activeTripRef);');
+  });
+
   it('stores route-risk history as coarse hashes instead of GPS coordinates', () => {
     const constantsSource = readFileSync(new URL('../routeRisk/constants.js', import.meta.url), 'utf8');
     const segmentKeySource = readFileSync(new URL('../routeRisk/segmentKey.js', import.meta.url), 'utf8');

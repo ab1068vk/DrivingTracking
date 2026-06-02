@@ -127,6 +127,11 @@ export function PrivacyZoneDialog({ mode, open, zone, onOpenChange, onSave }) {
               onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
               className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
               placeholder="e.g. Home, Work, Gym"
+              autoComplete="off"
+              data-lpignore="true"
+              data-form-type="other"
+              aria-autocomplete="none"
+              spellCheck={false}
             />
           </label>
 

@@ -8,6 +8,7 @@ import {
 export const CALIBRATION_LABEL_SCHEMA_VERSION = 1;
 export const CALIBRATION_LABEL_TARGET_COUNT = MIN_CALIBRATION_LABEL_COUNT;
 export const CALIBRATION_LABEL_COLLECTION = 'trip_calibration_labels';
+const CALIBRATION_TIMESTAMP_GRANULARITY_MS = 3_600_000;
 export const CALIBRATION_MILESTONES = Object.freeze([
   { count: 10, label: 'Getting started', benefit: 'Trip rating history begins' },
   { count: 50, label: 'Early insights', benefit: 'Trend patterns emerging' },
@@ -52,6 +53,38 @@ const numberOrNull = (value) => {
 };
 
 const boolOrNull = (value) => (typeof value === 'boolean' ? value : null);
+
+/**
+ * Adds Laplace-distributed noise to a Unix timestamp.
+ * Calibrated for epsilon=1.0 differential privacy with sensitivity of 1 hour.
+ *
+ * epsilon=1.0 means that for adjacent timestamps differing by 1 hour, the
+ * probability ratio of observing any output is at most e^1, or about 2.72.
+ */
+export function addLaplaceNoise(timestampMs, sensitivityMs = CALIBRATION_TIMESTAMP_GRANULARITY_MS, epsilon = 1.0, random = Math.random) {
+  const timestamp = Number(timestampMs);
+  const sensitivity = Number(sensitivityMs);
+  const privacyBudget = Number(epsilon);
+
+  if (!Number.isFinite(timestamp)) return null;
+  if (!Number.isFinite(sensitivity) || sensitivity <= 0) {
+    throw new Error('Laplace sensitivity must be a positive number.');
+  }
+  if (!Number.isFinite(privacyBudget) || privacyBudget <= 0) {
+    throw new Error('Laplace epsilon must be a positive number.');
+  }
+
+  const sample = Number(random());
+  const boundedSample = Number.isFinite(sample)
+    ? Math.min(1 - Number.EPSILON, Math.max(Number.EPSILON, sample))
+    : 0.5;
+  const u = boundedSample - 0.5;
+  const scale = sensitivity / privacyBudget;
+  const noise = -scale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
+  const noisy = timestamp + noise;
+
+  return Math.round(noisy / CALIBRATION_TIMESTAMP_GRANULARITY_MS) * CALIBRATION_TIMESTAMP_GRANULARITY_MS;
+}
 
 function normalizedLabelCount(labelCount) {
   const count = Math.floor(Number(labelCount));
@@ -329,15 +362,39 @@ export function isCalibrationEligible(qualityFlags = []) {
   ].includes(flag));
 }
 
-function roundedCreatedAt(value, granularity = 'hour') {
-  const date = value ? new Date(value) : new Date();
-  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 13) + ':00:00.000Z';
-  if (granularity === 'day') {
-    date.setUTCHours(0, 0, 0, 0);
-  } else {
-    date.setUTCMinutes(0, 0, 0);
-  }
-  return date.toISOString();
+function timeMsFromValue(value) {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+}
+
+function tripStartTimeMs(trip = {}) {
+  return timeMsFromValue(
+    trip.start_time ??
+      trip.startTime ??
+      trip.started_at ??
+      trip.startedAt ??
+      trip.start_timestamp ??
+      trip.startTimestamp
+  );
+}
+
+function calibrationTimestampMs(trip = {}, options = {}) {
+  return (
+    tripStartTimeMs(trip) ??
+    timeMsFromValue(options.createdAt ?? options.submittedAt) ??
+    Date.now()
+  );
+}
+
+function noisyRoundedCreatedAt(trip = {}, options = {}) {
+  const timestampMs = calibrationTimestampMs(trip, options);
+  const noisyTimestampMs = addLaplaceNoise(
+    timestampMs,
+    options.timestampSensitivityMs ?? CALIBRATION_TIMESTAMP_GRANULARITY_MS,
+    options.timestampPrivacyEpsilon ?? 1.0,
+    options.timestampNoiseRandom ?? Math.random
+  );
+  return new Date(noisyTimestampMs).toISOString();
 }
 
 export async function getAnonymousInstallIdHash() {
@@ -374,7 +431,7 @@ export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {
     schemaVersion: CALIBRATION_LABEL_SCHEMA_VERSION,
     anonymousInstallIdHash: options.anonymousInstallIdHash || null,
     scoringModelVersion: scoringVersion,
-    createdAt: roundedCreatedAt(options.createdAt || options.submittedAt, options.createdAtGranularity || 'hour'),
+    createdAt: noisyRoundedCreatedAt(trip, options),
     tripFeatureSummary,
     scoreOutput,
     surveyLabel,

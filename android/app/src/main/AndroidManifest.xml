@@ -40,12 +40,14 @@
 
         <receiver
             android:name=".DriveSenseActivityReceiver"
-            android:exported="false" />
+            android:exported="false"
+            android:permission="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
 
         <receiver
             android:name=".ParkedCarWidgetProvider"
             android:exported="true"
-            android:label="Parked Car Locator">
+            android:label="Parked Car Locator"
+            android:permission="android.permission.BIND_APPWIDGET">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

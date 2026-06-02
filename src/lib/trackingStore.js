@@ -4,6 +4,8 @@
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
+import { truncateCoord, truncateRoutePoint, truncateTripCoordinates } from '@/lib/gps/sanitize';
 import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
 import { isValidLatLng } from '@/lib/mapDefaults';
 import { clamp as clampNumber } from '@/lib/mathUtils';
@@ -91,8 +93,8 @@ const normalizePreferencePrivacyZone = (zone) => {
 
   return {
     name: String(zone.name || 'Private zone').trim().slice(0, 80) || 'Private zone',
-    lat,
-    lng,
+    lat: truncateCoord(lat),
+    lng: truncateCoord(lng),
     radius: clampPrivacyZoneRadius(zone.radius),
   };
 };
@@ -303,6 +305,9 @@ export const DEFAULT_SETTINGS = {
   // PRIVACY: auto-delete completed trips older than this many months.
   // 0 = never delete automatically.
   data_retention_months: 24,
+  // PRIVACY: require biometric re-authentication after this many unlocked minutes.
+  // 0 = never time out while the app remains visible; backgrounding still locks.
+  lock_timeout_minutes: 5,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -487,6 +492,7 @@ export function migrateDefaultSettings(parsed = {}) {
 
 const IMPORT_NUMBER_RANGES = {
   data_retention_months: [0, 120],
+  lock_timeout_minutes: [0, 30],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_stop_start_decel_ms2: [0.5, 15],
@@ -580,8 +586,8 @@ const sanitizeImportedPrivacyZones = (zones) => (
         const lat = Number(zone.lat);
         const lng = Number(zone.lng);
         if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-          sanitized.lat = lat;
-          sanitized.lng = lng;
+          sanitized.lat = truncateCoord(lat);
+          sanitized.lng = truncateCoord(lng);
         }
         return sanitized;
       })
@@ -595,8 +601,8 @@ const sanitizeMapCenter = (value) => {
   if (!isValidLatLng(lat, lng)) return null;
 
   return {
-    lat,
-    lng,
+    lat: truncateCoord(lat),
+    lng: truncateCoord(lng),
     ...(typeof value.tripId === 'string' ? { tripId: value.tripId.slice(0, 120) } : {}),
     ...(typeof value.source === 'string' ? { source: value.source.slice(0, 80) } : {}),
     ...(typeof value.updated_at === 'string' ? { updated_at: value.updated_at.slice(0, 80) } : {}),
@@ -746,6 +752,8 @@ export async function getLastParkedLocation() {
 }
 
 export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
+  if (isEphemeralModeActive()) return null;
+
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
@@ -769,8 +777,8 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
     });
 
   const parkedLocation = {
-    lat: parsedLat,
-    lng: parsedLng,
+    lat: truncateCoord(parsedLat),
+    lng: truncateCoord(parsedLng),
     timestamp: timestamp || new Date().toISOString(),
     tripId: tripId ?? null,
     address: resolvedAddress,
@@ -789,12 +797,14 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
 }
 
 export function saveLastMapCenter({ lat, lng, tripId = null, source = 'tracking', updated_at = new Date().toISOString() } = {}) {
+  if (isEphemeralModeActive()) return null;
+
   const settings = localSettings.get();
   if (settings.store_last_map_center === false || !isValidLatLng(lat, lng)) return null;
 
   const center = {
-    lat: Number(lat),
-    lng: Number(lng),
+    lat: truncateCoord(lat),
+    lng: truncateCoord(lng),
     tripId,
     source,
     updated_at,
@@ -928,8 +938,9 @@ export const activeTripStore = {
     }
   },
   set(trip) {
+    if (isEphemeralModeActive()) return;
     try {
-      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(trip));
+      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(truncateTripCoordinates(trip)));
     } catch (err) {
       logError('active_trip_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
     }
@@ -939,10 +950,11 @@ export const activeTripStore = {
     legacyStorageKeysFor(ACTIVE_TRIP_KEY).forEach((key) => localStorage.removeItem(key));
   },
   addPoint(point) {
+    if (isEphemeralModeActive()) return;
     const trip = this.get();
     if (!trip) return;
     trip.route_points = trip.route_points || [];
-    trip.route_points.push(point);
+    trip.route_points.push(truncateRoutePoint(point));
     this.set(trip);
   },
 };

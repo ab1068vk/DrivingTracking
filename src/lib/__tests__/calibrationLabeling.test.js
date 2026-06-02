@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addLaplaceNoise,
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
   shouldAskFatigueSelfReport,
@@ -148,6 +149,7 @@ describe('calibration labeling pipeline', () => {
     const payload = buildCalibrationLabelPayload(completedTrip, 4, {
       submittedAt: '2026-05-26T18:00:00.000Z',
       anonymousInstallIdHash: 'install_hash',
+      timestampNoiseRandom: () => 0.5,
     });
     const serialized = JSON.stringify(payload);
 
@@ -189,6 +191,25 @@ describe('calibration labeling pipeline', () => {
     expect(serialized).not.toContain('Private note');
     expect(serialized).not.toContain('43.65');
     expect(serialized).not.toContain('-79.38');
+  });
+
+  it('adds calibrated Laplace noise before hour rounding upload timestamps', () => {
+    const startTimeMs = Date.parse('2026-05-26T18:00:00.000Z');
+
+    expect(addLaplaceNoise(startTimeMs, 3_600_000, 1.0, () => 0.5))
+      .toBe(startTimeMs);
+    expect(addLaplaceNoise(startTimeMs, 3_600_000, 1.0, () => 0.75))
+      .toBe(Date.parse('2026-05-26T19:00:00.000Z'));
+
+    const payload = buildCalibrationLabelPayload({
+      ...completedTrip,
+      start_time: '2026-05-26T06:12:00.000Z',
+    }, 4, {
+      submittedAt: '2026-05-26T18:00:00.000Z',
+      timestampNoiseRandom: () => 0.5,
+    });
+
+    expect(payload.createdAt).toBe('2026-05-26T06:00:00.000Z');
   });
 
   it('adds optional fatigue self-report only for long late or overnight trips', () => {

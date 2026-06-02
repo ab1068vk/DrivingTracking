@@ -30,6 +30,18 @@ describe('tracking store default settings', () => {
     });
   });
 
+  it('defaults biometric session auto-lock to five minutes', () => {
+    expect(DEFAULT_SETTINGS.lock_timeout_minutes).toBe(5);
+    expect(sanitizeImportedSettings({ lock_timeout_minutes: 15 })).toMatchObject({
+      lock_timeout_minutes: 15,
+    });
+    expect(sanitizeImportedSettings({ lock_timeout_minutes: 60 })).toMatchObject({
+      lock_timeout_minutes: 30,
+    });
+    expect(validateSettingsPatch({ lock_timeout_minutes: 0 })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ lock_timeout_minutes: 31 })).toMatchObject({ valid: false });
+  });
+
   it('stores the last map center as an opt-in contextual fallback', () => {
     expect(DEFAULT_SETTINGS.last_map_center).toBeNull();
 

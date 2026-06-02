@@ -5,7 +5,7 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
   const {
     AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
     AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, FeaturePermissionBadge: FeaturePermissionBadgeFromCtx, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
-    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
@@ -57,6 +57,57 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                     onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
                   />
                 </SettingRow>
+                <SettingRow
+                  icon={Lock}
+                  label="Auto-lock after"
+                  sublabel="Require biometric re-authentication after this unlocked session timeout. Backgrounding still locks immediately."
+                >
+                  <select
+                    value={cfg.lock_timeout_minutes ?? 5}
+                    onChange={(event) => updateCfg({ lock_timeout_minutes: Number(event.target.value) })}
+                    className="bg-card border border-border rounded-lg text-xs px-2 py-1"
+                    aria-label="Auto-lock timeout"
+                  >
+                    <option value={1}>1 minute</option>
+                    <option value={5}>5 minutes (default)</option>
+                    <option value={15}>15 minutes</option>
+                    <option value={30}>30 minutes</option>
+                    <option value={0}>Never</option>
+                  </select>
+                </SettingRow>
+                <div className="my-3 rounded-2xl border border-amber-400/50 bg-amber-500/10 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <Shield className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-foreground">Stealth Trip Mode</div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          The next trip is scored in memory only, then route points and events are erased when the trip ends or the app backgrounds.
+                        </p>
+                      </div>
+                    </div>
+                    <Toggle
+                      value={ephemeralModeState?.stealthNextTrip === true}
+                      onChange={setStealthNextTripEnabled}
+                      disabled={stealthTripToggleDisabled}
+                    />
+                  </div>
+                  {ephemeralModeState?.stealthNextTrip && (
+                    <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+                      Active: the next trip will leave no saved trip record on this device.
+                    </p>
+                  )}
+                  {ephemeralModeState?.ephemeralActive && (
+                    <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+                      Recording in stealth mode. This setting unlocks after the trip is erased.
+                    </p>
+                  )}
+                  {stealthTripToggleDisabled && !ephemeralModeState?.ephemeralActive && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Finish the current trip before arming stealth mode.
+                    </p>
+                  )}
+                </div>
                 <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div>
@@ -74,6 +125,11 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                       onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, label: event.target.value }))}
                       className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
                       placeholder="Home, work, school"
+                      autoComplete="off"
+                      data-lpignore="true"
+                      data-form-type="other"
+                      aria-autocomplete="none"
+                      spellCheck={false}
                     />
                     <input
                       type="number"

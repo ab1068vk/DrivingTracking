@@ -4,10 +4,41 @@ const config: CapacitorConfig = {
   appId: 'com.roadsage.app',
   appName: 'Road Sage',
   webDir: 'dist',
+  loggingBehavior: 'none',
+  includePlugins: [
+    '@capacitor/app',
+    '@capacitor/filesystem',
+    '@capacitor/geolocation',
+    '@capacitor/local-notifications',
+    '@capacitor/preferences',
+    '@capacitor/splash-screen',
+    '@capacitor-community/background-geolocation',
+  ],
   android: {
     useLegacyBridge: true,
+    includePlugins: [
+      '@capacitor/app',
+      '@capacitor/filesystem',
+      '@capacitor/geolocation',
+      '@capacitor/local-notifications',
+      '@capacitor/preferences',
+      '@capacitor/splash-screen',
+      '@capacitor-community/background-geolocation',
+    ],
+  },
+  server: {
+    allowNavigation: [],
   },
   plugins: {
+    CapacitorHttp: {
+      enabled: false,
+    },
+    BiometricGate: {},
+    SecureKey: {},
+    SecureClipboard: {},
+    PlayIntegrity: {},
+    EncryptedCapacitorPlugin: {},
+    DriveSenseActivityRecognition: {},
     LocalNotifications: {
       smallIcon: 'ic_stat_drivesense',
       iconColor: '#0F766E',

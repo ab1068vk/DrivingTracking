@@ -261,37 +261,9 @@ const eventPopupHtml = (event) => {
   `;
 };
 
-let leafletLoaded = false;
-let loadPromise = null;
-
 function loadLeaflet() {
-  if (typeof window !== 'undefined' && !window.L) window.L = L;
-  if (leafletLoaded) return Promise.resolve();
-  if (loadPromise) return loadPromise;
-
-  loadPromise = new Promise((resolve, reject) => {
-    if (window.L) {
-      leafletLoaded = true;
-      resolve();
-      return;
-    }
-
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => {
-      leafletLoaded = true;
-      resolve();
-    };
-    script.onerror = () => reject(new Error('Leaflet could not be loaded'));
-    document.head.appendChild(script);
-  });
-
-  return loadPromise;
+  if (typeof window !== 'undefined') window.L = L;
+  return Promise.resolve();
 }
 
 export default function TripMap(props) {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { secureClipboardCopy } from '@/lib/clipboard';
 
 const ANDROID_CODE = [
   {
@@ -871,7 +872,7 @@ function CodeBlock({ content, language, id }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(content).then(() => {
+    secureClipboardCopy(content, `Road Sage ${language} reference`).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

@@ -2,6 +2,7 @@ import {
   AUTO_START_GPS_FALLBACK_SECONDS,
   AUTO_START_SPEED_KMH,
 } from '@/lib/activityRecognition';
+import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
 import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
 
 const DIAGNOSTIC_EVENTS_KEY = 'road_sage_tracking_diagnostics';
@@ -31,6 +32,7 @@ export function getTrackingDiagnostics() {
 }
 
 export function recordTrackingDiagnostic(event = {}) {
+  if (isEphemeralModeActive()) return null;
   if (typeof localStorage === 'undefined') return null;
   const nextEvent = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,

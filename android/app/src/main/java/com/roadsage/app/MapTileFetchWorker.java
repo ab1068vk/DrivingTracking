@@ -35,6 +35,14 @@ public class MapTileFetchWorker extends Worker {
     private static final String MAP_CACHE_PREFIX = "widget_map_";
     private static final String LEGACY_MAP_CACHE_PREFIX = "parked_map_widget_";
     private static final String MAP_CACHE_SUFFIX = ".png";
+    private static final int OSM_WIDGET_ZOOM = 16;
+    private static final int OSM_TILE_SIZE = 256;
+    private static final double MAX_WEB_MERCATOR_LAT = 85.05112878d;
+    private static final String[] OSM_TILE_HOSTS = {
+        "a.tile.openstreetmap.org",
+        "b.tile.openstreetmap.org",
+        "c.tile.openstreetmap.org"
+    };
 
     static final String KEY_WIDGET_ID = "widget_id";
     static final String KEY_LAT = "lat";
@@ -68,20 +76,12 @@ public class MapTileFetchWorker extends Worker {
             return Result.success();
         }
 
-        String url = String.format(
-            Locale.US,
-            "https://staticmap.openstreetmap.de/staticmap.php?center=%.6f,%.6f&zoom=16&size=%dx%d",
-            lat,
-            lng,
-            tileW,
-            tileH
-        );
-        Bitmap raw = fetchTile(url);
+        Bitmap raw = fetchMapTiles(lat, lng, tileW, tileH);
         if (raw == null) return Result.retry();
 
         Bitmap pinned = applyDarkMapStyle(raw);
         raw.recycle();
-        drawParkedPin(pinned, tileW);
+        drawParkedPin(pinned, pinned.getWidth());
 
         File cacheFile = getCacheFile(context, widgetId, lat, lng);
         try (FileOutputStream output = new FileOutputStream(cacheFile)) {
@@ -165,7 +165,62 @@ public class MapTileFetchWorker extends Worker {
         return dark;
     }
 
-    private static Bitmap fetchTile(String url) {
+    private static Bitmap fetchMapTiles(double lat, double lng, int tileW, int tileH) {
+        int width = Math.max(128, Math.min(tileW, 1024));
+        int height = Math.max(96, Math.min(tileH, 1024));
+        int tileCount = 1 << OSM_WIDGET_ZOOM;
+        double clampedLat = Math.max(-MAX_WEB_MERCATOR_LAT, Math.min(MAX_WEB_MERCATOR_LAT, lat));
+        double latRad = Math.toRadians(clampedLat);
+        double centerX = ((lng + 180d) / 360d) * tileCount * OSM_TILE_SIZE;
+        double centerY = (
+            1d - Math.log(Math.tan(latRad) + (1d / Math.cos(latRad))) / Math.PI
+        ) / 2d * tileCount * OSM_TILE_SIZE;
+        double left = centerX - width / 2d;
+        double top = centerY - height / 2d;
+        int startX = (int) Math.floor(left / OSM_TILE_SIZE);
+        int endX = (int) Math.floor((left + width - 1d) / OSM_TILE_SIZE);
+        int startY = (int) Math.floor(top / OSM_TILE_SIZE);
+        int endY = (int) Math.floor((top + height - 1d) / OSM_TILE_SIZE);
+
+        Bitmap map = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(map);
+        canvas.drawColor(0xFFE5E7EB);
+
+        for (int tileX = startX; tileX <= endX; tileX++) {
+            for (int tileY = startY; tileY <= endY; tileY++) {
+                if (tileY < 0 || tileY >= tileCount) continue;
+                int wrappedX = Math.floorMod(tileX, tileCount);
+                Bitmap tile = fetchBitmap(osmTileUrl(wrappedX, tileY));
+                if (tile == null) {
+                    map.recycle();
+                    return null;
+                }
+                canvas.drawBitmap(
+                    tile,
+                    (float) (tileX * OSM_TILE_SIZE - left),
+                    (float) (tileY * OSM_TILE_SIZE - top),
+                    null
+                );
+                tile.recycle();
+            }
+        }
+
+        return map;
+    }
+
+    private static String osmTileUrl(int tileX, int tileY) {
+        String host = OSM_TILE_HOSTS[Math.floorMod(tileX + tileY, OSM_TILE_HOSTS.length)];
+        return String.format(
+            Locale.US,
+            "https://%s/%d/%d/%d.png",
+            host,
+            OSM_WIDGET_ZOOM,
+            tileX,
+            tileY
+        );
+    }
+
+    private static Bitmap fetchBitmap(String url) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(url).openConnection();

@@ -1,7 +1,9 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
+import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
 import { isAndroid } from '@/lib/nativePlatform';
 import { decryptTripFields, encryptTripFields } from '@/lib/tripFieldEncryption';
+import { truncateTripCoordinates } from '@/lib/gps/sanitize';
 import {
   buildDrivingThresholds,
   calculateTripScores,
@@ -215,9 +217,10 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
 });
 
 const sanitizeTripRouteRiskCells = (trip) => {
-  if (!Array.isArray(trip?.route_risk_cells)) return trip;
+  const next = truncateTripCoordinates(trip);
+  if (!Array.isArray(next?.route_risk_cells)) return next;
   return {
-    ...trip,
+    ...next,
     route_risk_cells: trip.route_risk_cells
       .map((cell) => sanitizeRouteRiskCellForStorage(cell))
       .filter((cell) => cell.key),
@@ -226,7 +229,9 @@ const sanitizeTripRouteRiskCells = (trip) => {
 
 const decryptStoredTrip = async (trip) => sanitizeTripRouteRiskCells(await decryptTripFields(trip));
 
-const routeRiskCellsChanged = (before, after) => (
+const storageSanitizationChanged = (before, after) => (
+  JSON.stringify(before?.route_points || null) !== JSON.stringify(after?.route_points || null) ||
+  JSON.stringify(before?.raw_route_points || null) !== JSON.stringify(after?.raw_route_points || null) ||
   JSON.stringify(before?.route_risk_cells || null) !== JSON.stringify(after?.route_risk_cells || null)
 );
 
@@ -325,14 +330,14 @@ const getAllTrips = async () => {
     db.close();
     const decrypted = await Promise.all(trips.map(decryptTripFields));
     const sanitized = decrypted.map(sanitizeTripRouteRiskCells);
-    const changed = sanitized.filter((trip, index) => routeRiskCellsChanged(decrypted[index], trip));
+    const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
     if (changed.length) await putTrips(changed).catch(() => {});
     return sanitized;
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
     const decrypted = await Promise.all(trips.map(decryptTripFields));
     const sanitized = decrypted.map(sanitizeTripRouteRiskCells);
-    const changed = sanitized.filter((trip, index) => routeRiskCellsChanged(decrypted[index], trip));
+    const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
     if (changed.length) await putTrips(changed).catch(() => {});
     return sanitized;
   }
@@ -866,6 +871,13 @@ export const localTripRepository = {
   },
 
   async create(trip) {
+    if (isEphemeralModeActive()) {
+      return {
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}`,
+        ephemeral_trip: true,
+      };
+    }
     const saved = withRouteRiskCells(withId({ ...trip, created_at: new Date().toISOString() }));
     await putTrip(saved);
     if (saved.status === 'completed') {
@@ -877,6 +889,7 @@ export const localTripRepository = {
   },
 
   async update(id, patch) {
+    if (isEphemeralModeActive()) return { id, ...patch, ephemeral_trip: true };
     const current = await this.getById(id);
     const updated = withRouteRiskCells(withId({ ...current, ...patch, id: current.id }));
     await putTrip(updated);
@@ -890,6 +903,13 @@ export const localTripRepository = {
   },
 
   async upsertMany(trips = []) {
+    if (isEphemeralModeActive()) {
+      return trips.map((trip, index) => ({
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}_${index}`,
+        ephemeral_trip: true,
+      }));
+    }
     const thresholds = buildDrivingThresholds(localSettings.get());
     const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     const normalized = trips.map((trip) => {

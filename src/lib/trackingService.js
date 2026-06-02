@@ -1,6 +1,7 @@
 import { registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import { calculateSegmentMetrics, normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/gps/math';
+import { truncateRoutePoint } from '@/lib/gps/sanitize';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import {
   requestBackgroundLocationPermission,
@@ -56,8 +57,9 @@ export function createDrivingTrackingService({ background = false } = {}) {
     const normalizedPoint = previousPoint
       ? { ...point, speed_kmh: segment.reliableSpeedKmh }
       : { ...point, speed_kmh: point.speed_kmh != null && point.speed_kmh >= 5 ? point.speed_kmh : 0 };
-    previousPoint = normalizedPoint;
-    onPoint(normalizedPoint);
+    const storagePoint = truncateRoutePoint(normalizedPoint);
+    previousPoint = storagePoint;
+    onPoint(storagePoint);
   };
 
   const emitInitialPoint = async (onPoint) => {

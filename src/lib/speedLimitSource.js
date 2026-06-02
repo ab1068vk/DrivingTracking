@@ -7,7 +7,6 @@ const SPEED_LIMIT_CACHE_KEY = 'road_sage_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const FALLBACK_OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.ru/api/interpreter',
 ];
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_BBOX_SPAN_DEG = 0.8;

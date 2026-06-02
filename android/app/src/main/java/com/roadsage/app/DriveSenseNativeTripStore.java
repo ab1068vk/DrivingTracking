@@ -98,8 +98,8 @@ class DriveSenseNativeTripStore {
     static void saveLastParkedLocation(Context context, double lat, double lng, long timestampMs, String tripId, String source) {
         JSONObject parked = new JSONObject();
         try {
-            parked.put("lat", lat);
-            parked.put("lng", lng);
+            parked.put("lat", roundCoordinate(lat));
+            parked.put("lng", roundCoordinate(lng));
             parked.put("timestamp", RoadSageAutoTrackingService.iso(timestampMs));
             parked.put("timestamp_ms", timestampMs);
             parked.put("tripId", tripId);
@@ -109,6 +109,14 @@ class DriveSenseNativeTripStore {
     }
 
     static void saveLastParkedLocation(Context context, JSONObject parked) {
+        if (parked != null) {
+            try {
+                double lat = parked.optDouble("lat", Double.NaN);
+                double lng = parked.optDouble("lng", Double.NaN);
+                if (Double.isFinite(lat)) parked.put("lat", roundCoordinate(lat));
+                if (Double.isFinite(lng)) parked.put("lng", roundCoordinate(lng));
+            } catch (JSONException ignored) {}
+        }
         ParkedLocationPreferenceReconciler.writeCurrent(context, parked);
     }
 
@@ -118,5 +126,10 @@ class DriveSenseNativeTripStore {
 
     static String newTripId() {
         return "native_trip_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private static double roundCoordinate(double value) {
+        if (!Double.isFinite(value)) return value;
+        return Math.round(value * 100000d) / 100000d;
     }
 }

@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
+import { App as CapacitorApp } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -15,6 +16,7 @@ import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
 import { enforceDataRetention } from '@/lib/localTripRepository';
+import { lock } from '@/lib/biometricLock';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
 
@@ -96,6 +98,27 @@ const AuthenticatedApp = () => {
       applyThemeMode(settings.dark_mode);
     };
     bootstrapSettings();
+  }, []);
+
+  useEffect(() => {
+    const lockOnHidden = () => {
+      if (document.visibilityState === 'hidden') lock();
+    };
+    document.addEventListener('visibilitychange', lockOnHidden);
+
+    let appStateListener;
+    CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) lock();
+    }).then((handle) => {
+      appStateListener = handle;
+    }).catch((err) => {
+      logError('biometric_lock_app_state_listener_register', err);
+    });
+
+    return () => {
+      document.removeEventListener('visibilitychange', lockOnHidden);
+      appStateListener?.remove?.();
+    };
   }, []);
 
   useEffect(() => {

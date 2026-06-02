@@ -1,9 +1,10 @@
 const STATIC_CONNECT_SOURCES = [
   "'self'",
   'https://overpass-api.de',
+  'https://overpass.kumi.systems',
   'https://api.open-meteo.com',
+  'https://archive-api.open-meteo.com',
   'https://nominatim.openstreetmap.org',
-  'https://staticmap.openstreetmap.de',
 ];
 
 const cspSourceForUrl = (value) => {
@@ -32,7 +33,7 @@ export function buildContentSecurityPolicy({ apiUrl = '', reportUri = '/csp-repo
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://staticmap.openstreetmap.de",
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://*.tile.openstreetmap.fr",
     "font-src 'self' data:",
     `connect-src ${[...new Set(connectSources)].join(' ')}`,
     "object-src 'none'",

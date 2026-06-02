@@ -111,6 +111,15 @@ import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/spe
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 import {
+  consumeStealthNextTrip,
+  endEphemeralTrip,
+  getEphemeralTripModeState,
+  isEphemeralModeActive,
+  isStealthNextTripEnabled,
+  subscribeEphemeralTripMode,
+  wipeTripObject,
+} from '@/lib/ephemeralTripMode';
+import {
   buildSensorFusionSummary,
   createMotionSensorFusion,
   detectCrashIncident,
@@ -183,6 +192,8 @@ export default function Dashboard() {
   const [dangerZones, setDangerZones] = useState([]);
   const [rescoreBannerDismissed, setRescoreBannerDismissed] = useState(false);
   const [rescoreBannerBusy, setRescoreBannerBusy] = useState(false);
+  const [ephemeralModeState, setEphemeralModeState] = useState(() => getEphemeralTripModeState());
+  const [ephemeralTripResult, setEphemeralTripResult] = useState(null);
   const [trackingStatusContext, setTrackingStatusContext] = useState({
     permissionStatus: null,
     nativeStatus: null,
@@ -219,6 +230,8 @@ export default function Dashboard() {
       diagnostics,
     });
   }, []);
+
+  useEffect(() => subscribeEphemeralTripMode(setEphemeralModeState), []);
 
   useEffect(() => {
     activeTripRef.current = activeTrip;
@@ -373,6 +386,49 @@ export default function Dashboard() {
     }
   };
 
+  const wipeEphemeralSession = useCallback(async (message = 'Stealth trip erased because the app went to the background.') => {
+    if (!isEphemeralModeActive() && activeTripRef.current?.ephemeral_trip !== true) return;
+
+    locationService.current?.stop();
+    locationService.current = null;
+    await autoLocationService.current?.stop();
+    autoLocationService.current = null;
+    sensorFusionRef.current?.stop();
+    await activityStopRef.current?.();
+    activityStopRef.current = null;
+    latestActivityRef.current = null;
+    stopTimer();
+    await cancelLongTripReminder();
+    activeTripStore.clear();
+    await endEphemeralTrip(activeTripRef);
+    trackingRef.current = false;
+    autoEndingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
+    setActiveTrip(null);
+    setTracking(false);
+    setElapsed(0);
+    setCurrentLocation(null);
+    setHazardMessage(null);
+    setEphemeralTripResult(null);
+    setLocationError(message);
+  }, []);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      wipeEphemeralSession();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') wipeEphemeralSession();
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [wipeEphemeralSession]);
+
   const discardCandidateTrip = useCallback(async (trip, decision) => {
     const cfg = localSettings.get();
     locationService.current?.stop();
@@ -485,10 +541,12 @@ export default function Dashboard() {
       speed_kmh: Math.round(decision?.metrics?.max_speed_kmh || 0),
     });
     refreshTrackingStatusContext();
-    notifyTripStarted(promoted).catch((err) => {
-      logError('trip_started_notification', err, { trip_state: promoted.trip_state });
-    });
-    scheduleLongTripReminder(promoted.start_time);
+    if (!promoted.ephemeral_trip) {
+      notifyTripStarted(promoted).catch((err) => {
+        logError('trip_started_notification', err, { trip_state: promoted.trip_state });
+      });
+      scheduleLongTripReminder(promoted.start_time);
+    }
   }, [refreshTrackingStatusContext]);
 
   const startGPS = useCallback(() => {
@@ -502,16 +560,18 @@ export default function Dashboard() {
         setCurrentLocation(point);
         setLocationError(null);
         const latestSettings = localSettings.get();
-        saveLastMapCenter({
-          ...point,
-          tripId: activeTripRef.current?.id ?? null,
-          source: 'tracking',
-        });
+        if (!isEphemeralModeActive() && !isStealthNextTripEnabled()) {
+          saveLastMapCenter({
+            ...point,
+            tripId: activeTripRef.current?.id ?? null,
+            source: 'tracking',
+          });
+        }
         const tripBeforePoint = activeTripRef.current;
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
         const latestPrivacyZones = getPrivacyZones(latestSettings);
         const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
-        if (!isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
+        if (!isEphemeralModeActive() && !isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
           const zones = await loadDangerZones();
           const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
           if (nearby.length > 0 && Date.now() - lastProximityAlertRef.current > 60 * 1000) {
@@ -558,6 +618,7 @@ export default function Dashboard() {
         const speedMarginKmh = Number(latestSettings.threshold_speed_over_kmh ?? 5);
         if (
           !isCandidateTrip &&
+          !isEphemeralModeActive() &&
           latestSettings.speed_warning_enabled !== false &&
           latestSettings.voice_alerts_enabled !== false &&
           speed > speedLimitKmh + speedMarginKmh
@@ -608,7 +669,7 @@ export default function Dashboard() {
           activity: latestActivityRef.current,
           settings: latestSettings,
         });
-        if (incident && Date.now() - incidentAlertRef.current > 5 * 60 * 1000) {
+        if (!isEphemeralModeActive() && incident && Date.now() - incidentAlertRef.current > 5 * 60 * 1000) {
           incidentAlertRef.current = Date.now();
           const emergencyWorkflow = latestSettings.emergency_workflow_enabled === true;
           const workflowBody = emergencyWorkflow
@@ -724,8 +785,10 @@ export default function Dashboard() {
     locationPermissionEndingRef.current = false;
 
     const cfg = localSettings.get();
+    const stealthRequested = isStealthNextTripEnabled();
+    if (stealthRequested) setEphemeralTripResult(null);
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
-      setPendingStartOptions({ autoStarted });
+      setPendingStartOptions({ autoStarted, candidate, initialPoint, nearParkedLocation, triggerReason });
       setFatigueDialogOpen(true);
       return;
     }
@@ -740,9 +803,14 @@ export default function Dashboard() {
       return;
     }
 
-    const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    const useBackground = stealthRequested ? false : (cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto');
     let pausedNativeAuto = false;
-    if (!autoStarted && useBackground && isAndroid()) {
+    if (stealthRequested && isAndroid()) {
+      await stopNativeAutoTracking().catch((err) => {
+        logNativeAutoStopFailure(err, cfg, { reason: 'stealth_trip_start_pause_native_auto' });
+      });
+      pausedNativeAuto = true;
+    } else if (!autoStarted && useBackground && isAndroid()) {
       await stopNativeAutoTracking().catch((err) => {
         logNativeAutoStopFailure(err, cfg, { reason: 'manual_trip_start_pause_native_auto' });
       });
@@ -752,7 +820,7 @@ export default function Dashboard() {
     if ((autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual') && isAndroid()) {
       const activityGranted = await requestActivityRecognitionPermission();
       if (!activityGranted) {
-        if (pausedNativeAuto) await startNativeAutoTracking().catch((err) => {
+        if (pausedNativeAuto && !stealthRequested) await startNativeAutoTracking().catch((err) => {
           logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_activity_permission_denied' });
         });
         recordTrackingDiagnostic({
@@ -771,7 +839,7 @@ export default function Dashboard() {
       : await requestForegroundLocationPermission();
 
     if (!granted) {
-      if (pausedNativeAuto) await startNativeAutoTracking().catch((err) => {
+      if (pausedNativeAuto && !stealthRequested) await startNativeAutoTracking().catch((err) => {
         logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_location_permission_denied' });
       });
       recordTrackingDiagnostic({
@@ -786,6 +854,11 @@ export default function Dashboard() {
       return;
     }
 
+    const ephemeralTrip = stealthRequested ? await consumeStealthNextTrip() : false;
+    if (ephemeralTrip) {
+      activeTripStore.clear();
+    }
+
     const startTime = initialPoint?.timestamp || new Date().toISOString();
     const phoneUsageAccessStatus = isAndroid()
       ? await getAndroidUsageAccessStatus().catch(() => null)
@@ -797,9 +870,10 @@ export default function Dashboard() {
       trip_state: candidate ? TRIP_STATES.CANDIDATE : TRIP_STATES.CONFIRMED,
       route_points: initialPoint ? [initialPoint] : [],
       driving_events: [],
-      background_tracking: useBackground,
+      ephemeral_trip: ephemeralTrip,
+      background_tracking: ephemeralTrip ? false : useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
-      resume_native_auto: !autoStarted && useBackground && isAndroid(),
+      resume_native_auto: !ephemeralTrip && !autoStarted && useBackground && isAndroid(),
       candidate_started_at: candidate ? startTime : null,
       candidate_first_point: candidate && initialPoint ? initialPoint : null,
       candidate_near_parked: candidate ? nearParkedLocation === true : false,
@@ -857,7 +931,7 @@ export default function Dashboard() {
     }
     startTimer(new Date(startTime));
     startGPS();
-    if (!candidate) {
+    if (!candidate && !ephemeralTrip) {
       notifyTripStarted(tripData).catch((err) => {
         logError('trip_started_notification', err, { start_source: tripData.start_source });
       });
@@ -1004,6 +1078,7 @@ export default function Dashboard() {
 
     let pts = cleanedPoints;
     const preliminaryStats = calculateTripStats(cleanedPoints, tripToEnd.start_time, endTime, thresholds);
+    const stealthTripEnding = tripToEnd.ephemeral_trip === true || isEphemeralModeActive();
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
     const shouldDiscard = isManualTrip
@@ -1025,26 +1100,33 @@ export default function Dashboard() {
       activityStopRef.current = null;
       latestActivityRef.current = null;
       activeTripStore.clear();
-      activeTripRef.current = null;
+      if (stealthTripEnding) {
+        wipeTripObject(tripToEnd);
+        await endEphemeralTrip(activeTripRef);
+      } else {
+        activeTripRef.current = null;
+      }
       trackingRef.current = false;
       autoEndingTripRef.current = false;
       locationPermissionEndingRef.current = false;
       setActiveTrip(null);
       setTracking(false);
       setElapsed(0);
-      if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+      if (!stealthTripEnding && isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
         await startNativeAutoTracking().catch((err) => {
           logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_short_trip_discard' });
         });
       }
       refreshTrackingStatusContext();
-      setLocationError(isManualTrip
+      setLocationError(stealthTripEnding
+        ? 'Stealth trip was erased because Road Sage did not detect enough movement to score it.'
+        : isManualTrip
         ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
       return;
     }
 
-    const shouldAutoFetchExternalContext = isExternalContextAutoFetchEnabled(cfg);
+    const shouldAutoFetchExternalContext = !stealthTripEnding && isExternalContextAutoFetchEnabled(cfg);
     const mapMatchingContext = {
       provider: 'osrm',
       status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'manual_required' : 'disabled',
@@ -1112,7 +1194,7 @@ export default function Dashboard() {
     const startMs = new Date(tripToEnd.start_time).getTime();
     const endMs = new Date(endTime).getTime();
     let nativePhoneUsageSummary = null;
-    if (isAndroid() && Number.isFinite(startMs) && Number.isFinite(endMs)) {
+    if (!stealthTripEnding && isAndroid() && Number.isFinite(startMs) && Number.isFinite(endMs)) {
       nativePhoneUsageSummary = await getAndroidPhoneUsageSummary(startMs, endMs).catch((err) => {
         logError('native_phone_usage_summary', err, {
           trip_start_time: tripToEnd.start_time,
@@ -1211,6 +1293,36 @@ export default function Dashboard() {
       ...completedTripDraft,
       route_risk_cells: buildRouteRiskCellsForTrip(completedTripDraft, privacyZones),
     };
+
+    if (stealthTripEnding) {
+      setEphemeralTripResult({
+        ended_at: endTime,
+        duration_seconds: Math.round(completedTrip.duration_seconds || 0),
+        distance_km: completedTrip.distance_km || 0,
+        score_overall: completedTrip.score_overall,
+        score_safety: completedTrip.score_safety,
+        score_smoothness: completedTrip.score_smoothness,
+        score_eco: completedTrip.score_eco,
+      });
+      wipeTripObject(completedTrip);
+      wipeTripObject(completedTripDraft);
+      wipeTripObject(tripToEnd);
+      await activityStopRef.current?.();
+      activityStopRef.current = null;
+      latestActivityRef.current = null;
+      activeTripStore.clear();
+      await endEphemeralTrip(activeTripRef);
+      trackingRef.current = false;
+      autoEndingTripRef.current = false;
+      locationPermissionEndingRef.current = false;
+      setActiveTrip(null);
+      setTracking(false);
+      setElapsed(0);
+      setCurrentLocation(null);
+      setHazardMessage(null);
+      refreshTrackingStatusContext();
+      return;
+    }
 
     const savedTrip = await tripService.create(completedTrip);
     recordTrackingDiagnostic({
@@ -1409,11 +1521,13 @@ export default function Dashboard() {
         (point) => {
           setCurrentLocation(point);
           setLocationError(null);
-          saveLastMapCenter({
-            ...point,
-            tripId: activeTripRef.current?.id ?? null,
-            source: 'auto_tracking',
-          });
+          if (!isEphemeralModeActive() && !isStealthNextTripEnabled()) {
+            saveLastMapCenter({
+              ...point,
+              tripId: activeTripRef.current?.id ?? null,
+              source: 'auto_tracking',
+            });
+          }
           maybeAutoStart(point);
         },
         (err) => {
@@ -1497,6 +1611,7 @@ export default function Dashboard() {
 
   const units = settings.units || 'metric';
   const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;
+  const stealthTripActive = activeTrip?.ephemeral_trip === true || ephemeralModeState.ephemeralActive;
   const dashboardRescoreMismatchCount = scoreMigrationSummary.auto_rescore_recommended
     ? Number(scoreMigrationSummary.recent_mismatch_count) || 0
     : 0;
@@ -1884,12 +1999,14 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse" />
                   <span className="text-white/80 text-sm font-medium">
-                    {activeTripIsCandidate ? 'Checking Movement' : 'Trip Active'}
+                    {stealthTripActive ? 'Stealth Trip Active' : activeTripIsCandidate ? 'Checking Movement' : 'Trip Active'}
                   </span>
                 </div>
                 <div className="font-grotesk font-bold text-4xl">{formatDuration(elapsed)}</div>
                 <div className="text-white/70 text-sm mt-1">
-                  {activeTripIsCandidate ? (
+                  {stealthTripActive ? (
+                    'RAM-only recording. It will be erased if the app closes or backgrounds.'
+                  ) : activeTripIsCandidate ? (
                     activeTrip?.candidate_near_parked
                       ? 'Hidden candidate near parked car'
                       : 'Hidden candidate validating movement'
@@ -2023,6 +2140,48 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {!tracking && ephemeralTripResult && (
+        <div className="rounded-3xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-bold">
+                <Shield className="h-4 w-4" />
+                Stealth trip erased
+              </div>
+              <p className="mt-1 text-xs leading-relaxed opacity-80">
+                Raw route points and events were wiped from memory. This score summary exists only until you dismiss it or leave the session.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEphemeralTripResult(null)}
+              className="rounded-lg p-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              aria-label="Dismiss stealth trip summary"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 min-[520px]:grid-cols-4">
+            <div>
+              <div className="text-xs opacity-70">Overall</div>
+              <div className="text-lg font-bold">{formatEstimatedScore(ephemeralTripResult.score_overall)}</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-70">Safety</div>
+              <div className="text-lg font-bold">{formatEstimatedScore(ephemeralTripResult.score_safety)}</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-70">Distance</div>
+              <div className="text-lg font-bold">{formatDistance(ephemeralTripResult.distance_km, units)}</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-70">Duration</div>
+              <div className="text-lg font-bold">{formatDuration(ephemeralTripResult.duration_seconds)}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!tracking && completedTrips.length >= 5 && !readinessDismissed && (
         <SectionErrorBoundary
