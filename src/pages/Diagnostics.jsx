@@ -44,6 +44,10 @@ import {
 import { logError } from '@/lib/errorReporting';
 import PageNotFound from '@/lib/PageNotFound';
 import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import {
+  CALIBRATION_MIN_TRIPS,
+  loadCalibrationState,
+} from '@/lib/readinessCalibration';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -155,6 +159,7 @@ function DiagnosticsContent() {
   const [motionPermissionBusy, setMotionPermissionBusy] = useState(false);
   const [testDataBusy, setTestDataBusy] = useState(false);
   const [testDataNotice, setTestDataNotice] = useState('');
+  const [readinessCalibration, setReadinessCalibration] = useState({ offsets: {}, tripCount: 0, version: 1 });
 
   const { data: trips = [], refetch } = useQuery({
     queryKey: ['diagnostics-trips'],
@@ -176,16 +181,18 @@ function DiagnosticsContent() {
     setWebDiagnostics(getTrackingDiagnostics());
     setActiveTrip(activeTripStore.get());
     try {
-      const [permissions, native, battery, nativeLog] = await Promise.all([
+      const [permissions, native, battery, nativeLog, calibration] = await Promise.all([
         getPermissionStatus(),
         isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
         isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
         isAndroid() ? getNativeDiagnostics().catch(() => ({ enabled: false, events: [] })) : Promise.resolve({ enabled: false, events: [] }),
+        loadCalibrationState().catch(() => ({ offsets: {}, tripCount: 0, version: 1 })),
       ]);
       setPermissionStatus(permissions);
       setNativeStatus(native);
       setBatteryStatus(battery);
       setNativeDiagnostics(nativeLog || { enabled: false, events: [] });
+      setReadinessCalibration(calibration);
       setActiveTrip(activeTripStore.get());
       await Promise.all([
         refetch(),
@@ -225,6 +232,10 @@ function DiagnosticsContent() {
   const settings = localSettings.get();
   const backgroundAutoEnabled = settings.tracking_mode === 'background_auto' && !settings.tracking_paused;
   const osrmLastReachable = settings.osrm_last_reachable_at ? relativeAge(settings.osrm_last_reachable_at) : 'never';
+  const readinessCalibrationActive = Number(readinessCalibration.tripCount) >= CALIBRATION_MIN_TRIPS;
+  const readinessTripsRemaining = Math.max(0, CALIBRATION_MIN_TRIPS - Number(readinessCalibration.tripCount || 0));
+  const readinessOffsets = Object.entries(readinessCalibration.offsets || {})
+    .sort(([a], [b]) => a.localeCompare(b));
   const motionDiagnostics = useMemo(() => buildMotionSensorDiagnostics({
     permissionState: permissionStatus?.motionSensors,
     settings,
@@ -424,6 +435,46 @@ function DiagnosticsContent() {
               : 'not configured'}
           </span>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">Readiness Calibration</h2>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {readinessCalibration.tripCount} / {CALIBRATION_MIN_TRIPS} completed calibration trips.
+            </div>
+          </div>
+          <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${readinessCalibrationActive ? statusStyle.good : statusStyle.warn}`}>
+            {readinessCalibrationActive ? 'Calibration active' : `Pending ${readinessTripsRemaining}`}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Version</div>
+            <div className="mt-1 text-sm font-semibold">v{readinessCalibration.version || 1}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Active offsets</div>
+            <div className="mt-1 text-sm font-semibold">{readinessCalibrationActive ? readinessOffsets.length : 0}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Updated</div>
+            <div className="mt-1 text-sm font-semibold">{readinessCalibration.updatedAt ? relativeAge(readinessCalibration.updatedAt) : 'never'}</div>
+          </div>
+        </div>
+        {readinessOffsets.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-xl border border-border">
+            {readinessOffsets.map(([signal, offset]) => (
+              <div key={signal} className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs last:border-b-0">
+                <span className="font-medium">{signal}</span>
+                <span className={Number(offset) < 0 ? 'font-semibold text-emerald-600 dark:text-emerald-300' : 'font-semibold text-orange-600 dark:text-orange-300'}>
+                  {Number(offset).toFixed(3)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section>

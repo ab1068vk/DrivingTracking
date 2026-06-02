@@ -1,232 +1,58 @@
 # Road Sage Trip Readiness
 
-Road Sage trip readiness is the Dashboard estimate shown before a trip starts. It combines the driver's own recent history, learned time patterns, daily fatigue exposure, last-trip outcome, repeated-event areas, and historical context into a provisional "Trip readiness estimate." It is advisory only. It is not a crash prediction, insurance rating, medical fatigue diagnosis, traffic model, or legal safety determination.
+Road Sage trip readiness is the Dashboard estimate shown before a trip starts. It combines personal driving history, learned schedule patterns, daily fatigue, recent rest, last-trip outcome, repeated-event context, historical context, and optional weather into a provisional readiness estimate.
+
+It is advisory only. It is not a crash prediction, insurance rating, medical fatigue diagnosis, traffic model, or legal safety determination.
 
 ## Current Architecture
 
 | Layer | File | Responsibility |
 | --- | --- | --- |
-| Dashboard card | `src/pages/Dashboard.jsx` | Shows the trip readiness estimate, recommended pre-start action, top signals, and historical context breakdown. |
-| Readiness model | `src/lib/preTripRisk.js` | Computes composite pre-trip risk, readiness score, risk level, primary concern, tips, evidence quality, and signal provenance. |
-| Daily fatigue | `src/lib/dailyFatigueEngine.js` | Computes same-day active-driving fatigue exposure and break recovery. Also blocks manual trip start with a fatigue dialog when high or critical. |
-| Habit profile | `src/lib/habitProfile.js` | Learns time-bucket, day-of-week, hourly, trend, and fatigue-onset patterns from completed scored trips. |
-| Historical context | `src/lib/predictiveRouteRisk.js` | Estimates current context risk from recent scored driving, event density, repeated-event areas, weather input, and time of day. |
-| Repeated-event areas | `src/lib/dangerZoneEngine.js` | Builds stored repeated driving-event areas from completed trip events. |
-| Route-risk index | `src/lib/routeRiskIndex.js`, `src/hooks/useRouteRiskIndexMigration.js` | Builds and loads privacy-filtered route-risk cells used before falling back to stored repeated-event areas. |
-| Settings/defaults | `src/lib/trackingStore.js`, `src/settings/sections/AdvancedSettings.jsx` | Stores `predictive_route_risk_enabled`, disclaimer count, and the Advanced Settings toggle for historical context display. |
-| Constants | `src/lib/scoringConstants.js` | Names all readiness, fatigue, and historical-context weights and gates for auditability. |
-| Tests | `src/lib/__tests__/preTripRisk.test.js`, `src/lib/__tests__/dailyFatigueEngine.test.js`, `src/lib/__tests__/advancedOpenSourceFeatures.test.js` | Cover evidence gates, score math, fatigue recovery, historical context, repeated-event areas, and calibration limitations. |
+| Dashboard card | `src/pages/Dashboard.jsx` | Loads calibration state, correlations, and fitted thresholds; computes the estimate; shows bootstrapping, developing, or calibrated readiness copy. |
+| Readiness model | `src/lib/preTripRisk.js` | Computes signals, adaptive weights, composite risk, readiness score, risk level, interval, top signals, evidence tier, and data-quality metadata. |
+| Habit profile | `src/lib/habitProfile.js` | Learns time bucket, day of week, hourly risk, trend, fatigue onset, and adaptive temporal half-life from completed scored trips. |
+| Local calibration | `src/lib/readinessCalibration.js` | Stores `readiness_calibration_v1`, updates per-signal offsets after outcomes are paired, and activates offsets after 30 paired trips. |
+| Signal history | `src/lib/calibration/readinessSignalCorrelation.js` | Stores `readiness_signal_history_v1`, pairs pre-trip snapshots with actual trip scores, computes per-signal and pairwise Pearson correlations. |
+| Threshold fitting | `src/lib/calibration/readinessThresholdFit.js` | Stores `readiness_threshold_fit_v1` and fits moderate/high risk floors after at least 30 paired readiness records. |
+| Daily fatigue | `src/lib/dailyFatigueEngine.js` | Computes same-day active-driving fatigue and break recovery; can warn before a manual trip. |
+| Historical context | `src/lib/predictiveRouteRisk.js` | Supplies route/history context risk when enough completed-trip history exists. |
+| Constants | `src/lib/scoringConstants.js` | Names readiness weights, gates, correlation thresholds, variance fallbacks, and evidence thresholds. |
+| Survey feedback | `src/components/PostTripCalibrationSurvey.jsx`, `src/lib/calibrationLabeling.js` | Adds readiness-accuracy feedback when a scored trip has a captured pre-trip readiness context. |
 
-## Important Code Snippets
+## Current Behavior Summary
 
-These excerpts show the current implementation shape. Keep them synchronized when changing readiness scoring, fatigue recovery, or Dashboard gates.
+- The model no longer treats missing personal time or trend history as generic low risk.
+- Readiness can display an early bootstrap estimate from fatigue/rest, a developing estimate from at least 2 actual-user signals, or a calibrated evidence state from at least 5 actual-user signals.
+- Full local calibration is progressive: snapshots are captured before trips, paired with completed-trip scores, and then used for offsets, correlations, pairwise decorrelation, and fitted thresholds once enough records exist.
+- The displayed readiness score is still an estimate and remains approximate even when evidence is "calibrated"; calibrated means enough local signal evidence for the app's readiness path, not external validation against crash or insurance outcomes.
 
-### Readiness Signal Assembly
+## Signal Assembly
 
-From `src/lib/preTripRisk.js`, `computePreTripRisk()` builds a nullable signal map. Missing evidence stays `null`; it is not treated as safe driving.
+`computePreTripRisk()` builds these nullable risk signals. Null signals stay unavailable and are omitted from weighted blending.
 
-```javascript
-const signals = {
-  timeOfDay: timeOfDayRisk,
-  dayOfWeek: dayOfWeekRisk,
-  recentTrend: recentTrendRisk,
-  dailyFatigue: fatigueRisk,
-  lastTripOutcome: lastTripScore == null ? null : 100 - lastTripScore,
-  weather: weatherRisk,
-  dangerZones: dangerZoneRisk,
-  routeForecast: routeForecastRisk,
-  recentRest: restRisk,
-};
-
-const clampedSignals = Object.fromEntries(Object.entries(signals).map(([key, value]) => [
-  key,
-  value == null || value === '' || !Number.isFinite(Number(value)) ? null : clamp(Number(value), 0, 100),
-]));
-```
-
-### Evidence Gate And Score Conversion
-
-The score is blocked unless the core personal signals exist and fallback evidence stays limited. The displayed readiness score is the inverse of composite risk.
-
-```javascript
-const missingCoreSignals = [
-  clampedSignals.timeOfDay == null ? 'timeOfDay' : null,
-  clampedSignals.recentTrend == null ? 'recentTrend' : null,
-].filter(Boolean);
-
-const fallbackGateTriggered = fallbackSignalKeys.length > 1;
-const hasCoreReadinessEvidence = missingCoreSignals.length === 0 && !fallbackGateTriggered;
-const weightedCompositeRisk = hasCoreReadinessEvidence ? weightedRisk(clampedSignals, weights) : null;
-const gateFloor = hasCoreReadinessEvidence ? riskFloorFromSignalGates(clampedSignals, habitProfile) : 0;
-
-const compositeRisk = weightedCompositeRisk == null && gateFloor <= 0
-  ? null
-  : clamp(Math.round(Math.max(weightedCompositeRisk ?? 0, gateFloor)), 0, 100);
-
-return {
-  compositeRisk,
-  readinessScore: compositeRisk == null ? null : 100 - compositeRisk,
-  riskLevel,
-  topSignals,
-  signals: clampedSignals,
-  dataQuality: {
-    readinessEvidence: compositeRisk == null
-      ? 'unavailable'
-      : availableSignals.length >= 6
-        ? 'high'
-        : availableSignals.length >= 3
-          ? 'developing'
-          : 'low',
-    missingCoreSignals,
-    fallbackGateTriggered,
-  },
-};
-```
-
-### Adaptive Weight Redistribution
-
-When the learned profile is confident enough but the current bucket is thin, part of that bucket's weight moves to broader trend and fatigue evidence.
-
-```javascript
-export function deriveWeights(profile = null, now = new Date()) {
-  if (!profile || Number(profile.confidence) < 0.3) {
-    return DEFAULT_WEIGHTS;
-  }
-
-  const adjusted = { ...DEFAULT_WEIGHTS };
-  const currentBucket = getTimeBucket(now.getHours());
-
-  if (profile.timeBuckets?.[currentBucket]?.insufficient) {
-    const freed = adjusted.timeOfDay * PRE_TRIP_WEIGHT_REDISTRIBUTION_RATIO;
-    adjusted.timeOfDay -= freed;
-    adjusted.recentTrend += freed * PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS.recentTrend;
-    adjusted.dailyFatigue += freed * PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS.dailyFatigue;
-  }
-
-  return normalizeWeights(adjusted);
-}
-```
-
-### Daily Fatigue Recovery
-
-From `src/lib/dailyFatigueEngine.js`, active driving minutes accumulate fatigue, and breaks longer than the recovery threshold reduce accumulated fatigue.
-
-```javascript
-const getActiveDrivingMinutes = (trip) => {
-  const movingSeconds = Math.max(
-    0,
-    (Number(trip?.duration_seconds) || 0) - (Number(trip?.idle_time_seconds) || 0)
-  );
-  return movingSeconds / 60;
-};
-
-const applyBreakRecovery = (fatigueMinutes, breakMinutes) => {
-  if (!(breakMinutes > DAILY_FATIGUE_DEFAULTS.RECOVERY_BREAK_MINUTES)) return fatigueMinutes;
-  return fatigueMinutes * Math.max(
-    0,
-    1 - breakMinutes / DAILY_FATIGUE_DEFAULTS.FULL_RECOVERY_BREAK_MINUTES
-  );
-};
-```
-
-### Manual Start Warning Gate
-
-The warning dialog before starting a manual trip comes from this returned flag.
-
-```javascript
-const fatigueLevel = cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.CRITICAL
-  ? 'critical'
-  : cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.HIGH
-    ? 'high'
-    : cumulativeFatigueScore >= DAILY_FATIGUE_THRESHOLDS.MODERATE
-      ? 'moderate'
-      : 'low';
-
-return {
-  cumulativeFatigueScore,
-  fatigueLevel,
-  recommendedBreakMinutes,
-  shouldWarnBeforeTrip: fatigueLevel === 'high' || fatigueLevel === 'critical',
-};
-```
-
-## Dashboard Behavior
-
-The trip readiness card is rendered only when:
-
-- the user is not actively tracking a trip
-- there are at least 5 completed trips
-- the card has not been dismissed for the current latest-trip state
-
-The card is wrapped in `SectionErrorBoundary` with context `dashboard_risk_panel`, so failures show a local "Trip readiness unavailable" fallback instead of blanking the Dashboard.
-
-The visible readiness number is intentionally hidden unless the model reports high evidence:
-
-- `readinessEvidence === "high"` and `readinessScore != null`: show the numeric estimate
-- score exists but evidence is lower than high: show "Limited-data readiness estimate"
-- score is unavailable: show "Not enough data yet"
-
-The card also displays:
-
-- risk color: green for low, yellow for moderate, red for high, muted for unavailable
-- `CalibrationStatusTag` when `pre_trip_readiness_score` is still approximate
-- primary concern and tip when risk is not low
-- a "Recommended before starting" action
-- up to three top signals with values
-- an optional historical-context section when `predictive_route_risk_enabled !== false`
-
-## Readiness Score Output
-
-`computePreTripRisk()` returns:
-
-| Field | Meaning |
+| Signal key | Source |
 | --- | --- |
-| `compositeRisk` | 0-100 risk score, or `null` when evidence is insufficient. |
-| `readinessScore` | `100 - compositeRisk`, or `null` when risk is unavailable. |
-| `riskLevel` | `low`, `moderate`, `high`, or `unavailable`. |
-| `primaryConcern` | Human-readable label for the highest available risk signal. |
-| `tipText` | Short action-oriented driving/pre-start suggestion. |
-| `topSignals` | Up to three available signals with value >= 25, sorted descending. |
-| `signals` | Full clamped signal map, with unavailable signals set to `null`. |
-| `dataQuality` | Evidence count, fallback status, provenance, missing core signals, confidence, and personalization state. |
+| `timeOfDay` | Habit-profile time bucket risk when sufficient; otherwise legacy time-bucket history when the current bucket has at least 3 trips. |
+| `dayOfWeek` | Habit-profile day risk when sufficient; otherwise legacy weekday history when the current weekday has at least 2 trips. |
+| `recentTrend` | Habit-profile trend delta or personal-baseline delta; only declines become risk. |
+| `dailyFatigue` | Current daily fatigue level: low 10, moderate 40, high 70, critical 90. |
+| `lastTripOutcome` | `100 - last completed trip score`. |
+| `weather` | Supplied weather-context risk, clamped 0-100. |
+| `dangerZones` | Repeated-event-area count converted through the route-risk decay curve. |
+| `routeForecast` | Historical-context risk when history is sufficient. |
+| `recentRest` | Time since the last completed trip ended, scaled against the recommended break threshold. |
 
-Risk levels use the named pre-trip policy:
+Recent-rest risk is no longer a fixed table. It uses the larger of:
 
-| Risk level | Composite risk |
-| --- | ---: |
-| `high` | `>= 65` |
-| `moderate` | `>= 40` and `< 65` |
-| `low` | `< 40` |
-| `unavailable` | `compositeRisk == null` |
+- `PRE_TRIP_REST_MIN_THRESHOLD_MINUTES = 10`
+- the current fatigue state's `recommendedBreakMinutes`
+- `PRE_TRIP_REST_DEFAULT_BREAK_MINUTES = 30` when fatigue state is unavailable
 
-## Readiness Inputs
+The risk is `round((1 - breakMinutes / threshold) * 100)`, clamped to 0-100, and becomes 0 when the break meets the threshold.
 
-The model uses only completed trips for history. It looks at completed trips from the last 90 days for legacy time/day analysis and sorts all completed trips newest-first for last-trip and trend inputs.
+## Base Weights
 
-| Signal | Key | Value calculation |
-| --- | --- | --- |
-| Time of day | `timeOfDay` | Habit-profile time bucket risk when sufficient; otherwise legacy time bucket risk when the current bucket has at least 3 trips; otherwise unavailable. |
-| Day of week | `dayOfWeek` | Habit-profile day risk when sufficient; otherwise legacy day risk when the current weekday has at least 2 trips; otherwise unavailable. |
-| Recent trend | `recentTrend` | Declining profile trend or personal-baseline delta. Only negative deltas become risk. |
-| Daily fatigue | `dailyFatigue` | `low = 10`, `moderate = 40`, `high = 70`, `critical = 90`. |
-| Last trip outcome | `lastTripOutcome` | `100 - last completed trip score`. |
-| Weather | `weather` | `context.weatherRiskScore` or `context.weather_context.riskScore`, clamped 0-100. |
-| Repeated-event areas | `dangerZones` | `nearbyDangerZoneCount * 35`, clamped 0-100. |
-| Route forecast | `routeForecast` | Historical-context `riskScore`, unless historical context is marked insufficient. |
-| Recent rest | `recentRest` | Risk from time since the last trip ended. |
-
-Recent rest risk:
-
-| Time since last trip | Risk |
-| --- | ---: |
-| `< 15 min` | `80` |
-| `< 30 min` | `60` |
-| `< 60 min` | `35` |
-| `>= 60 min` | `5` |
-
-## Signal Weights
-
-Readiness uses a provisional weighted blend. Null signals are omitted by `weightedBlend`; unavailable evidence does not become a perfect score.
+Readiness uses these provisional weights before adaptive changes:
 
 | Signal | Weight |
 | --- | ---: |
@@ -242,61 +68,125 @@ Readiness uses a provisional weighted blend. Null signals are omitted by `weight
 
 When a personalized time bucket or day bucket exists but is insufficient, half of that signal's weight is redistributed:
 
-- 60% of the freed weight goes to `recentTrend`
-- 40% of the freed weight goes to `dailyFatigue`
+- 60% of freed weight to `recentTrend`
+- 40% of freed weight to `dailyFatigue`
 
-Weights are normalized after redistribution.
+Weights are normalized after each adjustment.
 
-## Evidence Gates
+## Adaptive Calibration Path
 
-Road Sage hides the readiness score when core personal evidence is missing or too much of the signal set would be fallback data.
+Readiness weight derivation applies adjustments in this order:
 
-The core personal signals are:
+1. Start from the base weights, with bucket/day redistribution when the habit profile is sufficiently confident.
+2. Apply per-signal calibration offsets from `readiness_calibration_v1` after at least 30 paired trips.
+3. Apply signal/outcome correlation checks from `readiness_signal_history_v1` after at least 20 paired records. Signals with absolute Pearson r below `0.15` keep `60%` of their weight before re-normalization.
+4. Apply pairwise decorrelation. If a pair such as `timeOfDay|dayOfWeek` has `abs(r) >= 0.65`, both members keep `70%` of their weight before re-normalization.
 
-- `timeOfDay`
-- `recentTrend`
+The pairwise decorrelation step prevents regular schedules, such as weekday morning commutes, from counting the same evidence twice through both time-of-day and day-of-week.
 
-The readiness score is unavailable when:
+## Snapshot And Outcome Pairing
 
-- either core signal is missing
-- more than one signal has fallback provenance
+When a trip starts, Dashboard builds a readiness context and records a signal snapshot:
 
-Evidence quality is reported as:
+- signals
+- composite risk, or bootstrap risk when full risk is unavailable
+- effective weights
+- calibration snapshot
+- signal correlations
+- pairwise signal correlations
+- fitted thresholds
+- evidence tier and data-quality metadata
 
-| Evidence label | Condition |
+The snapshot id is stored on the active trip as `readiness_signal_record_id` and in `pre_trip_readiness_context.signalHistoryRecordId`.
+
+When the trip completes, local trip storage:
+
+- updates per-signal calibration offsets with the pre-trip context and actual score
+- pairs the readiness snapshot with the completed-trip score
+- recomputes fitted thresholds when enough paired records exist
+
+Storage keys:
+
+| Key | Purpose |
 | --- | --- |
-| `high` | Score exists and at least 6 signals are available. |
-| `developing` | Score exists and at least 3 signals are available. |
-| `low` | Score exists and fewer than 3 signals are available. |
-| `unavailable` | Composite risk is unavailable. |
+| `readiness_calibration_v1` | Local per-signal weight offsets and paired-trip count. |
+| `readiness_signal_history_v1` | Up to 200 pre-trip snapshots and paired actual scores. |
+| `readiness_threshold_fit_v1` | Fitted moderate/high risk floors and validation metadata. |
 
-The Dashboard shows the precise number only for `high` evidence.
+## Evidence Tiers
 
-## Risk Floors And Signal Gates
+Evidence is based on actual-user signals, not simply the number of non-null values.
 
-After weighted risk is computed, Road Sage may apply a risk floor if an individual signal crosses a named gate. This prevents a severe single concern from disappearing inside the blended average.
+| Tier | Condition | Dashboard behavior |
+| --- | --- | --- |
+| `bootstrapping` | Fewer than 2 actual-user signals. | Shows an early estimate only when fatigue/rest bootstrap risk exists, with "Limited data" copy. |
+| `developing` | At least 2 actual-user signals. | Shows a developing estimate and confidence copy. |
+| `calibrated` | At least 5 actual-user signals. | Shows an estimated readiness value with high evidence labeling. |
 
-High-risk floor candidates:
+`dataQuality.readinessEvidence` maps these tiers to `bootstrapping`, `developing`, or `high`. If no bootstrap risk exists, it reports `unavailable`.
 
-- `timeOfDay >= 80`
-- `routeForecast >= 65`
-- `dailyFatigue >= 90` and `lastTripOutcome >= 70`
+## Risk, Score, And Interval
 
-Moderate-risk floor candidates:
+The primary conversion is:
 
-- `timeOfDay >= 60`
-- `routeForecast >= 40`
-- `dailyFatigue >= 70`
-- `recentRest >= 80`
-- `weather >= 60`
-- `dangerZones >= 70`
+```text
+readinessScore = 100 - compositeRisk
+```
 
-Default floors:
+In bootstrapping mode:
 
-- high floor: `65`
-- moderate floor: `40`
+```text
+bootstrapReadinessScore = 100 - bootstrapRisk
+```
 
-If a habit profile has confidence >= 0.3, the floors are adjusted by the driver's all-time average score:
+`computePreTripRisk()` returns:
+
+| Field | Meaning |
+| --- | --- |
+| `compositeRisk` | Full 0-100 risk score, or `null` while bootstrapping. |
+| `readinessScore` | `100 - compositeRisk`, or `null` when full risk is unavailable. |
+| `bootstrapRisk` | Fatigue/rest-only risk used for early display. |
+| `bootstrapReadinessScore` | `100 - bootstrapRisk`. |
+| `riskLevel` | `low`, `moderate`, `high`, or `unavailable`, using fitted thresholds when supplied. |
+| `compositeStdDev` | Estimated risk standard deviation from weighted signal variance. |
+| `readinessInterval` | Low/high readiness range derived from `compositeRisk +/- compositeStdDev`. |
+| `evidenceTier` | `bootstrapping`, `developing`, or `calibrated`. |
+| `signals` | Full signal map with unavailable signals as `null`. |
+| `weights` | Effective normalized weights after all adaptations. |
+| `dataQuality` | Provenance, evidence counts, correlation inputs, fitted floors, half-life, and personalization metadata. |
+
+Fallback variances used for the interval are named in `scoringConstants.js`: time 64, day 64, trend 81, fatigue 36, last trip 100, weather 25, danger 81, route 64, and rest 36.
+
+## Risk Floors And Fitted Thresholds
+
+The default risk floors are:
+
+| Risk level | Composite risk |
+| --- | ---: |
+| `high` | `>= 65` |
+| `moderate` | `>= 40` and `< 65` |
+| `low` | `< 40` |
+| `unavailable` | `compositeRisk == null` |
+
+If `readiness_threshold_fit_v1` is available, `computePreTripRisk()` uses its fitted `highRiskFloor` and `moderateRiskFloor` for risk-level classification.
+
+Threshold fitting requires at least 30 paired records. It searches high floors from 55 to 80 and moderate floors from 25 up to the selected high floor, maximizing F1 for detecting trips with actual score below `GOOD_TRIP_SCORE_FLOOR = 72`.
+
+Signal gates can still raise the composite risk floor so severe individual signals are not hidden inside an average:
+
+| Gate | Default |
+| --- | ---: |
+| high time of day | `80` |
+| high route forecast | `65` |
+| high fatigue plus poor last trip | `dailyFatigue >= 90` and `lastTripOutcome >= 70` |
+| moderate time of day | `60` |
+| moderate route forecast | `40` |
+| moderate daily fatigue | `70` |
+| moderate recent rest | `80` |
+| moderate weather | `60` |
+| moderate danger zones | `70` |
+
+With a confident habit profile, default floors are adjusted by the driver's all-time average score:
 
 ```text
 adjustment = clamp((allTimeAvgScore - 70) / 10, -5, 5)
@@ -304,46 +194,28 @@ highFloor = 65 - adjustment
 moderateFloor = 40 - adjustment
 ```
 
-That means a consistently high-scoring driver can trigger a concern at a slightly lower composite risk, while a lower-scoring baseline slightly raises the concern floor.
+## Habit Profile And Half-Life
 
-## Habit Profile
-
-The Dashboard builds a habit profile after at least 5 completed trips. The profile itself reports confidence as:
+The Dashboard builds a habit profile after 5 completed trips. Profile confidence is:
 
 ```text
 confidence = clamp(completedTripCount / 30, 0, 1)
 ```
 
-Profile data includes:
+The habit profile includes:
 
-- `timeBuckets`: Morning, Afternoon, Evening, Night
-- `dayOfWeek`: risk per local weekday
-- `hourlyRisk`: per-hour risk when an hour has at least 2 trips
-- `trendDelta`: recent average score minus all-time average score
-- `fatigueOnsetMinutes`: learned fatigue onset when enough multi-trip days show a score drop, otherwise 90 minutes
+- time buckets: Morning, Afternoon, Evening, Night
+- weekday risk
+- hourly risk when an hour has at least 2 trips
+- recent trend delta
+- fatigue onset minutes
+- adaptive `halfLifeDays`
 
-Time buckets:
-
-| Bucket | Local hours |
-| --- | --- |
-| Morning | `05:00-11:59` |
-| Afternoon | `12:00-16:59` |
-| Evening | `17:00-21:59` |
-| Night | `22:00-04:59` |
-
-Minimum profile evidence:
-
-- time bucket: 3 trips
-- day of week: 2 trips
-- hour: 2 trips
-- full confidence: 30 trips
-- learned fatigue onset: at least 10 multi-trip days
+Adaptive half-life uses score autocorrelation when at least 20 scored trips exist. It is bounded from 7 to 60 days and defaults to 21 days.
 
 ## Daily Fatigue Readiness
 
-`computeDailyFatigue()` uses completed trips from the current local day. It ignores incomplete trips and trips with invalid start/end timestamps.
-
-The model uses active driving minutes:
+`computeDailyFatigue()` uses completed trips from the current local day. It uses active driving minutes:
 
 ```text
 activeMinutes = max(0, duration_seconds - idle_time_seconds) / 60
@@ -351,19 +223,8 @@ activeMinutes = max(0, duration_seconds - idle_time_seconds) / 60
 
 Break recovery:
 
-- breaks must be longer than 30 minutes to reduce accumulated fatigue
-- recovery scales linearly up to a 180-minute full-recovery cap
-
-```text
-fatigueMinutesAfterBreak = fatigueMinutes * max(0, 1 - breakMinutes / 180)
-```
-
-Fatigue score:
-
-```text
-fatigueRatio = clamp(accumulatedFatigueMinutes / fatigueOnsetMinutes, 0, 2)
-cumulativeFatigueScore = clamp(round((fatigueRatio * 5) * 10) / 10, 0, 10)
-```
+- breaks longer than 30 minutes reduce accumulated fatigue
+- recovery scales linearly up to a 180-minute full recovery cap
 
 Fatigue levels:
 
@@ -374,206 +235,78 @@ Fatigue levels:
 | `moderate` | `>= 3` |
 | `low` | `< 3` |
 
-Recommended break minutes:
+Before a manual trip starts, Dashboard shows a fatigue dialog only when fatigue is `high` or `critical`.
 
-| Level | Break |
-| --- | ---: |
-| `critical` | `30 min` |
-| `high` | `20 min` |
-| `moderate` | `10 min` |
-| `low` | `0 min` |
+## Historical Context And Privacy
 
-Before a manual trip starts, Dashboard shows a fatigue dialog when `dailyFatigue.shouldWarnBeforeTrip` is true, which means fatigue is `high` or `critical`. The dialog offers "Take a break" or "Continue anyway."
+Historical context is supplied by `estimatePredictiveRouteRisk()` when enough completed-trip history exists. If history is insufficient, route forecast risk is unavailable rather than treated as low risk.
 
-## Historical Context Estimate
+The historical-context subsection is controlled by `predictive_route_risk_enabled`, but Dashboard can still compute context for readiness inputs.
 
-The historical-context section is computed by `estimatePredictiveRouteRisk()` and displayed inside the readiness card when `predictive_route_risk_enabled !== false`.
+Trip readiness avoids current-location repeated-event context when the current point is inside a privacy zone. Route-risk cells use coarse geohashes and privacy filtering. Weather and road-context requests follow the app-wide privacy rules: unavailable or privacy-skipped weather remains unavailable instead of becoming low risk.
 
-Important current behavior: the Advanced Settings toggle controls display of the historical-context subsection. The Dashboard still computes historical context and passes it into `computePreTripRisk()`.
+## Post-Trip Readiness Feedback
 
-Historical context requires:
+The post-trip survey asks readiness-accuracy feedback only when the trip has a captured pre-trip readiness context and is not still bootstrapping. The answer is stored with the local calibration label and can supplement readiness calibration through a synthetic score adjustment:
 
-- at least one completed trip with recorded distance
-- at least one scored completed trip with recorded distance
-
-If not enough history exists, it returns `status: "insufficient_history"` and does not produce a risk score.
-
-The estimate uses the 20 newest completed trips. It computes:
-
-- distance-weighted recent average score
-- driving-event density from eligible trips at least 0.5 km long
-- nearby route-risk cells or repeated-event areas within 2 km
-- weather risk, when supplied
-- time-of-day risk
-
-Historical-context risk weights:
-
-| Component | Weight |
-| --- | ---: |
-| Recent driving baseline | `0.35` |
-| Driving-event density | `0.25` |
-| Repeated-event areas | `0.15` |
-| Weather | `0.15` |
-| Time of day | `0.10` |
-
-Event-density risk saturates at 5 events/km. Repeated-event-area risk saturates at 5 nearby areas.
-
-Risk levels:
-
-| Level | Historical-context risk |
-| --- | ---: |
-| `high` | `>= 65` |
-| `moderate` | `>= 40` |
-| `low` | `< 40` |
-
-Historical context wording uses "estimated historical context" because no planned route is known. It is based on current location and driving history, not a route preview or collision model.
-
-## Repeated-Event Areas
-
-`buildDangerZones()` creates personal repeated-event areas from completed trip events.
-
-Inputs:
-
-- completed trips only
-- `driving_events`
-- default event types: `harsh_brake`, `sharp_turn`, `speeding`
-- default cell size: 80 m
-- minimum events per area: 3
-
-Excluded:
-
-- diagnostic-only events
-- proxy event types: `near_miss`, `close_proximity`, `tailgate_cycle`, `stop_start_pattern`
-- events without finite coordinates
-
-Severity points:
-
-| Severity | Points |
-| --- | ---: |
-| `high` | `3` |
-| `medium` | `2` |
-| `low` | `1` |
-
-Area risk level:
-
-| Severity score | Risk level |
+| Response | Effect |
 | --- | --- |
-| `>= 15` | `critical` |
-| `>= 8` | `high` |
-| `>= 4` | `medium` |
-| `< 4` | `low` |
+| `overestimated` | Treats the pre-trip estimate as too optimistic. |
+| `accurate` | Leaves the paired signal close to the actual trip outcome. |
+| `underestimated` | Treats the pre-trip estimate as too pessimistic. |
 
-For readiness, nearby repeated-event count is converted to signal risk as `count * 35`, clamped to 100. For historical context, nearby count is normalized against the 5-area saturation count and contributes through the historical-context weighted blend.
-
-## Privacy Behavior
-
-Trip readiness avoids using the current location for repeated-event-area context when the current point is inside a privacy zone. Dashboard sets the current location passed to the readiness panel to `null` in that case.
-
-The route-risk index migration also receives privacy zones. The route-risk system stores repeated-route cells as coarse geohashes rather than exact GPS coordinates, filters cells that overlap privacy-zone guards, and rewrites legacy precomputed cells without midpoint coordinates when trips are read or saved.
-
-Weather context and external road-context behavior follow the app-wide privacy rules documented elsewhere: unavailable weather remains unavailable instead of becoming low risk, and private route points are skipped before external context is requested.
+Calibration-label sharing remains opt-in. Shared payloads are summary-only and exclude raw GPS points, addresses, route polylines, personal identifiers, and free-text notes.
 
 ## Tracking Readiness Is Separate
 
-Dashboard also shows a tracking readiness panel. That panel answers "can Road Sage track right now?" rather than "is this a good moment to start?"
+Trip readiness asks, "is this a good moment to start?"
 
-Tracking readiness checks:
+Tracking readiness asks, "can Road Sage track right now?"
 
-- tracking mode is not paused
-- location permission
-- Android Physical Activity permission when relevant
-- background location for Android background-auto mode
-- notification permission for Android background-auto mode
-- unrestricted battery for Android background-auto mode
-- native service armed for Android background-auto mode
-
-Trip readiness uses historical and context signals. Tracking readiness uses setup and permission signals.
-
-## Settings
-
-| Setting key | Default | Effect |
-| --- | ---: | --- |
-| `predictive_route_risk_enabled` | `true` | Shows or hides the historical-context subsection in the readiness card. |
-| `route_risk_disclaimer_seen_count` | `0` | Tracks how many times the full route-risk disclaimer has been shown; after 3 views the UI uses an info tooltip. |
-
-Related settings and learned values:
-
-- `threshold_long_drive_minutes` affects trip-level fatigue scoring, while daily readiness fatigue uses `DAILY_FATIGUE_ONSET_MINUTES` or learned `habitProfile.fatigueOnsetMinutes`.
-- privacy zones affect current-location context and route-risk cells.
-- weather context availability affects readiness only when weather risk is supplied to `computePreTripRisk()`.
-
-## User-Facing Wording
-
-Primary concerns and tips are defined in `src/lib/preTripRisk.js`.
-
-| Signal | Concern | Tip |
-| --- | --- | --- |
-| `timeOfDay` | Higher-risk time of day for you | Drive the first few minutes deliberately and leave extra following room. |
-| `dayOfWeek` | This day of week trends lower for you | Start smooth and treat this route like a fresh baseline. |
-| `recentTrend` | Your scores have been declining recently | Pick one behaviour to protect this trip instead of fixing everything. |
-| `dailyFatigue` | High daily fatigue accumulation | A short break before starting will improve alertness. |
-| `lastTripOutcome` | Low score on your last trip | Ease into this drive and avoid repeating the last trip pattern. |
-| `weather` | Weather may raise trip risk | Leave more space ahead and brake earlier than usual. |
-| `dangerZones` | Your repeated driving-event areas are nearby | Start slowly and watch for the familiar repeated-event area. |
-| `routeForecast` | Historical context estimate looks elevated | Consider the calmer window or start with a wider safety margin. |
-| `recentRest` | Short recovery since your last trip | Pause briefly before driving again, especially after a demanding trip. |
-
-Low-risk recommendation:
-
-```text
-Conditions look steady. Start when your phone is mounted and GPS has a clear signal.
-```
-
-Fallback recommendation:
-
-```text
-Take a short reset before driving, then start when you feel focused.
-```
+Tracking readiness checks permissions, background-location state, notification availability, Android activity-recognition access, battery optimization, tracking pause state, and native service health. Those checks do not make the pre-trip readiness estimate safer or riskier.
 
 ## Limitations
 
-- The readiness score is approximate and product-heuristic driven.
-- Readiness weights are not calibrated to crashes, claims, casualty outcomes, traffic volume, or medical fatigue.
-- Historical context is not a planned-route risk model unless a future route is explicitly supplied.
-- Repeated-event areas reflect the user's recorded event history, not objective road danger.
-- Weather can be unavailable and should not be treated as low risk.
-- Phone distraction, fatigue, heading drift, and incident signals elsewhere in the app remain proxies with separate limitations.
-- The readiness number is hidden until evidence is high because early history can be misleading.
+- Readiness calibration is personal and local; it is not externally validated against crashes, claims, casualty outcomes, traffic volume, or medical fatigue.
+- "Calibrated" means enough local readiness evidence for the app's own estimate path, not scientific validation.
+- Weather, route context, phone-use evidence, motion signals, and fatigue remain proxies with their own limitations.
+- Repeated-event areas reflect the user's recorded events, not objective road danger.
+- A narrow readiness interval means the available signals are internally consistent, not that the future trip outcome is guaranteed.
+- Fitted thresholds optimize against the app's own trip score outcome, not real-world collision or insurance outcomes.
 
 ## Tests
 
-Direct readiness coverage:
+Direct readiness coverage includes:
 
 - `src/lib/__tests__/preTripRisk.test.js`
+- `src/lib/__tests__/readinessCalibration.test.js`
+- `src/lib/__tests__/readinessSignalCorrelation.test.js`
+- `src/lib/__tests__/readinessThresholdFit.test.js`
+- `src/lib/__tests__/habitProfile.test.js`
 - `src/lib/__tests__/dailyFatigueEngine.test.js`
-- `src/lib/__tests__/advancedOpenSourceFeatures.test.js`
+- `src/lib/__tests__/calibrationLabeling.test.js`
 
 Covered behavior includes:
 
-- readiness does not use generic clock-risk fallback when personal core evidence is missing
-- overnight/rush-hour boundaries use shared app constants
-- signal weights sum to 1
-- `readinessScore` is `100 - compositeRisk`
-- missing core signals suppress the score
-- too many fallback signals suppress the score
-- daily fatigue can drive high composite risk
-- historical context risk becomes a readiness signal
-- insufficient historical context is treated as unavailable route evidence
-- recent rest can become the primary concern
-- personalized time buckets and day buckets are used only when sufficient
-- insufficient bucket weight redistribution is normalized
-- daily fatigue excludes invalid timestamps, credits long breaks, caps score at 10, and warns before trips only for high/critical fatigue
-- historical context includes repeated-event areas, clamps weather risk, marks unavailable weather separately, and excludes low-confidence proxy events
+- readiness score is `100 - compositeRisk`
+- bootstrapping uses fatigue/rest only
+- developing and calibrated evidence tiers depend on actual-user signals
+- calibration offsets keep weights normalized
+- non-predictive signals are discounted
+- highly correlated signal pairs are damped and re-normalized
+- fitted thresholds affect risk classification
+- readiness intervals stay ordered and narrow when variance is low
+- adaptive half-life is bounded and only activates with enough history
+- snapshots pair with completed-trip outcomes
+- readiness survey feedback is only requested when a captured context exists
 
 ## Maintenance Checklist
 
 When changing trip readiness:
 
-1. Keep every threshold or weight in `src/lib/scoringConstants.js` unless it is purely local UI copy.
-2. Preserve the evidence gates unless the UI wording and tests are updated together.
-3. Treat unavailable evidence as unavailable, not low risk and not perfect safety.
-4. Keep privacy-zone filtering before current-location repeated-area or route-risk lookups.
-5. Keep low-confidence proxy events out of repeated-event-area and historical-context risk unless their limitations are re-reviewed.
-6. Update `preTripRisk.test.js` for score, gate, or provenance changes.
-7. Update `dailyFatigueEngine.test.js` for fatigue/recovery changes.
-8. Update README and `TECHNICAL_REFERENCE.md` generation when user-facing behavior changes.
+1. Keep thresholds and weights in `src/lib/scoringConstants.js` unless they are purely UI copy.
+2. Update `scripts/generate-technical-reference.mjs` before regenerating `README.md` or `docs/TECHNICAL_REFERENCE.md`.
+3. Keep unavailable evidence unavailable; do not convert missing context into low risk or perfect safety.
+4. Preserve privacy-zone filtering before current-location context lookup.
+5. Update readiness tests when score math, calibration, evidence tiers, or storage keys change.
+6. Re-run `node scripts/generate-technical-reference.mjs` after source or README-template changes.

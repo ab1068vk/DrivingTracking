@@ -79,7 +79,7 @@ export const DEFAULT_MAINTENANCE_ITEMS = [
 ];
 
 const DAY_MS = 86400000;
-const PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS = scoringValue('SIGNAL_DECAY_HALF_LIFE_DAYS') ?? 21;
+const PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS = scoringValue('SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS') ?? scoringValue('SIGNAL_DECAY_HALF_LIFE_DAYS') ?? 21;
 
 const distanceWeightedScore = (trips = [], field = 'score_overall') => {
   const scored = trips
@@ -110,11 +110,11 @@ const ageDaysForTrip = (trip, now = new Date()) => {
   return (nowMs - tripMs) / DAY_MS;
 };
 
-const temporallyWeightedScore = (trips = [], now = new Date(), field = 'score_overall') => {
+const temporallyWeightedScore = (trips = [], now = new Date(), field = 'score_overall', halfLifeDays = PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS) => {
   const weighted = trips
     .map((trip) => ({
       score: Number(trip?.[field]),
-      weight: decayWeight(ageDaysForTrip(trip, now), PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS),
+      weight: decayWeight(ageDaysForTrip(trip, now), halfLifeDays),
     }))
     .filter((item) => Number.isFinite(item.score) && item.weight > 0);
   const weightSum = weighted.reduce((sum, item) => sum + item.weight, 0);
@@ -800,7 +800,7 @@ export function calculateNoHarshBrakeStreak(trips = []) {
   return streak;
 }
 
-export function analyzeTimeOfDay(trips = [], now = new Date()) {
+export function analyzeTimeOfDay(trips = [], now = new Date(), halfLifeDays = PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS) {
   const buckets = [
     { id: 'morning', label: 'Morning', range: '5a-12p', from: 5, to: 12 },
     { id: 'afternoon', label: 'Afternoon', range: '12p-5p', from: 12, to: 17 },
@@ -815,7 +815,7 @@ export function analyzeTimeOfDay(trips = [], now = new Date()) {
       const normalized = hour < NIGHT_END_HOUR ? hour + 24 : hour;
       return normalized >= bucket.from && normalized < bucket.to;
     });
-    const weightedScore = temporallyWeightedScore(bucketTrips, now);
+    const weightedScore = temporallyWeightedScore(bucketTrips, now, 'score_overall', halfLifeDays);
     const events = bucketTrips.reduce((sum, trip) => (
       sum +
       (trip.harsh_brakes_count || 0) +
@@ -832,11 +832,11 @@ export function analyzeTimeOfDay(trips = [], now = new Date()) {
   });
 }
 
-export function analyzeDayOfWeek(trips = [], now = new Date()) {
+export function analyzeDayOfWeek(trips = [], now = new Date(), halfLifeDays = PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS) {
   const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return labels.map((label, index) => {
     const dayTrips = trips.filter((trip) => trip.status === 'completed' && new Date(trip.start_time).getDay() === index);
-    const weightedScore = temporallyWeightedScore(dayTrips, now);
+    const weightedScore = temporallyWeightedScore(dayTrips, now, 'score_overall', halfLifeDays);
     const events = dayTrips.reduce((sum, trip) => (
       sum +
       (trip.harsh_brakes_count || 0) +

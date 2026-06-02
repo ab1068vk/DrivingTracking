@@ -31,6 +31,19 @@ import {
 } from '@/lib/phoneUsageAccess';
 import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } from '@/lib/mapPlaybackInsights';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
+import { logError } from '@/lib/errorReporting';
+import {
+  CALIBRATION_STORAGE_KEY,
+  updateCalibration,
+} from '@/lib/readinessCalibration';
+import {
+  pairOutcome,
+  READINESS_HISTORY_KEY,
+} from '@/lib/calibration/readinessSignalCorrelation';
+import {
+  computeAndStoreReadinessThresholdFit,
+  THRESHOLD_FIT_KEY,
+} from '@/lib/calibration/readinessThresholdFit';
 import {
   DB_NAME,
   DB_NAME_META_KEY,
@@ -834,19 +847,21 @@ const importNativeCompletedTrips = async () => {
       }, privacyZones);
 
       await putTrip(importedTrip);
-      await mergeCompletedTripRouteRisk(importedTrip);
+      const calibratedImportedTrip = await maybeUpdateReadinessCalibration(importedTrip);
+      if (calibratedImportedTrip !== importedTrip) await putTrip(calibratedImportedTrip);
+      await mergeCompletedTripRouteRisk(calibratedImportedTrip);
 
       const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
-      const endedStopped = importedTrip.parking_stop_detected ||
-        Number(importedTrip.parking_stop_duration_seconds || 0) > 0 ||
+      const endedStopped = calibratedImportedTrip.parking_stop_detected ||
+        Number(calibratedImportedTrip.parking_stop_duration_seconds || 0) > 0 ||
         Number(finalPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? 5);
       if (finalPoint && endedStopped) {
         await saveLastParkedLocation({
           lat: finalPoint.lat,
           lng: finalPoint.lng,
-          timestamp: importedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
-          tripId: importedTrip.id,
-          source: importedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_stopped_trip_end',
+          timestamp: calibratedImportedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
+          tripId: calibratedImportedTrip.id,
+          source: calibratedImportedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_stopped_trip_end',
         });
         // Native background trips update the shared parked location only when they ended stopped.
       }
@@ -893,6 +908,9 @@ const deleteAllTripsFromStorage = async () => {
   await Promise.all([
     removeJson(TRIPS_KEY),
     removeJson(DRIVER_SIGNATURE_KEY),
+    removeJson(CALIBRATION_STORAGE_KEY),
+    removeJson(READINESS_HISTORY_KEY),
+    removeJson(THRESHOLD_FIT_KEY),
     removeJson(TRIP_EVENT_MIGRATION_KEY),
     removeJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY),
     clearNativeCompletedTrips().catch(() => {}),
@@ -941,6 +959,75 @@ const withId = (trip) => ({
   }),
 });
 
+const maybeUpdateReadinessCalibration = async (trip) => {
+  if (
+    trip?.status !== 'completed' ||
+    trip.score_overall == null
+  ) {
+    return trip;
+  }
+
+  let updated = trip;
+
+  try {
+    if (
+      updated.pre_trip_readiness_context &&
+      updated.readiness_calibration_update?.storageKey !== CALIBRATION_STORAGE_KEY
+    ) {
+      const state = await updateCalibration(updated.pre_trip_readiness_context, updated.score_overall);
+      if (state) {
+        updated = {
+          ...updated,
+          readiness_calibration_update: {
+            storageKey: CALIBRATION_STORAGE_KEY,
+            version: state.version,
+            tripCount: state.tripCount,
+            updatedAt: state.updatedAt,
+          },
+        };
+      }
+    }
+  } catch (err) {
+    logError('readiness_calibration_update', err, { tripId: trip.id });
+  }
+
+  const signalRecordId = updated.readiness_signal_record_id ||
+    updated.pre_trip_readiness_context?.signalHistoryRecordId;
+  if (signalRecordId && updated.readiness_signal_outcome_paired?.storageKey !== READINESS_HISTORY_KEY) {
+    try {
+      const paired = await pairOutcome(signalRecordId, updated.score_overall);
+      if (paired) {
+        const thresholdFit = await computeAndStoreReadinessThresholdFit().catch((err) => {
+          logError('readiness_threshold_fit', err, { tripId: trip.id });
+          return null;
+        });
+        updated = {
+          ...updated,
+          readiness_signal_outcome_paired: {
+            storageKey: READINESS_HISTORY_KEY,
+            recordId: signalRecordId,
+            pairedAt: new Date().toISOString(),
+          },
+          ...(thresholdFit ? {
+            readiness_threshold_fit: {
+              storageKey: THRESHOLD_FIT_KEY,
+              highRiskFloor: thresholdFit.highRiskFloor,
+              moderateRiskFloor: thresholdFit.moderateRiskFloor,
+              f1: thresholdFit.f1,
+              n: thresholdFit.n,
+              fittedAt: thresholdFit.fittedAt,
+            },
+          } : {}),
+        };
+      }
+    } catch (err) {
+      logError('readiness_signal_outcome_pair', err, { tripId: trip.id });
+    }
+  }
+
+  return updated;
+};
+
 export const localTripRepository = {
   async list({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
@@ -979,8 +1066,13 @@ export const localTripRepository = {
         ephemeral_trip: true,
       };
     }
-    const saved = withRouteRiskCells(withId({ ...trip, created_at: new Date().toISOString() }));
+    let saved = withRouteRiskCells(withId({ ...trip, created_at: new Date().toISOString() }));
     await putTrip(saved);
+    const calibratedSaved = await maybeUpdateReadinessCalibration(saved);
+    if (calibratedSaved !== saved) {
+      saved = calibratedSaved;
+      await putTrip(saved);
+    }
     if (saved.status === 'completed') {
       await invalidateDangerZoneCache();
       await mergeCompletedTripRouteRisk(saved);
@@ -992,8 +1084,13 @@ export const localTripRepository = {
   async update(id, patch) {
     if (isEphemeralModeActive()) return { id, ...patch, ephemeral_trip: true };
     const current = await this.getById(id);
-    const updated = withRouteRiskCells(withId({ ...current, ...patch, id: current.id }));
+    let updated = withRouteRiskCells(withId({ ...current, ...patch, id: current.id }));
     await putTrip(updated);
+    const calibratedUpdated = await maybeUpdateReadinessCalibration(updated);
+    if (calibratedUpdated !== updated) {
+      updated = calibratedUpdated;
+      await putTrip(updated);
+    }
     if (updated.status === 'completed') await invalidateTripDerivedCaches();
     return updated;
   },
@@ -1026,13 +1123,16 @@ export const localTripRepository = {
       return withRouteRiskCells(needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next);
     });
     await putTrips(normalized);
-    const completed = normalized.filter((trip) => trip.status === 'completed');
+    const calibrated = await Promise.all(normalized.map(maybeUpdateReadinessCalibration));
+    const changedCalibrationTrips = calibrated.filter((trip, index) => trip !== normalized[index]);
+    if (changedCalibrationTrips.length) await putTrips(changedCalibrationTrips);
+    const completed = calibrated.filter((trip) => trip.status === 'completed');
     if (completed.length) {
       await invalidateDangerZoneCache();
       for (const trip of completed) await mergeCompletedTripRouteRisk(trip);
     }
     await pruneExpiredTrips();
-    return normalized;
+    return calibrated;
   },
 
   async markCompletedForRescore({ onlyProvenanceMismatch = false } = {}) {

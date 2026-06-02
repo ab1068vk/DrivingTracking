@@ -3,7 +3,9 @@ import {
   addLaplaceNoise,
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
+  readinessSurveySyntheticScore,
   shouldAskFatigueSelfReport,
+  shouldAskReadinessSurvey,
   getCalibrationMilestone,
   getCompletionRate,
   getNextCalibrationMilestone,
@@ -55,6 +57,17 @@ const fatigueEligibleTrip = {
   duration_seconds: 60 * 60,
   end_time: '2026-01-01T22:15:00',
 };
+
+const makeReadinessTrip = (overrides = {}) => ({
+  ...completedTrip,
+  duration_seconds: 600,
+  pre_trip_readiness_context: {
+    signalHistoryRecordId: 'rs_abc',
+    evidenceTier: 'calibrated',
+  },
+  readiness_signal_record_id: 'rs_abc',
+  ...overrides,
+});
 
 const ratingForBucket = {
   careful: 5,
@@ -236,6 +249,54 @@ describe('calibration labeling pipeline', () => {
 
     expect(eligiblePayload.surveyLabel.fatigue_self_report).toBe('very_tired');
     expect(ordinaryPayload.surveyLabel.fatigue_self_report).toBeNull();
+  });
+
+  it('shouldAskReadinessSurvey returns false for bootstrapping tier', () => {
+    const trip = makeReadinessTrip();
+    const ctx = { recordId: 'rs_abc', evidenceTier: 'bootstrapping' };
+
+    expect(shouldAskReadinessSurvey(trip, ctx)).toBe(false);
+  });
+
+  it('shouldAskReadinessSurvey returns true for calibrated trips with a recordId', () => {
+    const trip = makeReadinessTrip();
+    const ctx = { recordId: 'rs_abc', evidenceTier: 'calibrated' };
+
+    expect(shouldAskReadinessSurvey(trip, ctx)).toBe(true);
+  });
+
+  it('shouldAskReadinessSurvey returns false when already answered', () => {
+    const trip = makeReadinessTrip({ readiness_survey_answered: true });
+    const ctx = { recordId: 'rs_abc', evidenceTier: 'calibrated' };
+
+    expect(shouldAskReadinessSurvey(trip, ctx)).toBe(false);
+  });
+
+  it('stores readiness survey feedback only when the trip is eligible', () => {
+    const eligible = buildCalibrationLabelPayload(makeReadinessTrip(), {
+      overallDriveRating: 4,
+      wasDriver: 'yes',
+      readiness_accuracy: 'overestimated_risk',
+    });
+    const ineligible = buildCalibrationLabelPayload({
+      ...makeReadinessTrip(),
+      pre_trip_readiness_context: { signalHistoryRecordId: 'rs_abc', evidenceTier: 'bootstrapping' },
+    }, {
+      overallDriveRating: 4,
+      wasDriver: 'yes',
+      readiness_accuracy: 'overestimated_risk',
+    });
+
+    expect(eligible.surveyLabel.readiness_accuracy).toBe('overestimated_risk');
+    expect(ineligible.surveyLabel.readiness_accuracy).toBeNull();
+  });
+
+  it('maps readiness survey feedback to synthetic calibration scores', () => {
+    const trip = makeReadinessTrip({ score_overall: 80 });
+    expect(readinessSurveySyntheticScore('underestimated_risk', {}, trip)).toBe(65);
+    expect(readinessSurveySyntheticScore('accurate', {}, trip)).toBe(80);
+    expect(readinessSurveySyntheticScore('overestimated_risk', {}, trip)).toBe(95);
+    expect(readinessSurveySyntheticScore('no_estimate', {}, trip)).toBeNull();
   });
 
   it('marks passenger and low-quality trips as ineligible', () => {

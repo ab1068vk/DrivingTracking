@@ -70,6 +70,34 @@ describe('scoring constants registry', () => {
     expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_TREND_MIN_BASELINE_TRIPS).toBe(PERSONAL_BASELINE_MIN_TRIPS);
     expect(scoringValue('SIGNAL_DECAY_HALF_LIFE_DAYS')).toBe(21);
     expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_HALF_LIFE_DAYS).toBe(21);
+    expect(scoringValue('SIGNAL_DECAY_MIN_HALF_LIFE_DAYS')).toBe(7);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_MIN_HALF_LIFE_DAYS).toBe(7);
+    expect(scoringValue('SIGNAL_DECAY_MAX_HALF_LIFE_DAYS')).toBe(60);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_MAX_HALF_LIFE_DAYS).toBe(60);
+    expect(scoringValue('SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS')).toBe(21);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS).toBe(21);
+    expect(scoringValue('SIGNAL_DECAY_AUTOCORR_THRESHOLD')).toBe(0.5);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_AUTOCORR_THRESHOLD).toBe(0.5);
+    expect(scoringValue('SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR')).toBe(20);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR).toBe(20);
+    expect(scoringValue('VIF_CORRELATION_FLOOR')).toBe(0.65);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').VIF_CORRELATION_FLOOR).toBe(0.65);
+    expect(scoringValue('VIF_DAMP_FACTOR')).toBe(0.7);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').VIF_DAMP_FACTOR).toBe(0.7);
+    [
+      ['FALLBACK_VARIANCE_TIME', 64],
+      ['FALLBACK_VARIANCE_DAY', 64],
+      ['FALLBACK_VARIANCE_TREND', 81],
+      ['FALLBACK_VARIANCE_FATIGUE', 36],
+      ['FALLBACK_VARIANCE_LAST_TRIP', 100],
+      ['FALLBACK_VARIANCE_WEATHER', 25],
+      ['FALLBACK_VARIANCE_DANGER', 81],
+      ['FALLBACK_VARIANCE_ROUTE', 64],
+      ['FALLBACK_VARIANCE_REST', 36],
+    ].forEach(([key, value]) => {
+      expect(scoringValue(key)).toBe(value);
+      expect(scoringValue('PRE_TRIP_READINESS_POLICY')[key]).toBe(value);
+    });
     expect(scoringValue('PRE_TRIP_REST_DEFAULT_BREAK_MINUTES')).toBe(30);
     expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_REST_DEFAULT_BREAK_MINUTES).toBe(30);
     expect(scoringValue('PRE_TRIP_REST_MIN_THRESHOLD_MINUTES')).toBe(10);

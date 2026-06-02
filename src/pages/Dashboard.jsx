@@ -99,6 +99,13 @@ import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } 
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
 import { computePreTripRisk } from '@/lib/preTripRisk';
+import { calibrationSnapshot, loadCalibrationState } from '@/lib/readinessCalibration';
+import {
+  computeSignalCorrelations,
+  computePairwiseSignalCorrelation,
+  recordReadinessSnapshot,
+} from '@/lib/calibration/readinessSignalCorrelation';
+import { loadReadinessThresholdFit } from '@/lib/calibration/readinessThresholdFit';
 import { buildRouteRiskCellsForTrip } from '@/lib/routeRiskIndex';
 import {
   buildDashboardTrackingExplanation,
@@ -194,6 +201,10 @@ export default function Dashboard() {
   const [rescoreBannerBusy, setRescoreBannerBusy] = useState(false);
   const [ephemeralModeState, setEphemeralModeState] = useState(() => getEphemeralTripModeState());
   const [ephemeralTripResult, setEphemeralTripResult] = useState(null);
+  const [readinessCalibrationState, setReadinessCalibrationState] = useState(null);
+  const [readinessSignalCorrelations, setReadinessSignalCorrelations] = useState({});
+  const [readinessPairwiseSignalCorrelations, setReadinessPairwiseSignalCorrelations] = useState({});
+  const [readinessThresholdFit, setReadinessThresholdFit] = useState(null);
   const [trackingStatusContext, setTrackingStatusContext] = useState({
     permissionStatus: null,
     nativeStatus: null,
@@ -332,6 +343,33 @@ export default function Dashboard() {
   const todayTrips = getTodayTrips(completedTrips);
   const dailyFatigue = computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
   const { routeRiskIndex, routeRiskIndexBuildStatus } = useRouteRiskIndexMigration(completedTrips, privacyZones);
+  const readinessCalibration = useMemo(
+    () => calibrationSnapshot(readinessCalibrationState),
+    [readinessCalibrationState]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      loadCalibrationState(),
+      computeSignalCorrelations(),
+      computePairwiseSignalCorrelation(),
+      loadReadinessThresholdFit(),
+    ])
+      .then(([state, correlations, pairwiseCorrelations, thresholdFit]) => {
+        if (cancelled) return;
+        setReadinessCalibrationState(state);
+        setReadinessSignalCorrelations(correlations);
+        setReadinessPairwiseSignalCorrelations(pairwiseCorrelations);
+        setReadinessThresholdFit(thresholdFit);
+      })
+      .catch((err) => {
+        logError('readiness_calibration_context_load', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [completedTrips[0]?.id]);
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch((err) => {
@@ -774,6 +812,51 @@ export default function Dashboard() {
     );
   }, [discardCandidateTrip, handleLocationTrackingError, promoteCandidateTrip]);
 
+  const buildPreTripReadinessContext = useCallback((capturedAt = new Date()) => {
+    const predictiveRouteRisk = estimatePredictiveRouteRisk({
+      trips: completedTrips,
+      dangerZones,
+      weatherRiskScore: null,
+      currentLocation: dangerZoneCurrentLocation,
+      habitProfile,
+      routeRiskIndex,
+    });
+    const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue, {
+      nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
+      predictiveRouteRisk,
+      now: capturedAt,
+      fittedThresholds: readinessThresholdFit,
+    }, habitProfile, readinessCalibration.offsets, readinessSignalCorrelations, readinessPairwiseSignalCorrelations);
+
+    return {
+      readinessScore: preTripRisk.readinessScore,
+      compositeRisk: preTripRisk.compositeRisk,
+      bootstrapReadinessScore: preTripRisk.bootstrapReadinessScore,
+      bootstrapRisk: preTripRisk.bootstrapRisk,
+      signals: preTripRisk.signals,
+      weights: preTripRisk.weights,
+      evidenceTier: preTripRisk.evidenceTier,
+      dataQuality: preTripRisk.dataQuality,
+      calibration: readinessCalibration,
+      signalCorrelations: readinessSignalCorrelations,
+      pairwiseSignalCorrelations: readinessPairwiseSignalCorrelations,
+      fittedThresholds: readinessThresholdFit,
+      capturedAt: capturedAt.toISOString(),
+    };
+  }, [
+    completedTrips,
+    dangerZones,
+    dangerZoneCurrentLocation,
+    dailyFatigue,
+    habitProfile,
+    readinessCalibration,
+    readinessPairwiseSignalCorrelations,
+    readinessSignalCorrelations,
+    readinessThresholdFit,
+    routeRiskIndex,
+    settings,
+  ]);
+
   const handleStartTrip = useCallback(async ({
     autoStarted = false,
     bypassFatigueWarning = false,
@@ -862,6 +945,21 @@ export default function Dashboard() {
     }
 
     const startTime = initialPoint?.timestamp || new Date().toISOString();
+    const startDate = new Date(startTime);
+    const preTripReadinessContext = buildPreTripReadinessContext(
+      Number.isFinite(startDate.getTime()) ? startDate : new Date()
+    );
+    const readinessSignalRecordId = await recordReadinessSnapshot(
+      preTripReadinessContext.signals,
+      preTripReadinessContext.compositeRisk ?? preTripReadinessContext.bootstrapRisk,
+      preTripReadinessContext.weights
+    ).catch((err) => {
+      logError('readiness_signal_snapshot_record', err);
+      return null;
+    });
+    if (readinessSignalRecordId) {
+      preTripReadinessContext.signalHistoryRecordId = readinessSignalRecordId;
+    }
     const phoneUsageAccessStatus = isAndroid()
       ? await getAndroidUsageAccessStatus().catch(() => null)
       : null;
@@ -882,6 +980,8 @@ export default function Dashboard() {
       candidate_trigger_reason: triggerReason,
       native_phone_usage_access_granted: phoneUsageAccessGrantedAtStart,
       native_phone_usage_access_checked_at: phoneUsageAccessStatus ? new Date().toISOString() : null,
+      pre_trip_readiness_context: preTripReadinessContext,
+      readiness_signal_record_id: readinessSignalRecordId,
     };
 
     activeTripStore.set(tripData);
@@ -939,7 +1039,7 @@ export default function Dashboard() {
       });
       scheduleLongTripReminder(tripData.start_time);
     }
-  }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
+  }, [buildPreTripReadinessContext, dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
 
   const acknowledgeEmergencyWorkflow = (action = 'ok') => {
     const current = activeTripRef.current || activeTrip;
@@ -1240,6 +1340,10 @@ export default function Dashboard() {
       route_points_raw_count: rawPoints.length,
       route_points_map_count: pts.length,
       ...scores,
+      score_provenance: {
+        ...scores.score_provenance,
+        readiness_calibration: tripToEnd.pre_trip_readiness_context?.calibration ?? null,
+      },
       driving_events: tripEvents,
       speed_limit_context: {
         provider: 'openstreetmap_overpass',
@@ -1290,6 +1394,7 @@ export default function Dashboard() {
       data_quality_flags: dataQualityFlags,
       score_confidence_flag: scoreConfidenceFlag,
       tracking_timeline: Array.isArray(tripToEnd.timeline) ? tripToEnd.timeline : [],
+      pre_trip_readiness_context: tripToEnd.pre_trip_readiness_context ?? null,
     };
     const completedTrip = {
       ...completedTripDraft,
@@ -2200,6 +2305,10 @@ export default function Dashboard() {
             habitProfile={habitProfile}
             onDismiss={() => setReadinessDismissed(true)}
             routeRiskIndex={routeRiskIndex}
+            calibrationOffsets={readinessCalibration.offsets}
+            signalCorrelations={readinessSignalCorrelations}
+            pairwiseSignalCorrelations={readinessPairwiseSignalCorrelations}
+            fittedThresholds={readinessThresholdFit}
             settings={settings}
           />
         </SectionErrorBoundary>
@@ -2475,13 +2584,17 @@ export default function Dashboard() {
 }
 
 function DashboardRiskPanel({
+  calibrationOffsets,
   completedTrips,
   currentLocation,
   dailyFatigue,
   dangerZones,
+  fittedThresholds,
   habitProfile,
   onDismiss,
+  pairwiseSignalCorrelations,
   routeRiskIndex,
+  signalCorrelations,
   settings,
 }) {
   const initialRouteRiskDisclaimerSeenCount = useRef(Math.max(0, Number(settings.route_risk_disclaimer_seen_count) || 0));
@@ -2506,7 +2619,8 @@ function DashboardRiskPanel({
   const preTripRisk = useMemo(() => computePreTripRisk(completedTrips, settings, dailyFatigue, {
     nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
     predictiveRouteRisk,
-  }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
+    fittedThresholds,
+  }, habitProfile, calibrationOffsets, signalCorrelations, pairwiseSignalCorrelations), [calibrationOffsets, completedTrips, dailyFatigue, fittedThresholds, habitProfile, pairwiseSignalCorrelations, predictiveRouteRisk, settings, signalCorrelations]);
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
   const evidenceTier = preTripRisk.evidenceTier || preTripRisk.dataQuality?.evidenceTier || 'bootstrapping';
   const displayReadinessScore = evidenceTier === 'bootstrapping'
@@ -2528,6 +2642,11 @@ function DashboardRiskPanel({
     ? Math.round(Number(preTripRisk.readinessScore))
     : null;
   const tripsUntilTrendBaseline = Math.max(0, SCORE_BASELINE_TRIP_TARGET - completedTrips.length);
+  const showReadinessRange = Boolean(preTripRisk.readinessInterval) &&
+    (evidenceTier !== 'calibrated' || Number(preTripRisk.compositeStdDev ?? 0) >= 10);
+  const readinessDisplayText = showReadinessRange
+    ? `${formatEstimatedScore(preTripRisk.readinessInterval.low)}-${formatEstimatedScore(preTripRisk.readinessInterval.high)}/100`
+    : `${formatEstimatedScore(preTripRisk.readinessScore)}/100`;
   const readinessSummary = evidenceTier === 'bootstrapping'
     ? displayReadinessScore == null
       ? 'Early estimate unavailable'
@@ -2535,8 +2654,8 @@ function DashboardRiskPanel({
     : preTripRisk.readinessScore == null
     ? 'Not enough data yet'
     : evidenceTier === 'calibrated'
-      ? `Estimated ${formatEstimatedScore(preTripRisk.readinessScore)}/100 - ${preTripRisk.riskLevel} risk`
-      : `Developing estimate ${formatEstimatedScore(preTripRisk.readinessScore)}/100 - ${preTripRisk.riskLevel} risk`;
+      ? `Estimated ${readinessDisplayText} - ${preTripRisk.riskLevel} risk`
+      : `Developing estimate ${readinessDisplayText} - ${preTripRisk.riskLevel} risk`;
 
   return (
     <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">

@@ -29,6 +29,26 @@ export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'to
 export const WAS_DRIVER_OPTIONS = Object.freeze(['yes', 'no', 'unsure']);
 export const FATIGUE_SELF_REPORT_QUESTION = 'How alert did you feel during this drive?';
 export const FATIGUE_SELF_REPORT_OPTIONS = Object.freeze(['alert', 'normal', 'tired', 'very_tired']);
+export const READINESS_SURVEY_QUESTION = Object.freeze({
+  key: 'readiness_accuracy',
+  prompt: 'Was your pre-trip readiness estimate accurate?',
+});
+export const READINESS_ACCURACY_OPTIONS = Object.freeze([
+  { value: 'underestimated_risk', label: 'I felt less ready than it showed' },
+  { value: 'accurate', label: 'It matched how I felt' },
+  { value: 'overestimated_risk', label: 'I felt more ready than it showed' },
+  { value: 'no_estimate', label: 'No estimate was shown' },
+]);
+export const READINESS_CALIBRATION_MILESTONES = Object.freeze([
+  { count: 10, message: 'Readiness model is learning your patterns' },
+  { count: 25, message: 'Readiness weights partially calibrated' },
+  { count: 50, message: 'Readiness model fully calibrated' },
+]);
+export const READINESS_SURVEY_SCORE_OFFSET = Object.freeze({
+  underestimated_risk: -15,
+  accurate: 0,
+  overestimated_risk: 15,
+});
 export const TRIP_CONTEXT_TAG_OPTIONS = Object.freeze([
   'traffic',
   'weather',
@@ -202,6 +222,14 @@ function normalizeFatigueSelfReport(value) {
   return value;
 }
 
+function normalizeReadinessAccuracy(value) {
+  if (value == null || value === '') return null;
+  if (!READINESS_ACCURACY_OPTIONS.some((option) => option.value === value)) {
+    throw new Error(`readiness_accuracy must be one of: ${READINESS_ACCURACY_OPTIONS.map((option) => option.value).join(', ')}.`);
+  }
+  return value;
+}
+
 function tripEndTimeMs(trip = {}) {
   const value = trip.end_time ?? trip.endTime ?? trip.completed_at ?? trip.completedAt;
   const time = value ? new Date(value).getTime() : NaN;
@@ -221,6 +249,26 @@ export function shouldAskFatigueSelfReport(trip = {}) {
   return durationMin > 45 && hour != null && (hour >= 20 || hour < 8);
 }
 
+export function shouldAskReadinessSurvey(trip = {}, readinessContext = trip?.pre_trip_readiness_context) {
+  if (trip?.status !== 'completed') return false;
+  const durationMin = Math.max(0, numberOrNull(trip.duration_seconds) || 0) / 60;
+  if (durationMin < 5) return false;
+  const recordId = readinessContext?.recordId ??
+    readinessContext?.signalHistoryRecordId ??
+    trip?.readiness_signal_record_id;
+  if (!recordId) return false;
+  if (readinessContext?.evidenceTier === 'bootstrapping') return false;
+  if (trip.readiness_survey_answered === true) return false;
+  return true;
+}
+
+export function readinessSurveySyntheticScore(responseValue, readinessContext = {}, trip = {}) {
+  const response = normalizeReadinessAccuracy(responseValue);
+  if (!response || response === 'no_estimate') return null;
+  const baseScore = numberOrNull(readinessContext.actualScore ?? trip.score_overall ?? trip.overall_score ?? 72) ?? 72;
+  return Math.max(0, Math.min(100, baseScore + (READINESS_SURVEY_SCORE_OFFSET[response] ?? 0)));
+}
+
 function normalizeSurveyLabel(input = {}) {
   const source = typeof input === 'number' ? { overallDriveRating: input } : input || {};
   const overallDriveRating = normalizeRating(source.overallDriveRating ?? source.rating);
@@ -228,6 +276,7 @@ function normalizeSurveyLabel(input = {}) {
   const wasDriver = source.wasDriver || 'unsure';
   const tripDifficulty = normalizeRating(source.tripDifficulty, { optional: true });
   const fatigueSelfReport = normalizeFatigueSelfReport(source.fatigue_self_report ?? source.fatigueSelfReport);
+  const readinessAccuracy = normalizeReadinessAccuracy(source.readiness_accuracy ?? source.readinessAccuracy);
 
   if (scoreAccuracy != null && !SCORE_ACCURACY_OPTIONS.includes(scoreAccuracy)) {
     throw new Error(`scoreAccuracy must be one of: ${SCORE_ACCURACY_OPTIONS.join(', ')}.`);
@@ -250,6 +299,7 @@ function normalizeSurveyLabel(input = {}) {
     tripDifficulty,
     contextTags,
     fatigue_self_report: fatigueSelfReport,
+    readiness_accuracy: readinessAccuracy,
   };
 }
 
@@ -431,9 +481,12 @@ export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {
   const surveyLabel = shouldAskFatigueSelfReport(trip)
     ? normalizedSurveyLabel
     : { ...normalizedSurveyLabel, fatigue_self_report: null };
+  const surveyLabelWithReadiness = shouldAskReadinessSurvey(trip, trip.pre_trip_readiness_context)
+    ? surveyLabel
+    : { ...surveyLabel, readiness_accuracy: null };
   const tripFeatureSummary = buildTripFeatureSummary(trip);
   const scoreOutput = buildScoreOutputSummary(trip);
-  const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabel, tripFeatureSummary);
+  const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabelWithReadiness, tripFeatureSummary);
   const scoringVersion = trip.score_provenance?.scoring_version || SCORING_VERSION;
   const labelId = options.labelId || `label_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
@@ -445,7 +498,7 @@ export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {
     createdAt: noisyRoundedCreatedAt(trip, options),
     tripFeatureSummary,
     scoreOutput,
-    surveyLabel,
+    surveyLabel: surveyLabelWithReadiness,
     dataQualityFlags,
     eligibleForCalibration: isCalibrationEligible(dataQualityFlags),
   };

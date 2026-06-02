@@ -58,7 +58,7 @@ const profile = (patch = {}) => ({
   },
   dayOfWeek: Object.fromEntries(Array.from({ length: 7 }, (_, day) => [
     day,
-    { avgScore: 80, riskScore: 20, tripCount: 2, insufficient: false },
+    { avgScore: 80, riskScore: 20, tripCount: 2, stdDev: 0, insufficient: false },
   ])),
   hourlyRisk: {},
   recentAvgScore: 80,
@@ -109,9 +109,97 @@ describe('preTripRisk', () => {
     expect(total).toBeCloseTo(1, 5);
   });
 
+  it('applies calibration offsets and keeps weights normalized', () => {
+    const weights = deriveWeights(null, new Date(2026, 0, 10, 12), {
+      timeOfDay: -0.05,
+      dailyFatigue: 0.05,
+    });
+    const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
+
+    expect(total).toBeCloseTo(1, 5);
+    expect(weights.timeOfDay).toBeLessThan(PRE_TRIP_RISK_WEIGHTS.timeOfDay);
+    expect(weights.dailyFatigue).toBeGreaterThan(PRE_TRIP_RISK_WEIGHTS.dailyFatigue);
+  });
+
+  it('returns the calibrated weights used for the readiness result', () => {
+    const state = computePreTripRisk(
+      Array.from({ length: 6 }, (_, i) => trip(90, i)),
+      {},
+      { fatigueLevel: 'high' },
+      { now: new Date(2026, 0, 10, 12) },
+      profile(),
+      { dailyFatigue: 0.05 }
+    );
+
+    expect(state.weights.dailyFatigue).toBeGreaterThan(PRE_TRIP_RISK_WEIGHTS.dailyFatigue);
+  });
+
   it('readinessScore is 100 minus compositeRisk', () => {
     const state = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 12) }, profile());
     expect(state.readinessScore).toBe(100 - state.compositeRisk);
+  });
+
+  it('uses fitted thresholds from context for risk level classification', () => {
+    const baseline = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 12) }, profile());
+    const fitted = computePreTripRisk(
+      [],
+      {},
+      { fatigueLevel: 'low' },
+      {
+        now: new Date(2026, 0, 10, 12),
+        fittedThresholds: {
+          highRiskFloor: 10,
+          moderateRiskFloor: 5,
+        },
+      },
+      profile()
+    );
+
+    expect(baseline.compositeRisk).toBeGreaterThanOrEqual(10);
+    expect(baseline.riskLevel).not.toBe('high');
+    expect(fitted.riskLevel).toBe('high');
+    expect(fitted.dataQuality.effectiveRiskFloors).toEqual({ high: 10, moderate: 5 });
+  });
+
+  it('compositeStdDev is null when compositeRisk is null', () => {
+    const result = computePreTripRisk([], {}, null, { now: new Date(2026, 0, 10, 12) });
+
+    expect(result.compositeRisk).toBeNull();
+    expect(result.compositeStdDev).toBeNull();
+    expect(result.readinessInterval).toBeNull();
+  });
+
+  it('readinessInterval.low is always less than or equal to readinessInterval.high', () => {
+    const result = computePreTripRisk(
+      Array.from({ length: 8 }, (_, index) => trip(82 - index, index)),
+      {},
+      { fatigueLevel: 'moderate' },
+      { now: new Date(2026, 0, 10, 12) },
+      profile()
+    );
+
+    expect(result.readinessInterval.low).toBeLessThanOrEqual(result.readinessInterval.high);
+  });
+
+  it('readiness interval is narrower when bucket variance is low', () => {
+    const morningProfile = (stdDev) => profile({
+      timeBuckets: {
+        ...profile().timeBuckets,
+        Morning: { avgScore: 80, riskScore: 20, tripCount: 5, stdDev, insufficient: false },
+      },
+      dayOfWeek: Object.fromEntries(Array.from({ length: 7 }, (_, day) => [
+        day,
+        { avgScore: 80, riskScore: 20, tripCount: 5, stdDev, insufficient: false },
+      ])),
+    });
+    const trips = Array.from({ length: 8 }, (_, index) => trip(82 - index, index));
+    const context = { now: new Date(2026, 0, 10, 8) };
+    const stable = computePreTripRisk(trips, {}, { fatigueLevel: 'moderate' }, context, morningProfile(2));
+    const noisy = computePreTripRisk(trips, {}, { fatigueLevel: 'moderate' }, context, morningProfile(20));
+    const stableWidth = stable.readinessInterval.high - stable.readinessInterval.low;
+    const noisyWidth = noisy.readinessInterval.high - noisy.readinessInterval.low;
+
+    expect(stableWidth).toBeLessThan(noisyWidth);
   });
 
   it('suppresses readiness score when core personal signals are unavailable', () => {

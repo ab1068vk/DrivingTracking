@@ -5,6 +5,8 @@ import {
   CALIBRATION_LABEL_TARGET_COUNT,
   FATIGUE_SELF_REPORT_OPTIONS,
   FATIGUE_SELF_REPORT_QUESTION,
+  READINESS_ACCURACY_OPTIONS,
+  READINESS_SURVEY_QUESTION,
   SCORE_ACCURACY_OPTIONS,
   SURVEY_RATING_OPTIONS,
   TRIP_CONTEXT_TAG_OPTIONS,
@@ -12,6 +14,7 @@ import {
   getCalibrationMilestone,
   getNextCalibrationMilestone,
   shouldAskFatigueSelfReport,
+  shouldAskReadinessSurvey,
 } from '@/lib/calibrationLabeling';
 
 const SCORE_ACCURACY_LABELS = {
@@ -32,6 +35,10 @@ const FATIGUE_SELF_REPORT_LABELS = {
   tired: 'Tired',
   very_tired: 'Very tired',
 };
+
+const READINESS_ACCURACY_LABELS = Object.fromEntries(
+  READINESS_ACCURACY_OPTIONS.map((option) => [option.value, option.label])
+);
 
 const CONTEXT_TAG_LABELS = {
   traffic: 'Traffic',
@@ -106,6 +113,7 @@ export default function PostTripCalibrationSurvey({
     wasDriver: 'yes',
     contextTags: [],
     fatigue_self_report: null,
+    readiness_accuracy: '',
     freeTextNote: '',
   });
   const submittedRating = Number(status?.rating);
@@ -120,6 +128,10 @@ export default function PostTripCalibrationSurvey({
   const somethingHappened = selectedRating === 1;
   const askDriver = useMemo(() => shouldAskWasDriver(trip), [trip]);
   const askFatigueSelfReport = useMemo(() => shouldAskFatigueSelfReport(trip), [trip]);
+  const askReadinessSurvey = useMemo(
+    () => shouldAskReadinessSurvey(trip, trip?.pre_trip_readiness_context),
+    [trip]
+  );
   const scoreMismatch = useMemo(() => {
     const score = scoreValue(trip);
     return fullSurvey && Number.isFinite(score) && Number.isInteger(selectedRating) && Math.abs(score - targetScoreForRating(selectedRating)) >= 20;
@@ -145,6 +157,7 @@ export default function PostTripCalibrationSurvey({
       wasDriver: askDriver ? draft.wasDriver : 'yes',
       contextTags: somethingHappened ? draft.contextTags : [],
       fatigue_self_report: askFatigueSelfReport ? draft.fatigue_self_report : null,
+      readiness_accuracy: askReadinessSurvey ? draft.readiness_accuracy || null : null,
       freeTextNote: fullSurvey ? draft.freeTextNote : '',
     });
   };
@@ -320,6 +333,32 @@ export default function PostTripCalibrationSurvey({
               Dismiss
             </button>
           )}
+        </div>
+      )}
+
+      {!submitted && askReadinessSurvey && (
+        <div className="mt-4">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">{READINESS_SURVEY_QUESTION.prompt}</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {READINESS_ACCURACY_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                disabled={disabled}
+                onClick={() => setDraft((current) => ({
+                  ...current,
+                  readiness_accuracy: current.readiness_accuracy === option.value ? '' : option.value,
+                }))}
+                className={`rounded-xl border px-3 py-2 text-left text-xs font-semibold ${
+                  draft.readiness_accuracy === option.value
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                }`}
+              >
+                {READINESS_ACCURACY_LABELS[option.value]}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

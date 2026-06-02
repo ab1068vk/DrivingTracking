@@ -23,6 +23,10 @@ export const PRE_TRIP_WEIGHT_REDISTRIBUTION_RATIO = scoringValue('PRE_TRIP_WEIGH
 export const PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS = scoringValue('PRE_TRIP_REDISTRIBUTION_TARGETS');
 
 export const PRE_TRIP_RISK_SIGNAL_GATES = scoringValue('PRE_TRIP_SIGNAL_GATES');
+export const READINESS_HISTORY_MIN_FOR_CORRELATION = scoringValue('READINESS_HISTORY_MIN_FOR_CORRELATION') ?? 20;
+export const READINESS_CORRELATION_DISCOUNT = scoringValue('READINESS_CORRELATION_DISCOUNT') ?? 0.6;
+export const VIF_CORRELATION_FLOOR = scoringValue('VIF_CORRELATION_FLOOR') ?? 0.65;
+export const VIF_DAMP_FACTOR = scoringValue('VIF_DAMP_FACTOR') ?? 0.7;
 
 const SIGNAL_LABELS = {
   timeOfDay: 'Higher-risk time of day for you',
@@ -113,16 +117,76 @@ const normalizeWeights = (weights) => {
   return Object.fromEntries(Object.entries(weights).map(([key, value]) => [key, value / total]));
 };
 
+const applyCalibrationOffsets = (weights, calibrationOffsets = {}) => {
+  if (!calibrationOffsets || typeof calibrationOffsets !== 'object') return normalizeWeights(weights);
+  const adjusted = Object.fromEntries(
+    Object.entries(weights).map(([key, weight]) => [
+      key,
+      Math.max(0.01, Number(weight) + (Number(calibrationOffsets[key]) || 0)),
+    ])
+  );
+  return normalizeWeights(adjusted);
+};
+
+const applySignalCorrelations = (weights, signalCorrelations = {}) => {
+  if (!signalCorrelations || typeof signalCorrelations !== 'object') return normalizeWeights(weights);
+  const adjusted = Object.fromEntries(
+    Object.entries(weights).map(([key, weight]) => {
+      const correlation = signalCorrelations[key];
+      if (!correlation || Number(correlation.n) < READINESS_HISTORY_MIN_FOR_CORRELATION) return [key, weight];
+      return [key, weight * (correlation.predictive ? 1 : READINESS_CORRELATION_DISCOUNT)];
+    })
+  );
+  return normalizeWeights(adjusted);
+};
+
+const hasPairwiseCorrelationKeys = (value) => (
+  value &&
+  typeof value === 'object' &&
+  Object.keys(value).some((key) => key.includes('|'))
+);
+
+const applyPairwiseDecorrelations = (weights, pairwiseSignalCorrelations = {}) => {
+  if (!pairwiseSignalCorrelations || typeof pairwiseSignalCorrelations !== 'object') {
+    return normalizeWeights(weights);
+  }
+
+  const damped = { ...weights };
+  for (const [pairKey, rawCorrelation] of Object.entries(pairwiseSignalCorrelations)) {
+    const correlation = Number(rawCorrelation);
+    if (!Number.isFinite(correlation) || Math.abs(correlation) < VIF_CORRELATION_FLOOR) continue;
+    const [a, b] = String(pairKey).split('|');
+    if (damped[a] != null) damped[a] *= VIF_DAMP_FACTOR;
+    if (damped[b] != null) damped[b] *= VIF_DAMP_FACTOR;
+  }
+
+  return normalizeWeights(damped);
+};
+
 /**
  * Derive readiness signal weights from profile confidence and bucket data quality.
  * @param {object|null} profile - Optional habit profile returned by buildHabitProfile.
  * @param {Date} now - Clock used to resolve current time and day buckets.
+ * @param {object} calibrationOffsets - Optional learned per-signal weight offsets.
+ * @param {object} signalCorrelations - Optional per-signal outcome correlations.
+ * @param {object} pairwiseSignalCorrelations - Optional pairwise signal correlations keyed as "signalA|signalB".
  * @returns {object} Normalized signal weight map that sums to 1.
  * @example deriveWeights(habitProfile, new Date())
  */
-export function deriveWeights(profile = null, now = new Date()) {
+export function deriveWeights(profile = null, now = new Date(), calibrationOffsets = {}, signalCorrelations = {}, pairwiseSignalCorrelations = {}) {
+  const resolvedSignalCorrelations = hasPairwiseCorrelationKeys(signalCorrelations) && !hasPairwiseCorrelationKeys(pairwiseSignalCorrelations)
+    ? {}
+    : signalCorrelations;
+  const resolvedPairwiseCorrelations = hasPairwiseCorrelationKeys(signalCorrelations) && !hasPairwiseCorrelationKeys(pairwiseSignalCorrelations)
+    ? signalCorrelations
+    : pairwiseSignalCorrelations;
+  const applyAdjustments = (rawWeights) => applyPairwiseDecorrelations(
+    applyCalibrationOffsets(applySignalCorrelations(rawWeights, resolvedSignalCorrelations), calibrationOffsets),
+    resolvedPairwiseCorrelations
+  );
+  let weights = DEFAULT_WEIGHTS;
   if (!profile || Number(profile.confidence) < 0.3) {
-    return DEFAULT_WEIGHTS;
+    return applyAdjustments(weights);
   }
 
   const adjusted = { ...DEFAULT_WEIGHTS };
@@ -143,7 +207,8 @@ export function deriveWeights(profile = null, now = new Date()) {
     adjusted.dailyFatigue += freed * PRE_TRIP_WEIGHT_REDISTRIBUTION_TARGETS.dailyFatigue;
   }
 
-  return normalizeWeights(adjusted);
+  weights = normalizeWeights(adjusted);
+  return applyAdjustments(weights);
 }
 
 /**
@@ -225,6 +290,11 @@ const declineRiskFromDelta = (delta) => {
   return clamp(Math.round(Math.max(0, -parsed)), 0, 100);
 };
 
+const squaredStdDev = (value, fallbackVariance) => {
+  const stdDev = Number(value);
+  return Number.isFinite(stdDev) && stdDev >= 0 ? stdDev ** 2 : fallbackVariance;
+};
+
 const finiteRisk = (value) => Number.isFinite(Number(value));
 
 const signalSource = (source, { actualUserData = false, fallback = false } = {}) => ({
@@ -246,10 +316,13 @@ const profileBucketHasTrips = (bucket, minimumTrips) => (
  * @param {object|null} dailyFatigueState - Daily fatigue state from computeDailyFatigue.
  * @param {object} context - Weather, repeated-event-area, historical-context, and optional now values.
  * @param {object|null} habitProfile - Optional learned profile returned by buildHabitProfile.
+ * @param {object} calibrationOffsets - Optional learned per-signal weight offsets loaded by the caller.
+ * @param {object} signalCorrelations - Optional per-signal readiness/outcome correlations loaded by the caller.
+ * @param {object} pairwiseSignalCorrelations - Optional pairwise readiness signal correlations loaded by the caller.
  * @returns {object} Readiness result with composite risk, score, signals, and data quality.
  * @example computePreTripRisk(completedTrips, settings, dailyFatigue, context, habitProfile)
  */
-export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState = null, context = {}, habitProfile = null) {
+export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState = null, context = {}, habitProfile = null, calibrationOffsets = {}, signalCorrelations = {}, pairwiseSignalCorrelations = {}) {
   void settings;
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const now = context?.now instanceof Date
@@ -261,8 +334,11 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const recent = last90Days(completed, now);
   const currentBucket = getTimeBucket(now.getHours());
   const currentDow = now.getDay();
-  const timeData = analyzeTimeOfDay(recent, now);
-  const dayData = analyzeDayOfWeek(recent, now);
+  const halfLifeDays = Number.isFinite(Number(habitProfile?.halfLifeDays))
+    ? Number(habitProfile.halfLifeDays)
+    : undefined;
+  const timeData = analyzeTimeOfDay(recent, now, halfLifeDays);
+  const dayData = analyzeDayOfWeek(recent, now, halfLifeDays);
   const legacyTimeBucket = timeData.find((bucket) => bucket.label === currentBucket);
   const legacyDayEntry = dayData[currentDow];
   const baseline = computePersonalBaseline(recent, now);
@@ -367,7 +443,7 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const fallbackSignalKeys = Object.entries(signalProvenance)
     .filter(([, provenance]) => provenance.fallback === true)
     .map(([key]) => key);
-  const weights = deriveWeights(habitProfile, now);
+  const weights = deriveWeights(habitProfile, now, calibrationOffsets, signalCorrelations, pairwiseSignalCorrelations);
   const missingCoreSignals = [
     clampedSignals.timeOfDay == null ? 'timeOfDay' : null,
     clampedSignals.recentTrend == null ? 'recentTrend' : null,
@@ -385,14 +461,49 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const compositeRisk = weightedCompositeRisk == null && gateFloor <= 0
     ? null
     : clamp(Math.round(Math.max(weightedCompositeRisk ?? 0, gateFloor)), 0, 100);
+  const effectiveHighFloor = Number.isFinite(Number(context?.fittedThresholds?.highRiskFloor))
+    ? Number(context.fittedThresholds.highRiskFloor)
+    : RISK_CONSTANTS.HIGH_RISK_FLOOR;
+  const effectiveModFloor = Number.isFinite(Number(context?.fittedThresholds?.moderateRiskFloor))
+    ? Number(context.fittedThresholds.moderateRiskFloor)
+    : RISK_CONSTANTS.MODERATE_RISK_FLOOR;
+  const signalVariances = {
+    timeOfDay: squaredStdDev(
+      habitProfile?.timeBuckets?.[currentBucket]?.stdDev,
+      RISK_CONSTANTS.FALLBACK_VARIANCE_TIME
+    ),
+    dayOfWeek: squaredStdDev(
+      habitProfile?.dayOfWeek?.[currentDow]?.stdDev,
+      RISK_CONSTANTS.FALLBACK_VARIANCE_DAY
+    ),
+    recentTrend: RISK_CONSTANTS.FALLBACK_VARIANCE_TREND,
+    dailyFatigue: RISK_CONSTANTS.FALLBACK_VARIANCE_FATIGUE,
+    lastTripOutcome: RISK_CONSTANTS.FALLBACK_VARIANCE_LAST_TRIP,
+    weather: RISK_CONSTANTS.FALLBACK_VARIANCE_WEATHER,
+    dangerZones: RISK_CONSTANTS.FALLBACK_VARIANCE_DANGER,
+    routeForecast: RISK_CONSTANTS.FALLBACK_VARIANCE_ROUTE,
+    recentRest: RISK_CONSTANTS.FALLBACK_VARIANCE_REST,
+  };
+  const compositeStdDev = compositeRisk == null
+    ? null
+    : Math.round(Math.sqrt(Object.entries(weights).reduce((sum, [key, weight]) => {
+      const variance = clampedSignals[key] != null ? Number(signalVariances[key]) || 0 : 0;
+      return sum + (Number(weight) ** 2) * variance;
+    }, 0)) * 10) / 10;
+  const readinessInterval = compositeRisk == null || compositeStdDev == null
+    ? null
+    : {
+      low: clamp(100 - Math.round(compositeRisk + compositeStdDev), 0, 100),
+      high: clamp(100 - Math.round(compositeRisk - compositeStdDev), 0, 100),
+    };
   const bootstrapRisk = evidenceTier === 'bootstrapping'
     ? bootstrapRiskFromSignals(clampedSignals, weights)
     : null;
-  const riskLevel = compositeRisk >= RISK_CONSTANTS.HIGH_RISK_FLOOR
+  const riskLevel = compositeRisk >= effectiveHighFloor
     ? 'high'
     : compositeRisk == null
       ? 'unavailable'
-      : compositeRisk >= RISK_CONSTANTS.MODERATE_RISK_FLOOR
+      : compositeRisk >= effectiveModFloor
         ? 'moderate'
         : 'low';
   const availableSignals = Object.entries(clampedSignals).filter(([, value]) => value != null);
@@ -412,6 +523,8 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   return {
     compositeRisk,
     readinessScore: compositeRisk == null ? null : 100 - compositeRisk,
+    compositeStdDev,
+    readinessInterval,
     evidenceTier,
     bootstrapRisk,
     bootstrapReadinessScore: bootstrapRisk == null ? null : 100 - bootstrapRisk,
@@ -420,6 +533,7 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     tipText: SIGNAL_TIPS[primaryKey] || 'Start only when you feel ready and GPS has a clear signal.',
     topSignals,
     signals: clampedSignals,
+    weights,
     habitProfile,
     dataQuality: {
       confidence: habitProfile?.confidence ?? 0,
@@ -438,6 +552,14 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
       fallbackGateTriggered,
       missingCoreSignals,
       signalProvenance,
+      halfLifeDays: halfLifeDays ?? null,
+      signalCorrelations,
+      pairwiseSignalCorrelations,
+      fittedThresholds: context?.fittedThresholds ?? null,
+      effectiveRiskFloors: {
+        high: effectiveHighFloor,
+        moderate: effectiveModFloor,
+      },
       sufficientTimeData: clampedSignals.timeOfDay != null,
       sufficientDayData: clampedSignals.dayOfWeek != null,
       sufficientTrendData: clampedSignals.recentTrend != null,
