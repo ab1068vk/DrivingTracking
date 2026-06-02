@@ -7,6 +7,7 @@ import {
   achievementNotificationId,
   dispatchPostTripNotification,
   isQuietHours,
+  notifySpeedingAlert,
 } from '@/lib/notificationService';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 
@@ -114,6 +115,69 @@ describe('advanced notifications', () => {
     }), [], { ...settings, notifications_enabled: false });
 
     expect(notification).toBeNull();
+  });
+
+  it('does not fire phantom speeding alerts for empty or invalid speed context', async () => {
+    stubLocalStorage();
+
+    await expect(notifySpeedingAlert({}, settings)).resolves.toBeNull();
+    await expect(notifySpeedingAlert({ currentSpeedKmh: 80 }, settings)).resolves.toBeNull();
+    await expect(notifySpeedingAlert({ currentSpeedKmh: 0, limitKmh: 50 }, settings)).resolves.toBeNull();
+    await expect(notifySpeedingAlert({ currentSpeedKmh: 51, limitKmh: 50 }, settings)).resolves.toBeNull();
+  });
+
+  it('formats valid speeding warnings from real speed and limit values', async () => {
+    stubLocalStorage();
+
+    const notification = await notifySpeedingAlert({
+      currentSpeedKmh: 68.4,
+      limitKmh: 50,
+      durationS: 12,
+      limitSource: 'inferred',
+    }, settings);
+
+    expect(notification.id).toBe(NOTIFICATION_IDS.SPEEDING_WARNING);
+    expect(notification.title).toBe('Speed Warning');
+    expect(notification.body).toBe('68 km/h - 18 km/h over the estimated limit.');
+    expect(notification.extra).toMatchObject({
+      type: 'speeding',
+      currentSpeedKmh: 68.4,
+      limitKmh: 50,
+      durationS: 12,
+      limitSource: 'inferred',
+    });
+  });
+
+  it('uses a shorter cooldown for initial speeding warnings', async () => {
+    stubLocalStorage();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00'));
+
+    const payload = { currentSpeedKmh: 70, limitKmh: 50, durationS: 12 };
+
+    expect(await notifySpeedingAlert(payload, settings)).not.toBeNull();
+    vi.setSystemTime(new Date('2026-01-01T12:00:29'));
+    expect(await notifySpeedingAlert(payload, settings)).toBeNull();
+    vi.setSystemTime(new Date('2026-01-01T12:00:31'));
+    expect(await notifySpeedingAlert(payload, settings)).not.toBeNull();
+  });
+
+  it('escalates sustained speeding and applies the longer cooldown', async () => {
+    stubLocalStorage();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00'));
+
+    const payload = { currentSpeed: 82, limit: 60, durationS: 60, limitSource: 'openstreetmap' };
+
+    const notification = await notifySpeedingAlert(payload, settings);
+    expect(notification.id).toBe(NOTIFICATION_IDS.SPEEDING_ESCALATION);
+    expect(notification.title).toBe('Continued Speeding');
+    expect(notification.body).toBe('82 km/h - 22 km/h over the limit.');
+
+    vi.setSystemTime(new Date('2026-01-01T12:00:59'));
+    expect(await notifySpeedingAlert(payload, settings)).toBeNull();
+    vi.setSystemTime(new Date('2026-01-01T12:01:01'));
+    expect(await notifySpeedingAlert(payload, settings)).not.toBeNull();
   });
 
   it('fires nothing during quiet hours for non-safety post-trip notifications', async () => {

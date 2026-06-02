@@ -119,7 +119,14 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     private static final long STATS_MAX_SAMPLE_GAP_SECONDS = 120L;
     private static final long ANDROID_USAGE_ACCESS_LOOKBACK_MS = 120_000L;
     private static final double SUSTAINED_TURN_HEADING_CHANGE_DEG = 35.0d;
-    private static final float TTS_SPEECH_RATE = 0.95f;
+    /** Normal speech rate (1.0 = default Android TTS speed). */
+    private static final float TTS_SPEECH_RATE = 1.0f;
+    /**
+     * Queue mode: flush any current speech, then speak this utterance.
+     * Equals TextToSpeech.QUEUE_FLUSH. Use for safety alerts so they
+     * are never delayed by a queued utterance.
+     */
+    private static final int TTS_QUEUE_MODE = TextToSpeech.QUEUE_FLUSH;
     private static final long MAX_TERMINAL_IDLE_SECONDS = 1800L;
     private static final int MAX_NATIVE_MOTION_SAMPLES = 5000;
     private static final long MOTION_SAMPLE_MIN_INTERVAL_MS = 100L;
@@ -1299,22 +1306,26 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         if (textToSpeech == null) {
             textToSpeech = new TextToSpeech(this, status -> {
                 if (status == TextToSpeech.SUCCESS && textToSpeech != null) {
-                    textToSpeech.setLanguage(Locale.getDefault());
+                    textToSpeech.setLanguage(Locale.US);
                     textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
+                    textToSpeech.setPitch(1.0f);
                     textToSpeechReady = true;
                     speakNativeAlertNow(text);
+                } else {
+                    textToSpeechReady = false;
+                    textToSpeech = null;
                 }
             });
         }
     }
 
     private void speakNativeAlertNow(String text) {
-        if (textToSpeech == null) return;
-        String utteranceId = "road_sage_phone_use_" + System.currentTimeMillis();
+        if (textToSpeech == null || !textToSpeechReady || text == null || text.trim().isEmpty()) return;
+        String utteranceId = "road_sage_alert_" + System.currentTimeMillis();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            textToSpeech.speak(text, TTS_QUEUE_MODE, null, utteranceId);
         } else {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
+            textToSpeech.speak(text, TTS_QUEUE_MODE, null);
         }
     }
 

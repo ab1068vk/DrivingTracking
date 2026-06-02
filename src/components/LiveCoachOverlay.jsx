@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
 import {
@@ -23,6 +23,9 @@ import { logError } from '@/lib/errorReporting';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
+const SPEED_CHECK_INTERVAL_MS = 4000;
+const SPEED_ALERT_BUFFER_KMH = 5;
+const MIN_SPEEDING_DURATION_S = 8;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
 const VOICE_COOLDOWNS_MS = {
@@ -49,11 +52,19 @@ const plainText = (message) => {
   return 'Road Sage safety alert';
 };
 
+const isVoiceAlertsEnabled = (settings) => {
+  const value = settings?.voice_alerts_enabled;
+  return value === true || value === 'true';
+};
+
 export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {
   const [message, setMessage] = useState(null);
   const [dismissed, setDismissed] = useState(false);
   const visibleRef = useRef(false);
   const queueRef = useRef([]);
+  const coachIntervalRef = useRef(null);
+  const speedIntervalRef = useRef(null);
+  const speedingStartMsRef = useRef(null);
   const lastCoachCheckRef = useRef(0);
   const lastDisplayedAlertRef = useRef({});
   const previousCountsRef = useRef({
@@ -94,7 +105,92 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     };
     lastCoachCheckRef.current = new Date(tripStartTime).getTime() || Date.now();
     lastDisplayedAlertRef.current = {};
+    speedingStartMsRef.current = null;
   }, [tripStartTime]);
+
+  const checkSpeedAlert = useCallback(() => {
+    const settings = localSettings.get();
+    const speedWarningEnabled = settings?.speed_warning_enabled !== false;
+    if (!speedWarningEnabled) {
+      speedingStartMsRef.current = null;
+      return;
+    }
+
+    const points = Array.isArray(currentRoutePoints) ? currentRoutePoints : [];
+    if (points.length < 2) {
+      speedingStartMsRef.current = null;
+      return;
+    }
+
+    const latest = points[points.length - 1];
+    const currentSpeedKmh = Number(latest?.speed_kmh) || 0;
+    if (currentSpeedKmh <= 0) {
+      speedingStartMsRef.current = null;
+      return;
+    }
+
+    const thresholds = buildDrivingThresholds(settings);
+    const currentIndex = points.length - 1;
+    const limitResult = resolveEffectiveSpeedLimitForIndex(points, currentIndex, thresholds);
+    const limitKmh = limitResult?.actualLimitKmh ?? null;
+    if (limitKmh === null) {
+      // No annotated limit available yet: do not fire an alert, and do not fetch.
+      speedingStartMsRef.current = null;
+      return;
+    }
+
+    const isCurrentlySpeeding = limitKmh !== null &&
+      Number.isFinite(limitKmh) &&
+      currentSpeedKmh > limitKmh + SPEED_ALERT_BUFFER_KMH;
+    const now = Date.now();
+
+    if (!isCurrentlySpeeding) {
+      speedingStartMsRef.current = null;
+      return;
+    }
+
+    if (speedingStartMsRef.current === null) {
+      speedingStartMsRef.current = now;
+    }
+
+    const durationS = Math.round((now - speedingStartMsRef.current) / 1000);
+    if (durationS < MIN_SPEEDING_DURATION_S) return;
+
+    if (settings?.notif_speeding_alert_enabled !== false) {
+      notifySpeedingAlert({
+        currentSpeedKmh,
+        limitKmh,
+        durationS,
+        limitSource: limitResult?.limitSource ?? 'inferred',
+      }, settings).catch((err) => {
+        // Speed and limit are intentionally omitted from local diagnostics.
+        logError('live_coach_speeding_notification', err, {
+          duration_seconds: durationS,
+        });
+      });
+    }
+
+    if (isVoiceAlertsEnabled(settings)) {
+      const overBy = Math.round(currentSpeedKmh - limitKmh);
+      const voiceText = `Speed warning. ${Math.round(currentSpeedKmh)} kilometres per hour. ${overBy} over the limit.`;
+      speakSafetyAlertOnce('speeding', voiceText, settings, VOICE_COOLDOWNS_MS.speeding)
+        .catch((err) => logError('live_coach_speed_voice', err));
+    }
+  }, [currentRoutePoints]);
+
+  useEffect(() => {
+    if (!tripStartTime) {
+      speedingStartMsRef.current = null;
+      return undefined;
+    }
+
+    checkSpeedAlert();
+    speedIntervalRef.current = setInterval(checkSpeedAlert, SPEED_CHECK_INTERVAL_MS);
+    return () => {
+      clearInterval(speedIntervalRef.current);
+      speedIntervalRef.current = null;
+    };
+  }, [checkSpeedAlert, tripStartTime]);
 
   useEffect(() => {
     if (!tripStartTime || currentRoutePoints.length < 2) return undefined;
@@ -141,14 +237,6 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const harshBrakeCount = events.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length;
       const rapidAccelCount = events.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length;
       const stopStartPatternCount = events.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
-      const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
-      const latestSpeeding = speedingEvents[speedingEvents.length - 1];
-      const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
-      const latestSpeedLimit = resolveEffectiveSpeedLimitForIndex(
-        currentRoutePoints,
-        currentRoutePoints.length - 1,
-        thresholds
-      ).effectiveLimitKmh;
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
 
       let nextMessage = null;
@@ -189,12 +277,6 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           voiceKey: 'heading_drift_beta',
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
-      } else if (settings.speed_warning_enabled !== false && latestSpeed > (latestSpeedLimit ?? thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
-        nextMessage = {
-          text: `Speed warning. ${Math.round(latestSpeed)} kilometers per hour.`,
-          voiceKey: 'speeding',
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
-        };
       } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
         nextMessage = {
           text: 'Brake earlier and more gradually',
@@ -227,25 +309,6 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         };
       }
 
-      if (latestSpeeding && settings.notif_speeding_alert_enabled !== false) {
-        notifySpeedingAlert({
-          currentSpeedKmh: latestSpeeding.speed_kmh,
-          limitKmh: latestSpeeding.speed_limit_kmh ?? latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
-          durationS: latestSpeeding.duration_seconds ?? 0,
-        }, settings).catch((err) => {
-          logError('live_coach_speeding_notification', err, {
-            speed_kmh: latestSpeeding.speed_kmh,
-            duration_seconds: latestSpeeding.duration_seconds ?? 0,
-          });
-        });
-        if (!nextMessage && settings.voice_alerts_enabled !== false) {
-          nextMessage = {
-            text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`,
-            voiceKey: 'speeding',
-            voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
-          };
-        }
-      }
       if (stats.heading_drift_beta_level === 'high' && settings.notif_heading_drift_alert_enabled !== false) {
         notifyHeadingDriftBetaWarning({
           headingDriftBetaLevel: 'high',
@@ -282,9 +345,12 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       }
     };
 
-    const interval = setInterval(evaluate, CHECK_INTERVAL_MS);
+    coachIntervalRef.current = setInterval(evaluate, CHECK_INTERVAL_MS);
     evaluate();
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(coachIntervalRef.current);
+      coachIntervalRef.current = null;
+    };
   }, [currentRoutePoints, tripStartTime, dismissed]);
 
   if (dismissed) return null;

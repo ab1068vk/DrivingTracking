@@ -804,6 +804,9 @@ export function speedLimitForIndex(points = [], index) {
 }
 
 export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS, options = {}) {
+  // NOTE: This resolver is local-only. It reads already-annotated speed-limit
+  // fields from route points and derives fallback context in memory; it never
+  // starts OSM, OSRM, weather, or other external requests.
   const speedLimit = speedLimitForIndex(points, index);
   const actualLimitKmh = speedLimit?.limitKmh ?? null;
   const zoneForIndex = options.zoneForIndex || createZoneLookup(options.inferredZones || inferSpeedZones(points, thresholds));

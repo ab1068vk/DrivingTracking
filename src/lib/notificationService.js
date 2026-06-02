@@ -621,20 +621,36 @@ export const notifyDrowsyWarning = notifyHeadingDriftBetaWarning;
 export async function notifySpeedingAlert(opts = {}, settings = localSettings.get()) {
   if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_speeding_alert_enabled === false) return null;
   if (isQuietHours(settings, true)) return null;
-  const now = Date.now();
-  if (now - readNumber(SPEEDING_NOTIF_LAST_KEY) < 60000) return null;
 
   const durationS = Number(opts.durationS) || 0;
-  const currentSpeed = Number(opts.currentSpeedKmh) || 0;
-  const limit = Number(opts.limitKmh) || Number(settings.threshold_speeding_kmh) || 100;
+  const currentSpeed = Number(opts.currentSpeedKmh ?? opts.currentSpeed);
+  const limit = Number(opts.limitKmh ?? opts.limit);
+
+  if (!Number.isFinite(currentSpeed) || currentSpeed <= 0) return null;
+  if (!Number.isFinite(limit) || limit <= 0) return null;
+
+  const overKmh = currentSpeed - limit;
+  if (overKmh <= 1) return null;
+
+  const speedingNotifCooldownMs = durationS >= 60 ? 60_000 : 30_000;
+  const now = Date.now();
+  if (now - readNumber(SPEEDING_NOTIF_LAST_KEY) < speedingNotifCooldownMs) return null;
+
   const id = durationS < 60 ? NOTIFICATION_IDS.SPEEDING_WARNING : NOTIFICATION_IDS.SPEEDING_ESCALATION;
+  const sourceNote = (opts.limitSource ?? 'inferred') === 'inferred' ? ' estimated' : '';
   const notification = {
     id,
     title: durationS >= 60 ? 'Continued Speeding' : 'Speed Warning',
-    body: `${Math.round(currentSpeed)} km/h - ${Math.max(0, Math.round(currentSpeed - limit))} km/h over the estimated limit.`,
+    body: `${Math.round(currentSpeed)} km/h - ${Math.max(0, Math.round(overKmh))} km/h over the${sourceNote} limit.`,
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
-    extra: { type: 'speeding', currentSpeedKmh: currentSpeed, limitKmh: limit, durationS },
+    extra: {
+      type: 'speeding',
+      currentSpeedKmh: currentSpeed,
+      limitKmh: limit,
+      durationS,
+      limitSource: opts.limitSource ?? 'inferred',
+    },
   };
   const scheduled = await scheduleNotification(notification);
   if (scheduled) writeNumber(SPEEDING_NOTIF_LAST_KEY, now);

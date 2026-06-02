@@ -59,6 +59,14 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private static final int BACKUP_ENC_VERSION = 1;
     private static final int BACKUP_ENC_HEADER_BYTES = 1 + 32 + 12;
     private static final int MIN_ENCRYPTED_EXPORT_BYTES = BACKUP_ENC_HEADER_BYTES + 16;
+    /** Normal speech rate (1.0 = default Android TTS speed). */
+    private static final float TTS_SPEECH_RATE = 1.0f;
+    /**
+     * Queue mode: flush any current speech, then speak this utterance.
+     * Equals TextToSpeech.QUEUE_FLUSH. Use for safety alerts so they
+     * are never delayed by a queued utterance.
+     */
+    private static final int TTS_QUEUE_MODE = TextToSpeech.QUEUE_FLUSH;
     private static WeakReference<DriveSenseActivityRecognitionPlugin> instance;
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
@@ -186,15 +194,23 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
         textToSpeech = new TextToSpeech(getContext(), status -> {
             if (status != TextToSpeech.SUCCESS || textToSpeech == null) {
+                textToSpeechReady = false;
+                textToSpeech = null;
                 call.reject("Android text-to-speech is unavailable.");
                 return;
             }
-            textToSpeech.setLanguage(Locale.getDefault());
-            textToSpeech.setSpeechRate(0.95f);
+            textToSpeech.setLanguage(Locale.US);
+            textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
+            textToSpeech.setPitch(1.0f);
             textToSpeechReady = true;
             speakNow(text);
             call.resolve();
         });
+    }
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        speakText(call);
     }
 
     @PluginMethod
@@ -211,12 +227,12 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     private void speakNow(String text) {
-        if (textToSpeech == null) return;
-        String utteranceId = "roadsage_" + System.currentTimeMillis();
+        if (textToSpeech == null || !textToSpeechReady || text == null || text.trim().isEmpty()) return;
+        String utteranceId = "road_sage_alert_" + System.currentTimeMillis();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            textToSpeech.speak(text, TTS_QUEUE_MODE, null, utteranceId);
         } else {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
+            textToSpeech.speak(text, TTS_QUEUE_MODE, null);
         }
     }
 
