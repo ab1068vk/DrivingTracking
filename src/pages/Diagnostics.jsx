@@ -43,6 +43,7 @@ import {
 } from '@/lib/sensorFusionModel';
 import { logError } from '@/lib/errorReporting';
 import PageNotFound from '@/lib/PageNotFound';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -406,18 +407,20 @@ function DiagnosticsContent() {
           <div>
             <h2 className="font-semibold">OSRM Route Snapping</h2>
             <div className="mt-1 text-xs text-muted-foreground">
-              OSRM last reachable: {osrmLastReachable}. {settings.osrm_health_status === 'unreachable' && settings.osrm_last_health_error ? settings.osrm_last_health_error : 'Health checks run when the endpoint is saved in Settings.'}
+              OSRM last reachable: {osrmLastReachable}. {settings.osrm_verified_domain ? `Verified domain: ${settings.osrm_verified_domain}.` : ''} {settings.osrm_health_status === 'unreachable' && settings.osrm_last_health_error ? settings.osrm_last_health_error : 'Health checks run when the endpoint is saved in Settings.'}
             </div>
           </div>
           <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${
-            settings.osrm_health_status === 'connected'
+            hasVerifiedOsrmEndpoint(settings)
               ? statusStyle.good
               : settings.osrm_health_status === 'unreachable'
                 ? statusStyle.bad
                 : statusStyle.unknown
           }`}>
-            {settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true
-              ? settings.osrm_health_status || 'not checked'
+            {hasVerifiedOsrmEndpoint(settings)
+              ? 'verified'
+              : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true
+                ? settings.osrm_health_status || 'not checked'
               : 'not configured'}
           </span>
         </div>

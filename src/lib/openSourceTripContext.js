@@ -61,7 +61,7 @@ function skippedMapMatchingContext(originalPoints = [], settings = {}) {
       routePoints: originalPoints,
       status: 'unavailable',
       provider: 'osrm',
-      error: settings.osrm_last_health_error || 'Route snapping is disabled until the OSRM endpoint passes verification.',
+      error: settings.osrm_last_health_error || 'Route snapping is disabled until the OSRM endpoint passes verification and has a matching domain trust record.',
       isOsrmDemoUrl,
     };
   }
@@ -96,11 +96,11 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather when all candidates are private or the origin, midpoint, or destination is inside the expanded weather privacy guard.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');
+    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your verified OSRM endpoint, one request per continuous route segment.');
   } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true) {
-    lines.push('- Snap route to roads has an endpoint but will be skipped until its OSRM health check passes.');
+    lines.push('- Snap route to roads has an endpoint but will be skipped until its OSRM health check passes and the verified domain record matches.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
     lines.push('- Snap route to roads has an endpoint but will be skipped until OSRM data-sharing consent is saved.');
   } else if (isOsrmMapMatchingEnabled(settings)) {

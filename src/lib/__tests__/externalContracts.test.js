@@ -264,6 +264,9 @@ describe('external service contracts', () => {
       osrm_data_sharing_consented: true,
       osrm_health_status: 'connected',
       osrm_last_reachable_at: '2026-05-23T16:00:00.000Z',
+      osrm_verified_endpoint: 'https://osrm.example',
+      osrm_verified_origin: 'https://osrm.example',
+      osrm_verified_domain: 'osrm.example',
     });
 
     expect(fetch).toHaveBeenCalledTimes(1);

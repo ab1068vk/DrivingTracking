@@ -21,6 +21,7 @@ export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const csp = buildContentSecurityPolicy({
     apiUrl: env.VITE_API_URL,
+    trustedApiOrigins: env.VITE_TRUSTED_BACKEND_ORIGINS,
     dev: command === 'serve',
   });
 

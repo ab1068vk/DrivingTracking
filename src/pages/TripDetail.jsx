@@ -51,6 +51,7 @@ import {
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
+  isOsrmMapMatchingConfigured,
 } from '@/lib/openSourceTripContext';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
@@ -1327,7 +1328,7 @@ export default function TripDetail() {
             <div>Get Road Data: checks the enabled options below for this trip.</div>
             <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.'}</div>
             <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends a privacy-safe route point and date to Open-Meteo.'}</div>
-            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint and consent are saved in Settings.'}</div>
+            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : isOsrmMapMatchingConfigured(settings) ? 'ON' : 'NEEDS VERIFICATION'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : isOsrmMapMatchingConfigured(settings) ? 'sends sampled GPS points to your verified OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint, consent, health check, and domain record are saved in Settings.'}</div>
             <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>

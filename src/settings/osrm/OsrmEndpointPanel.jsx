@@ -3,7 +3,7 @@ import { osrmEndpointDomain } from '@/lib/osrmEndpointTrust';
 
 const statusText = (cfg, isPublicOsrmDemoUrl) => {
   if (cfg.osrm_health_status === 'connected' && cfg.osrm_last_reachable_at) {
-    return `Connected. OSRM last verified: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`;
+    return `Connected. OSRM trust last verified: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`;
   }
   if (cfg.osrm_health_status === 'unreachable') {
     return `Unreachable${cfg.osrm_last_health_error ? `: ${cfg.osrm_last_health_error}` : '.'}`;
@@ -34,6 +34,7 @@ export function OsrmEndpointPanel({
   onSaveEndpoint,
 }) {
   const configuredDomain = osrmEndpointDomain(cfg.osrm_map_matching_url);
+  const verifiedDomain = cfg.osrm_verified_domain || '';
 
   return (
     <div className="px-1 py-3">
@@ -42,6 +43,12 @@ export function OsrmEndpointPanel({
         <div className="mb-2 rounded-xl border border-border bg-card px-3 py-2 text-xs">
           <span className="text-muted-foreground">Configured domain: </span>
           <span className="break-all font-semibold text-foreground">{configuredDomain}</span>
+          {verifiedDomain && (
+            <>
+              <span className="text-muted-foreground"> | Verified domain: </span>
+              <span className="break-all font-semibold text-foreground">{verifiedDomain}</span>
+            </>
+          )}
         </div>
       )}
       <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
@@ -54,7 +61,7 @@ export function OsrmEndpointPanel({
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
           <span>
-            This endpoint will receive raw GPS coordinates from your routes. Only use endpoints you control or fully trust.
+            This endpoint will receive raw GPS coordinates from your routes. Only HTTPS domains that pass verification can be saved.
           </span>
         </div>
       </div>
@@ -76,7 +83,7 @@ export function OsrmEndpointPanel({
           Turn off + clear
         </button>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {publicDemoUrl}. The public demo is not saved or used by Road Sage because it receives route points and has no service guarantee.</p>
+      <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {publicDemoUrl}. The public demo, HTTP URLs, localhost, private-network addresses, and IP literals are not saved or used by Road Sage.</p>
       <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
         {statusText(cfg, isPublicOsrmDemoUrl)}
       </div>

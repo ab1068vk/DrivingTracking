@@ -1,6 +1,7 @@
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
 import { OsrmEndpointPanel } from '@/settings/osrm/OsrmEndpointPanel';
 import { CalibrationSettings } from './CalibrationSettings';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 
 export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -100,7 +101,7 @@ export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
                       sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
                     >
                       <Toggle
-                        value={cfg.map_matching_enabled !== false && Boolean(cfg.osrm_map_matching_url) && cfg.osrm_data_sharing_consented === true}
+                        value={hasVerifiedOsrmEndpoint(cfg)}
                         onChange={enableOsrmMapMatching}
                       />
                     </SettingRow>

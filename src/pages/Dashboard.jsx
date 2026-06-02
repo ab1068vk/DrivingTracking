@@ -127,7 +127,7 @@ import {
 } from '@/lib/sensorFusionModel';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
-import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
+import { isExternalContextAutoFetchEnabled, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
@@ -1131,7 +1131,7 @@ export default function Dashboard() {
     const shouldAutoFetchExternalContext = !stealthTripEnding && isExternalContextAutoFetchEnabled(cfg);
     const mapMatchingContext = {
       provider: 'osrm',
-      status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'manual_required' : 'disabled',
+      status: isOsrmMapMatchingConfigured(cfg) ? 'manual_required' : 'disabled',
       confidence: null,
       snapped_coverage: 0,
       isOsrmDemoUrl: isPublicOsrmDemoUrl(cfg.osrm_map_matching_url),

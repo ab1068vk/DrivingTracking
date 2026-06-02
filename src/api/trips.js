@@ -1,11 +1,11 @@
-import { API_BASE_URL, apiClient } from "@/api/client";
+import { API_ENDPOINT_CONFIGURED, apiClient } from "@/api/client";
 import { isEphemeralModeActive } from "@/lib/ephemeralTripMode";
 import { localTripRepository } from "@/lib/localTripRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
 
-export const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
+export const shouldUseLocalStore = () => isNativePlatform() || !API_ENDPOINT_CONFIGURED;
 
 const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 

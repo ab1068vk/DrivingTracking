@@ -1,4 +1,4 @@
-import { API_BASE_URL, apiClient } from '@/api/client';
+import { API_ENDPOINT_CONFIGURED, apiClient } from '@/api/client';
 import {
   CALIBRATION_LABEL_COLLECTION,
   buildCalibrationUploadPayload,
@@ -9,7 +9,7 @@ import { isNativePlatform } from '@/lib/nativePlatform';
 import { assertServerVerifiedPlayIntegrity, requestPlayIntegrityAttestation } from '@/lib/nativePlayIntegrity';
 import { localSettings } from '@/lib/trackingStore';
 
-const shouldUseRemoteLabelStore = () => Boolean(API_BASE_URL);
+const shouldUseRemoteLabelStore = () => API_ENDPOINT_CONFIGURED;
 
 export const calibrationLabelService = {
   async submitTripSurveyLabel(trip, surveyInput) {

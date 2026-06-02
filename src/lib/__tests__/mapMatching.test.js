@@ -13,6 +13,9 @@ const verifiedOsrmSettings = (patch = {}) => ({
   osrm_data_sharing_consented: true,
   osrm_health_status: 'connected',
   osrm_last_reachable_at: '2026-01-01T12:00:00.000Z',
+  osrm_verified_endpoint: 'https://example.test',
+  osrm_verified_origin: 'https://example.test',
+  osrm_verified_domain: 'example.test',
   ...patch,
 });
 
@@ -124,6 +127,17 @@ describe('mapMatching', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('does not send route points when the verified endpoint record does not match', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], verifiedOsrmSettings({
+      osrm_map_matching_url: 'https://changed.example.test',
+    }));
+
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('uses the user-configured OSRM timeout when matching routes', async () => {
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -172,6 +186,9 @@ describe('mapMatching', () => {
       osrm_data_sharing_consented: true,
       osrm_health_status: 'connected',
       osrm_last_reachable_at: '2026-01-01T12:00:00.000Z',
+      osrm_verified_endpoint: 'https://router.project-osrm.org',
+      osrm_verified_origin: 'https://router.project-osrm.org',
+      osrm_verified_domain: 'router.project-osrm.org',
     });
 
     expect(result).toBeNull();

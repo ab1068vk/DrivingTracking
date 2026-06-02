@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { checkOsrmEndpointHealth, readableOsrmHeader } from '@/lib/osrmEndpointHealth';
+import { buildOsrmHealthPatch, checkOsrmEndpointHealth, readableOsrmHeader } from '@/lib/osrmEndpointHealth';
 
 describe('OSRM endpoint health', () => {
   afterEach(() => {
@@ -22,6 +22,34 @@ describe('OSRM endpoint health', () => {
       ok: true,
       status: 'connected',
       header: 'x-osrm-backend',
+      url: 'https://osrm.example',
+      origin: 'https://osrm.example',
+      domain: 'osrm.example',
+    });
+    expect(buildOsrmHealthPatch(result)).toMatchObject({
+      osrm_verified_endpoint: 'https://osrm.example',
+      osrm_verified_origin: 'https://osrm.example',
+      osrm_verified_domain: 'osrm.example',
+      osrm_health_status: 'connected',
+    });
+  });
+
+  it('rejects untrusted endpoints before issuing a health request', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await checkOsrmEndpointHealth('http://osrm.example');
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'unreachable',
+    });
+    expect(result.error).toContain('HTTPS');
+    expect(buildOsrmHealthPatch(result)).toMatchObject({
+      osrm_verified_endpoint: '',
+      osrm_verified_origin: '',
+      osrm_verified_domain: '',
+      osrm_last_reachable_at: '',
     });
   });
 

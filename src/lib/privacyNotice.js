@@ -10,11 +10,11 @@ export const PRIVACY_NOTICE_HIGHLIGHTS = [
   },
   {
     title: 'What can leave this device',
-    body: 'Data can leave the device when you export a file, import/share a backup, use an optional backend build, upload anonymized calibration labels, request external road/weather/map context, view map tiles, or save a trusted OSRM endpoint and tap Get Road Data.',
+    body: 'Data can leave the device when you export a file, import/share a backup, use an optional backend build, upload anonymized calibration labels, request external road/weather/map context, view map tiles, or save a verified trusted OSRM endpoint and tap Get Road Data.',
   },
   {
     title: 'External service disclosures',
-    body: 'OpenStreetMap tile hosts can receive map tile requests for visible map areas. Nominatim and Overpass requests are skipped for privacy-zone-protected coordinates where the app can do so. Open-Meteo receives a privacy-safe route point/date for weather context. A trusted OSRM endpoint receives sampled GPS coordinate pairs only after explicit consent, and privacy-zone gaps are excluded.',
+    body: 'OpenStreetMap tile hosts can receive map tile requests for visible map areas. Nominatim and Overpass requests are skipped for privacy-zone-protected coordinates where the app can do so. Open-Meteo receives a privacy-safe route point/date for weather context. A verified trusted OSRM HTTPS domain receives sampled GPS coordinate pairs only after explicit consent, and privacy-zone gaps are excluded.',
   },
   {
     title: 'What privacy zones mask',

@@ -15,7 +15,7 @@ import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
-import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { evaluateOsrmEndpointTrust, normalizeOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
@@ -38,7 +38,7 @@ const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 9;
 
 const settingsStorage = () => {
   if (isNativePlatform()) return null;
@@ -157,12 +157,8 @@ const distanceMetersBetweenLatLng = (lat, lng, zone) => {
 
 const defaultOsrmEndpoint = () => {
   const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL || '').trim();
-  if (!value || isPublicOsrmDemoUrl(value)) return '';
-  try {
-    return new URL(value).toString().replace(/\/$/, '');
-  } catch {
-    return '';
-  }
+  const trust = evaluateOsrmEndpointTrust(value);
+  return trust.ok ? normalizeOsrmEndpoint(value) : '';
 };
 
 const defaultOsrmTimeoutMs = () => {
@@ -393,6 +389,10 @@ export const DEFAULT_SETTINGS = {
   osrm_last_health_checked_at: '',
   osrm_last_reachable_at: '',
   osrm_last_health_error: '',
+  osrm_verified_endpoint: '',
+  osrm_verified_origin: '',
+  osrm_verified_domain: '',
+  osrm_trust_verified_at: '',
   osrm_timeout_ms: defaultOsrmTimeoutMs(),
   last_map_center: null,
   predictive_route_risk_enabled: true,
@@ -574,6 +574,10 @@ const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_last_health_checked_at',
   'osrm_last_reachable_at',
   'osrm_last_health_error',
+  'osrm_verified_endpoint',
+  'osrm_verified_origin',
+  'osrm_verified_domain',
+  'osrm_trust_verified_at',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -711,13 +715,8 @@ export function validateSettingsPatch(patch = {}) {
     if (key === 'osrm_map_matching_url') {
       const endpoint = String(value || '').trim();
       if (!endpoint) return;
-      try {
-        new URL(endpoint);
-      } catch {
-        errors.push('osrm_map_matching_url must be a valid URL.');
-        return;
-      }
-      if (isPublicOsrmDemoUrl(endpoint)) errors.push('Use a private or trusted OSRM endpoint; the public OSRM demo cannot be saved as a route-snapping endpoint.');
+      const trust = evaluateOsrmEndpointTrust(endpoint);
+      if (!trust.ok) errors.push(trust.error || 'osrm_map_matching_url must be a trusted HTTPS URL.');
       return;
     }
     if (SETTINGS_ENUMS[key] && !SETTINGS_ENUMS[key].includes(value)) {

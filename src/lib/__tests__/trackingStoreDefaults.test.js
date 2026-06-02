@@ -11,16 +11,22 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.osrm_map_matching_url).not.toBe('https://router.project-osrm.org');
     expect(DEFAULT_SETTINGS.osrm_data_sharing_consented).toBe(false);
     expect(DEFAULT_SETTINGS.osrm_health_status).toBe('');
+    expect(DEFAULT_SETTINGS.osrm_verified_endpoint).toBe('');
+    expect(DEFAULT_SETTINGS.osrm_verified_domain).toBe('');
     expect(DEFAULT_SETTINGS.osrm_timeout_ms).toBe(12000);
     expect(sanitizeImportedSettings({
       osrm_map_matching_url: 'https://evil.example.com',
       osrm_data_sharing_consented: true,
       osrm_last_reachable_at: '2026-05-30T12:00:00.000Z',
+      osrm_verified_endpoint: 'https://evil.example.com',
+      osrm_verified_domain: 'evil.example.com',
       osrm_timeout_ms: 45000,
     }).osrm_map_matching_url).toBeUndefined();
     expect(sanitizeImportedSettings({ osrm_timeout_ms: 45000 }).osrm_timeout_ms).toBe(30000);
     expect(validateSettingsPatch({ osrm_timeout_ms: 5000 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ osrm_timeout_ms: 4999 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'http://osrm.example' })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'https://192.168.1.10' })).toMatchObject({ valid: false });
   });
 
   it('keeps calibration sharing opt-in by default', () => {
@@ -121,7 +127,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(8);
+    expect(legacySunset.settings_defaults_version).toBe(9);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 

@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { authService, consumeLegacyAuthTokenMigration } from '@/api/auth';
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, API_ENDPOINT_CONFIGURED, API_ENDPOINT_TRUST } from '@/api/client';
 
 const AuthContext = createContext();
 
@@ -22,6 +22,17 @@ export const AuthProvider = ({ children }) => {
   const checkAppState = async () => {
     setIsLoadingPublicSettings(false);
     setAuthError(null);
+
+    if (API_ENDPOINT_CONFIGURED && !API_BASE_URL) {
+      setIsLoadingAuth(false);
+      setIsAuthenticated(false);
+      setAuthChecked(true);
+      setAuthError({
+        type: 'backend_config_error',
+        message: API_ENDPOINT_TRUST.error || 'Backend API URL is not trusted.',
+      });
+      return;
+    }
 
     if (!API_BASE_URL) {
       setIsLoadingAuth(false);

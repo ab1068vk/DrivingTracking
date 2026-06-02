@@ -73,7 +73,7 @@ import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sen
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { checkOsrmEndpointHealth, buildOsrmHealthPatch } from '@/lib/osrmEndpointHealth';
-import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import { evaluateOsrmEndpointTrust, hasVerifiedOsrmEndpoint, normalizeOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
@@ -440,36 +440,32 @@ export default function Settings() {
         osrm_last_health_checked_at: '',
         osrm_last_reachable_at: '',
         osrm_last_health_error: '',
+        osrm_verified_endpoint: '',
+        osrm_verified_origin: '',
+        osrm_verified_domain: '',
+        osrm_trust_verified_at: '',
       });
       return;
     }
-    if (isPublicOsrmDemoUrl(value)) {
-      toast({
-        title: 'Public demo not saved',
-        description: `Use a private or trusted OSRM endpoint. ${PUBLIC_OSRM_DEMO_URL} is shown only as an example.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-    try {
-      new URL(value);
-    } catch {
+    const endpointTrust = evaluateOsrmEndpointTrust(value);
+    if (!endpointTrust.ok) {
       toast({
         title: 'Endpoint not saved',
-        description: 'Enter a valid OSRM URL, such as https://your-osrm.example.',
+        description: endpointTrust.error || 'Enter a trusted HTTPS OSRM URL, such as https://your-osrm.example.',
         variant: 'destructive',
       });
       return;
     }
+    const normalizedValue = normalizeOsrmEndpoint(value);
     if (!consented) {
-      setOsrmPendingEndpoint(value);
+      setOsrmPendingEndpoint(normalizedValue);
       setOsrmConsentChecked(false);
       setOsrmConsentOpen(true);
       return;
     }
 
     const consentedAt = new Date().toISOString();
-    const { result, patch } = await runOsrmEndpointHealthCheck(value);
+    const { result, patch } = await runOsrmEndpointHealthCheck(normalizedValue);
     if (!result.ok) {
       toast({
         title: 'Endpoint not saved',
@@ -480,7 +476,7 @@ export default function Settings() {
     }
     updateCfg({
       map_matching_enabled: true,
-      osrm_map_matching_url: value,
+      osrm_map_matching_url: normalizedValue,
       osrm_public_demo_consent_at: '',
       osrm_data_sharing_consented: true,
       osrm_data_sharing_consented_at: consentedAt,
@@ -1432,7 +1428,7 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
-            The endpoint can learn route shape, timing context, and your network metadata for those samples. Use a private or trusted HTTPS endpoint; the public OSRM demo endpoint is blocked for saved route snapping.
+            The endpoint can learn route shape, timing context, and your network metadata for those samples. Road Sage saves only HTTPS endpoints that pass the OSRM health check and records the verified domain before route snapping can run.
           </div>
           <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
             <Checkbox
@@ -1440,7 +1436,7 @@ export default function Settings() {
               onCheckedChange={(checked) => setOsrmConsentChecked(checked === true)}
               className="mt-0.5"
             />
-            <span>I understand and accept that sampled GPS coordinate pairs from selected trips will be sent to this OSRM endpoint when I tap Get Road Data.</span>
+            <span>I understand and accept that sampled GPS coordinate pairs from selected trips will be sent to this verified OSRM endpoint when I tap Get Road Data.</span>
           </label>
           <DialogFooter>
             <button

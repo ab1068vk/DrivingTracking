@@ -1,3 +1,5 @@
+import { evaluateOsrmEndpointTrust } from '@/lib/osrmEndpointTrust';
+
 const OSRM_HEALTH_TIMEOUT_MS = 5000;
 const OSRM_HEADER_NAMES = [
   'x-osrm',
@@ -7,7 +9,9 @@ const OSRM_HEADER_NAMES = [
 ];
 
 const normalizeEndpointUrl = (endpoint) => {
-  const url = new URL(String(endpoint || '').trim());
+  const trust = evaluateOsrmEndpointTrust(endpoint);
+  if (!trust.ok) throw new Error(trust.error || 'The OSRM endpoint is not trusted.');
+  const url = new URL(trust.url);
   url.hash = '';
   return url.toString().replace(/\/$/, '');
 };
@@ -35,7 +39,11 @@ export function buildOsrmHealthPatch(result) {
     osrm_health_status: result.ok ? 'connected' : 'unreachable',
     osrm_last_health_checked_at: result.checked_at,
     osrm_last_health_error: result.error || '',
-    ...(result.ok ? { osrm_last_reachable_at: result.checked_at } : {}),
+    osrm_verified_endpoint: result.ok ? result.url : '',
+    osrm_verified_origin: result.ok ? result.origin : '',
+    osrm_verified_domain: result.ok ? result.domain : '',
+    osrm_trust_verified_at: result.ok ? result.checked_at : '',
+    ...(result.ok ? { osrm_last_reachable_at: result.checked_at } : { osrm_last_reachable_at: '' }),
   };
 }
 
@@ -43,14 +51,15 @@ export async function checkOsrmEndpointHealth(endpoint) {
   let url;
   try {
     url = normalizeEndpointUrl(endpoint);
-  } catch {
+  } catch (error) {
     return {
       status: 'unreachable',
       ok: false,
       checked_at: new Date().toISOString(),
-      error: 'The OSRM endpoint is not a valid URL.',
+      error: error?.message || 'The OSRM endpoint is not a valid URL.',
     };
   }
+  const trust = evaluateOsrmEndpointTrust(url);
 
   try {
     const controller = new AbortController();
@@ -81,6 +90,9 @@ export async function checkOsrmEndpointHealth(endpoint) {
       ok: true,
       checked_at: new Date().toISOString(),
       header: osrmHeader.name,
+      url: trust.url,
+      origin: trust.origin,
+      domain: trust.domain,
       error: '',
     };
   } catch (error) {

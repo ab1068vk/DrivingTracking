@@ -1,4 +1,5 @@
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 
 export function ScoringSettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -543,15 +544,17 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
                       : 'sends a privacy-safe route point and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
                   </div>
                   <div>
-                    <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : cfg.osrm_map_matching_url ? 'NEEDS CONSENT' : 'OPTIONAL'}:</span>{' '}
+                    <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : hasVerifiedOsrmEndpoint(cfg) ? 'ON' : cfg.osrm_map_matching_url ? 'NEEDS VERIFICATION' : 'OPTIONAL'}:</span>{' '}
                     {cfg.map_matching_enabled === false
                       ? 'skips OSRM; map/playback keep the original GPS line.'
                       : cfg.osrm_map_matching_url
                         ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
                           ? 'blocked because the public OSRM demo is reference text only.'
-                          : cfg.osrm_data_sharing_consented === true
-                            ? 'sends sampled GPS points to your trusted OSRM endpoint and may make map/playback follow roads more cleanly.'
-                            : 'will be skipped until OSRM data-sharing consent is saved.'
+                          : hasVerifiedOsrmEndpoint(cfg)
+                            ? 'sends sampled GPS points to your verified OSRM endpoint and may make map/playback follow roads more cleanly.'
+                            : cfg.osrm_data_sharing_consented === true
+                              ? 'will be skipped until the OSRM endpoint passes verification and has a matching trust record.'
+                              : 'will be skipped until OSRM data-sharing consent is saved.'
                         : 'optional map cleanup only; trips still score correctly without an OSRM endpoint.'}
                   </div>
                   <div>

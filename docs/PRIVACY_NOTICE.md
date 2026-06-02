@@ -20,14 +20,14 @@ Data can leave the device when you:
 - enable anonymized calibration label sharing;
 - request external road, map, weather, or route-matching context;
 - view online map tiles;
-- save a trusted OSRM endpoint and tap **Get Road Data**.
+- save a verified trusted OSRM endpoint and tap **Get Road Data**.
 
 ## External Services
 
 - OpenStreetMap tile hosts can receive map tile requests for visible map areas.
 - Nominatim reverse-geocoding and Overpass road-data requests are skipped for privacy-zone-protected coordinates where Road Sage can do so.
 - Open-Meteo receives a privacy-safe route point and date for weather context.
-- A trusted OSRM endpoint receives sampled GPS coordinate pairs only after explicit consent. Privacy-zone gaps are excluded from OSRM requests.
+- A verified trusted OSRM HTTPS domain receives sampled GPS coordinate pairs only after explicit consent. Privacy-zone gaps are excluded from OSRM requests.
 - External services can process, log, or retain requests according to their own policies. Road Sage cannot erase data after it has been sent to those services.
 
 ## Privacy Zones
