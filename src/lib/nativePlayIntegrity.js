@@ -1,4 +1,5 @@
 import { registerPlugin } from '@capacitor/core';
+import { API_BASE_URL, apiClient } from '@/api/client';
 import { isNativePlatform } from '@/lib/nativePlatform';
 
 const PlayIntegrity = registerPlugin('PlayIntegrity');
@@ -30,6 +31,21 @@ export async function requestPlayIntegrityAttestation(action = 'sensitive-action
   });
 }
 
+async function verifyPlayIntegrityAttestation(action, attestation) {
+  if (!API_BASE_URL) {
+    throw new Error('Play Integrity attestation must be verified by a trusted backend before this native sensitive action can continue.');
+  }
+
+  const response = await apiClient.post('/play-integrity/verify', {
+    action,
+    nonce: attestation?.nonce,
+    token: attestation?.token,
+    runtimeStatus: attestation?.runtimeStatus,
+  });
+  assertServerVerifiedPlayIntegrity(response, action);
+  return response;
+}
+
 export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-action', options = {}) {
   if (!isNativePlatform()) return null;
   const requireServerVerification = options.requireServerVerification !== false;
@@ -42,7 +58,7 @@ export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-
     result.requiresServerVerification === true &&
     ALLOW_UNVERIFIED_PLAY_INTEGRITY !== true
   ) {
-    throw new Error('Play Integrity attestation must be verified by a trusted backend before this native sensitive action can continue.');
+    await verifyPlayIntegrityAttestation(action, result);
   }
   return result;
 }

@@ -226,11 +226,28 @@ describe('release blocker regressions', () => {
     expect(capacitorConfigSource).toContain('includePlugins: [');
     expect(capacitorConfigSource).toContain("'@capacitor/app'");
     expect(capacitorConfigSource).toContain("'@capacitor-community/background-geolocation'");
+    expect(capacitorConfigSource).not.toContain("'@capacitor/preferences'");
     expect(capacitorConfigSource).toContain('allowNavigation: []');
     expect(capacitorConfigSource).toContain('CapacitorHttp:');
     expect(capacitorConfigSource).toContain('enabled: false');
     expect(capacitorConfigSource).toContain('SecureClipboard: {}');
     expect(capacitorConfigSource).toContain('DriveSenseActivityRecognition: {}');
+  });
+
+  it('zeros native IMU motion samples before every trip discard or handoff', () => {
+    const serviceSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(serviceSource).toContain('zeroMotionSamples(activeMotionSamples);');
+    expect(serviceSource).toContain('zeroMotionSamples(motionSamples);');
+    expect(serviceSource.indexOf('zeroMotionSamples(activeMotionSamples);')).toBeLessThan(
+      serviceSource.indexOf('activeMotionSamples = null;')
+    );
+    expect(serviceSource.indexOf('zeroMotionSamples(motionSamples);')).toBeLessThan(
+      serviceSource.indexOf('DriveSenseNativeTripStore.addCompletedTrip(this, trip);')
+    );
   });
 
   it('keeps stealth trip mode RAM-only and wipes active trip artifacts', () => {

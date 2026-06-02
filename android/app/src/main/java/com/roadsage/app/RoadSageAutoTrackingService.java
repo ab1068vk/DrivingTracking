@@ -821,6 +821,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         TripStats stats = calculateStats(activePoints, activeStartMs, now);
         recordTimeline("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
         recordDiagnostic("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
+        zeroMotionSamples(activeMotionSamples);
         activePoints = null;
         activeTimeline = null;
         activeMotionSamples = null;
@@ -955,6 +956,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         TripStats stats = calculateStats(points, startMs, endMs);
         if (points.length() < MIN_POINTS_TO_SAVE || stats.durationSeconds < MIN_TRIP_MS / 1000L || stats.distanceKm < MIN_TRIP_KM) {
             recordDiagnostic("trip_discarded", "Native trip was too short to save.", reason, 0d, stoppedSeconds, 0d);
+            zeroMotionSamples(motionSamples);
             return;
         }
 

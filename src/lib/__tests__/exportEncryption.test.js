@@ -20,7 +20,7 @@ describe('encrypted export wrapper', () => {
     expect(encryptedExportFilename('road:sage/report.csv')).toBe('road-sage-report.rsexport');
   });
 
-  it('requires Play Integrity attestation for exports without blocking on backend verification', async () => {
+  it('requires server-verified Play Integrity attestation for exports', async () => {
     const encrypted = await buildEncryptedExport({
       filename: 'trip-report.csv',
       mimeType: 'text/csv',
@@ -29,9 +29,7 @@ describe('encrypted export wrapper', () => {
       kind: 'csv',
     });
 
-    expect(assertPlayIntegrityForSensitiveAction).toHaveBeenCalledWith('export:csv', {
-      requireServerVerification: false,
-    });
+    expect(assertPlayIntegrityForSensitiveAction).toHaveBeenCalledWith('export:csv');
     expect(encryptBackup).toHaveBeenCalledWith(expect.stringContaining('"kind":"csv"'), 'correct horse battery');
     expect(encrypted).toContain('trip-report.csv');
   });

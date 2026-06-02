@@ -12,9 +12,7 @@ export async function buildEncryptedExport({ filename, mimeType, data, password,
   if (typeof password !== 'string' || password.length < 12) {
     throw new Error('Export password must be at least 12 characters.');
   }
-  await assertPlayIntegrityForSensitiveAction(`export:${kind}`, {
-    requireServerVerification: false,
-  });
+  await assertPlayIntegrityForSensitiveAction(`export:${kind}`);
 
   const payload = {
     app: 'Road Sage',
