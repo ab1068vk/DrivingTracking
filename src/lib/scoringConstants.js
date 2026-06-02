@@ -1,4 +1,5 @@
 import { SCORING_VERSION } from './scoringVersion.generated.js';
+import { PERSONAL_BASELINE_MIN_TRIPS } from './personalBaselineConstants.js';
 
 export const CALIBRATION_STATUSES = Object.freeze({
   PROVISIONAL: 'provisional',
@@ -495,8 +496,50 @@ export const SCORING_CONSTANTS = Object.freeze({
     MODERATE_RISK_FLOOR: 40,
     GATE_ADJUSTMENT_MAX: 5,
     TREND_WINDOW: 20,
+    PRE_TRIP_TREND_MIN_BASELINE_TRIPS: PERSONAL_BASELINE_MIN_TRIPS,
+    SIGNAL_DECAY_HALF_LIFE_DAYS: 21,
+    PRE_TRIP_REST_DEFAULT_BREAK_MINUTES: 30,
+    PRE_TRIP_REST_MIN_THRESHOLD_MINUTES: 10,
+    CALIBRATED_SIGNAL_THRESHOLD: 5,
+    DEVELOPING_SIGNAL_THRESHOLD: 2,
     RECENT_TRIP_DAYS: 90,
   }), { label: 'Pre-trip readiness policy', domain: 'pre_trip_risk', calibration_note: 'Readiness thresholds are product heuristics.', affected_metrics: ['pre_trip_readiness_score'] }),
+  PRE_TRIP_TREND_MIN_BASELINE_TRIPS: constant(PERSONAL_BASELINE_MIN_TRIPS, {
+    label: 'Pre-trip trend minimum baseline trips',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Trend signal requires the same minimum as personalBaseline.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_HALF_LIFE_DAYS: constant(21, {
+    label: 'Pre-trip signal temporal half-life',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Exponential decay applied to time/day bucket averaging; heuristic.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  PRE_TRIP_REST_DEFAULT_BREAK_MINUTES: constant(30, {
+    label: 'Pre-trip rest default break threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Rest-risk threshold when fatigue state is unavailable.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  PRE_TRIP_REST_MIN_THRESHOLD_MINUTES: constant(10, {
+    label: 'Pre-trip rest minimum threshold floor',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Prevents threshold from collapsing below a reasonable minimum.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  CALIBRATED_SIGNAL_THRESHOLD: constant(5, {
+    label: 'Pre-trip calibrated evidence signal threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Minimum actual-user signals before readiness is presented as calibrated.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  DEVELOPING_SIGNAL_THRESHOLD: constant(2, {
+    label: 'Pre-trip developing evidence signal threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Minimum actual-user signals before full readiness is shown with limited confidence.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
   PRE_TRIP_RISK_WEIGHTS: constant(Object.freeze({
     timeOfDay: 0.14, dayOfWeek: 0.10, recentTrend: 0.18, dailyFatigue: 0.20, lastTripOutcome: 0.12,
     weather: 0.08, dangerZones: 0.06, routeForecast: 0.08, recentRest: 0.04,

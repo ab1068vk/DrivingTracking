@@ -3,6 +3,7 @@ import { weightedBlend } from '@/lib/scoring/componentScores';
 import { getTimeBucket } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
 import { scoringValue } from '@/lib/scoringConstants';
+import { ROUTE_RISK_CONSTANTS } from '@/lib/predictiveRouteRisk';
 
 const RISK_CONSTANTS = scoringValue('PRE_TRIP_READINESS_POLICY');
 
@@ -11,6 +12,7 @@ const RISK_CONSTANTS = scoringValue('PRE_TRIP_READINESS_POLICY');
  * not calibrated to crash, claims, or naturalistic driving outcome data.
  */
 const DEFAULT_WEIGHTS = scoringValue('PRE_TRIP_RISK_WEIGHTS');
+const BOOTSTRAP_SIGNALS = ['dailyFatigue', 'recentRest'];
 
 export const PRE_TRIP_RISK_WEIGHTS = DEFAULT_WEIGHTS;
 /**
@@ -66,16 +68,36 @@ const routeRiskFromContext = (context = {}) => {
   return null;
 };
 
-const recentRestRisk = (lastTrip, nowMs) => {
+const getTimeMs = (value) => {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : null;
+};
+
+const safePositiveNumber = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const PRE_TRIP_REST_DEFAULT_BREAK_MINUTES = scoringValue('PRE_TRIP_REST_DEFAULT_BREAK_MINUTES');
+const PRE_TRIP_REST_MIN_THRESHOLD_MINUTES = scoringValue('PRE_TRIP_REST_MIN_THRESHOLD_MINUTES');
+
+const recentRestRisk = (
+  lastTrip,
+  nowMs,
+  recommendedBreakMinutes = PRE_TRIP_REST_DEFAULT_BREAK_MINUTES
+) => {
   if (!lastTrip) return null;
-  const endMs = new Date(lastTrip.end_time || lastTrip.endedAt || lastTrip.start_time || lastTrip.startedAt || 0).getTime();
+  const endMs = getTimeMs(lastTrip.end_time ?? lastTrip.endedAt);
   if (!Number.isFinite(endMs) || endMs <= 0 || endMs > nowMs) return null;
 
-  const minutesSinceLastTrip = (nowMs - endMs) / 60000;
-  if (minutesSinceLastTrip < 15) return 80;
-  if (minutesSinceLastTrip < 30) return 60;
-  if (minutesSinceLastTrip < 60) return 35;
-  return 5;
+  const breakMinutes = (nowMs - endMs) / 60000;
+  const threshold = Math.max(
+    safePositiveNumber(PRE_TRIP_REST_MIN_THRESHOLD_MINUTES, 10),
+    safePositiveNumber(recommendedBreakMinutes, safePositiveNumber(PRE_TRIP_REST_DEFAULT_BREAK_MINUTES, 30))
+  );
+
+  if (breakMinutes >= threshold) return 0;
+  return clamp(Math.round((1 - breakMinutes / threshold) * 100), 0, 100);
 };
 
 const dailyFatigueRisk = (dailyFatigueState) => {
@@ -174,10 +196,27 @@ const weightedRisk = (signals, weights) => weightedBlend(
   Object.entries(weights).map(([key, weight]) => ({ score: signals[key], weight }))
 );
 
+const bootstrapRiskFromSignals = (signals, weights) => {
+  const components = BOOTSTRAP_SIGNALS
+    .filter((key) => signals[key] != null)
+    .map((key) => ({ score: signals[key], weight: weights[key] ?? 0 }));
+  return weightedBlend(components);
+};
+
 const nullableRisk = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? clamp(parsed, 0, 100) : null;
 };
+
+const dangerZoneRiskFromCount = (zoneCount) => clamp(
+  Math.round(
+    (1 - Math.exp(
+      -Math.max(0, Number(zoneCount) || 0) / ROUTE_RISK_CONSTANTS.DANGER_ZONE_DECAY_COUNT
+    )) * 100
+  ),
+  0,
+  100
+);
 
 const declineRiskFromDelta = (delta) => {
   if (delta == null || delta === '') return null;
@@ -222,16 +261,16 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const recent = last90Days(completed, now);
   const currentBucket = getTimeBucket(now.getHours());
   const currentDow = now.getDay();
-  const timeData = analyzeTimeOfDay(recent);
-  const dayData = analyzeDayOfWeek(recent);
+  const timeData = analyzeTimeOfDay(recent, now);
+  const dayData = analyzeDayOfWeek(recent, now);
   const legacyTimeBucket = timeData.find((bucket) => bucket.label === currentBucket);
   const legacyDayEntry = dayData[currentDow];
-  const baseline = computePersonalBaseline(recent);
+  const baseline = computePersonalBaseline(recent, now);
   const sorted = [...completed].sort((a, b) => (
     new Date(b.end_time || b.endedAt || b.start_time || b.startedAt || 0).getTime() -
     new Date(a.end_time || a.endedAt || a.start_time || a.startedAt || 0).getTime()
   ));
-  const lastTrip = sorted[0] || null;
+  const lastTrip = context?.lastTrip || sorted[0] || null;
   const profileTimeBucket = habitProfile?.timeBuckets?.[currentBucket];
   const profileDayEntry = habitProfile?.dayOfWeek?.[currentDow];
   const hasProfileTimeRisk = habitProfile && profileBucketHasTrips(profileTimeBucket, RISK_CONSTANTS.MIN_TRIPS_FOR_BUCKET);
@@ -245,16 +284,18 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const legacyDayRisk = hasLegacyDayRisk
     ? 100 - legacyDayEntry.avgScore
     : null;
-  const baselineTrendRisk = declineRiskFromDelta(baseline.delta);
+  const baselineTrendRisk = baseline.baseline_avg != null
+    ? declineRiskFromDelta(baseline.delta)
+    : null;
   const lastTripScore = lastTrip
     ? nullableRisk(lastTrip.score_overall ?? lastTrip.overall_score ?? lastTrip.score)
     : null;
   const weatherRisk = nullableRisk(context.weatherRiskScore ?? context.weather_context?.riskScore);
   const dangerZoneRisk = context.nearbyDangerZoneCount == null
     ? null
-    : clamp((Number(context.nearbyDangerZoneCount) || 0) * 35, 0, 100);
+    : dangerZoneRiskFromCount(context.nearbyDangerZoneCount);
   const routeForecastRisk = routeRiskFromContext(context);
-  const restRisk = recentRestRisk(lastTrip, nowMs);
+  const restRisk = recentRestRisk(lastTrip, nowMs, dailyFatigueState?.recommendedBreakMinutes);
   const fatigueRisk = dailyFatigueRisk(dailyFatigueState);
   const timeOfDayRisk = hasProfileTimeRisk
     ? profileTimeBucket.riskScore
@@ -332,12 +373,21 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     clampedSignals.recentTrend == null ? 'recentTrend' : null,
   ].filter(Boolean);
   const fallbackGateTriggered = fallbackSignalKeys.length > 1;
-  const hasCoreReadinessEvidence = missingCoreSignals.length === 0 && !fallbackGateTriggered;
-  const weightedCompositeRisk = hasCoreReadinessEvidence ? weightedRisk(clampedSignals, weights) : null;
-  const gateFloor = hasCoreReadinessEvidence ? riskFloorFromSignalGates(clampedSignals, habitProfile) : 0;
+  const personalSignalCount = actualUserSignalKeys.length;
+  const evidenceTier = personalSignalCount >= RISK_CONSTANTS.CALIBRATED_SIGNAL_THRESHOLD
+    ? 'calibrated'
+    : personalSignalCount >= RISK_CONSTANTS.DEVELOPING_SIGNAL_THRESHOLD
+      ? 'developing'
+      : 'bootstrapping';
+  const hasFullReadinessEvidence = evidenceTier !== 'bootstrapping';
+  const weightedCompositeRisk = hasFullReadinessEvidence ? weightedRisk(clampedSignals, weights) : null;
+  const gateFloor = hasFullReadinessEvidence ? riskFloorFromSignalGates(clampedSignals, habitProfile) : 0;
   const compositeRisk = weightedCompositeRisk == null && gateFloor <= 0
     ? null
     : clamp(Math.round(Math.max(weightedCompositeRisk ?? 0, gateFloor)), 0, 100);
+  const bootstrapRisk = evidenceTier === 'bootstrapping'
+    ? bootstrapRiskFromSignals(clampedSignals, weights)
+    : null;
   const riskLevel = compositeRisk >= RISK_CONSTANTS.HIGH_RISK_FLOOR
     ? 'high'
     : compositeRisk == null
@@ -362,6 +412,9 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   return {
     compositeRisk,
     readinessScore: compositeRisk == null ? null : 100 - compositeRisk,
+    evidenceTier,
+    bootstrapRisk,
+    bootstrapReadinessScore: bootstrapRisk == null ? null : 100 - bootstrapRisk,
     riskLevel,
     primaryConcern: SIGNAL_LABELS[primaryKey] || 'Insufficient readiness evidence',
     tipText: SIGNAL_TIPS[primaryKey] || 'Start only when you feel ready and GPS has a clear signal.',
@@ -370,8 +423,14 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     habitProfile,
     dataQuality: {
       confidence: habitProfile?.confidence ?? 0,
-      readinessEvidence: compositeRisk == null ? 'unavailable' : availableSignals.length >= 6 ? 'high' : availableSignals.length >= 3 ? 'developing' : 'low',
+      readinessEvidence: evidenceTier === 'calibrated'
+        ? 'high'
+        : evidenceTier === 'developing'
+          ? 'developing'
+          : bootstrapRisk == null ? 'unavailable' : 'bootstrapping',
+      evidenceTier,
       availableSignalCount: availableSignals.length,
+      personalSignalCount,
       actualUserSignalCount: actualUserSignalKeys.length,
       actualUserSignalKeys,
       fallbackSignalCount: fallbackSignalKeys.length,

@@ -16,6 +16,7 @@ import {
 import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
 import { PHONE_USE_PENALTY_POINTS } from '@/lib/phoneUsageAccess';
 import { DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
+import { PERSONAL_BASELINE_MIN_TRIPS } from '@/lib/tripInsights';
 import { TIME_OF_DAY_NIGHT_MULTIPLIER } from '@/lib/ubiReport';
 
 describe('scoring constants registry', () => {
@@ -62,6 +63,21 @@ describe('scoring constants registry', () => {
     expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM).toBe(scoringValue('HILL_INFRACTION_PENALTY_POINTS_PER_KM'));
     expect(PHONE_USE_PENALTY_POINTS.high).toBe(scoringValue('PHONE_PENALTY_HIGH'));
     expect(TIME_OF_DAY_NIGHT_MULTIPLIER).toBe(scoringValue('UBI_NIGHT_MULTIPLIER'));
+  });
+
+  it('uses the personal baseline minimum for pre-trip trend evidence', () => {
+    expect(scoringValue('PRE_TRIP_TREND_MIN_BASELINE_TRIPS')).toBe(PERSONAL_BASELINE_MIN_TRIPS);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_TREND_MIN_BASELINE_TRIPS).toBe(PERSONAL_BASELINE_MIN_TRIPS);
+    expect(scoringValue('SIGNAL_DECAY_HALF_LIFE_DAYS')).toBe(21);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_HALF_LIFE_DAYS).toBe(21);
+    expect(scoringValue('PRE_TRIP_REST_DEFAULT_BREAK_MINUTES')).toBe(30);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_REST_DEFAULT_BREAK_MINUTES).toBe(30);
+    expect(scoringValue('PRE_TRIP_REST_MIN_THRESHOLD_MINUTES')).toBe(10);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_REST_MIN_THRESHOLD_MINUTES).toBe(10);
+    expect(scoringValue('CALIBRATED_SIGNAL_THRESHOLD')).toBe(5);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').CALIBRATED_SIGNAL_THRESHOLD).toBe(5);
+    expect(scoringValue('DEVELOPING_SIGNAL_THRESHOLD')).toBe(2);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').DEVELOPING_SIGNAL_THRESHOLD).toBe(2);
   });
 
   it('keeps blend weights normalized and non-negative', () => {

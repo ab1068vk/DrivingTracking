@@ -129,7 +129,7 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isExternalContextAutoFetchEnabled, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
-import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { SCORE_BASELINE_TRIP_TARGET, formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, isInsidePrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
 
@@ -2508,12 +2508,35 @@ function DashboardRiskPanel({
     predictiveRouteRisk,
   }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
-  const showReadinessNumber = readinessEvidence === 'high' && preTripRisk.readinessScore != null;
-  const readinessSummary = preTripRisk.readinessScore == null
+  const evidenceTier = preTripRisk.evidenceTier || preTripRisk.dataQuality?.evidenceTier || 'bootstrapping';
+  const displayReadinessScore = evidenceTier === 'bootstrapping'
+    ? preTripRisk.bootstrapReadinessScore
+    : preTripRisk.readinessScore;
+  const displayRisk = evidenceTier === 'bootstrapping'
+    ? preTripRisk.bootstrapRisk
+    : preTripRisk.compositeRisk;
+  const displayRiskLevel = displayRisk == null
+    ? 'unavailable'
+    : displayRisk >= 65
+      ? 'high'
+      : displayRisk >= 40
+        ? 'moderate'
+        : 'low';
+  const showReadinessNumber = displayReadinessScore != null;
+  const availableSignalCount = preTripRisk.dataQuality?.availableSignalCount ?? 0;
+  const roundedReadinessScore = Number.isFinite(Number(preTripRisk.readinessScore))
+    ? Math.round(Number(preTripRisk.readinessScore))
+    : null;
+  const tripsUntilTrendBaseline = Math.max(0, SCORE_BASELINE_TRIP_TARGET - completedTrips.length);
+  const readinessSummary = evidenceTier === 'bootstrapping'
+    ? displayReadinessScore == null
+      ? 'Early estimate unavailable'
+      : `Early estimate ${formatEstimatedScore(displayReadinessScore)}/100`
+    : preTripRisk.readinessScore == null
     ? 'Not enough data yet'
-    : showReadinessNumber
+    : evidenceTier === 'calibrated'
       ? `Estimated ${formatEstimatedScore(preTripRisk.readinessScore)}/100 - ${preTripRisk.riskLevel} risk`
-      : 'Limited-data readiness estimate';
+      : `Developing estimate ${formatEstimatedScore(preTripRisk.readinessScore)}/100 - ${preTripRisk.riskLevel} risk`;
 
   return (
     <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
@@ -2521,16 +2544,18 @@ function DashboardRiskPanel({
         <div
           className="grid h-14 w-14 flex-shrink-0 place-items-center rounded-full text-sm font-bold text-white"
           style={{
-            background: preTripRisk.riskLevel === 'low'
+            background: evidenceTier === 'bootstrapping'
+              ? '#64748b'
+              : displayRiskLevel === 'low'
               ? '#22c55e'
-              : preTripRisk.riskLevel === 'moderate'
+              : displayRiskLevel === 'moderate'
                 ? '#eab308'
-                : preTripRisk.riskLevel === 'high'
+                : displayRiskLevel === 'high'
                   ? '#ef4444'
                   : 'hsl(var(--muted-foreground))',
           }}
         >
-          {showReadinessNumber ? formatEstimatedScore(preTripRisk.readinessScore) : '-'}
+          {showReadinessNumber ? formatEstimatedScore(displayReadinessScore) : '-'}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -2552,9 +2577,42 @@ function DashboardRiskPanel({
           <div className="mt-0.5 break-words text-xs capitalize text-muted-foreground">
             {readinessEvidence} evidence
           </div>
+          {evidenceTier === 'bootstrapping' && (
+            <div className="mt-2 space-y-2 text-xs">
+              <div className="inline-flex items-center rounded-full border border-border bg-secondary px-2 py-0.5 font-medium text-muted-foreground">
+                Limited data
+              </div>
+              <div className="break-words text-muted-foreground">
+                Early estimate based on today&apos;s fatigue and rest only.
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${Math.min(100, (completedTrips.length / SCORE_BASELINE_TRIP_TARGET) * 100)}%` }}
+                />
+              </div>
+              <div className="break-words text-muted-foreground">
+                {tripsUntilTrendBaseline > 0
+                  ? `${tripsUntilTrendBaseline} more trip${tripsUntilTrendBaseline === 1 ? '' : 's'} needed for full trend readiness.`
+                  : 'Trend readiness is ready to unlock as signal quality improves.'}
+              </div>
+            </div>
+          )}
+          {evidenceTier === 'developing' && (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              <div className="inline-flex items-center rounded-full border border-border bg-secondary px-2 py-0.5 font-medium">
+                Developing - {availableSignalCount} of 9 signals available
+              </div>
+              {roundedReadinessScore != null && (
+                <div>
+                  Confidence band approximately {Math.max(0, roundedReadinessScore - 8)}-{Math.min(100, roundedReadinessScore + 8)}
+                </div>
+              )}
+            </div>
+          )}
           {preTripRisk.dataQuality?.personalised === false && (
             <div className="mt-1 break-words text-xs text-muted-foreground">
-              Learning your habits - a precise readiness number stays hidden until enough signals are available.
+              Learning your habits - personal time, day, and trend signals unlock as trips are recorded.
             </div>
           )}
           {preTripRisk.dataQuality?.personalised && preTripRisk.dataQuality.confidence < 1 && (
@@ -2562,7 +2620,7 @@ function DashboardRiskPanel({
               Readiness is personalising ({completedTrips.length} trips recorded).
             </div>
           )}
-          {preTripRisk.riskLevel !== 'low' && (
+          {displayRiskLevel !== 'low' && (
             <>
               <div className="mt-1 break-words text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
               <div className="mt-1 break-words text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
@@ -2571,7 +2629,7 @@ function DashboardRiskPanel({
           <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-3 text-xs">
             <div className="font-semibold">Recommended before starting</div>
             <div className="mt-1 text-muted-foreground">
-              {preTripRisk.riskLevel === 'low'
+              {displayRiskLevel === 'low'
                 ? 'Conditions look steady. Start when your phone is mounted and GPS has a clear signal.'
                 : preTripRisk.tipText || 'Take a short reset before driving, then start when you feel focused.'}
             </div>

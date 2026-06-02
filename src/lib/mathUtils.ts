@@ -14,6 +14,17 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * Exponential decay weight for a data point that is `ageDays` old.
+ * Half-life of 21 days: a 3-week-old trip counts half as much as today's.
+ * Returns a value in (0, 1].
+ */
+export function decayWeight(ageDays: number, halfLifeDays = 21): number {
+  const days = Math.max(0, Number.isFinite(ageDays) ? ageDays : 0);
+  const halfLife = Math.max(Number.EPSILON, Number.isFinite(halfLifeDays) ? halfLifeDays : 21);
+  return Math.pow(0.5, days / halfLife);
+}
+
+/**
  * Calculate Pearson correlation for paired numeric samples.
  * Invalid pairs are discarded so callers can pass raw sensor-derived arrays.
  * @param {number[]} xs
