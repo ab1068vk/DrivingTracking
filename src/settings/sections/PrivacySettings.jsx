@@ -1,5 +1,6 @@
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
 import { LEGAL_DISCLAIMER_ITEMS, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
+import { PRIVACY_CONSENT_POINTS, PRIVACY_NOTICE_HIGHLIGHTS, PRIVACY_NOTICE_SUMMARY } from '@/lib/privacyNotice';
 
 export function PrivacySettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -25,11 +26,36 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                 <SettingRow
                   icon={Shield}
                   label="Privacy, Legal & Safety"
-                  sublabel="Local data defaults plus personal-use legal disclaimers"
+                  sublabel="What stays local, what can leave, what is masked, and deletion limits"
                   onClick={showPrivacyPolicy}
                 >
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </SettingRow>
+                <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
+                  <div className="flex items-start gap-2">
+                    <Shield className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">Privacy Notice Summary</div>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{PRIVACY_NOTICE_SUMMARY}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 divide-y divide-border/60">
+                    {PRIVACY_NOTICE_HIGHLIGHTS.map((item) => (
+                      <div key={item.title} className="py-2 first:pt-0 last:pb-0">
+                        <div className="text-xs font-semibold text-foreground">{item.title}</div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 border-t border-border/70 pt-3">
+                    <div className="text-xs font-semibold text-foreground">Consent checkpoints</div>
+                    <ul className="mt-1 space-y-1 text-xs leading-relaxed text-muted-foreground">
+                      {PRIVACY_CONSENT_POINTS.map((point) => (
+                        <li key={point}>- {point}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
                 <div className="my-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />

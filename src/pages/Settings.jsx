@@ -83,6 +83,13 @@ import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { useSettingsSections } from '@/features/settings/hooks/useSettingsSections';
 import { SettingsNavigator } from '@/settings/SettingsNavigator';
 import { LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
+import {
+  PRIVACY_CONSENT_POINTS,
+  PRIVACY_NOTICE_HIGHLIGHTS,
+  PRIVACY_NOTICE_LAST_UPDATED,
+  PRIVACY_NOTICE_SUMMARY,
+  PRIVACY_NOTICE_TOAST_DESCRIPTION,
+} from '@/lib/privacyNotice';
 import { secureWipeAllData } from '@/lib/privacyWipe';
 import {
   CALIBRATION_STATUSES,
@@ -278,6 +285,7 @@ export default function Settings() {
   const [backupImportError, setBackupImportError] = useState('');
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [backupImportBusy, setBackupImportBusy] = useState(false);
+  const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
@@ -619,9 +627,10 @@ export default function Settings() {
   };
 
   const showPrivacyPolicy = () => {
+    setPrivacyNoticeOpen(true);
     toast({
       title: 'Privacy, legal, and local data',
-      description: `Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent. ${LEGAL_DISCLAIMER_SUMMARY}`,
+      description: `${PRIVACY_NOTICE_TOAST_DESCRIPTION} ${LEGAL_DISCLAIMER_SUMMARY}`,
       duration: 9000,
     });
   };
@@ -1269,10 +1278,13 @@ export default function Settings() {
           <DialogHeader>
             <DialogTitle>Export Backup</DialogTitle>
             <DialogDescription>
-              Protect trip history, routes, vehicles, and settings with a password before saving the backup file.
+              Protect trip history, privacy-masked routes, vehicles, settings, and saved filters with a password before saving the backup file.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              Backups remove privacy-zone center coordinates and mask protected route/event data, but the file still contains sensitive trip history. Anyone with this file and password can restore it.
+            </div>
             <label className="block text-sm font-medium">
               Password
               <input
@@ -1357,6 +1369,9 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
+            <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
+              Importing merges trips, vehicles, saved filters, and safe settings into local storage. Backups do not restore privacy-zone coordinates; re-add private places after import if needed.
+            </div>
             {backupImportError === 'wrong_password' && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
                 Wrong password. Check the password and try again.
@@ -1416,6 +1431,9 @@ export default function Settings() {
               Road Sage will send sampled GPS coordinate pairs from one selected trip at a time to the OSRM endpoint you save. This happens only when you tap Get Road Data; each continuous route segment sends up to 100 sampled coordinate pairs, with privacy-zone gaps excluded.
             </DialogDescription>
           </DialogHeader>
+          <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
+            The endpoint can learn route shape, timing context, and your network metadata for those samples. Use a private or trusted HTTPS endpoint; the public OSRM demo endpoint is blocked for saved route snapping.
+          </div>
           <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
             <Checkbox
               checked={osrmConsentChecked}
@@ -1439,6 +1457,45 @@ export default function Settings() {
               className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
               Confirm and check endpoint
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={privacyNoticeOpen} onOpenChange={setPrivacyNoticeOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Privacy, Data, and Consent</DialogTitle>
+            <DialogDescription>
+              Last updated {PRIVACY_NOTICE_LAST_UPDATED}. {PRIVACY_NOTICE_SUMMARY}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {PRIVACY_NOTICE_HIGHLIGHTS.map((item) => (
+              <div key={item.title} className="rounded-xl border border-border bg-secondary/40 p-3">
+                <div className="text-sm font-semibold">{item.title}</div>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</p>
+              </div>
+            ))}
+            <div className="rounded-xl border border-border bg-card p-3">
+              <div className="text-sm font-semibold">Consent checkpoints</div>
+              <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                {PRIVACY_CONSENT_POINTS.map((point) => (
+                  <li key={point}>- {point}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              {LEGAL_DISCLAIMER_SUMMARY}
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setPrivacyNoticeOpen(false)}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+            >
+              Done
             </button>
           </DialogFooter>
         </DialogContent>
