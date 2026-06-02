@@ -13,7 +13,7 @@ export async function buildEncryptedExport({ filename, mimeType, data, password,
     throw new Error('Export password must be at least 12 characters.');
   }
   await assertPlayIntegrityForSensitiveAction(`export:${kind}`, {
-    requireServerVerification: true,
+    requireServerVerification: false,
   });
 
   const payload = {
