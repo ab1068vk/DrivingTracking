@@ -29,7 +29,9 @@ class DriveSenseNativeTripStore {
         SharedPreferences encryptedPrefs = EncryptedPreferenceStore.open(context, PREFS_ENCRYPTED);
         if (!encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_PLAINTEXT, false)) {
             SharedPreferences.Editor editor = encryptedPrefs.edit();
-            editor.putBoolean(KEY_MIGRATED_FROM_V1, true);
+            boolean migratedFromV1 = copyPlaintextPrefs(context, PREFS_OLD, encryptedPrefs, editor);
+            copyPlaintextPrefs(context, PREFS, encryptedPrefs, editor);
+            editor.putBoolean(KEY_MIGRATED_FROM_V1, migratedFromV1 || encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_V1, false));
             editor.putBoolean(KEY_MIGRATED_FROM_PLAINTEXT, true);
             editor.commit();
         }
@@ -139,5 +141,22 @@ class DriveSenseNativeTripStore {
     private static double roundCoordinate(double value) {
         if (!Double.isFinite(value)) return value;
         return Math.round(value * 100000d) / 100000d;
+    }
+
+    private static boolean copyPlaintextPrefs(
+        Context context,
+        String prefsName,
+        SharedPreferences encryptedPrefs,
+        SharedPreferences.Editor encryptedEditor
+    ) {
+        SharedPreferences plaintext = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
+        if (plaintext.getAll().isEmpty()) return false;
+
+        for (java.util.Map.Entry<String, ?> entry : plaintext.getAll().entrySet()) {
+            String key = entry.getKey();
+            if (key == null || encryptedPrefs.contains(key)) continue;
+            EncryptedPreferenceStore.put(encryptedEditor, key, entry.getValue());
+        }
+        return true;
     }
 }

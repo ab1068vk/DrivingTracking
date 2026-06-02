@@ -29,13 +29,15 @@ export async function requestPlayIntegrityAttestation(action = 'sensitive-action
   });
 }
 
-export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-action') {
+export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-action', options = {}) {
   if (!isNativePlatform()) return null;
+  const requireServerVerification = options.requireServerVerification === true;
   const result = await requestPlayIntegrityAttestation(action);
   if (!result?.token) {
     throw new Error('Play Integrity attestation did not return a token.');
   }
   if (
+    requireServerVerification &&
     result.requiresServerVerification === true &&
     import.meta.env.VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY !== 'true'
   ) {

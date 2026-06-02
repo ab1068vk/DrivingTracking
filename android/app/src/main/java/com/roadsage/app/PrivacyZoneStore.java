@@ -24,7 +24,7 @@ public final class PrivacyZoneStore {
     public static void migratePlaintextPrefsIfNeeded(Context context) {
         SharedPreferences encrypted = encryptedPrefs(context);
         if (!encrypted.contains(NATIVE_KEY)) {
-            encrypted.edit().putString(NATIVE_KEY, "[]").commit();
+            encrypted.edit().putString(NATIVE_KEY, normalizedPlaintextZones(context)).commit();
         }
         EncryptedPreferenceStore.deletePlaintext(context, NATIVE_PREFS);
     }
@@ -106,6 +106,24 @@ public final class PrivacyZoneStore {
 
     private static SharedPreferences encryptedPrefs(Context context) {
         return EncryptedPreferenceStore.open(context, ENCRYPTED_PREFS);
+    }
+
+    private static String normalizedPlaintextZones(Context context) {
+        SharedPreferences plaintext = context.getSharedPreferences(NATIVE_PREFS, Context.MODE_PRIVATE);
+        String raw = plaintext.getString(NATIVE_KEY, "[]");
+        try {
+            JSONArray array = new JSONArray(raw == null ? "[]" : raw);
+            JSONArray normalized = new JSONArray();
+            for (int i = 0; i < array.length(); i++) {
+                normalized.put(PrivacyZone.fromJson(array.getJSONObject(i)).toJson());
+            }
+            return normalized.toString();
+        } catch (JSONException e) {
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Failed to migrate plaintext privacy zones", e);
+            }
+            return "[]";
+        }
     }
 
     public static String keyBacking(Context context) {
