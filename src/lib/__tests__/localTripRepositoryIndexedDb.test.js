@@ -77,6 +77,7 @@ class FakeObjectStore {
   put(value) {
     return makeIdbRequest(() => {
       this.state.records.set(value[this.keyPath], value);
+      this.state.writeLog.push(value);
       queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
       return value[this.keyPath];
     });
@@ -130,6 +131,7 @@ class FakeDatabase {
       indexes: new Set(),
       indexKeyPaths: new Map(),
       records: new Map(),
+      writeLog: [],
       databaseState: this.state,
     };
     this.state.stores.set(name, store);
@@ -318,9 +320,17 @@ describe('localTripRepository IndexedDB migrations', () => {
     await expect(enforceDataRetention(24)).resolves.toBe(1);
 
     const records = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records;
+    const writes = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').writeLog;
     expect(records.has('old-completed')).toBe(false);
     expect(records.has('old-draft')).toBe(true);
     expect(records.has('recent-completed')).toBe(true);
+    expect(writes).toContainEqual(expect.objectContaining({
+      id: 'old-completed',
+      secure_delete_tombstone: true,
+      route_points: [],
+      driving_events: [],
+      notes: '',
+    }));
     await expect(enforceDataRetention(0)).resolves.toBe(0);
   });
 

@@ -33,12 +33,12 @@ export async function getCurrentLocation() {
 
   if (isNativePlatform()) {
     const position = await Geolocation.getCurrentPosition(watchOptions);
-    return normalizeLocationPoint(position);
+    return truncateRoutePoint(normalizeLocationPoint(position));
   }
 
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
-      (position) => resolve(normalizeLocationPoint(position)),
+      (position) => resolve(truncateRoutePoint(normalizeLocationPoint(position))),
       (error) => reject(error),
       watchOptions
     );

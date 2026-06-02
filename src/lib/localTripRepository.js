@@ -244,12 +244,14 @@ const storageSanitizationChanged = (before, after) => (
   Boolean(before && Object.prototype.hasOwnProperty.call(before, 'motion_samples')) !== Boolean(after && Object.prototype.hasOwnProperty.call(after, 'motion_samples'))
 );
 
+const withoutSecureDeleteTombstones = (trips) => trips.filter((trip) => !trip?.secure_delete_tombstone);
+
 const readTripsFromDb = async (dbName) => {
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readonly');
     const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
-    return Promise.all(trips.map(decryptStoredTrip));
+    return withoutSecureDeleteTombstones(await Promise.all(trips.map(decryptStoredTrip)));
   } finally {
     db.close();
   }
@@ -280,6 +282,67 @@ const deleteDbByName = (dbName) => new Promise((resolve, reject) => {
   request.onerror = () => reject(request.error);
   request.onblocked = () => reject(new Error(`IndexedDB delete blocked for ${dbName}`));
 });
+
+const buildSecureDeleteTombstone = (id) => sanitizeTripForStorage({
+  id,
+  status: 'deleted',
+  schema_version: TRIP_SCHEMA_VERSION,
+  secure_delete_tombstone: true,
+  start_time: null,
+  end_time: null,
+  updated_at: new Date(0).toISOString(),
+  route_points: [],
+  raw_route_points: [],
+  route_points_raw_count: 0,
+  route_points_map_count: 0,
+  route_risk_cells: [],
+  driving_events: [],
+  notes: '',
+});
+
+const overwriteTripRecordBeforeDelete = (store, id) => (
+  store.put(buildSecureDeleteTombstone(id))
+);
+
+const overwriteLocalTripsBeforeDelete = async (shouldWipeTrip) => {
+  const trips = await getJson(TRIPS_KEY, []);
+  if (!Array.isArray(trips) || trips.length === 0) return [];
+  let changed = false;
+  const wiped = trips.map((trip) => {
+    if (!shouldWipeTrip(trip)) return trip;
+    changed = true;
+    return buildSecureDeleteTombstone(trip?.id);
+  });
+  if (changed) await setJson(TRIPS_KEY, wiped);
+  return wiped;
+};
+
+const overwriteAllTripsInDbBeforeDelete = async (dbName) => {
+  if (!canUseIndexedDb()) return;
+
+  const readDb = await openDbByName(dbName);
+  let tripIds = [];
+  try {
+    if (!hasStore(readDb, TRIP_STORE)) return;
+    const tx = readDb.transaction(TRIP_STORE, 'readonly');
+    const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    tripIds = trips.map((trip) => trip?.id).filter((id) => id != null);
+  } finally {
+    readDb.close();
+  }
+
+  if (tripIds.length === 0) return;
+
+  const writeDb = await openDbByName(dbName);
+  try {
+    const tx = writeDb.transaction(TRIP_STORE, 'readwrite');
+    const store = tx.objectStore(TRIP_STORE);
+    tripIds.forEach((id) => store.put(buildSecureDeleteTombstone(id)));
+    await idbTransactionDone(tx);
+  } finally {
+    writeDb.close();
+  }
+};
 
 let dbNameMigrationPromise = null;
 
@@ -316,6 +379,7 @@ export const migrateIndexedDbName = async ({
     await openDbByName(currentName).then((db) => db.close());
   }
 
+  await overwriteAllTripsInDbBeforeDelete(legacyPreviousName).catch(() => {});
   await deleteDbByName(legacyPreviousName);
   storage.setItem(DB_NAME_META_KEY, currentName);
   return true;
@@ -341,14 +405,14 @@ const getAllTrips = async () => {
     const sanitized = decrypted.map(sanitizeTripForStorage);
     const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
     if (changed.length) await putTrips(changed).catch(() => {});
-    return sanitized;
+    return withoutSecureDeleteTombstones(sanitized);
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
     const decrypted = await Promise.all(trips.map(decryptTripFields));
     const sanitized = decrypted.map(sanitizeTripForStorage);
     const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
     if (changed.length) await putTrips(changed).catch(() => {});
-    return sanitized;
+    return withoutSecureDeleteTombstones(sanitized);
   }
 };
 
@@ -800,20 +864,32 @@ const importNativeCompletedTrips = async () => {
 const deleteTrip = async (id) => {
   try {
     const db = await openDb();
-    const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).delete(id));
-    db.close();
+    try {
+      try {
+        const wipeTx = db.transaction(TRIP_STORE, 'readwrite');
+        overwriteTripRecordBeforeDelete(wipeTx.objectStore(TRIP_STORE), id);
+        await idbTransactionDone(wipeTx);
+      } catch {
+        // Deletion should still proceed if the best-effort wipe cannot complete.
+      }
+      const deleteTx = db.transaction(TRIP_STORE, 'readwrite');
+      deleteTx.objectStore(TRIP_STORE).delete(id);
+      await idbTransactionDone(deleteTx);
+    } finally {
+      db.close();
+    }
   } catch {
-    const trips = await getJson(TRIPS_KEY, []);
-    await setJson(TRIPS_KEY, trips.filter((trip) => String(trip.id) !== String(id)));
+    const wiped = await overwriteLocalTripsBeforeDelete((trip) => String(trip?.id) === String(id));
+    await setJson(TRIPS_KEY, wiped.filter((trip) => String(trip?.id) !== String(id)));
   }
 };
 
 const deleteAllTripsFromStorage = async () => {
-  try {
-    await deleteDbByName(DB_NAME);
-    await deleteDbByName(LOCAL_DB_LEGACY_DEFAULT_NAME);
-  } catch {}
+  await overwriteAllTripsInDbBeforeDelete(DB_NAME).catch(() => {});
+  await overwriteAllTripsInDbBeforeDelete(LOCAL_DB_LEGACY_DEFAULT_NAME).catch(() => {});
+  await deleteDbByName(DB_NAME).catch(() => {});
+  await deleteDbByName(LOCAL_DB_LEGACY_DEFAULT_NAME).catch(() => {});
+  await overwriteLocalTripsBeforeDelete(() => true).catch(() => {});
   await Promise.all([
     removeJson(TRIPS_KEY),
     removeJson(DRIVER_SIGNATURE_KEY),

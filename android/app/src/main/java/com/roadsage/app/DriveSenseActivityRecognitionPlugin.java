@@ -55,6 +55,10 @@ import java.util.Locale;
     }
 )
 public class DriveSenseActivityRecognitionPlugin extends Plugin {
+    private static final String SECURE_EXPORT_MIME_TYPE = "application/octet-stream";
+    private static final int BACKUP_ENC_VERSION = 1;
+    private static final int BACKUP_ENC_HEADER_BYTES = 1 + 32 + 12;
+    private static final int MIN_ENCRYPTED_EXPORT_BYTES = BACKUP_ENC_HEADER_BYTES + 16;
     private static WeakReference<DriveSenseActivityRecognitionPlugin> instance;
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
@@ -422,6 +426,12 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             call.reject("data is required.");
             return;
         }
+        if (!isAllowedSecureExportFilename(filename) ||
+            !isSecureExportMimeType(mimeType) ||
+            !looksLikeEncryptedRoadSagePayload(data)) {
+            call.reject("Only encrypted Road Sage export files can be saved to Downloads.");
+            return;
+        }
 
         try {
             byte[] bytes = isBase64 ? Base64.decode(data, Base64.DEFAULT) : data.getBytes(StandardCharsets.UTF_8);
@@ -464,6 +474,26 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             }
         } catch (Exception error) {
             call.reject(error.getMessage(), error);
+        }
+    }
+
+    private static boolean isAllowedSecureExportFilename(String filename) {
+        String normalized = filename == null ? "" : filename.trim().toLowerCase(Locale.US);
+        return normalized.endsWith(".rsexport") || normalized.endsWith(".rsbackup");
+    }
+
+    private static boolean isSecureExportMimeType(String mimeType) {
+        return SECURE_EXPORT_MIME_TYPE.equalsIgnoreCase(String.valueOf(mimeType).trim());
+    }
+
+    private static boolean looksLikeEncryptedRoadSagePayload(String value) {
+        if (value == null || value.trim().isEmpty()) return false;
+        try {
+            byte[] decoded = Base64.decode(value.trim(), Base64.DEFAULT);
+            return decoded.length > MIN_ENCRYPTED_EXPORT_BYTES &&
+                decoded[0] == (byte) BACKUP_ENC_VERSION;
+        } catch (IllegalArgumentException error) {
+            return false;
         }
     }
 
