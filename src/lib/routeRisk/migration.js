@@ -1,9 +1,16 @@
 import { hasRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRisk/storage';
 import { buildRouteRiskIndexFromTrips } from '@/lib/routeRisk/aggregate';
 
+const waitForIdleRebuildSlot = () => new Promise((resolve) => {
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    window.requestIdleCallback(resolve, { timeout: 10000 });
+    return;
+  }
+  setTimeout(resolve, 200);
+});
+
 const runInlineRebuild = async ({ trips, privacyZones, onProgress }) => {
   onProgress?.({ status: 'running', completed: 0, total: trips.length });
-  await new Promise((resolve) => setTimeout(resolve, 0));
   const index = buildRouteRiskIndexFromTrips(trips, privacyZones);
   await saveRouteRiskIndex(index);
   onProgress?.({ status: 'complete', completed: trips.length, total: trips.length });
@@ -55,6 +62,7 @@ export async function ensureRouteRiskIndexMigration({
   }
 
   const canUseWorker = typeof Worker !== 'undefined' && typeof URL !== 'undefined';
+  await waitForIdleRebuildSlot();
   const index = canUseWorker
     ? await runWorkerRebuild({ trips: completedTrips, privacyZones, onProgress })
     : await runInlineRebuild({ trips: completedTrips, privacyZones, onProgress });

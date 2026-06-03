@@ -4,6 +4,7 @@
 
 import { isNativePlatform } from '@/lib/nativePlatform';
 import NativeSpeech from '@/lib/driveSenseNativePlugin';
+import { playEarcon } from '@/lib/voiceEarcon';
 import { ALERT_PRIORITY } from '@/lib/voiceAlertMessages';
 
 export const PRIORITY = { INFO: 0, WARNING: 1, DANGER: 2, CRITICAL: 3 };
@@ -41,6 +42,7 @@ function normalizeEntry(entry = {}) {
     pitch: entry.pitch ?? 1.0,
     volume: entry.volume ?? 0.95,
     language: entry.language ?? DEFAULT_LANGUAGE,
+    earconEnabled: entry.earconEnabled !== false,
   };
 }
 
@@ -71,6 +73,8 @@ async function speakNative(entry) {
     volume: entry.volume,
     pitch: entry.pitch,
     language: entry.language,
+    earconEnabled: entry.earconEnabled,
+    earconPattern: entry.priority,
   };
   if (typeof NativeSpeech?.speak === 'function') {
     await NativeSpeech.speak(payload);
@@ -129,6 +133,10 @@ async function speakNow(entry) {
     if (isNativePlatform()) {
       await speakNative(entry);
     } else {
+      if (entry.earconEnabled) {
+        await playEarcon(entry.priority, entry.volume);
+        if (token !== activeToken) return;
+      }
       await speakWeb(entry);
     }
   } catch {

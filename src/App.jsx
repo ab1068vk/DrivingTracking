@@ -15,7 +15,6 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
-import { enforceDataRetention } from '@/lib/localTripRepository';
 import { isLocked, lock, markUnlocked, msUntilAutoLock, setBiometricLockEnabled } from '@/lib/biometricLock';
 import { authenticateBiometricGate } from '@/lib/nativeBiometricGate';
 import { toast } from '@/components/ui/use-toast';
@@ -44,6 +43,31 @@ const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
 const Diagnostics = showDebugRoutes ? lazy(() => import('@/pages/Diagnostics')) : null;
 const Insights = lazy(() => import('@/pages/Insights'));
 
+const scheduleDataRetentionPrune = (retentionMonths) => {
+  const prune = () => {
+    import('@/lib/localTripRepository')
+      .then(({ enforceDataRetention }) => enforceDataRetention(retentionMonths))
+      .then((count) => {
+        if (count > 0) {
+          logError('data_retention_pruned', new Error('Retention pruning'), { deleted: count });
+        }
+      })
+      .catch((err) => {
+        logError('data_retention_prune_failed', err);
+      });
+  };
+
+  if (typeof window === 'undefined') {
+    prune();
+    return;
+  }
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(prune, { timeout: 10_000 });
+    return;
+  }
+  window.setTimeout(prune, 3_000);
+};
+
 function AppLoading() {
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-background">
@@ -68,13 +92,7 @@ const AuthenticatedApp = () => {
         logError('notification_channel_configure', err);
       });
       const settings = await localSettings.hydrateFromNative();
-      enforceDataRetention(settings.data_retention_months).then((count) => {
-        if (count > 0) {
-          logError('data_retention_pruned', new Error('Retention pruning'), { deleted: count });
-        }
-      }).catch((err) => {
-        logError('data_retention_prune_failed', err);
-      });
+      scheduleDataRetentionPrune(settings.data_retention_months);
       reverifyConfiguredOsrmEndpoint(settings).then(({ result }) => {
         if (result && !result.ok) {
           toast({

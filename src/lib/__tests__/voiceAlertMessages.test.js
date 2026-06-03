@@ -44,12 +44,14 @@ describe('voice alert messages', () => {
       rate: 1.16,
       pitch: 1.1,
       volume: 0.8,
+      earconEnabled: true,
     });
 
-    expect(buildTtsParams('idle', { voice_alert_volume: 2 })).toEqual({
+    expect(buildTtsParams('idle', { voice_alert_volume: 2, voice_earcon_enabled: false })).toEqual({
       rate: 0.85,
       pitch: 0.9,
       volume: 1,
+      earconEnabled: false,
     });
   });
 });

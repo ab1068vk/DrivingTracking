@@ -152,33 +152,6 @@ export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
                   />
                 </SettingRow>
                 <SettingRow
-                  icon={Volume2}
-                  label="Live voice alerts"
-                  sublabel="Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, repeated-event-area, and incident alerts"
-                >
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        runVoiceTest();
-                      }}
-                      className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
-                    >
-                      Test
-                    </button>
-                    <Toggle
-                      value={cfg.voice_alerts_enabled !== false}
-                      onChange={v => updateCfg({ voice_alerts_enabled: v })}
-                    />
-                  </div>
-                </SettingRow>
-                {voiceTestStatus && (
-                  <div className="px-1 pb-3 text-xs text-muted-foreground">
-                    {voiceTestStatus}
-                  </div>
-                )}
-                <SettingRow
                   icon={Bluetooth}
                   label="OBD-II Bluetooth"
                   sublabel={obdSupport.supported ? 'BLE OBD-II parsing is available for compatible adapters' : obdSupport.note}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { calibrationLabelService } from '@/api/calibrationLabels';
@@ -21,6 +21,7 @@ import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
 import { TripEventList, classifyTripEvent } from '@/components/TripEventList';
+import { EventStatusBadge } from '@/components/EventStatusBadge';
 import {
   calculateSegmentMetrics,
 } from '@/lib/gps/math';
@@ -281,6 +282,110 @@ const getEventRowStyle = (evt = {}, cfg = {}, diagnostic = false) => {
     badge: null,
   };
 };
+
+const eventFeedbackKey = (event, index) => [
+  event.type || 'event',
+  event.timestamp || index,
+  Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(2) : '',
+].join('|');
+
+const EventRow = memo(function EventRow({
+  row,
+  diagnostic = false,
+  status = 'scored',
+  eventFeedback,
+  feedbackMutation,
+}) {
+  const { event: evt, originalIndex, eventKey } = row;
+  const key = eventKey || eventFeedbackKey(evt, originalIndex);
+  const feedback = eventFeedback[key]?.verdict || null;
+  const cfg = eventDisplayConfig(evt, isGpsPhoneUseProxyEvent(evt));
+  const timeText = evt.timestamp || evt.startTime
+    ? new Date(evt.timestamp || evt.startTime).toLocaleTimeString()
+    : 'Time unknown';
+  const eventValueText = evt.type === 'possible_crash'
+    ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
+    : evt.type === 'phone_use'
+      ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
+      : evt.type === 'lane_change_detected'
+        ? `${Math.round(evt.speed_kmh || 0)} km/h${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
+        : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
+  const inferredTypes = ['lane_change_detected', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
+  const confidenceText = evt.source === 'android_usage_access'
+    ? 'Measured phone activity'
+    : evt.type === 'speeding' && evt.speed_limit_source
+      ? evt.speed_limit_source === 'inferred'
+        ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
+        : evt.speed_limit_source === 'osm_highway_default'
+          ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
+          : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
+      : evt.feedback_removed
+        ? 'Marked wrong - removed from scoring'
+      : diagnostic
+        ? 'Diagnostic GPS inference - not scored'
+        : inferredTypes.includes(evt.type)
+          ? `${evt.confidence || evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
+          : 'Measured from GPS motion';
+  const diagnosticExplanation = diagnostic ? diagnosticExplanationForEvent(evt) : null;
+  const rowStyle = getEventRowStyle(evt, cfg, diagnostic);
+  return (
+    <div className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${rowStyle.row}`}>
+      <div className="flex items-center gap-2.5">
+        <span className={`text-lg ${rowStyle.icon}`}>{cfg.icon}</span>
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`text-sm font-medium ${rowStyle.label}`}>{cfg.label}</span>
+            <EventStatusBadge status={status} />
+            {rowStyle.badge}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {timeText} - {eventValueText}
+          </div>
+          {cfg.badge && (
+            <div className="mt-0.5 inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">{cfg.badge}</div>
+          )}
+          <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
+          {diagnosticExplanation && (
+            <div className="mt-0.5 text-[11px] text-muted-foreground">{diagnosticExplanation}</div>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${rowStyle.severity}`}>
+          {rowStyle.severityLabel}
+        </span>
+        {[
+          { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
+          { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
+        ].map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            disabled={feedbackMutation.isPending}
+            onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
+            className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+              feedbackMutation.isPending
+                ? 'border-border text-muted-foreground opacity-60'
+                : feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}, (prev, next) => {
+  const prevKey = prev.row.eventKey || eventFeedbackKey(prev.row.event, prev.row.originalIndex);
+  const nextKey = next.row.eventKey || eventFeedbackKey(next.row.event, next.row.originalIndex);
+  return (
+    prevKey === nextKey &&
+    prev.diagnostic === next.diagnostic &&
+    prev.status === next.status &&
+    prev.feedbackMutation.isPending === next.feedbackMutation.isPending &&
+    (prev.eventFeedback[prevKey]?.verdict || null) === (next.eventFeedback[nextKey]?.verdict || null)
+  );
+});
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
 
@@ -772,11 +877,6 @@ export default function TripDetail() {
     .filter((event) => event.type !== 'near_miss')
     .filter(isUserVisibleTripEvent);
   const eventFeedback = trip.event_feedback || {};
-  const eventFeedbackKey = (event, index) => [
-    event.type || 'event',
-    event.timestamp || index,
-    Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(2) : '',
-  ].join('|');
   const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
   const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
     .filter((event) => !displayEvents.some((candidate) => (
@@ -901,86 +1001,6 @@ export default function TripDetail() {
     : speedLimitContext
       ? 'Road data was checked, but no usable speed limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
       : 'Before getting road data, this map shows GPS speed bands and event markers only.';
-  const renderEventRow = ({ event: evt, originalIndex, eventKey }, { diagnostic = false, badge = null } = {}) => {
-    const key = eventKey || eventFeedbackKey(evt, originalIndex);
-    const feedback = eventFeedback[key]?.verdict || null;
-    const cfg = eventDisplayConfig(evt, isGpsPhoneUseProxyEvent(evt));
-    const timeText = evt.timestamp || evt.startTime
-      ? new Date(evt.timestamp || evt.startTime).toLocaleTimeString()
-      : 'Time unknown';
-    const eventValueText = evt.type === 'possible_crash'
-      ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
-      : evt.type === 'phone_use'
-        ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
-        : evt.type === 'lane_change_detected'
-          ? `${Math.round(evt.speed_kmh || 0)} km/h${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
-        : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
-    const inferredTypes = ['lane_change_detected', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
-    const confidenceText = evt.source === 'android_usage_access'
-      ? 'Measured phone activity'
-      : evt.type === 'speeding' && evt.speed_limit_source
-        ? evt.speed_limit_source === 'inferred'
-          ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
-          : evt.speed_limit_source === 'osm_highway_default'
-            ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
-            : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
-        : evt.feedback_removed
-          ? 'Marked wrong - removed from scoring'
-        : diagnostic
-          ? 'Diagnostic GPS inference - not scored'
-          : inferredTypes.includes(evt.type)
-            ? `${evt.confidence || evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
-            : 'Measured from GPS motion';
-    const diagnosticExplanation = diagnostic ? diagnosticExplanationForEvent(evt) : null;
-    const rowStyle = getEventRowStyle(evt, cfg, diagnostic);
-    return (
-      <div key={`${evt.type}-${evt.timestamp || evt.startTime || originalIndex}`} className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${rowStyle.row}`}>
-        <div className="flex items-center gap-2.5">
-          <span className={`text-lg ${rowStyle.icon}`}>{cfg.icon}</span>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`text-sm font-medium ${rowStyle.label}`}>{cfg.label}</span>
-              {badge}
-              {rowStyle.badge}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {timeText} - {eventValueText}
-            </div>
-            {cfg.badge && (
-              <div className="mt-0.5 inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">{cfg.badge}</div>
-            )}
-            <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
-            {diagnosticExplanation && (
-              <div className="mt-0.5 text-[11px] text-muted-foreground">{diagnosticExplanation}</div>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0">
-          <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${rowStyle.severity}`}>
-            {rowStyle.severityLabel}
-          </span>
-          {[
-            { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
-            { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
-          ].map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              disabled={feedbackMutation.isPending}
-              onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
-              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                feedbackMutation.isPending
-                  ? 'border-border text-muted-foreground opacity-60'
-                  : feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="space-y-5 pb-4">
@@ -2059,7 +2079,11 @@ export default function TripDetail() {
             scoredRows={scoredEventRows}
             reviewedRows={reviewedWrongRows}
             diagnosticRows={diagnosticEventRows}
-            renderEventRow={renderEventRow}
+            EventRowComponent={EventRow}
+            eventRowProps={{
+              eventFeedback,
+              feedbackMutation,
+            }}
           />
         </motion.div>
       )}

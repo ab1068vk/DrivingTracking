@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
@@ -53,6 +54,8 @@ const SCORE_SPARKLINES = [
 ];
 
 export const SCORE_DELTA_MIN_PREVIOUS_TRIPS = 3;
+const TRIP_CARD_ESTIMATED_HEIGHT = 188;
+const TRIP_LIST_OVERSCAN = 5;
 
 const scoreValue = (trip, key = 'overall') => getTripComponentScore(trip, key).value;
 const sortableScore = (trip, direction = 'desc') => {
@@ -119,6 +122,7 @@ const matchesQuickFilter = (trip, filter) => {
 
 export default function TripHistory() {
   const [searchParams] = useSearchParams();
+  const tripListRef = useRef(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
   const [filterBy, setFilterBy] = useState(() => (searchParams.get('filter') === 'unlabeled' ? 'unlabeled' : 'all'));
@@ -203,6 +207,14 @@ export default function TripHistory() {
       case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
       default: return 0;
     }
+  });
+  const rowVirtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => tripListRef.current,
+    estimateSize: () => TRIP_CARD_ESTIMATED_HEIGHT,
+    getItemKey: (index) => sorted[index]?.id ?? index,
+    initialRect: { width: 0, height: 720 },
+    overscan: TRIP_LIST_OVERSCAN,
   });
 
   const clearFilters = () => {
@@ -472,22 +484,44 @@ export default function TripHistory() {
       )}
 
       {!isLoading && sorted.length > 0 && (
-        <div className="space-y-3">
-          {sorted.map((trip, index) => (
-            <TripCard
-              key={trip.id}
-              trip={trip}
-              units={units}
-              index={index}
-              tripCount={completed.length}
-              scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
-              onToggleFavorite={(target) => updateTripMut.mutate({
-                id: target.id,
-                patch: { is_favorite: target.is_favorite !== true },
-              })}
-              onCalibrationLabelSaved={() => qc.invalidateQueries({ queryKey: ['calibration-survey-markers'] })}
-            />
-          ))}
+        <div
+          ref={tripListRef}
+          className="relative overflow-auto pr-1 thin-scrollbar"
+          style={{
+            height: `min(${rowVirtualizer.getTotalSize()}px, calc(100vh - 8rem))`,
+          }}
+        >
+          <div
+            className="relative w-full"
+            style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const trip = sorted[virtualRow.index];
+              if (!trip) return null;
+              return (
+                <div
+                  key={virtualRow.key}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className="absolute left-0 top-0 w-full pb-3"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <TripCard
+                    trip={trip}
+                    units={units}
+                    index={virtualRow.index}
+                    tripCount={completed.length}
+                    scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+                    onToggleFavorite={(target) => updateTripMut.mutate({
+                      id: target.id,
+                      patch: { is_favorite: target.is_favorite !== true },
+                    })}
+                    onCalibrationLabelSaved={() => qc.invalidateQueries({ queryKey: ['calibration-survey-markers'] })}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

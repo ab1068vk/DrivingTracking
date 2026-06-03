@@ -140,10 +140,11 @@ export function buildTtsParams(key, settings = {}) {
   const priority = ALERT_PRIORITY[key] ?? 1;
   const base = SEVERITY_TTS[priority] ?? SEVERITY_TTS[1];
   const userRate = Number(settings.voice_alert_rate) || 1.0;
-  const userVolume = Number(settings.voice_alert_volume) || 0.95;
+  const userVolume = Number(settings.voice_alert_volume) || 0.9;
   return {
     rate: parseFloat((base.rate * userRate).toFixed(2)),
     pitch: base.pitch,
     volume: Math.min(1, Math.max(0.1, userVolume)),
+    earconEnabled: settings.voice_earcon_enabled !== false,
   };
 }

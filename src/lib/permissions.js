@@ -3,7 +3,6 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { isAndroid, isNativePlatform, openNativeSettings } from '@/lib/nativePlatform';
 import { localSettings } from '@/lib/trackingStore';
 import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
-import { getMotionSensorSupport } from '@/lib/sensorFusionModel';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 import { logError } from '@/lib/errorReporting';
 
@@ -63,8 +62,13 @@ export async function getPermissionStatus() {
     status.backgroundLocation = localSettings.get().background_location_granted ? 'granted' : 'not_requested';
   }
 
-  const motionSupport = getMotionSensorSupport();
-  status.motionSensors = motionSupport.status;
+  try {
+    const { getMotionSensorSupport } = await import('@/lib/sensorFusionModel');
+    const motionSupport = getMotionSensorSupport();
+    status.motionSensors = motionSupport.status;
+  } catch (err) {
+    logError('permission_status_motion_sensors', err);
+  }
   const bluetoothSupport = getObdBluetoothSupport();
   status.bluetooth = bluetoothSupport.supported ? 'not_requested' : 'unavailable';
 

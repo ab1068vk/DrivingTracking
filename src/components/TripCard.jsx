@@ -78,9 +78,11 @@ export default function TripCard({
   const [dismissed, setDismissed] = useState(false);
   const [savingRating, setSavingRating] = useState(null);
   const [showThanks, setShowThanks] = useState(false);
+  const [isEntering, setIsEntering] = useState(true);
   const sharingEnabled = localSettings.get().calibration_sharing_enabled === true;
   const hasCalibrationLabel = Number.isInteger(Number(surveyStatus?.rating));
   const showRatingFooter = !unavailableScore && !hasCalibrationLabel && !showThanks && (sharingEnabled || !dismissed);
+  const animationDelay = Math.min(index, 8) * 0.05;
 
   useEffect(() => {
     let cancelled = false;
@@ -131,9 +133,10 @@ export default function TripCard({
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
+      transition={{ delay: animationDelay }}
+      onAnimationComplete={() => setIsEntering(false)}
       onClick={() => navigate(`/trips/${trip.id}`)}
-      className="bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group"
+      className={`${isEntering ? 'trip-card-entering' : ''} bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">

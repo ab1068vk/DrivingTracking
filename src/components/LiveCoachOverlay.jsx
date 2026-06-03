@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import {
   buildDrivingThresholds,
@@ -18,9 +17,11 @@ import {
 import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
-import { canSpeakSafetyAlert, isVoiceAlertEnabled, markSafetyAlertSpoken } from '@/lib/voiceAlerts';
-import { enqueueVoiceAlert } from '@/lib/voiceAlertQueue';
+import { canSpeakSafetyAlert, markSafetyAlertSpoken } from '@/lib/voiceAlerts';
+import { enqueueVoiceAlert, silenceAllAlerts } from '@/lib/voiceAlertQueue';
 import { buildAlertMessage, buildTtsParams } from '@/lib/voiceAlertMessages';
+import { recordImprovement, recordOffenseAndGetLevel, resetAllEscalation } from '@/lib/voiceEscalation';
+import { isAlertAllowedByProfile } from '@/lib/voiceProfileGate';
 import { logError } from '@/lib/errorReporting';
 
 const RECENT_WINDOW_MS = 120000;
@@ -54,8 +55,6 @@ const plainText = (message) => {
   return 'Road Sage safety alert';
 };
 
-const escalationFromCount = (count) => Math.max(0, Math.min(Math.max(0, count) - 1, 2));
-
 const queueVoiceAlertForKey = ({
   key,
   ctx = {},
@@ -65,10 +64,11 @@ const queueVoiceAlertForKey = ({
   text,
   ttsParams,
 }) => {
-  if (!isVoiceAlertEnabled(settings)) return false;
+  if (!isAlertAllowedByProfile(key, settings)) return false;
   if (key && !canSpeakSafetyAlert(key, cooldownMs)) return false;
 
-  const voiceText = text ?? buildAlertMessage(key, ctx, escalation);
+  const effectiveEscalation = key ? recordOffenseAndGetLevel(key) : escalation;
+  const voiceText = text ?? buildAlertMessage(key, ctx, effectiveEscalation);
   if (!voiceText) return false;
 
   if (key) markSafetyAlertSpoken(key);
@@ -78,11 +78,16 @@ const queueVoiceAlertForKey = ({
 
 export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {
   const [message, setMessage] = useState(null);
+  const [overlayVisible, setOverlayVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const overlayRef = useRef(null);
   const visibleRef = useRef(false);
   const queueRef = useRef([]);
   const coachIntervalRef = useRef(null);
   const speedIntervalRef = useRef(null);
+  const displayTimeoutRef = useRef(null);
+  const exitTimeoutRef = useRef(null);
+  const animationFrameRef = useRef(null);
   const speedingStartMsRef = useRef(null);
   const lastCoachCheckRef = useRef(0);
   const lastDisplayedAlertRef = useRef({});
@@ -107,16 +112,50 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       text: normalized.voiceText ?? (!normalized.voiceKey ? plainText(normalized.text) : undefined),
       ttsParams: normalized.ttsParams,
     });
-    if (!dismissed) setMessage(normalized);
-    setTimeout(() => {
-      visibleRef.current = false;
-      setMessage(null);
-      showNext();
+    if (!dismissed) {
+      setMessage(normalized);
+      animationFrameRef.current = requestAnimationFrame(() => setOverlayVisible(true));
+    }
+    displayTimeoutRef.current = setTimeout(() => {
+      setOverlayVisible(false);
+      exitTimeoutRef.current = setTimeout(() => {
+        visibleRef.current = false;
+        setMessage(null);
+        showNext();
+      }, 150);
     }, normalized?.displayMs || DISPLAY_MS);
   };
 
+  const dismissOverlay = () => {
+    clearTimeout(displayTimeoutRef.current);
+    clearTimeout(exitTimeoutRef.current);
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    queueRef.current = [];
+    visibleRef.current = false;
+    setOverlayVisible(false);
+    setMessage(null);
+    setDismissed(true);
+  };
+
+  useLayoutEffect(() => {
+    if (!overlayRef.current) return;
+    overlayRef.current.style.willChange = overlayVisible ? 'transform, opacity' : 'auto';
+  }, [overlayVisible]);
+
+  useEffect(() => () => {
+    clearTimeout(displayTimeoutRef.current);
+    clearTimeout(exitTimeoutRef.current);
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     setDismissed(false);
+    setOverlayVisible(false);
     previousCountsRef.current = {
       [EVENT_TYPES.HARSH_BRAKE]: 0,
       [EVENT_TYPES.RAPID_ACCELERATION]: 0,
@@ -164,6 +203,9 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const now = Date.now();
 
     if (!isCurrentlySpeeding) {
+      if (speedingStartMsRef.current !== null) {
+        recordImprovement('speeding');
+      }
       speedingStartMsRef.current = null;
       return;
     }
@@ -189,9 +231,8 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       });
     }
 
-    if (isVoiceAlertEnabled(settings)) {
+    if (isAlertAllowedByProfile('speeding', settings)) {
       const overBy = Math.round(currentSpeedKmh - limitKmh);
-      const escalation = limitKmh > 0 && overBy / limitKmh >= 0.5 ? 2 : overBy >= 15 ? 1 : 0;
       queueVoiceAlertForKey({
         key: 'speeding',
         ctx: {
@@ -199,7 +240,6 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           limitKmh,
           overKmh: overBy,
         },
-        escalation,
         settings,
         cooldownMs: VOICE_COOLDOWNS_MS.speeding,
       });
@@ -281,7 +321,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           tone: 'danger',
           displayMs: PHONE_DISPLAY_MS,
           voiceKey: 'phone_use',
-          voiceText: buildAlertMessage('phone_use', {}, escalationFromCount(phoneUse.phone_use_window_count || newPhoneWindows.length)),
+          voiceCtx: {},
           ttsParams: buildTtsParams('phone_use', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.phone_use,
         };
@@ -296,12 +336,10 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           });
         }
       } else if (recentCloseProximity) {
-        const closeProximityCount = events.filter((event) => (
-          event.type === EVENT_TYPES.CLOSE_PROXIMITY || event.type === EVENT_TYPES.NEAR_MISS
-        )).length;
         nextMessage = {
-          text: buildAlertMessage('close_proximity', {}, escalationFromCount(closeProximityCount)),
+          text: buildAlertMessage('close_proximity'),
           voiceKey: 'close_proximity',
+          voiceCtx: {},
           ttsParams: buildTtsParams('close_proximity', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.close_proximity,
         };
@@ -314,40 +352,41 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         };
       } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
         nextMessage = {
-          text: buildAlertMessage('harsh_brake', {}, escalationFromCount(harshBrakeCount)),
+          text: buildAlertMessage('harsh_brake'),
           voiceKey: 'harsh_brake',
+          voiceCtx: {},
           ttsParams: buildTtsParams('harsh_brake', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
         };
       } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
         nextMessage = {
-          text: buildAlertMessage('stop_start_pattern', {}, escalationFromCount(stopStartPatternCount)),
+          text: buildAlertMessage('stop_start_pattern'),
           voiceKey: 'stop_start_pattern',
+          voiceCtx: {},
           ttsParams: buildTtsParams('stop_start_pattern', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
         };
       } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
         nextMessage = {
-          text: buildAlertMessage('rapid_accel', {}, escalationFromCount(rapidAccelCount)),
+          text: buildAlertMessage('rapid_accel'),
           voiceKey: 'rapid_accel',
+          voiceCtx: {},
           ttsParams: buildTtsParams('rapid_accel', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.rapid_accel,
         };
       } else if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
-        const thresholdMins = settings.threshold_long_drive_minutes ?? 120;
-        const escalation = durationMins >= thresholdMins * 1.5 ? 2 : durationMins >= thresholdMins * 1.25 ? 1 : 0;
         nextMessage = {
-          text: buildAlertMessage('long_drive', { durationMins }, escalation),
+          text: buildAlertMessage('long_drive', { durationMins }),
           voiceKey: 'long_drive',
+          voiceCtx: { durationMins },
           ttsParams: buildTtsParams('long_drive', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.long_drive,
         };
       } else if ((stats.idle_time_seconds || 0) > 300) {
-        const idleSeconds = stats.idle_time_seconds || 0;
-        const escalation = idleSeconds > 600 ? 2 : idleSeconds > 450 ? 1 : 0;
         nextMessage = {
-          text: buildAlertMessage('idle', {}, escalation),
+          text: buildAlertMessage('idle'),
           voiceKey: 'idle',
+          voiceCtx: {},
           ttsParams: buildTtsParams('idle', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.idle,
         };
@@ -397,40 +436,38 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     };
   }, [currentRoutePoints, tripStartTime, dismissed]);
 
+  useEffect(() => () => {
+    resetAllEscalation();
+    silenceAllAlerts();
+  }, []);
+
   if (dismissed) return null;
 
   return (
-    <AnimatePresence>
-      {message && (
-        <motion.div
-          initial={{ opacity: 0, y: 28 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 28 }}
-          className={`fixed bottom-4 left-4 right-4 z-50 rounded-2xl border px-4 py-3 shadow-lg ${
-            message.tone === 'danger'
-              ? 'border-red-300 bg-gradient-to-r from-red-600 to-red-500 text-white dark:border-red-700'
-              : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950 dark:text-amber-100'
-          }`}
-        >
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            <div className="flex-1 text-sm font-medium">{message.text}</div>
-            <button
-              type="button"
-              onClick={() => {
-                queueRef.current = [];
-                visibleRef.current = false;
-                setMessage(null);
-                setDismissed(true);
-              }}
-              className={`rounded-lg p-1 ${message.tone === 'danger' ? 'hover:bg-red-700/60' : 'hover:bg-amber-100 dark:hover:bg-amber-900'}`}
-              aria-label="Dismiss live coaching"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    message && (
+      <div
+        ref={overlayRef}
+        className={`live-coach-overlay fixed bottom-4 left-4 right-4 z-50 rounded-2xl border px-4 py-3 shadow-lg ${
+          overlayVisible ? 'overlay-enter' : 'overlay-exit'
+        } ${
+          message.tone === 'danger'
+            ? 'border-red-300 bg-gradient-to-r from-red-600 to-red-500 text-white dark:border-red-700'
+            : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950 dark:text-amber-100'
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <div className="flex-1 text-sm font-medium">{message.text}</div>
+          <button
+            type="button"
+            onClick={dismissOverlay}
+            className={`rounded-lg p-1 ${message.tone === 'danger' ? 'hover:bg-red-700/60' : 'hover:bg-amber-100 dark:hover:bg-amber-900'}`}
+            aria-label="Dismiss live coaching"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    )
   );
 }

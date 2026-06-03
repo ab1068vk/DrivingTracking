@@ -274,10 +274,10 @@ Cache file:
 <context files dir>/parked_map_widget_<widgetId>.png
 ```
 
-The worker uses this HTTP user agent:
+The worker uses this HTTP user agent, with `<app version>` supplied by Android `BuildConfig.VERSION_NAME`:
 
 ```text
-RoadSage/1.0 (Android parked car widget)
+RoadSage/<app version> (Android parked car widget)
 ```
 
 ### `DriveSenseNativeTripStore`

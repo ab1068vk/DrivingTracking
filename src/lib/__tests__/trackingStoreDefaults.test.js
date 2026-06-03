@@ -90,6 +90,33 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.min_speed_rapid_accel_kmh).toBe(5);
   });
 
+  it('defines and validates voice profile defaults', () => {
+    expect(DEFAULT_SETTINGS.voice_alert_rate).toBe(1.0);
+    expect(DEFAULT_SETTINGS.voice_alert_volume).toBe(0.9);
+    expect(DEFAULT_SETTINGS.voice_alerts_min_severity).toBe(1);
+    expect(DEFAULT_SETTINGS.voice_earcon_enabled).toBe(true);
+    expect(DEFAULT_SETTINGS.voice_quiet_hours_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.voice_quiet_hours_start).toBe('22:00');
+    expect(DEFAULT_SETTINGS.voice_quiet_hours_end).toBe('06:00');
+
+    expect(sanitizeImportedSettings({
+      voice_alert_rate: 1.2,
+      voice_alert_volume: 0.2,
+      voice_alerts_min_severity: 4,
+      voice_earcon_enabled: false,
+      voice_quiet_hours_start: '23:30',
+    })).toMatchObject({
+      voice_alert_rate: 1.2,
+      voice_alert_volume: 0.3,
+      voice_alerts_min_severity: 3,
+      voice_earcon_enabled: false,
+      voice_quiet_hours_start: '23:30',
+    });
+    expect(validateSettingsPatch({ voice_alert_rate: 1.2 })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ voice_alert_rate: 1.3 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ voice_alerts_min_severity: 4 })).toMatchObject({ valid: false });
+  });
+
   it('defines configurable CO2 economics defaults', () => {
     expect(DEFAULT_SETTINGS.currencySymbol).toBe('$');
     expect(DEFAULT_SETTINGS.co2_baseline_kg_per_100km).toBe(12);
@@ -127,7 +154,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(9);
+    expect(legacySunset.settings_defaults_version).toBe(10);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 

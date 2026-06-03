@@ -2,7 +2,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
-import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
+import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/vehicleEconomyConstants';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { legacyStorageKeysFor } from '@/lib/storageKeyMigration';

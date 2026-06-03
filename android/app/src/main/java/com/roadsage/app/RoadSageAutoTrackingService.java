@@ -16,9 +16,13 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.location.Location;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -161,6 +165,9 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     private long lastLiveNotificationMs = 0L;
     private TextToSpeech textToSpeech;
     private boolean textToSpeechReady = false;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
+    private boolean audioFocusGranted = false;
     private String nativeAutoStartReason = "";
     private String lastNativeAutoStopReason = "";
     private boolean candidateTrip = false;
@@ -187,6 +194,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         ensureSafetyAlertsChannel();
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         if (sensorManager != null) {
             linearAccelerationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
@@ -257,6 +265,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
             textToSpeech = null;
             textToSpeechReady = false;
         }
+        abandonAudioFocus();
         super.onDestroy();
     }
 
@@ -1309,6 +1318,7 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
                     textToSpeech.setLanguage(Locale.US);
                     textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
                     textToSpeech.setPitch(1.0f);
+                    setTextToSpeechAudioAttributes(textToSpeech);
                     textToSpeechReady = true;
                     speakNativeAlertNow(text);
                 } else {
@@ -1321,12 +1331,84 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
 
     private void speakNativeAlertNow(String text) {
         if (textToSpeech == null || !textToSpeechReady || text == null || text.trim().isEmpty()) return;
+        if (!requestAudioFocusForAlert()) return;
         String utteranceId = "road_sage_alert_" + System.currentTimeMillis();
+        textToSpeech.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override
+            public void onStart(String id) {
+            }
+
+            @Override
+            public void onDone(String id) {
+                abandonAudioFocus();
+            }
+
+            @Override
+            public void onError(String id) {
+                abandonAudioFocus();
+            }
+        });
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             textToSpeech.speak(text, TTS_QUEUE_MODE, null, utteranceId);
         } else {
             textToSpeech.speak(text, TTS_QUEUE_MODE, null);
+            abandonAudioFocus();
         }
+    }
+
+    private AudioAttributes alertAudioAttributes(int contentType) {
+        return new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+            .setContentType(contentType)
+            .build();
+    }
+
+    private void setTextToSpeechAudioAttributes(TextToSpeech tts) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && tts != null) {
+            tts.setAudioAttributes(alertAudioAttributes(AudioAttributes.CONTENT_TYPE_SPEECH));
+        }
+    }
+
+    private boolean requestAudioFocusForAlert() {
+        if (audioManager == null) {
+            audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        }
+        if (audioManager == null) return false;
+        if (audioManager.getRingerMode() == AudioManager.RINGER_MODE_SILENT) return false;
+
+        abandonAudioFocus();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(alertAudioAttributes(AudioAttributes.CONTENT_TYPE_SPEECH))
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener((focusChange) -> {
+                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+                        if (textToSpeech != null) textToSpeech.stop();
+                        abandonAudioFocus();
+                    }
+                })
+                .build();
+            audioFocusGranted = audioManager.requestAudioFocus(audioFocusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        } else {
+            audioFocusGranted = audioManager.requestAudioFocus(
+                null,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        }
+
+        return audioFocusGranted;
+    }
+
+    private void abandonAudioFocus() {
+        if (!audioFocusGranted || audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            audioFocusRequest = null;
+        } else {
+            audioManager.abandonAudioFocus(null);
+        }
+        audioFocusGranted = false;
     }
 
     private double signedHeadingDiff(double h1, double h2) {

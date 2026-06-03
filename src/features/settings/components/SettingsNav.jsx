@@ -46,9 +46,9 @@ export const SECTION_GROUPS = [
   {
     id: 'notifications',
     label: 'Notifications',
-    description: 'Notification channels and driving goals',
+    description: 'Notification channels, voice alerts, and driving goals',
     icon: Bell,
-    ids: ['settings-notifications', 'settings-driving-goals'],
+    ids: ['settings-notifications', 'settings-voice-alerts', 'settings-driving-goals'],
   },
   {
     id: 'appearance',

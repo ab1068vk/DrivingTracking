@@ -15,7 +15,6 @@ import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import DriveSenseActivityRecognition from '@/lib/driveSenseNativePlugin';
-import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
 import { evaluateOsrmEndpointTrust, normalizeOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
 import {
@@ -23,7 +22,7 @@ import {
   DEFAULT_EV_KWH_PER_100KM,
   DEFAULT_GRID_CO2_KG_PER_KWH,
   DEFAULT_TREE_CO2_KG_PER_YEAR,
-} from '@/lib/tripInsights';
+} from '@/lib/vehicleEconomyConstants';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
@@ -31,6 +30,11 @@ const LAST_PARKED_KEY = 'drivesense_last_parked';
 const PRIVACY_ZONES_KEY = 'road_sage_privacy_zones';
 const ACTIVE_TRIP_STORAGE_KEY = resolveStorageKey(ACTIVE_TRIP_KEY);
 const SETTINGS_STORAGE_KEY = resolveStorageKey(SETTINGS_KEY);
+const ECO_DEFAULTS = Object.freeze({
+  CRUISE_SCORE_MULTIPLIER: scoringValue('ECO_CRUISE_SCORE_MULTIPLIER'),
+  IDLE_PENALTY_MULTIPLIER: scoringValue('ECO_IDLE_PENALTY_MULTIPLIER'),
+  IDLE_MAX_PENALTY: scoringValue('ECO_IDLE_MAX_PENALTY'),
+});
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 const PRIVACY_ZONE_RADIUS_DEFAULT_M = 200;
 const PRIVACY_ZONE_RADIUS_MIN_M = 50;
@@ -39,7 +43,11 @@ const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 9;
+const LIVE_POINTS_MAX = 6000;
+let liveRoutePoints = [];
+const activeTripListeners = new Set();
+let activeTripSnapshot = { trip: null, version: 0 };
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 10;
 
 const settingsStorage = () => {
   if (isNativePlatform()) return null;
@@ -71,6 +79,74 @@ const readStorageWithLegacyFallback = (storage, key) => {
 
   return null;
 };
+
+function downsampleOldestQuarter(points) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  const keepFrom = Math.floor(points.length * 0.25);
+  const thinned = points.slice(0, keepFrom).filter((_, index) => index % 2 === 0);
+  return [...thinned, ...points.slice(keepFrom)];
+}
+
+function stripActiveTripRoutePoints(trip) {
+  if (!trip || typeof trip !== 'object') return trip ?? null;
+  const { route_points: _routePoints, raw_route_points: _rawRoutePoints, ...metaWithoutPoints } = trip;
+  return metaWithoutPoints;
+}
+
+function attachLiveRoutePoints(trip) {
+  if (!trip || typeof trip !== 'object') return trip ?? null;
+  trip.route_points = liveRoutePoints;
+  return trip;
+}
+
+function notifyActiveTripListeners() {
+  activeTripSnapshot = {
+    trip: activeTripMemory,
+    version: activeTripSnapshot.version + 1,
+  };
+  activeTripListeners.forEach((listener) => listener());
+}
+
+function syncLiveRoutePointsFromTrip(trip) {
+  if (Array.isArray(trip?.route_points)) {
+    liveRoutePoints = trip.route_points.map(truncateRoutePoint);
+  }
+  return attachLiveRoutePoints(trip);
+}
+
+export function appendLiveRoutePoint(point) {
+  if (isEphemeralModeActive()) return liveRoutePoints;
+  if (liveRoutePoints.length >= LIVE_POINTS_MAX) {
+    liveRoutePoints = downsampleOldestQuarter(liveRoutePoints);
+    attachLiveRoutePoints(activeTripMemory);
+  }
+  liveRoutePoints.push(truncateRoutePoint(point));
+  attachLiveRoutePoints(activeTripMemory);
+  notifyActiveTripListeners();
+  return liveRoutePoints;
+}
+
+export function persistActiveTripMeta(tripMeta = activeTripMemory) {
+  if (isEphemeralModeActive() || !tripMeta) return;
+  const metaWithoutPoints = stripActiveTripRoutePoints(tripMeta);
+  try {
+    if (isNativePlatform()) {
+      setJson(ACTIVE_TRIP_KEY, metaWithoutPoints).catch((err) => {
+        logError('active_trip_encrypted_meta_save', err, {
+          trip_state: tripMeta?.trip_state,
+          point_count: liveRoutePoints.length,
+        });
+      });
+      return;
+    }
+    localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(metaWithoutPoints));
+  } catch (err) {
+    logError('active_trip_meta_save', err, {
+      trip_state: tripMeta?.trip_state,
+      point_count: liveRoutePoints.length,
+    });
+  }
+}
 
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
@@ -377,6 +453,13 @@ export const DEFAULT_SETTINGS = {
   tracking_paused: false,
   live_coaching_enabled: true,
   voice_alerts_enabled: true,
+  voice_alert_rate: 1.0,
+  voice_alert_volume: 0.9,
+  voice_alerts_min_severity: 1,
+  voice_earcon_enabled: true,
+  voice_quiet_hours_enabled: false,
+  voice_quiet_hours_start: '22:00',
+  voice_quiet_hours_end: '06:00',
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
@@ -502,6 +585,9 @@ export function migrateDefaultSettings(parsed = {}) {
 const IMPORT_NUMBER_RANGES = {
   data_retention_months: [0, 120],
   lock_timeout_minutes: [0, 30],
+  voice_alert_rate: [0.7, 1.2],
+  voice_alert_volume: [0.3, 1],
+  voice_alerts_min_severity: [0, 3],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_stop_start_decel_ms2: [0.5, 15],
@@ -937,11 +1023,23 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────
 export const activeTripStore = {
+  subscribe(listener) {
+    activeTripListeners.add(listener);
+    return () => activeTripListeners.delete(listener);
+  },
+  getSnapshot() {
+    return activeTripSnapshot;
+  },
   get() {
     if (isNativePlatform()) return activeTripMemory;
     try {
       const raw = readStorageWithLegacyFallback(localStorage, ACTIVE_TRIP_KEY);
-      activeTripMemory = raw ? JSON.parse(raw) : null;
+      if (!raw) {
+        activeTripMemory = null;
+        liveRoutePoints = [];
+        return null;
+      }
+      activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(JSON.parse(raw)));
       return activeTripMemory;
     } catch {
       return null;
@@ -952,15 +1050,17 @@ export const activeTripStore = {
     try {
       const encrypted = await getJson(ACTIVE_TRIP_KEY, null);
       if (encrypted) {
-        activeTripMemory = truncateTripCoordinates(encrypted);
+        activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(encrypted));
+        notifyActiveTripListeners();
         return activeTripMemory;
       }
 
       const raw = readStorageWithLegacyFallback(settingsStorage(), ACTIVE_TRIP_KEY);
       if (!raw) return null;
-      activeTripMemory = truncateTripCoordinates(JSON.parse(raw));
-      await setJson(ACTIVE_TRIP_KEY, activeTripMemory);
+      activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(JSON.parse(raw)));
+      await setJson(ACTIVE_TRIP_KEY, stripActiveTripRoutePoints(activeTripMemory));
       this.clearPlaintext();
+      notifyActiveTripListeners();
       return activeTripMemory;
     } catch {
       return null;
@@ -969,31 +1069,35 @@ export const activeTripStore = {
   set(trip) {
     if (isEphemeralModeActive()) return;
     try {
-      activeTripMemory = truncateTripCoordinates(trip);
+      activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(trip));
+      notifyActiveTripListeners();
       if (isNativePlatform()) {
         this.clearPlaintext();
-        setJson(ACTIVE_TRIP_KEY, activeTripMemory).catch((err) => {
+        setJson(ACTIVE_TRIP_KEY, stripActiveTripRoutePoints(activeTripMemory)).catch((err) => {
           logError('active_trip_encrypted_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
         });
         return;
       }
-      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(activeTripMemory));
+      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(stripActiveTripRoutePoints(activeTripMemory)));
     } catch (err) {
       logError('active_trip_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
     }
   },
   async setAsync(trip) {
     if (isEphemeralModeActive()) return;
-    activeTripMemory = truncateTripCoordinates(trip);
+    activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(trip));
+    notifyActiveTripListeners();
     if (isNativePlatform()) {
       this.clearPlaintext();
-      await setJson(ACTIVE_TRIP_KEY, activeTripMemory);
+      await setJson(ACTIVE_TRIP_KEY, stripActiveTripRoutePoints(activeTripMemory));
       return;
     }
     this.set(activeTripMemory);
   },
   clear() {
     activeTripMemory = null;
+    liveRoutePoints = [];
+    notifyActiveTripListeners();
     this.clearPlaintext();
     if (isNativePlatform()) {
       removeJson(ACTIVE_TRIP_KEY).catch((err) => logError('active_trip_encrypted_clear', err));
@@ -1001,6 +1105,8 @@ export const activeTripStore = {
   },
   async clearAsync() {
     activeTripMemory = null;
+    liveRoutePoints = [];
+    notifyActiveTripListeners();
     this.clearPlaintext();
     await removeJson(ACTIVE_TRIP_KEY);
   },
@@ -1015,11 +1121,11 @@ export const activeTripStore = {
   },
   addPoint(point) {
     if (isEphemeralModeActive()) return;
-    const trip = this.get();
+    const trip = activeTripMemory || this.get();
     if (!trip) return;
-    trip.route_points = trip.route_points || [];
-    trip.route_points.push(truncateRoutePoint(point));
-    this.set(trip);
+    appendLiveRoutePoint(point);
+    activeTripMemory = attachLiveRoutePoints(trip);
+    return activeTripMemory;
   },
 };
 

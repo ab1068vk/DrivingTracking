@@ -120,6 +120,31 @@
     filter: drop-shadow(0 0 8px hsl(var(--ds-blue) / 0.4));
   }
 
+  .live-coach-overlay {
+    transition: opacity 150ms ease, transform 150ms ease;
+    will-change: opacity, transform;
+  }
+
+  .live-coach-overlay.overlay-enter {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .live-coach-overlay.overlay-exit {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+
+  .live-coach-overlay.idle,
+  .score-ring-animated.complete {
+    will-change: auto;
+  }
+
+  .score-ring-animated,
+  .trip-card-entering {
+    will-change: transform, opacity;
+  }
+
   .animate-pulse-subtle {
     animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }

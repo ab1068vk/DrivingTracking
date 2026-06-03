@@ -35,6 +35,7 @@ public class MapTileFetchWorker extends Worker {
     private static final String MAP_CACHE_PREFIX = "widget_map_";
     private static final String LEGACY_MAP_CACHE_PREFIX = "parked_map_widget_";
     private static final String MAP_CACHE_SUFFIX = ".png";
+    private static final String HTTP_USER_AGENT = "RoadSage/" + BuildConfig.VERSION_NAME + " (Android parked car widget)";
     private static final int OSM_WIDGET_ZOOM = 16;
     private static final int OSM_TILE_SIZE = 256;
     private static final double MAX_WEB_MERCATOR_LAT = 85.05112878d;
@@ -226,7 +227,7 @@ public class MapTileFetchWorker extends Worker {
             connection = (HttpURLConnection) new URL(url).openConnection();
             connection.setConnectTimeout(12_000);
             connection.setReadTimeout(12_000);
-            connection.setRequestProperty("User-Agent", "RoadSage/1.0 (Android parked car widget)");
+            connection.setRequestProperty("User-Agent", HTTP_USER_AGENT);
             connection.connect();
 
             if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
@@ -330,7 +331,7 @@ public class MapTileFetchWorker extends Worker {
             connection = (HttpURLConnection) new URL(url).openConnection();
             connection.setConnectTimeout(12_000);
             connection.setReadTimeout(12_000);
-            connection.setRequestProperty("User-Agent", "RoadSage/1.0 (Android parked car widget)");
+            connection.setRequestProperty("User-Agent", HTTP_USER_AGENT);
             connection.connect();
 
             if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {

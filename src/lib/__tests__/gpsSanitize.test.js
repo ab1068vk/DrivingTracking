@@ -4,15 +4,21 @@ import { truncateCoord, truncateRoutePoint, truncateRoutePoints, truncateTripCoo
 
 describe('GPS coordinate sanitization', () => {
   let originalLocalStorage;
+  let values;
+  let setItemCalls;
 
   beforeEach(() => {
     originalLocalStorage = globalThis.localStorage;
-    const values = new Map();
+    values = new Map();
+    setItemCalls = [];
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: {
         getItem: (key) => values.get(key) ?? null,
-        setItem: (key, value) => values.set(key, String(value)),
+        setItem: (key, value) => {
+          setItemCalls.push([key, String(value)]);
+          values.set(key, String(value));
+        },
         removeItem: (key) => values.delete(key),
         clear: () => values.clear(),
       },
@@ -71,11 +77,36 @@ describe('GPS coordinate sanitization', () => {
       lng: -79.3833,
       altitude: 185,
     });
+    expect(JSON.parse(localStorage.getItem('road_sage_active_trip')).route_points).toBeUndefined();
 
     saveLastMapCenter({ lat: 43.65123456789, lng: -79.38329876543 });
     expect(JSON.parse(localStorage.getItem('road_sage_settings')).last_map_center).toMatchObject({
       lat: 43.65123,
       lng: -79.3833,
     });
+  });
+
+  it('appends live route points without writing active trip storage', () => {
+    localStorage.clear();
+    activeTripStore.set({
+      start_time: '2026-01-01T12:00:00.000Z',
+      status: 'active',
+      route_points: [],
+    });
+    setItemCalls = [];
+
+    const updated = activeTripStore.addPoint({
+      lat: 43.65123456789,
+      lng: -79.38329876543,
+      altitude: 184.72,
+    });
+
+    expect(updated.route_points).toHaveLength(1);
+    expect(updated.route_points[0]).toMatchObject({
+      lat: 43.65123,
+      lng: -79.3833,
+      altitude: 185,
+    });
+    expect(setItemCalls.filter(([key]) => key === 'road_sage_active_trip')).toHaveLength(0);
   });
 });

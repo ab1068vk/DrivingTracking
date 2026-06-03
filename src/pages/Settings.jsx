@@ -1519,7 +1519,7 @@ export default function Settings() {
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
-        <div>Version 1.0.0 (Capacitor Android)</div>
+        <div>Version {__APP_VERSION__} (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
         <div>Data: Stored locally by default - No ads - Calibration sharing is opt-in</div>
         <div>Legal: Personal-use estimates only; not professional advice or official records.</div>

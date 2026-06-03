@@ -2,7 +2,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/rescoreEvents';
 import { activeTripStore } from '@/lib/trackingStore';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 

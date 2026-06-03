@@ -7,6 +7,7 @@ const TrackingSettings = lazy(() => import('./sections/TrackingSettings').then((
 const ScoringSettings = lazy(() => import('./sections/ScoringSettings').then((module) => ({ default: module.ScoringSettings })));
 const PrivacySettings = lazy(() => import('./sections/PrivacySettings').then((module) => ({ default: module.PrivacySettings })));
 const PrivacyZonesSettings = lazy(() => import('./PrivacyZonesSettings'));
+const VoiceAlertSettings = lazy(() => import('./sections/VoiceAlertSettings').then((module) => ({ default: module.VoiceAlertSettings })));
 const VehicleSettings = lazy(() => import('./sections/VehicleSettings').then((module) => ({ default: module.VehicleSettings })));
 const UBISettings = lazy(() => import('./sections/UBISettings').then((module) => ({ default: module.UBISettings })));
 const AdvancedSettings = lazy(() => import('./sections/AdvancedSettings').then((module) => ({ default: module.AdvancedSettings })));
@@ -14,8 +15,13 @@ const AdvancedSettings = lazy(() => import('./sections/AdvancedSettings').then((
 const SECTION_RENDERERS = [
   {
     id: 'tracking',
-    legacyIds: ['settings-tracking', 'settings-android-permissions', 'settings-feature-permissions'],
+    legacyIds: ['settings-tracking', 'settings-android-permissions', 'settings-feature-permissions', 'settings-notifications'],
     Component: TrackingSettings,
+  },
+  {
+    id: 'voice-alerts',
+    legacyIds: ['settings-voice-alerts'],
+    Component: VoiceAlertSettings,
   },
   {
     id: 'scoring',

@@ -60,6 +60,10 @@ public class MainActivity extends BridgeActivity {
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         );
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        }
         registerRoadSagePlugins();
         PrivacyZoneStore.migratePlaintextPrefsIfNeeded(this);
         DriveSenseNativeTripStore.migratePlaintextPrefsIfNeeded(this);

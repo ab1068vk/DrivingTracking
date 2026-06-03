@@ -16,6 +16,11 @@ vi.mock('@/lib/driveSenseNativePlugin', () => ({
   default: mockState.nativeSpeech,
 }));
 
+vi.mock('@/lib/voiceEarcon', () => ({
+  playEarcon: vi.fn(() => Promise.resolve()),
+}));
+
+import { playEarcon } from '@/lib/voiceEarcon';
 import { enqueueVoiceAlert, getVoiceAlertQueueState, silenceAllAlerts } from '@/lib/voiceAlertQueue';
 
 function stubSpeechSynthesis() {
@@ -46,15 +51,18 @@ describe('voice alert priority queue', () => {
     mockState.isNative = false;
     mockState.nativeSpeech.speak = vi.fn();
     mockState.nativeSpeech.speakText = vi.fn();
+    playEarcon.mockClear();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
-  it('preempts lower-priority speech for critical alerts', () => {
+  it('preempts lower-priority speech for critical alerts', async () => {
     const { speechSynthesis, utterances } = stubSpeechSynthesis();
 
     expect(enqueueVoiceAlert({ key: 'idle', text: 'Idle reminder.' })).toBe(true);
+    await Promise.resolve();
     expect(enqueueVoiceAlert({ key: 'possible_incident', text: 'Check in now.' })).toBe(true);
+    await Promise.resolve();
 
     expect(speechSynthesis.cancel).toHaveBeenCalledTimes(1);
     expect(utterances.map((utterance) => utterance.text)).toEqual([
@@ -73,6 +81,7 @@ describe('voice alert priority queue', () => {
     const { utterances } = stubSpeechSynthesis();
 
     enqueueVoiceAlert({ key: 'speeding', text: 'Speed warning.' });
+    await Promise.resolve();
     enqueueVoiceAlert({ key: 'rapid_accel', text: 'Accelerate smoothly.' });
     enqueueVoiceAlert({ key: 'harsh_brake', text: 'Brake earlier.' });
 
@@ -83,6 +92,7 @@ describe('voice alert priority queue', () => {
     });
 
     utterances[0].onend();
+    await Promise.resolve();
     await Promise.resolve();
 
     expect(utterances.map((utterance) => utterance.text)).toEqual([
@@ -95,10 +105,11 @@ describe('voice alert priority queue', () => {
     });
   });
 
-  it('deduplicates pending keys and drops info alerts while busy', () => {
+  it('deduplicates pending keys and drops info alerts while busy', async () => {
     stubSpeechSynthesis();
 
     enqueueVoiceAlert({ key: 'speeding', text: 'Speed warning.' });
+    await Promise.resolve();
     expect(enqueueVoiceAlert({ key: 'rapid_accel', text: 'Accelerate smoothly.' })).toBe(true);
     expect(enqueueVoiceAlert({ key: 'rapid_accel', text: 'Accelerate smoothly again.' })).toBe(false);
     expect(enqueueVoiceAlert({ key: 'idle', text: 'Idle reminder.' })).toBe(false);
@@ -109,10 +120,11 @@ describe('voice alert priority queue', () => {
     });
   });
 
-  it('limits pending queue depth by pruning the lowest-priority pending alert', () => {
+  it('limits pending queue depth by pruning the lowest-priority pending alert', async () => {
     stubSpeechSynthesis();
 
     enqueueVoiceAlert({ key: 'speeding', text: 'Speed warning.' });
+    await Promise.resolve();
     enqueueVoiceAlert({ key: 'rapid_accel', text: 'Accelerate smoothly.' });
     enqueueVoiceAlert({ key: 'long_drive', text: 'Take a break.' });
     enqueueVoiceAlert({ key: 'harsh_brake', text: 'Brake earlier.' });
@@ -145,6 +157,31 @@ describe('voice alert priority queue', () => {
       pitch: 1.1,
       volume: 0.8,
       language: 'en-US',
+      earconEnabled: true,
+      earconPattern: 3,
     });
+  });
+
+  it('plays a web earcon before speaking unless disabled', async () => {
+    const { utterances } = stubSpeechSynthesis();
+
+    enqueueVoiceAlert({ key: 'speeding', text: 'Speed warning.', volume: 0.7 });
+    await Promise.resolve();
+
+    expect(playEarcon).toHaveBeenCalledWith(2, 0.7);
+    expect(utterances.map((utterance) => utterance.text)).toEqual(['Speed warning.']);
+
+    utterances[0].onend();
+    await Promise.resolve();
+    playEarcon.mockClear();
+
+    enqueueVoiceAlert({ key: 'rapid_accel', text: 'Accelerate smoothly.', earconEnabled: false });
+    await Promise.resolve();
+
+    expect(playEarcon).not.toHaveBeenCalled();
+    expect(utterances.map((utterance) => utterance.text)).toEqual([
+      'Speed warning.',
+      'Accelerate smoothly.',
+    ]);
   });
 });

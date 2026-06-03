@@ -24,7 +24,41 @@ export function classifyTripEvent(event = {}) {
   return 'scored';
 }
 
-export function TripEventList({ scoredRows = [], reviewedRows = [], diagnosticRows = [], renderEventRow }) {
+const renderRows = ({
+  rows,
+  diagnostic = false,
+  statusForRow,
+  renderEventRow,
+  EventRowComponent,
+  eventRowProps,
+}) => rows.map((row) => {
+  const status = statusForRow(row);
+  if (EventRowComponent) {
+    return (
+      <EventRowComponent
+        key={row.eventKey || `${row.event?.type || 'event'}-${row.event?.timestamp || row.event?.startTime || row.originalIndex}`}
+        row={row}
+        diagnostic={diagnostic}
+        status={status}
+        {...eventRowProps}
+      />
+    );
+  }
+  return renderEventRow(row, {
+    diagnostic,
+    status,
+    badge: <EventStatusBadge status={status} />,
+  });
+});
+
+export function TripEventList({
+  scoredRows = [],
+  reviewedRows = [],
+  diagnosticRows = [],
+  renderEventRow,
+  EventRowComponent = null,
+  eventRowProps = {},
+}) {
   return (
     <div className="event-list">
       <section>
@@ -40,10 +74,13 @@ export function TripEventList({ scoredRows = [], reviewedRows = [], diagnosticRo
           </div>
         ) : (
           <div className="space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
-            {scoredRows.map((row) => renderEventRow(row, {
-              badge: <EventStatusBadge status="scored" />,
-              status: 'scored',
-            }))}
+            {renderRows({
+              rows: scoredRows,
+              statusForRow: () => 'scored',
+              renderEventRow,
+              EventRowComponent,
+              eventRowProps,
+            })}
           </div>
         )}
       </section>
@@ -57,11 +94,14 @@ export function TripEventList({ scoredRows = [], reviewedRows = [], diagnosticRo
             </span>
           </div>
           <div className="space-y-2 max-h-48 overflow-y-auto thin-scrollbar">
-            {reviewedRows.map((row) => renderEventRow(row, {
+            {renderRows({
+              rows: reviewedRows,
               diagnostic: true,
-              status: 'removed',
-              badge: <EventStatusBadge status="removed" />,
-            }))}
+              statusForRow: () => 'removed',
+              renderEventRow,
+              EventRowComponent,
+              eventRowProps,
+            })}
           </div>
         </section>
       )}
@@ -78,13 +118,13 @@ export function TripEventList({ scoredRows = [], reviewedRows = [], diagnosticRo
             </span>
           </summary>
           <div className="mt-3 space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
-            {diagnosticRows.map((row) => {
-              const status = classifyTripEvent(row.event);
-              return renderEventRow(row, {
-                diagnostic: true,
-                status,
-                badge: <EventStatusBadge status={status} />,
-              });
+            {renderRows({
+              rows: diagnosticRows,
+              diagnostic: true,
+              statusForRow: (row) => classifyTripEvent(row.event),
+              renderEventRow,
+              EventRowComponent,
+              eventRowProps,
             })}
           </div>
         </details>

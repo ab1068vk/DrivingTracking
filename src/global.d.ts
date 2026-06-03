@@ -15,6 +15,8 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+declare const __APP_VERSION__: string;
+
 interface Window {
   L?: any;
   __roadSageErrorReportingInitialized?: boolean;

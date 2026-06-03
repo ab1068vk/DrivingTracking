@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { getScoreColor } from '@/lib/gps/formatting';
 import { motion } from 'framer-motion';
 import { isApproximateScoreOutput, scoreEstimateProgressText } from '@/lib/scoreDisplay';
@@ -7,6 +8,7 @@ import { isApproximateScoreOutput, scoreEstimateProgressText } from '@/lib/score
  * Uses SVG for the ring and color-codes based on score.
  */
 export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '', approximate = true, scoreProvenance = null, tripCount = null }) {
+  const [animationComplete, setAnimationComplete] = useState(!animated);
   const evidenceLevel = evidence || (score == null ? 'unavailable' : 'low');
   const unavailable = evidenceLevel === 'unavailable' || score == null;
   const provisional = !unavailable && (scoreProvenance ? isApproximateScoreOutput(scoreProvenance) : approximate !== false);
@@ -32,7 +34,7 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
   return (
     <div className="flex flex-col items-center gap-2" title={title || undefined} data-evidence={evidenceLevel}>
       <div className="relative" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="rotate-[-90deg]">
+        <svg width={size} height={size} className={`${animated ? 'score-ring-animated' : ''} ${animationComplete || unavailable ? 'complete' : ''} rotate-[-90deg]`}>
           {/* Background track */}
           <circle
             cx={size / 2}
@@ -58,6 +60,7 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
               initial={animated ? { strokeDashoffset: circumference } : { strokeDashoffset: offset }}
               animate={{ strokeDashoffset: offset }}
               transition={{ duration: 1.2, ease: 'easeOut', delay: 0.1 }}
+              onAnimationComplete={() => setAnimationComplete(true)}
             />
           )}
         </svg>

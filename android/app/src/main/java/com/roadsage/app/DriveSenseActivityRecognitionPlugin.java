@@ -8,6 +8,11 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.AudioTrack;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -15,6 +20,7 @@ import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
 
 import com.getcapacitor.JSObject;
@@ -59,6 +65,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private static final int BACKUP_ENC_VERSION = 1;
     private static final int BACKUP_ENC_HEADER_BYTES = 1 + 32 + 12;
     private static final int MIN_ENCRYPTED_EXPORT_BYTES = BACKUP_ENC_HEADER_BYTES + 16;
+    private static final int EARCON_SAMPLE_RATE = 22050;
     /** Normal speech rate (1.0 = default Android TTS speed). */
     private static final float TTS_SPEECH_RATE = 1.0f;
     /**
@@ -72,10 +79,14 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private PendingIntent activityIntent;
     private TextToSpeech textToSpeech;
     private boolean textToSpeechReady = false;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
+    private boolean audioFocusGranted = false;
 
     @Override
     public void load() {
         instance = new WeakReference<>(this);
+        audioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
         activityClient = ActivityRecognition.getClient(getContext());
         Intent intent = new Intent(getContext(), DriveSenseActivityReceiver.class);
         activityIntent = PendingIntent.getBroadcast(
@@ -94,6 +105,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             textToSpeech = null;
             textToSpeechReady = false;
         }
+        abandonAudioFocus();
         super.handleOnDestroy();
     }
 
@@ -181,13 +193,15 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     @PluginMethod
     public void speakText(PluginCall call) {
         String text = call.getString("text", "");
+        boolean earconEnabled = Boolean.TRUE.equals(call.getBoolean("earconEnabled", false));
+        int earconPattern = call.getInt("earconPattern", 0);
         if (text == null || text.trim().isEmpty()) {
             call.reject("text is required.");
             return;
         }
 
         if (textToSpeech != null && textToSpeechReady) {
-            speakNow(text);
+            speakAfterEarcon(text, earconEnabled, earconPattern);
             call.resolve();
             return;
         }
@@ -202,8 +216,9 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             textToSpeech.setLanguage(Locale.US);
             textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
             textToSpeech.setPitch(1.0f);
+            setTextToSpeechAudioAttributes(textToSpeech);
             textToSpeechReady = true;
-            speakNow(text);
+            speakAfterEarcon(text, earconEnabled, earconPattern);
             call.resolve();
         });
     }
@@ -229,11 +244,157 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private void speakNow(String text) {
         if (textToSpeech == null || !textToSpeechReady || text == null || text.trim().isEmpty()) return;
         String utteranceId = "road_sage_alert_" + System.currentTimeMillis();
+        textToSpeech.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override
+            public void onStart(String id) {
+            }
+
+            @Override
+            public void onDone(String id) {
+                abandonAudioFocus();
+            }
+
+            @Override
+            public void onError(String id) {
+                abandonAudioFocus();
+            }
+        });
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             textToSpeech.speak(text, TTS_QUEUE_MODE, null, utteranceId);
         } else {
             textToSpeech.speak(text, TTS_QUEUE_MODE, null);
+            abandonAudioFocus();
         }
+    }
+
+    private void speakAfterEarcon(String text, boolean earconEnabled, int earconPattern) {
+        if (textToSpeech == null || !textToSpeechReady || text == null || text.trim().isEmpty()) return;
+        if (!requestAudioFocusForAlert()) return;
+        if (!earconEnabled || earconPattern <= 0) {
+            speakNow(text);
+            return;
+        }
+
+        new Thread(() -> {
+            playEarcon(earconPattern);
+            if (audioFocusGranted) speakNow(text);
+        }).start();
+    }
+
+    private void playEarcon(int priorityLevel) {
+        if (priorityLevel <= 0) return;
+
+        int[][] pattern;
+        switch (priorityLevel) {
+            case 3:
+                pattern = new int[][]{{880, 80, 40}, {660, 80, 40}, {880, 120, 0}};
+                break;
+            case 2:
+                pattern = new int[][]{{660, 100, 60}, {660, 100, 0}};
+                break;
+            default:
+                pattern = new int[][]{{520, 140, 0}};
+                break;
+        }
+
+        for (int[] tone : pattern) {
+            int freqHz = tone[0];
+            int durationMs = tone[1];
+            int gapMs = tone[2];
+            int numSamples = EARCON_SAMPLE_RATE * durationMs / 1000;
+            short[] buffer = new short[numSamples];
+
+            for (int i = 0; i < numSamples; i += 1) {
+                double angle = 2.0 * Math.PI * i * freqHz / EARCON_SAMPLE_RATE;
+                buffer[i] = (short) (Math.sin(angle) * Short.MAX_VALUE * 0.4);
+            }
+
+            AudioTrack track = null;
+            try {
+                track = new AudioTrack.Builder()
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build())
+                    .setAudioFormat(new AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(EARCON_SAMPLE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build())
+                    .setBufferSizeInBytes(numSamples * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build();
+
+                track.write(buffer, 0, numSamples);
+                track.play();
+                Thread.sleep(durationMs + gapMs);
+            } catch (Exception ignored) {
+                return;
+            } finally {
+                if (track != null) {
+                    try {
+                        track.stop();
+                    } catch (Exception ignored) {
+                    }
+                    track.release();
+                }
+            }
+        }
+    }
+
+    private AudioAttributes alertAudioAttributes(int contentType) {
+        return new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+            .setContentType(contentType)
+            .build();
+    }
+
+    private void setTextToSpeechAudioAttributes(TextToSpeech tts) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && tts != null) {
+            tts.setAudioAttributes(alertAudioAttributes(AudioAttributes.CONTENT_TYPE_SPEECH));
+        }
+    }
+
+    private boolean requestAudioFocusForAlert() {
+        if (audioManager == null) {
+            audioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        }
+        if (audioManager == null) return false;
+        if (audioManager.getRingerMode() == AudioManager.RINGER_MODE_SILENT) return false;
+
+        abandonAudioFocus();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(alertAudioAttributes(AudioAttributes.CONTENT_TYPE_SPEECH))
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener((focusChange) -> {
+                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+                        if (textToSpeech != null) textToSpeech.stop();
+                        abandonAudioFocus();
+                    }
+                })
+                .build();
+            audioFocusGranted = audioManager.requestAudioFocus(audioFocusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        } else {
+            audioFocusGranted = audioManager.requestAudioFocus(
+                null,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        }
+
+        return audioFocusGranted;
+    }
+
+    private void abandonAudioFocus() {
+        if (!audioFocusGranted || audioManager == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            audioFocusRequest = null;
+        } else {
+            audioManager.abandonAudioFocus(null);
+        }
+        audioFocusGranted = false;
     }
 
     @PluginMethod

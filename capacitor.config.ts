@@ -14,7 +14,8 @@ const config: CapacitorConfig = {
     '@capacitor-community/background-geolocation',
   ],
   android: {
-    useLegacyBridge: true,
+    webContentsDebuggingEnabled: false,
+    useLegacyBridge: false,
     includePlugins: [
       '@capacitor/app',
       '@capacitor/filesystem',

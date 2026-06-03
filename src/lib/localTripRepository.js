@@ -1,4 +1,5 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/rescoreEvents';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
 import { isAndroid } from '@/lib/nativePlatform';
@@ -59,7 +60,7 @@ export const TRIP_SCHEMA_VERSION = 23;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'road_sage_trip_event_migration_version';
 export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'road_sage_heading_event_migration_note_dismissed';
-export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
+export { RESCORE_PROGRESS_EVENT };
 export const AUTO_RESCORE_RECENT_WINDOW_DAYS = 28;
 export const AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO = 0.2;
 /*
