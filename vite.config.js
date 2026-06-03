@@ -90,6 +90,7 @@ export default defineConfig(({ mode, command }) => {
   });
 
   return {
+    base: './',
     plugins: [cspPlugin(csp), react()],
     define: {
       __APP_VERSION__: JSON.stringify(packageJson.version),

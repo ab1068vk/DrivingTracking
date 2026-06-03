@@ -68,6 +68,18 @@ const scheduleDataRetentionPrune = (retentionMonths) => {
   window.setTimeout(prune, 3_000);
 };
 
+const withLaunchTimeout = (promise, fallback, context, timeoutMs = 2500) => (
+  Promise.race([
+    promise,
+    new Promise((resolve) => {
+      window.setTimeout(() => {
+        logError(context, new Error(`Launch step timed out after ${timeoutMs}ms`));
+        resolve(fallback);
+      }, timeoutMs);
+    }),
+  ])
+);
+
 function AppLoading() {
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-background">
@@ -91,7 +103,11 @@ const AuthenticatedApp = () => {
       configureNotificationChannels().catch((err) => {
         logError('notification_channel_configure', err);
       });
-      const settings = await localSettings.hydrateFromNative();
+      const settings = await withLaunchTimeout(
+        localSettings.hydrateFromNative(),
+        localSettings.get(),
+        'settings_hydrate_launch_timeout'
+      );
       scheduleDataRetentionPrune(settings.data_retention_months);
       reverifyConfiguredOsrmEndpoint(settings).then(({ result }) => {
         if (result && !result.ok) {

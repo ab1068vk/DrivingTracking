@@ -9,8 +9,10 @@ import { runStorageKeyMigration } from '@/lib/storageKeyMigration'
 initializeErrorReporting()
 migrateLegacyAuthTokens()
 
-runStorageKeyMigration().finally(() => {
-  ReactDOM.createRoot(document.getElementById('root')).render(
-    <App />
-  )
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <App />
+)
+
+runStorageKeyMigration().catch((error) => {
+  console.warn('Road Sage storage key migration failed', error)
 })
