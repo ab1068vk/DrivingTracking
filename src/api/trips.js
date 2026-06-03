@@ -55,6 +55,36 @@ export const tripService = {
     return local ? local.update(id, patch) : apiClient.patch(`/trips/${encodeURIComponent(id)}`, patch);
   },
 
+  markEventFeedback: async (id, feedback) => {
+    if (isEphemeralModeActive()) {
+      return Promise.resolve({
+        id,
+        event_feedback: {
+          [feedback.eventKey]: feedback.record,
+        },
+        needs_rescore: true,
+        ephemeral_trip: true,
+      });
+    }
+    const local = repository();
+    if (local?.markEventFeedback) return local.markEventFeedback(id, feedback);
+
+    const current = await apiClient.get(`/trips/${encodeURIComponent(id)}`);
+    const reviewedAt = feedback.reviewedAt || new Date().toISOString();
+    const updated = await apiClient.patch(`/trips/${encodeURIComponent(id)}`, {
+      event_feedback: {
+        ...(current?.event_feedback || {}),
+        [feedback.eventKey]: {
+          ...feedback.record,
+          reviewed_at: reviewedAt,
+        },
+      },
+      needs_rescore: true,
+      feedback_reviewed_at: reviewedAt,
+    });
+    return updated;
+  },
+
   delete: (id) => {
     const local = repository();
     return local ? local.delete(id) : apiClient.delete(`/trips/${encodeURIComponent(id)}`);

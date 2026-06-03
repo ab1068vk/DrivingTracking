@@ -1095,6 +1095,39 @@ export const localTripRepository = {
     return updated;
   },
 
+  async markEventFeedback(id, feedback) {
+    if (isEphemeralModeActive()) {
+      return {
+        id,
+        event_feedback: {
+          [feedback.eventKey]: feedback.record,
+        },
+        needs_rescore: true,
+        ephemeral_trip: true,
+      };
+    }
+
+    const current = await this.getById(id);
+    const reviewedAt = feedback.reviewedAt || new Date().toISOString();
+    const updated = withRouteRiskCells(withId({
+      ...current,
+      event_feedback: {
+        ...(current.event_feedback || {}),
+        [feedback.eventKey]: {
+          ...feedback.record,
+          reviewed_at: reviewedAt,
+        },
+      },
+      needs_rescore: true,
+      feedback_reviewed_at: reviewedAt,
+      id: current.id,
+    }));
+
+    await putTrip(updated);
+    if (updated.status === 'completed') await invalidateTripDerivedCaches();
+    return this.getById(id);
+  },
+
   async delete(id) {
     await deleteTrip(id);
     return { success: true };

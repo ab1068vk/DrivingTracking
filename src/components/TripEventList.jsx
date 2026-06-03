@@ -24,7 +24,7 @@ export function classifyTripEvent(event = {}) {
   return 'scored';
 }
 
-export function TripEventList({ scoredRows = [], diagnosticRows = [], renderEventRow }) {
+export function TripEventList({ scoredRows = [], reviewedRows = [], diagnosticRows = [], renderEventRow }) {
   return (
     <div className="event-list">
       <section>
@@ -47,6 +47,24 @@ export function TripEventList({ scoredRows = [], diagnosticRows = [], renderEven
           </div>
         )}
       </section>
+
+      {reviewedRows.length > 0 && (
+        <section className="mt-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold">Reviewed Events</h3>
+            <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
+              {reviewedRows.length}
+            </span>
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto thin-scrollbar">
+            {reviewedRows.map((row) => renderEventRow(row, {
+              diagnostic: true,
+              status: 'removed',
+              badge: <EventStatusBadge status="removed" />,
+            }))}
+          </div>
+        </section>
+      )}
 
       {diagnosticRows.length > 0 && (
         <details className="diagnostic-section mt-4 rounded-2xl border border-border bg-secondary/30 p-3">

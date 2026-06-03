@@ -103,6 +103,14 @@ const phoneUseIconHtml = (color) => `
 
 const eventMarkerHtml = (event, color) => {
   const label = EVENT_LABELS[event.type] || '!';
+  if (event.feedback_removed) {
+    return `
+      <div style="position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center">
+        <div style="position:absolute;inset:0;border-radius:999px;background:#991b1b;opacity:.12"></div>
+        <div style="width:23px;height:23px;background:#fee2e2;color:#991b1b;border:2px solid white;border-radius:999px;box-shadow:0 5px 14px rgba(127,29,29,0.22);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;line-height:1;text-decoration:line-through">${escapeHtml(label)}</div>
+      </div>
+    `;
+  }
   const border = event.severity === 'high' || event.type === 'possible_crash' || event.type === 'near_miss' || event.type === 'close_proximity'
     ? 'rgba(220,38,38,0.34)'
     : 'rgba(15,23,42,0.18)';
@@ -236,6 +244,7 @@ const eventPopupHtml = (event) => {
     ? `${Math.round(Number(speedLimitValue))} km/h${speedLimitSource === 'inferred' ? ' inferred estimate' : ''}`
     : null;
   const rows = [
+    ['Review', event.feedback_removed ? 'Marked wrong - removed from scoring' : null],
     ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
     ['Time', formatEventTime(event.timestamp)],
     ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],

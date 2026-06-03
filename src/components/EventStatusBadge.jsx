@@ -14,6 +14,11 @@ const BADGE_CONFIG = {
     className: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-300',
     title: 'Experimental detection - thresholds are not yet validated.',
   },
+  removed: {
+    label: 'Removed',
+    className: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300',
+    title: 'Marked wrong and removed from scoring.',
+  },
 };
 
 export function EventStatusBadge({ status }) {

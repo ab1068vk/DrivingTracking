@@ -77,6 +77,38 @@ describe('feedback-driven rescoring helpers', () => {
     );
   });
 
+  it('persists event feedback from the trip detail action and returns a rescored trip', async () => {
+    const routePoints = [
+      { lat: 43.6500, lng: -79.3800, speed_kmh: 80, accuracy: 5, timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.6502, lng: -79.3800, speed_kmh: 80, accuracy: 5, timestamp: '2026-01-01T12:00:01.000Z' },
+      { lat: 43.65028, lng: -79.3800, speed_kmh: 20, accuracy: 5, timestamp: '2026-01-01T12:00:02.000Z' },
+      { lat: 43.65036, lng: -79.3800, speed_kmh: 20, accuracy: 5, timestamp: '2026-01-01T12:00:03.000Z' },
+    ];
+    const detection = detectDrivingEvents(routePoints);
+    const reviewedEventIndex = detection.events.findIndex((event) => event.type !== 'phone_use');
+    const reviewedEvent = detection.events[reviewedEventIndex];
+    const [saved] = await localTripRepository.upsertMany([completedTrip(routePoints)]);
+    const eventKey = feedbackKey(reviewedEvent, reviewedEventIndex);
+
+    const updated = await localTripRepository.markEventFeedback(saved.id, {
+      eventKey,
+      reviewedAt: '2026-01-01T12:05:00.000Z',
+      record: {
+        verdict: 'wrong',
+        type: reviewedEvent.type,
+        timestamp: reviewedEvent.timestamp,
+        value: reviewedEvent.value,
+      },
+    });
+
+    expect(updated.needs_rescore).toBe(false);
+    expect(updated.event_feedback[eventKey]).toMatchObject({
+      verdict: 'wrong',
+      reviewed_at: '2026-01-01T12:05:00.000Z',
+    });
+    expect(updated.feedback_adjusted_events_count).toBe(1);
+  });
+
   it('does not remove phone-use events added during the post-score merge', async () => {
     const routePoints = [
       { lat: 43.6500, lng: -79.3800, speed_kmh: 30, accuracy: 5, timestamp: '2026-01-01T12:00:00.000Z' },

@@ -154,6 +154,48 @@ const uniqueTripEvents = (events = []) => {
   });
 };
 
+const finiteNumberOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const resolveEventMapLocation = (event = {}, routePoints = []) => {
+  const eventLat = finiteNumberOrNull(event.lat);
+  const eventLng = finiteNumberOrNull(event.lng);
+  if (eventLat != null && eventLng != null) {
+    return {
+      lat: eventLat,
+      lng: eventLng,
+      speed_kmh: finiteNumberOrNull(event.speed_kmh),
+    };
+  }
+
+  const eventMs = new Date(event.timestamp || event.startTime || 0).getTime();
+  if (!Number.isFinite(eventMs)) return {};
+
+  let nearest = null;
+  let nearestDelta = Infinity;
+  for (const point of routePoints) {
+    const lat = finiteNumberOrNull(point?.lat);
+    const lng = finiteNumberOrNull(point?.lng);
+    if (lat == null || lng == null) continue;
+    const pointMs = new Date(point?.timestamp || 0).getTime();
+    if (!Number.isFinite(pointMs)) continue;
+    const delta = Math.abs(pointMs - eventMs);
+    if (delta < nearestDelta) {
+      nearestDelta = delta;
+      nearest = point;
+    }
+  }
+
+  if (!nearest || nearestDelta > 2 * 60 * 1000) return {};
+  return {
+    lat: finiteNumberOrNull(nearest.lat),
+    lng: finiteNumberOrNull(nearest.lng),
+    speed_kmh: finiteNumberOrNull(event.speed_kmh ?? nearest.speed_kmh),
+  };
+};
+
 const resolveEventDisplayValue = (value, event) => (
   typeof value === 'function' ? value(event) : value
 );
@@ -193,6 +235,17 @@ const eventDisplayConfig = (event = {}, gpsPhoneUseProxy = false) => {
 };
 
 const getEventRowStyle = (evt = {}, cfg = {}, diagnostic = false) => {
+  if (evt.feedback_removed) {
+    return {
+      row: 'rounded-xl border border-red-200 bg-red-50/70 px-3 py-2 dark:border-red-900/50 dark:bg-red-950/20',
+      icon: 'text-red-500',
+      label: 'text-red-700 dark:text-red-300',
+      severity: 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300',
+      severityLabel: 'removed',
+      badge: null,
+    };
+  }
+
   const isDiagnostic =
     diagnostic
     || DIAGNOSTIC_TYPES.has(evt.type)
@@ -323,22 +376,22 @@ export default function TripDetail() {
   });
   const feedbackMutation = useMutation({
     mutationFn: async (/** @type {{eventKey:string, event:any, verdict:string}} */ vars) => {
-      const existing = trip?.event_feedback || {};
-      await tripService.update(id, {
-        event_feedback: {
-          ...existing,
-          [vars.eventKey]: {
-            verdict: vars.verdict,
-            type: vars.event?.type || 'unknown',
-            timestamp: vars.event?.timestamp || null,
-            value: vars.event?.value ?? null,
-            reviewed_at: new Date().toISOString(),
-          },
+      const reviewedAt = new Date().toISOString();
+      const mapLocation = resolveEventMapLocation(vars.event, trip?.route_points || []);
+      return tripService.markEventFeedback(id, {
+        eventKey: vars.eventKey,
+        reviewedAt,
+        record: {
+          verdict: vars.verdict,
+          type: vars.event?.type || 'unknown',
+          timestamp: vars.event?.timestamp || vars.event?.startTime || null,
+          value: vars.event?.value ?? null,
+          lat: mapLocation.lat ?? null,
+          lng: mapLocation.lng ?? null,
+          speed_kmh: mapLocation.speed_kmh ?? vars.event?.speed_kmh ?? null,
+          reviewed_at: reviewedAt,
         },
-        needs_rescore: true,
-        feedback_reviewed_at: new Date().toISOString(),
       });
-      return tripService.getById(id);
     },
     onSuccess: (updatedTrip, vars) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
@@ -718,6 +771,12 @@ export default function TripDetail() {
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(rawDrivingEvents, displayPhoneUse)
     .filter((event) => event.type !== 'near_miss')
     .filter(isUserVisibleTripEvent);
+  const eventFeedback = trip.event_feedback || {};
+  const eventFeedbackKey = (event, index) => [
+    event.type || 'event',
+    event.timestamp || index,
+    Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(2) : '',
+  ].join('|');
   const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
   const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
     .filter((event) => !displayEvents.some((candidate) => (
@@ -731,7 +790,37 @@ export default function TripDetail() {
     ...eventRows.filter(({ event }) => isDiagnosticOnlyTripEvent(event)),
     ...phoneProxyDiagnosticRows,
   ];
-  const eventPanelCount = scoredEventRows.length + diagnosticEventRows.length;
+  const currentEventFeedbackKeys = new Set([
+    ...eventRows,
+    ...phoneProxyDiagnosticRows,
+  ].map(({ event, originalIndex }) => eventFeedbackKey(event, originalIndex)));
+  const reviewedWrongRows = Object.entries(eventFeedback)
+    .filter(([key, item]) => item?.verdict === 'wrong' && !currentEventFeedbackKeys.has(key))
+    .map(([key, item], index) => {
+      const [typeFromKey, timestampFromKey, valueFromKey] = key.split('|');
+      const numericValue = Number(valueFromKey);
+      const eventForLocation = {
+        ...item,
+        type: item?.type || typeFromKey || 'event',
+        timestamp: item?.timestamp || timestampFromKey || null,
+      };
+      const mapLocation = resolveEventMapLocation(eventForLocation, trip.route_points || []);
+      return {
+        eventKey: key,
+        originalIndex: `reviewed-wrong-${index}`,
+        event: {
+          ...eventForLocation,
+          value: item?.value ?? (Number.isFinite(numericValue) ? numericValue : null),
+          lat: mapLocation.lat ?? null,
+          lng: mapLocation.lng ?? null,
+          speed_kmh: mapLocation.speed_kmh ?? item?.speed_kmh ?? null,
+          severity: 'removed',
+          feedback_removed: true,
+          feedback_verdict: 'wrong',
+        },
+      };
+    });
+  const eventPanelCount = scoredEventRows.length + reviewedWrongRows.length + diagnosticEventRows.length;
   const headingDeviationEventCount = Number.isFinite(Number(trip.heading_deviation_count))
     ? Number(trip.heading_deviation_count)
     : displayEvents.filter((event) => event.type === 'heading_deviation').length;
@@ -751,21 +840,19 @@ export default function TripDetail() {
     { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
   ];
   const showDrivingEventsPanel = Boolean(trip);
-  const eventFeedback = trip.event_feedback || {};
-  const eventFeedbackKey = (event, index) => [
-    event.type || 'event',
-    event.timestamp || index,
-    Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(2) : '',
-  ].join('|');
   const feedbackCounts = Object.values(eventFeedback).reduce((counts, item) => {
     if (item?.verdict === 'accurate') counts.accurate += 1;
     if (item?.verdict === 'wrong') counts.wrong += 1;
     return counts;
   }, { accurate: 0, wrong: 0 });
   const mapDisplayEvents = displayEvents.filter((event) => !isGpsPhoneUseProxyEvent(event));
-  const mapEvents = settings.phone_use_show_on_map === false
+  const activeMapEvents = settings.phone_use_show_on_map === false
     ? mapDisplayEvents.filter((event) => event.type !== 'phone_use')
     : mapDisplayEvents;
+  const removedMapEvents = reviewedWrongRows
+    .map(({ event }) => event)
+    .filter((event) => Number.isFinite(Number(event.lat)) && Number.isFinite(Number(event.lng)));
+  const mapEvents = [...activeMapEvents, ...removedMapEvents];
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -814,8 +901,8 @@ export default function TripDetail() {
     : speedLimitContext
       ? 'Road data was checked, but no usable speed limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
       : 'Before getting road data, this map shows GPS speed bands and event markers only.';
-  const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false, badge = null } = {}) => {
-    const key = eventFeedbackKey(evt, originalIndex);
+  const renderEventRow = ({ event: evt, originalIndex, eventKey }, { diagnostic = false, badge = null } = {}) => {
+    const key = eventKey || eventFeedbackKey(evt, originalIndex);
     const feedback = eventFeedback[key]?.verdict || null;
     const cfg = eventDisplayConfig(evt, isGpsPhoneUseProxyEvent(evt));
     const timeText = evt.timestamp || evt.startTime
@@ -837,6 +924,8 @@ export default function TripDetail() {
           : evt.speed_limit_source === 'osm_highway_default'
             ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
             : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
+        : evt.feedback_removed
+          ? 'Marked wrong - removed from scoring'
         : diagnostic
           ? 'Diagnostic GPS inference - not scored'
           : inferredTypes.includes(evt.type)
@@ -877,9 +966,12 @@ export default function TripDetail() {
             <button
               key={option.id}
               type="button"
+              disabled={feedbackMutation.isPending}
               onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
               className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
+                feedbackMutation.isPending
+                  ? 'border-border text-muted-foreground opacity-60'
+                  : feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
               }`}
             >
               {option.label}
@@ -1965,6 +2057,7 @@ export default function TripDetail() {
 
           <TripEventList
             scoredRows={scoredEventRows}
+            reviewedRows={reviewedWrongRows}
             diagnosticRows={diagnosticEventRows}
             renderEventRow={renderEventRow}
           />
@@ -2087,9 +2180,12 @@ export default function TripDetail() {
                       <button
                         key={option.id}
                         type="button"
+                        disabled={feedbackMutation.isPending}
                         onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
                         className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                          feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
+                          feedbackMutation.isPending
+                            ? 'border-border text-muted-foreground opacity-60'
+                            : feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
                         }`}
                       >
                         {option.label}
