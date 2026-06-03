@@ -16,7 +16,14 @@ vi.mock('@/lib/driveSenseNativePlugin', () => ({
   default: mockState.nativeSpeech,
 }));
 
-import { canSpeakSafetyAlert, resetSafetyAlertCooldowns, speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import {
+  canSpeakSafetyAlert,
+  isVoiceAlertEnabled,
+  markSafetyAlertSpoken,
+  resetSafetyAlertCooldowns,
+  speakSafetyAlert,
+  speakSafetyAlertOnce,
+} from '@/lib/voiceAlerts';
 
 function stubSpeechSynthesis(overrides = {}) {
   const SpeechSynthesisUtterance = class SpeechSynthesisUtterance {
@@ -50,6 +57,19 @@ describe('voice alert cooldowns', () => {
   it('allows unkeyed alerts without cooldown tracking', () => {
     resetSafetyAlertCooldowns();
     expect(canSpeakSafetyAlert(null, 60000, 1000)).toBe(true);
+  });
+
+  it('records cooldowns at enqueue time via markSafetyAlertSpoken', () => {
+    resetSafetyAlertCooldowns();
+    markSafetyAlertSpoken('speeding', 1000);
+
+    expect(canSpeakSafetyAlert('speeding', 60000, 30000)).toBe(false);
+    expect(canSpeakSafetyAlert('speeding', 60000, 61000)).toBe(true);
+  });
+
+  it('normalizes stored voice alert enabled settings', () => {
+    expect(isVoiceAlertEnabled({ voice_alerts_enabled: 'false' })).toBe(false);
+    expect(isVoiceAlertEnabled({ voice_alerts_enabled: 'undefined' })).toBe(true);
   });
 
   it('throttles keyed alerts after a successful spoken message', async () => {
@@ -98,6 +118,40 @@ describe('voice alert cooldowns', () => {
     expect(speechSynthesis.speak).toHaveBeenCalledTimes(1);
   });
 
+  it('applies alert-specific browser speech tuning', async () => {
+    const speechSynthesis = stubSpeechSynthesis();
+
+    expect(await speakSafetyAlert(
+      'Ease back.',
+      { voice_alerts_enabled: true },
+      { rate: 0.9, pitch: 0.95, volume: 0.8 }
+    )).toBe(true);
+
+    const utterance = speechSynthesis.speak.mock.calls[0][0];
+    expect(utterance.rate).toBe(0.9);
+    expect(utterance.pitch).toBe(0.95);
+    expect(utterance.volume).toBe(0.8);
+  });
+
+  it('passes keyed alert speech tuning through cooldown speech', async () => {
+    resetSafetyAlertCooldowns();
+    const speechSynthesis = stubSpeechSynthesis();
+
+    expect(await speakSafetyAlertOnce(
+      'idle',
+      'Extended idling recorded.',
+      { voice_alerts_enabled: true },
+      60000,
+      1000,
+      { rate: 0.85, pitch: 0.9, volume: 0.7 }
+    )).toBe(true);
+
+    const utterance = speechSynthesis.speak.mock.calls[0][0];
+    expect(utterance.rate).toBe(0.85);
+    expect(utterance.pitch).toBe(0.9);
+    expect(utterance.volume).toBe(0.7);
+  });
+
   it('falls back to the repo native speakText bridge when speak is unavailable', async () => {
     mockState.isNative = true;
     mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();
@@ -106,6 +160,7 @@ describe('voice alert cooldowns', () => {
     expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith({
       text: 'Eyes on the road.',
       rate: 0.95,
+      pitch: 1,
       volume: 0.95,
       language: 'en-US',
     });
@@ -119,6 +174,7 @@ describe('voice alert cooldowns', () => {
     expect(mockState.nativeSpeech.speak).toHaveBeenCalledWith({
       text: 'Eyes on the road.',
       rate: 0.95,
+      pitch: 1,
       volume: 0.95,
       language: 'en-US',
     });

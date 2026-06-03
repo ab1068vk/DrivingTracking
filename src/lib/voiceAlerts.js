@@ -7,6 +7,7 @@ import NativeSpeech from '@/lib/driveSenseNativePlugin';
 
 const DEFAULT_RATE = 0.95;
 const DEFAULT_VOLUME = 0.95;
+const DEFAULT_PITCH = 1;
 const DEFAULT_LANGUAGE = 'en-US';
 const VOICES_READY_TIMEOUT_MS = 1500;
 
@@ -19,7 +20,7 @@ const lastSpokenAt = new Map();
  * Normalise any value stored for voice_alerts_enabled.
  * Handles: true, false, "true", "false", "undefined", null, undefined.
  */
-function isVoiceEnabled(settings) {
+export function isVoiceAlertEnabled(settings) {
   const raw = settings?.voice_alerts_enabled;
   if (raw === false || raw === 0) return false;
   if (typeof raw !== 'string') return true;
@@ -42,9 +43,24 @@ export function resetSafetyAlertCooldowns() {
   lastSpokenAt.clear();
 }
 
+export function markSafetyAlertSpoken(key, now = Date.now()) {
+  if (key) lastSpokenAt.set(key, now);
+}
+
 // Core speak (web path)
 
-function speakWeb(text, rate = DEFAULT_RATE, volume = DEFAULT_VOLUME) {
+function normalizeSpeechParams(params = {}) {
+  const rate = Number(params.rate);
+  const pitch = Number(params.pitch);
+  const volume = Number(params.volume);
+  return {
+    rate: Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_RATE,
+    pitch: Number.isFinite(pitch) && pitch > 0 ? pitch : DEFAULT_PITCH,
+    volume: Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : DEFAULT_VOLUME,
+  };
+}
+
+function speakWeb(text, params = {}) {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') {
       reject(new Error('Window not available'));
@@ -60,6 +76,7 @@ function speakWeb(text, rate = DEFAULT_RATE, volume = DEFAULT_VOLUME) {
 
     // Always cancel any queued speech first to avoid stale-queue buildup.
     synth.cancel();
+    const speechParams = normalizeSpeechParams(params);
 
     let spoken = false;
     let timeout = null;
@@ -70,8 +87,9 @@ function speakWeb(text, rate = DEFAULT_RATE, volume = DEFAULT_VOLUME) {
       if (timeout) clearTimeout(timeout);
 
       const utter = new Utterance(text);
-      utter.rate = rate;
-      utter.volume = volume;
+      utter.rate = speechParams.rate;
+      utter.pitch = speechParams.pitch;
+      utter.volume = speechParams.volume;
       utter.lang = DEFAULT_LANGUAGE;
       utter.onend = () => resolve();
       utter.onerror = (event) => reject(new Error(`SpeechSynthesis error: ${event.error || 'unknown'}`));
@@ -96,10 +114,11 @@ function speakWeb(text, rate = DEFAULT_RATE, volume = DEFAULT_VOLUME) {
 
 // Core speak (native Android path)
 
-async function speakNative(text, rate = DEFAULT_RATE, volume = DEFAULT_VOLUME) {
+async function speakNative(text, params = {}) {
   // NativeSpeech bridges to DriveSenseActivityRecognitionPlugin -> Android TTS.
   // The plugin must be initialised; the try/catch surfaces failures upstream.
-  const payload = { text, rate, volume, language: DEFAULT_LANGUAGE };
+  const speechParams = normalizeSpeechParams(params);
+  const payload = { text, ...speechParams, language: DEFAULT_LANGUAGE };
   if (typeof NativeSpeech?.speak === 'function') {
     await NativeSpeech.speak(payload);
     return;
@@ -113,14 +132,14 @@ async function speakNative(text, rate = DEFAULT_RATE, volume = DEFAULT_VOLUME) {
  * Speak text respecting the user's voice-alerts setting.
  * Speed and GPS data are NEVER passed here: this is pure audio output.
  */
-export async function speakSafetyAlert(text, settings = localSettings.get()) {
+export async function speakSafetyAlert(text, settings = localSettings.get(), ttsParams = {}) {
   const message = typeof text === 'string' ? text.trim() : '';
-  if (!message || !isVoiceEnabled(settings)) return false;
+  if (!message || !isVoiceAlertEnabled(settings)) return false;
 
   if (isNativePlatform()) {
-    await speakNative(message);
+    await speakNative(message, ttsParams);
   } else {
-    await speakWeb(message);
+    await speakWeb(message, ttsParams);
   }
 
   return true;
@@ -134,11 +153,12 @@ export async function speakSafetyAlertOnce(
   text,
   settings = localSettings.get(),
   cooldownMs = 0,
-  now = Date.now()
+  now = Date.now(),
+  ttsParams = {}
 ) {
   if (!canSpeakSafetyAlert(key, cooldownMs, now)) return false;
-  const spoken = await speakSafetyAlert(text, settings);
-  if (spoken && key) lastSpokenAt.set(key, now);
+  const spoken = await speakSafetyAlert(text, settings, ttsParams);
+  if (spoken && key) markSafetyAlertSpoken(key, now);
   return spoken;
 }
 

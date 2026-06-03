@@ -116,7 +116,9 @@ import { logError } from '@/lib/errorReporting';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
-import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import { canSpeakSafetyAlert, isVoiceAlertEnabled, markSafetyAlertSpoken } from '@/lib/voiceAlerts';
+import { enqueueVoiceAlert } from '@/lib/voiceAlertQueue';
+import { buildAlertMessage, buildTtsParams } from '@/lib/voiceAlertMessages';
 import {
   consumeStealthNextTrip,
   endEphemeralTrip,
@@ -146,6 +148,24 @@ const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']
 const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
 const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
 const ROUTE_RISK_DISCLAIMER_TEXT = 'Route risk shows where you\'ve had driving events on this route. It does not reflect road danger, traffic volume, or collision history.';
+
+const queueVoiceAlertForKey = ({
+  key,
+  ctx = {},
+  escalation = 0,
+  settings,
+  cooldownMs = 30000,
+}) => {
+  if (!isVoiceAlertEnabled(settings)) return false;
+  if (key && !canSpeakSafetyAlert(key, cooldownMs)) return false;
+
+  const text = buildAlertMessage(key, ctx, escalation);
+  if (!text) return false;
+
+  if (key) markSafetyAlertSpoken(key);
+  const { rate, pitch, volume } = buildTtsParams(key, settings);
+  return enqueueVoiceAlert({ key, text, rate, pitch, volume });
+};
 
 const logNativeAutoStartFailure = (err, settings = {}, extra = {}) => {
   logError('native_auto_tracking_start', err, {
@@ -302,8 +322,10 @@ export default function Dashboard() {
       notifyStayAlert().catch((err) => {
         logError('stay_alert_notification', err, { reason: 'heading_drift_pattern' });
       });
-      speakSafetyAlert('GPS heading variation pattern recorded. Take a break when it is safe if you feel tired.', cfg).catch((err) => {
-        logError('voice_alert_heading_drift_pattern', err, { mode: cfg.tracking_mode });
+      queueVoiceAlertForKey({
+        key: 'heading_drift_beta',
+        settings: cfg,
+        cooldownMs: 10 * 60 * 1000,
       });
     }
   }, [activeTrip, tracking]);
@@ -628,8 +650,11 @@ export default function Dashboard() {
             }).catch((err) => {
               logError('repeated_event_area_notification', err, { zoneId: zone.id, dominantType: zone.dominantType });
             });
-            speakSafetyAlert(`Repeated event area ahead. ${typeLabel} was recorded nearby in your history.`, latestSettings).catch((err) => {
-              logError('voice_alert_repeated_event_area', err, { zoneId: zone.id, dominantType: zone.dominantType });
+            queueVoiceAlertForKey({
+              key: 'repeated_event_area',
+              ctx: { typeLabel },
+              settings: latestSettings,
+              cooldownMs: 60 * 1000,
             });
           }
         }
@@ -660,23 +685,25 @@ export default function Dashboard() {
           !isCandidateTrip &&
           !isEphemeralModeActive() &&
           latestSettings.speed_warning_enabled !== false &&
-          latestSettings.voice_alerts_enabled !== false &&
+          isVoiceAlertEnabled(latestSettings) &&
           speed > speedLimitKmh + speedMarginKmh
         ) {
+          const overKmh = speed - speedLimitKmh;
+          const escalation = speedLimitKmh > 0 && overKmh / speedLimitKmh >= 0.5 ? 2 : overKmh >= 15 ? 1 : 0;
           setHazardMessage({
             body: `Speed warning: ${Math.round(speed)} km/h over ${speedLimitLabel} ${Math.round(speedLimitKmh)} km/h`,
             at: Date.now(),
           });
-          speakSafetyAlertOnce(
-            'speeding',
-            `Speed warning. ${Math.round(speed)} kilometers per hour. ${speedLimitLabel} ${Math.round(speedLimitKmh)}.`,
-            latestSettings,
-            60 * 1000
-          ).catch((err) => {
-            logError('voice_alert_speeding', err, {
-              speed_kmh: Math.round(speed),
-              limit_kmh: Math.round(speedLimitKmh),
-            });
+          queueVoiceAlertForKey({
+            key: 'speeding',
+            ctx: {
+              speedKmh: speed,
+              limitKmh: speedLimitKmh,
+              overKmh,
+            },
+            escalation,
+            settings: latestSettings,
+            cooldownMs: 60 * 1000,
           });
         }
         if (tripBeforePoint) {
@@ -730,8 +757,11 @@ export default function Dashboard() {
           }).catch((err) => {
             logError('possible_incident_notification', err, { emergencyWorkflow });
           });
-          speakSafetyAlert(workflowBody, latestSettings).catch((err) => {
-            logError('voice_alert_possible_incident', err, { emergencyWorkflow });
+          queueVoiceAlertForKey({
+            key: 'possible_incident',
+            ctx: { emergencyWorkflow },
+            settings: latestSettings,
+            cooldownMs: 5 * 60 * 1000,
           });
           setActiveTrip(prev => {
             if (!prev) return prev;

@@ -41,6 +41,7 @@ export default defineConfig(({ mode, command }) => {
       exclude: [...configDefaults.exclude, 'e2e/**', 'android/**'],
     },
     build: {
+      chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {
           manualChunks: {

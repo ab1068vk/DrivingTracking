@@ -18,7 +18,9 @@ import {
 import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
-import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import { canSpeakSafetyAlert, isVoiceAlertEnabled, markSafetyAlertSpoken } from '@/lib/voiceAlerts';
+import { enqueueVoiceAlert } from '@/lib/voiceAlertQueue';
+import { buildAlertMessage, buildTtsParams } from '@/lib/voiceAlertMessages';
 import { logError } from '@/lib/errorReporting';
 
 const RECENT_WINDOW_MS = 120000;
@@ -52,9 +54,26 @@ const plainText = (message) => {
   return 'Road Sage safety alert';
 };
 
-const isVoiceAlertsEnabled = (settings) => {
-  const value = settings?.voice_alerts_enabled;
-  return value === true || value === 'true';
+const escalationFromCount = (count) => Math.max(0, Math.min(Math.max(0, count) - 1, 2));
+
+const queueVoiceAlertForKey = ({
+  key,
+  ctx = {},
+  escalation = 0,
+  settings,
+  cooldownMs = 30000,
+  text,
+  ttsParams,
+}) => {
+  if (!isVoiceAlertEnabled(settings)) return false;
+  if (key && !canSpeakSafetyAlert(key, cooldownMs)) return false;
+
+  const voiceText = text ?? buildAlertMessage(key, ctx, escalation);
+  if (!voiceText) return false;
+
+  if (key) markSafetyAlertSpoken(key);
+  const params = ttsParams ?? buildTtsParams(key, settings);
+  return enqueueVoiceAlert({ key, text: voiceText, ...params });
 };
 
 export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {
@@ -79,15 +98,15 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     const settings = localSettings.get();
-    const voiceText = plainText(normalized.text);
-    const speak = normalized.voiceKey
-      ? speakSafetyAlertOnce(normalized.voiceKey, voiceText, settings, normalized.voiceCooldownMs).catch((err) => {
-          logError('live_coach_voice_alert_once', err, { voiceKey: normalized.voiceKey });
-        })
-      : speakSafetyAlert(voiceText, settings).catch((err) => {
-          logError('live_coach_voice_alert', err);
-        });
-    void speak;
+    queueVoiceAlertForKey({
+      key: normalized.voiceKey,
+      ctx: normalized.voiceCtx,
+      escalation: normalized.escalation,
+      settings,
+      cooldownMs: normalized.voiceCooldownMs,
+      text: normalized.voiceText ?? (!normalized.voiceKey ? plainText(normalized.text) : undefined),
+      ttsParams: normalized.ttsParams,
+    });
     if (!dismissed) setMessage(normalized);
     setTimeout(() => {
       visibleRef.current = false;
@@ -170,11 +189,20 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       });
     }
 
-    if (isVoiceAlertsEnabled(settings)) {
+    if (isVoiceAlertEnabled(settings)) {
       const overBy = Math.round(currentSpeedKmh - limitKmh);
-      const voiceText = `Speed warning. ${Math.round(currentSpeedKmh)} kilometres per hour. ${overBy} over the limit.`;
-      speakSafetyAlertOnce('speeding', voiceText, settings, VOICE_COOLDOWNS_MS.speeding)
-        .catch((err) => logError('live_coach_speed_voice', err));
+      const escalation = limitKmh > 0 && overBy / limitKmh >= 0.5 ? 2 : overBy >= 15 ? 1 : 0;
+      queueVoiceAlertForKey({
+        key: 'speeding',
+        ctx: {
+          speedKmh: currentSpeedKmh,
+          limitKmh,
+          overKmh: overBy,
+        },
+        escalation,
+        settings,
+        cooldownMs: VOICE_COOLDOWNS_MS.speeding,
+      });
     }
   }, [currentRoutePoints]);
 
@@ -253,6 +281,8 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           tone: 'danger',
           displayMs: PHONE_DISPLAY_MS,
           voiceKey: 'phone_use',
+          voiceText: buildAlertMessage('phone_use', {}, escalationFromCount(phoneUse.phone_use_window_count || newPhoneWindows.length)),
+          ttsParams: buildTtsParams('phone_use', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.phone_use,
         };
         if (settings.notif_phone_use_alert_enabled !== false) {
@@ -266,45 +296,59 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           });
         }
       } else if (recentCloseProximity) {
+        const closeProximityCount = events.filter((event) => (
+          event.type === EVENT_TYPES.CLOSE_PROXIMITY || event.type === EVENT_TYPES.NEAR_MISS
+        )).length;
         nextMessage = {
-          text: 'Estimated brake-turn manoeuvre alert. Review conditions when safe.',
+          text: buildAlertMessage('close_proximity', {}, escalationFromCount(closeProximityCount)),
           voiceKey: 'close_proximity',
+          ttsParams: buildTtsParams('close_proximity', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.close_proximity,
         };
       } else if (stats.heading_drift_beta_level === 'high') {
         nextMessage = {
-          text: 'GPS heading variation pattern recorded. Take a break if you feel tired.',
+          text: buildAlertMessage('heading_drift_beta'),
           voiceKey: 'heading_drift_beta',
+          ttsParams: buildTtsParams('heading_drift_beta', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
       } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
         nextMessage = {
-          text: 'Brake earlier and more gradually',
+          text: buildAlertMessage('harsh_brake', {}, escalationFromCount(harshBrakeCount)),
           voiceKey: 'harsh_brake',
+          ttsParams: buildTtsParams('harsh_brake', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
         };
       } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
         nextMessage = {
-          text: 'Repeated stop-start pattern recorded',
+          text: buildAlertMessage('stop_start_pattern', {}, escalationFromCount(stopStartPatternCount)),
           voiceKey: 'stop_start_pattern',
+          ttsParams: buildTtsParams('stop_start_pattern', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
         };
       } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
         nextMessage = {
-          text: 'Accelerate more smoothly',
+          text: buildAlertMessage('rapid_accel', {}, escalationFromCount(rapidAccelCount)),
           voiceKey: 'rapid_accel',
+          ttsParams: buildTtsParams('rapid_accel', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.rapid_accel,
         };
       } else if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
+        const thresholdMins = settings.threshold_long_drive_minutes ?? 120;
+        const escalation = durationMins >= thresholdMins * 1.5 ? 2 : durationMins >= thresholdMins * 1.25 ? 1 : 0;
         nextMessage = {
-          text: `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`,
+          text: buildAlertMessage('long_drive', { durationMins }, escalation),
           voiceKey: 'long_drive',
+          ttsParams: buildTtsParams('long_drive', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.long_drive,
         };
       } else if ((stats.idle_time_seconds || 0) > 300) {
+        const idleSeconds = stats.idle_time_seconds || 0;
+        const escalation = idleSeconds > 600 ? 2 : idleSeconds > 450 ? 1 : 0;
         nextMessage = {
-          text: 'Extended idling recorded',
+          text: buildAlertMessage('idle', {}, escalation),
           voiceKey: 'idle',
+          ttsParams: buildTtsParams('idle', settings),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.idle,
         };
       }

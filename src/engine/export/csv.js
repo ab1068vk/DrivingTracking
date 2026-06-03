@@ -2,6 +2,10 @@ import {
   saveExportToDownloads
 } from '../../lib/nativeDownloads.js';
 import {
+  buildEncryptedExport,
+  encryptedExportFilename
+} from '../../lib/exportEncryption.js';
+import {
   clamp,
   pearsonCorrelation
 } from '../../lib/mathUtils.js';
@@ -609,7 +613,6 @@ export function tripsToCSV(trips) {
 
 export async function downloadCSV(content, filename, { password } = {}) {
   const safeFilename = filename.replace(/[\\/:*?"<>|]+/g, '-');
-  const { buildEncryptedExport, encryptedExportFilename } = await import('@/lib/exportEncryption');
   const exportContent = await buildEncryptedExport({
     filename: safeFilename,
     data: content,

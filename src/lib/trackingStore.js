@@ -14,6 +14,7 @@ import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
 import { isNativePlatform } from '@/lib/nativePlatform';
+import DriveSenseActivityRecognition from '@/lib/driveSenseNativePlugin';
 import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
 import { evaluateOsrmEndpointTrust, normalizeOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
@@ -123,7 +124,6 @@ const androidNativeDriveSensePlugin = async () => {
   try {
     const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.getPlatform?.() !== 'android') return null;
-    const { default: DriveSenseActivityRecognition } = await import('@/lib/driveSenseNativePlugin');
     return DriveSenseActivityRecognition;
   } catch {
     return null;
