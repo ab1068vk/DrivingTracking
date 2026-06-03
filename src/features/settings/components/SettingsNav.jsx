@@ -23,6 +23,7 @@ export const SECTION_GROUPS = [
     icon: BarChart3,
     ids: [
       'settings-detection-thresholds',
+      'settings-calibration',
       'settings-advanced-models',
       'settings-phone-use',
       'settings-speed-warning',
@@ -68,7 +69,7 @@ export const SECTION_GROUPS = [
 
 export function SettingsNav({ activeGroupId, onChange }) {
   return (
-    <nav className="flex gap-2 overflow-x-auto border-b border-border pb-3 md:w-52 md:shrink-0 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:pb-0 md:pr-3">
+    <nav className="grid grid-cols-2 gap-2 border-b border-border pb-3 min-[440px]:grid-cols-3 md:flex md:w-52 md:shrink-0 md:flex-col md:border-b-0 md:border-r md:pb-0 md:pr-3">
       {SECTION_GROUPS.map((group) => {
         const Icon = group.icon;
         const active = activeGroupId === group.id;
@@ -77,7 +78,7 @@ export function SettingsNav({ activeGroupId, onChange }) {
             key={group.id}
             type="button"
             onClick={() => onChange(group.id)}
-            className={`flex min-w-[10rem] items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors md:min-w-0 ${
+            className={`flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors ${
               active
                 ? 'bg-primary/10 font-semibold text-primary'
                 : 'text-muted-foreground hover:bg-secondary hover:text-foreground'

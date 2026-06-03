@@ -85,6 +85,7 @@ public class MainActivity extends BridgeActivity {
         String status = RuntimeIntegrityCheck.status(this);
         if ("ok".equals(status)) return;
         Log.w(TAG, "Runtime integrity warning: " + status);
+        if (BuildConfig.DEBUG && "adb;".equals(status)) return;
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
     }
 

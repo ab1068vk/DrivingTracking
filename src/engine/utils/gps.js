@@ -484,16 +484,17 @@ export function calculateCandidateTripStats(points = [], startTime = null, endTi
   };
 }
 
-export function validateCandidateTrip({
-  points = [],
-  startTime = null,
-  now = new Date().toISOString(),
-  activity = null,
-  nearParkedLocation = false,
-  forceFinal = false,
-  thresholds = DEFAULT_THRESHOLDS,
-  options = {},
-} = {}) {
+export function validateCandidateTrip(input = {}) {
+  const {
+    points = [],
+    startTime = null,
+    now = new Date().toISOString(),
+    activity = null,
+    nearParkedLocation = false,
+    forceFinal = false,
+    thresholds = DEFAULT_THRESHOLDS,
+    options = {},
+  } = input || {};
   const config = { ...CANDIDATE_TRIP_DEFAULTS, ...options };
   const cleanPoints = cleanRoutePoints(points, thresholds);
   const stats = calculateCandidateTripStats(cleanPoints, startTime, now, thresholds);

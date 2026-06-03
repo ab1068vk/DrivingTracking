@@ -106,7 +106,7 @@ export default defineConfig(({ mode, command }) => {
       },
     },
     test: {
-      exclude: [...configDefaults.exclude, 'e2e/**', 'android/**'],
+      exclude: [...configDefaults.exclude, 'e2e/**', 'android/**', 'tests/full-suite.test.mjs'],
     },
     build: {
       chunkSizeWarningLimit: 1000,

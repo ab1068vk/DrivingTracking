@@ -37,10 +37,15 @@ describe('tracking store default settings', () => {
   });
 
   it('defaults biometric session auto-lock to five minutes', () => {
+    expect(DEFAULT_SETTINGS.biometric_lock_enabled).toBe(false);
     expect(DEFAULT_SETTINGS.lock_timeout_minutes).toBe(5);
+    expect(sanitizeImportedSettings({ biometric_lock_enabled: true })).toMatchObject({
+      biometric_lock_enabled: true,
+    });
     expect(sanitizeImportedSettings({ lock_timeout_minutes: 15 })).toMatchObject({
       lock_timeout_minutes: 15,
     });
+    expect(validateSettingsPatch({ biometric_lock_enabled: true })).toMatchObject({ valid: true });
     expect(sanitizeImportedSettings({ lock_timeout_minutes: 60 })).toMatchObject({
       lock_timeout_minutes: 30,
     });

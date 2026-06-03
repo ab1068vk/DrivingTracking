@@ -18,7 +18,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import { activeTripStore, applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
-import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import { BIOMETRIC_LOCK_DEFAULT_ENABLED, BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES, NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { downloadCSV, tripsToCSV } from '@/engine/export/index.js';
 import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/scoring/componentScores';
 import {
@@ -37,6 +37,7 @@ import {
   getPermissionStatus,
   requestActivityRecognitionPermission,
   requestBackgroundLocationPermission,
+  requestBluetoothPermission,
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
@@ -143,9 +144,12 @@ function Toggle({ value, onChange, disabled = false }) {
   );
 }
 
-function PermissionBadge({ value }) {
-  const granted = value === 'granted';
-  const unavailable = value === 'unavailable';
+function PermissionBadge({ value, status, label }) {
+  const resolvedStatus = status ?? value ?? 'unknown';
+  const granted = resolvedStatus === 'granted';
+  const unavailable = resolvedStatus === 'unavailable';
+  const denied = resolvedStatus === 'denied';
+  const needsSettings = resolvedStatus === 'needs_settings';
   return (
     <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
       granted
@@ -154,20 +158,22 @@ function PermissionBadge({ value }) {
           ? 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300'
           : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
     }`}>
-      {granted ? 'Granted' : unavailable ? 'Unavailable' : value === 'denied' ? 'Denied' : 'Needs setup'}
+      {granted ? (label ?? 'Granted') : unavailable ? 'Unavailable' : needsSettings ? 'Open Settings' : denied ? 'Denied' : 'Needs setup'}
     </span>
   );
 }
 
-function FeaturePermissionBadge({ value }) {
-  if (value === 'none') {
+function FeaturePermissionBadge({ value, status, label }) {
+  const resolvedStatus = status ?? value;
+  if (resolvedStatus == null) return null;
+  if (resolvedStatus === 'none') {
     return (
       <span className="rounded-full bg-secondary px-2 py-1 text-xs font-semibold text-muted-foreground">
         No prompt
       </span>
     );
   }
-  return <PermissionBadge value={value} />;
+  return <PermissionBadge status={resolvedStatus} label={label} />;
 }
 
 const DRIVING_PATTERN_DEFINITIONS = [
@@ -230,6 +236,36 @@ const PENALTY_SCALE_CALIBRATION = Object.freeze({
   key: 'PENALTY_SCALE_FACTOR',
   ...SCORING_CONSTANTS.PENALTY_SCALE_FACTOR,
 });
+const SETTINGS_RENDER_FALLBACKS = {
+  tracking_mode: 'manual',
+  units: 'metric',
+  dark_mode: 'system',
+  lock_timeout_minutes: BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
+  data_retention_months: 24,
+  notifications_enabled: true,
+  tracking_paused: false,
+  auto_tracking_enabled: false,
+  background_tracking_enabled: false,
+  calibration_sharing_enabled: false,
+  biometric_lock_enabled: BIOMETRIC_LOCK_DEFAULT_ENABLED,
+  osrm_map_matching_url: '',
+};
+
+function normalizeSettingsSnapshot(settings) {
+  return {
+    ...SETTINGS_RENDER_FALLBACKS,
+    ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}),
+  };
+}
+
+function readLocalSettingsSnapshot() {
+  try {
+    return normalizeSettingsSnapshot(localSettings.get());
+  } catch (err) {
+    logError('settings_read_safe_fallback', err);
+    return normalizeSettingsSnapshot(null);
+  }
+}
 
 function calibrationStatusLabel(status) {
   return status === CALIBRATION_STATUSES.PROVISIONAL ? 'Provisional' : status;
@@ -286,13 +322,13 @@ export default function Settings() {
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [backupImportBusy, setBackupImportBusy] = useState(false);
   const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
-  const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
+  const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => readLocalSettingsSnapshot().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
   // Load settings from local storage
-  const [cfg, setCfg] = useState(() => localSettings.get());
+  const [cfg, setCfg] = useState(readLocalSettingsSnapshot);
   const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
 
   const { data: allTrips = [] } = useQuery({
@@ -333,7 +369,8 @@ export default function Settings() {
       });
       return cfg;
     }
-    const nextCfg = { ...cfg, ...patch };
+    const currentCfg = normalizeSettingsSnapshot(cfg);
+    const nextCfg = { ...currentCfg, ...patch };
     const touchesEcoMultipliers = Object.prototype.hasOwnProperty.call(patch, 'eco_cruise_score_multiplier') ||
       Object.prototype.hasOwnProperty.call(patch, 'eco_idle_penalty_multiplier');
     if (touchesEcoMultipliers && wouldDisableEcoScore(nextCfg)) {
@@ -344,7 +381,7 @@ export default function Settings() {
       });
       return cfg;
     }
-    const updated = localSettings.update(patch);
+    const updated = normalizeSettingsSnapshot(localSettings.update(patch));
     setCfg(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -353,7 +390,7 @@ export default function Settings() {
 
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
-  }, [cfg.osrm_map_matching_url]);
+  }, [cfg?.osrm_map_matching_url]);
 
   useEffect(() => subscribeEphemeralTripMode(setEphemeralModeState), []);
 
@@ -535,9 +572,9 @@ export default function Settings() {
     effectiveEcoMultiplier(settings.eco_cruise_score_multiplier) === 0 &&
     effectiveEcoMultiplier(settings.eco_idle_penalty_multiplier) === 0
   );
-  const ecoScoreWarning = (key, value = cfg[key]) => {
+  const ecoScoreWarning = (key, value = cfg?.[key]) => {
     if (!['eco_cruise_score_multiplier', 'eco_idle_penalty_multiplier'].includes(key)) return null;
-    const next = { ...cfg, [key]: value };
+    const next = { ...normalizeSettingsSnapshot(cfg), [key]: value };
     return wouldDisableEcoScore(next) ? 'Eco score unavailable' : null;
   };
 
@@ -563,13 +600,14 @@ export default function Settings() {
 
   const applyCalibration = async () => {
     const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
-      localSettings.set(next);
-      setCfg(next);
+      const normalizedNext = normalizeSettingsSnapshot(next);
+      localSettings.set(normalizedNext);
+      setCfg(normalizedNext);
     });
     const count = await tripService.markCompletedForRescore().catch(() => 0);
     await qc.invalidateQueries();
     setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
-    setCfg(updated);
+    setCfg(normalizeSettingsSnapshot(updated));
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     setCalibProfile(await loadCalibrationProfile());
@@ -772,6 +810,11 @@ export default function Settings() {
   const refreshPermissions = async () => {
     const status = await getPermissionStatus();
     setPermissionStatus(status);
+    try {
+      setCfg(normalizeSettingsSnapshot(localSettings.get()));
+    } catch (err) {
+      logError('settings_permission_snapshot_refresh', err);
+    }
 
     if (isAndroid()) {
       try {
@@ -788,7 +831,7 @@ export default function Settings() {
   };
 
   const refreshSettingsFromNative = async ({ restartIfReady = false } = {}) => {
-    const latest = await localSettings.hydrateFromNative();
+    const latest = normalizeSettingsSnapshot(await localSettings.hydrateFromNative());
     setCfg((current) => (
       JSON.stringify(current) === JSON.stringify(latest) ? current : latest
     ));
@@ -858,7 +901,7 @@ export default function Settings() {
       lng,
     }, cfg);
     void invalidateRouteRiskIndex();
-    setCfg(updated);
+    setCfg(normalizeSettingsSnapshot(updated));
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -879,7 +922,7 @@ export default function Settings() {
   const deletePrivacyZone = (id) => {
     const updated = removePrivacyZone(id, cfg);
     void invalidateRouteRiskIndex();
-    setCfg(updated);
+    setCfg(normalizeSettingsSnapshot(updated));
     setPrivacyRadiusDrafts((drafts) => {
       const next = { ...drafts };
       delete next[id];
@@ -909,7 +952,7 @@ export default function Settings() {
     const radius = validation.radius;
     const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
     void invalidateRouteRiskIndex();
-    setCfg(updated);
+    setCfg(normalizeSettingsSnapshot(updated));
     setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
     setPrivacyZoneRadiusErrors((errors) => {
       const next = { ...errors };
@@ -968,6 +1011,14 @@ export default function Settings() {
   const handleObdPairing = async () => {
     setObdPairingStatus('Opening Bluetooth chooser...');
     try {
+      if (isAndroid()) {
+        const bluetoothGranted = await requestBluetoothPermission();
+        if (!bluetoothGranted) {
+          setObdPairingStatus('Nearby Devices/Bluetooth permission is needed before pairing.');
+          await refreshPermissions();
+          return;
+        }
+      }
       const result = await connectObdBleAdapter();
       const name = result.device?.name || 'OBD-II adapter';
       setObdPairingStatus(result.connected ? `${name} connected for this session.` : `${name} selected. Could not open a GATT session.`);
@@ -1002,7 +1053,7 @@ export default function Settings() {
     if (!confirm('Last chance: wipe ALL Road Sage data from this device now?')) return;
 
     await secureWipeAllData();
-    const resetCfg = localSettings.get();
+    const resetCfg = readLocalSettingsSnapshot();
     setCfg(resetCfg);
     applyThemeMode(resetCfg.dark_mode);
     setParkedLocation(null);
@@ -1114,8 +1165,9 @@ export default function Settings() {
       if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
       return finishImportBackup(file, { password, acknowledgeTruncation: true });
     }
-    setCfg(localSettings.get());
-    applyThemeMode(localSettings.get().dark_mode);
+    const latestSettings = readLocalSettingsSnapshot();
+    setCfg(latestSettings);
+    applyThemeMode(latestSettings.dark_mode);
     await qc.invalidateQueries();
     toast({
       title: 'Import complete',
@@ -1196,7 +1248,7 @@ export default function Settings() {
   const settingsContext = {
     AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
     AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
-    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
   };
 
   return (

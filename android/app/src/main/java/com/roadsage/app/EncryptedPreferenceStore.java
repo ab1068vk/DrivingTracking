@@ -12,29 +12,40 @@ import androidx.security.crypto.MasterKey;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.util.HashMap;
+import java.util.Map;
 
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 
 final class EncryptedPreferenceStore {
     private static final String MASTER_KEY_ALIAS = "road_sage_master_key_v3";
+    private static final Map<String, SharedPreferences> PREFS_CACHE = new HashMap<>();
 
     private EncryptedPreferenceStore() {}
 
-    static SharedPreferences open(Context context, String prefsName) {
+    static synchronized SharedPreferences open(Context context, String prefsName) {
+        SharedPreferences cached = PREFS_CACHE.get(prefsName);
+        if (cached != null) return cached;
+
+        Context appContext = context.getApplicationContext();
         MasterKey masterKey;
         try {
-            masterKey = buildHardwareMasterKey(context);
+            masterKey = buildHardwareMasterKey(appContext);
         } catch (GeneralSecurityException | IOException error) {
             throw new IllegalStateException("Encrypted preferences are unavailable.", error);
         }
 
         try {
-            return openEncryptedPrefs(context, prefsName, masterKey);
+            SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, masterKey);
+            PREFS_CACHE.put(prefsName, prefs);
+            return prefs;
         } catch (GeneralSecurityException | IOException firstOpenError) {
-            SecureDelete.wipePlaintextPrefs(context, prefsName);
+            SecureDelete.wipePlaintextPrefs(appContext, prefsName);
             try {
-                return openEncryptedPrefs(context, prefsName, masterKey);
+                SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, masterKey);
+                PREFS_CACHE.put(prefsName, prefs);
+                return prefs;
             } catch (GeneralSecurityException | IOException secondOpenError) {
                 throw new IllegalStateException("Encrypted preferences are unavailable.", secondOpenError);
             }

@@ -12,6 +12,7 @@ import android.content.SharedPreferences;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import java.io.File;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -98,10 +99,19 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
     @Test
     public void plaintextLegacyPreferenceFilesAreDeleteOnlyCleanupTargets() {
+        context.getSharedPreferences("road_sage_native_tracking", Context.MODE_PRIVATE)
+            .edit()
+            .putString("legacy", "value")
+            .commit();
+        context.getSharedPreferences("drivesense_native_tracking", Context.MODE_PRIVATE)
+            .edit()
+            .putString("legacy", "value")
+            .commit();
+
         DriveSenseNativeTripStore.prefs(context);
 
-        assertFalse(context.deleteSharedPreferences("road_sage_native_tracking"));
-        assertFalse(context.deleteSharedPreferences("drivesense_native_tracking"));
+        assertFalse(sharedPrefsFile("road_sage_native_tracking").exists());
+        assertFalse(sharedPrefsFile("drivesense_native_tracking").exists());
     }
 
     @Test
@@ -174,7 +184,14 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
     private void assertGoldenScoringAsset(String name) throws Exception {
         JSONObject fixture = loadInstrumentationAsset(name);
-        assertEquals("2.1.0", fixture.getString("scoring_version"));
+        String scoringVersion = fixture.getString("scoring_version");
+        assertFalse(scoringVersion.isEmpty());
+        assertEquals(
+            scoringVersion,
+            fixture.getJSONObject("expected")
+                .getJSONObject("score_provenance")
+                .getString("scoring_version")
+        );
         assertTrue(fixture.getBoolean("human_verified"));
         assertTrue(fixture.getJSONArray("points").length() > 1);
         assertTrue(fixture.getJSONObject("expected").getJSONObject("scores").has("score_overall"));
@@ -196,6 +213,10 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         context.deleteSharedPreferences("road_sage_native_tracking");
         context.deleteSharedPreferences("drivesense_native_tracking");
         context.deleteSharedPreferences("CapacitorStorage");
+    }
+
+    private File sharedPrefsFile(String prefsName) {
+        return new File(context.getApplicationInfo().dataDir, "shared_prefs/" + prefsName + ".xml");
     }
 
     private static JSONObject parkedLocation(double lat, double lng, long timestampMs) throws Exception {

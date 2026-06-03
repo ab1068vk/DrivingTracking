@@ -20,20 +20,23 @@ class DriveSenseNativeTripStore {
     private static final String KEY_MIGRATED_FROM_V1 = "migrated_from_drivesense_v1";
     private static final String KEY_MIGRATED_FROM_PLAINTEXT = "migrated_from_plaintext";
     private static final int MAX_DIAGNOSTIC_EVENTS = 120;
+    private static SharedPreferences encryptedPrefs;
 
     static SharedPreferences prefs(Context context) {
         return migratePlaintextPrefsIfNeeded(context);
     }
 
-    static SharedPreferences migratePlaintextPrefsIfNeeded(Context context) {
-        SharedPreferences encryptedPrefs = EncryptedPreferenceStore.open(context, PREFS_ENCRYPTED);
-        if (!encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_PLAINTEXT, false)) {
-            SharedPreferences.Editor editor = encryptedPrefs.edit();
-            boolean migratedFromV1 = copyPlaintextPrefs(context, PREFS_OLD, encryptedPrefs, editor);
-            copyPlaintextPrefs(context, PREFS, encryptedPrefs, editor);
-            editor.putBoolean(KEY_MIGRATED_FROM_V1, migratedFromV1 || encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_V1, false));
-            editor.putBoolean(KEY_MIGRATED_FROM_PLAINTEXT, true);
-            editor.commit();
+    static synchronized SharedPreferences migratePlaintextPrefsIfNeeded(Context context) {
+        if (encryptedPrefs == null) {
+            encryptedPrefs = EncryptedPreferenceStore.open(context.getApplicationContext(), PREFS_ENCRYPTED);
+            if (!encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_PLAINTEXT, false)) {
+                SharedPreferences.Editor editor = encryptedPrefs.edit();
+                boolean migratedFromV1 = copyPlaintextPrefs(context, PREFS_OLD, encryptedPrefs, editor);
+                copyPlaintextPrefs(context, PREFS, encryptedPrefs, editor);
+                editor.putBoolean(KEY_MIGRATED_FROM_V1, migratedFromV1 || encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_V1, false));
+                editor.putBoolean(KEY_MIGRATED_FROM_PLAINTEXT, true);
+                editor.commit();
+            }
         }
 
         EncryptedPreferenceStore.deletePlaintext(context, PREFS);
@@ -93,7 +96,7 @@ class DriveSenseNativeTripStore {
             JSONObject item = current.optJSONObject(i);
             if (item != null) next.put(item);
         }
-        prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, next.toString()).apply();
+        prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, next.toString()).commit();
     }
 
     static void clearDiagnosticEvents(Context context) {

@@ -1,6 +1,7 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { PageSkeleton } from '@/components/PageSkeleton';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import { SECTION_GROUPS, SettingsNav } from '@/features/settings/components/SettingsNav';
 
 const TrackingSettings = lazy(() => import('./sections/TrackingSettings').then((module) => ({ default: module.TrackingSettings })));
@@ -50,7 +51,7 @@ const SECTION_RENDERERS = [
   },
   {
     id: 'advanced',
-    legacyIds: ['settings-advanced-models', 'settings-phone-use'],
+    legacyIds: ['settings-calibration', 'settings-advanced-models', 'settings-phone-use'],
     Component: AdvancedSettings,
   },
 ];
@@ -61,14 +62,43 @@ function groupForSectionId(sectionId) {
 
 export function SettingsNavigator({ ctx, settingsSearch, setSettingsSearch, settingSearchResults }) {
   const [activeGroupId, setActiveGroupId] = useState(SECTION_GROUPS[0].id);
+  const pendingScrollSectionRef = useRef(null);
   const activeGroup = useMemo(
     () => SECTION_GROUPS.find((group) => group.id === activeGroupId) || SECTION_GROUPS[0],
     [activeGroupId]
   );
   const activeIds = activeGroup.ids;
-  const activeRenderers = SECTION_RENDERERS.filter((section) => (
+  const activeRenderers = useMemo(() => SECTION_RENDERERS.filter((section) => (
     section.legacyIds.some((sectionId) => activeIds.includes(sectionId))
-  ));
+  )), [activeIds]);
+  const jumpToSection = (sectionId) => {
+    const group = groupForSectionId(sectionId);
+    pendingScrollSectionRef.current = sectionId;
+    setActiveGroupId(group.id);
+    setSettingsSearch('');
+  };
+
+  useEffect(() => {
+    const sectionId = pendingScrollSectionRef.current;
+    if (!sectionId) return undefined;
+
+    let attempts = 0;
+    const scrollWhenReady = () => {
+      const target = document.getElementById(sectionId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        pendingScrollSectionRef.current = null;
+        return;
+      }
+      attempts += 1;
+      if (attempts < 10) {
+        window.setTimeout(scrollWhenReady, 100);
+      }
+    };
+
+    const timer = window.setTimeout(scrollWhenReady, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeGroupId, activeRenderers]);
 
   return (
     <div className="settings-home space-y-4">
@@ -100,10 +130,7 @@ export function SettingsNavigator({ ctx, settingsSearch, setSettingsSearch, sett
                 <button
                   key={`${item.section}-${item.label}`}
                   type="button"
-                  onClick={() => {
-                    setActiveGroupId(group.id);
-                    setSettingsSearch('');
-                  }}
+                  onClick={() => jumpToSection(item.sectionId)}
                   className="rounded-xl border border-border bg-secondary/60 px-3 py-2 text-left text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
                 >
                   <span className="font-semibold text-foreground">{item.label}</span>
@@ -127,7 +154,9 @@ export function SettingsNavigator({ ctx, settingsSearch, setSettingsSearch, sett
           </div>
           <Suspense fallback={<PageSkeleton />}>
             {activeRenderers.map(({ id, Component }) => (
-              <Component key={id} ctx={ctx} visibleSectionIds={activeIds} />
+              <SectionErrorBoundary key={id} context={`settings_${id}`} resetKey={`${activeGroup.id}:${id}`}>
+                <Component ctx={ctx} visibleSectionIds={activeIds} />
+              </SectionErrorBoundary>
             ))}
           </Suspense>
         </div>

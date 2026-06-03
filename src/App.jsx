@@ -9,14 +9,24 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
+import { PermissionProvider } from '@/lib/permissions/PermissionContext';
 import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
-import { isLocked, lock, markUnlocked, msUntilAutoLock, setBiometricLockEnabled } from '@/lib/biometricLock';
-import { authenticateBiometricGate } from '@/lib/nativeBiometricGate';
+import {
+  BIOMETRIC_LOCK_STATE_CHANGE_EVENT,
+  isBiometricLockEnabled,
+  isLocked,
+  lock,
+  markUnlocked,
+  msUntilAutoLock,
+  setBiometricLockEnabled,
+} from '@/lib/biometricLock';
+import { authenticateBiometricGate, isBiometricGateAvailable } from '@/lib/nativeBiometricGate';
+import { BIOMETRIC_AUTH_TIMEOUT_MS } from '@/lib/appConstants';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
 
@@ -68,17 +78,43 @@ const scheduleDataRetentionPrune = (retentionMonths) => {
   window.setTimeout(prune, 3_000);
 };
 
-const withLaunchTimeout = (promise, fallback, context, timeoutMs = 2500) => (
-  Promise.race([
-    promise,
-    new Promise((resolve) => {
-      window.setTimeout(() => {
+const withLaunchTimeout = (promise, fallback, context, timeoutMs = 2500, { logTimeout = true } = {}) => {
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = window.setTimeout(() => {
+      if (logTimeout) {
         logError(context, new Error(`Launch step timed out after ${timeoutMs}ms`));
-        resolve(fallback);
-      }, timeoutMs);
-    }),
-  ])
-);
+      }
+      resolve(fallback);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  });
+};
+
+const persistBiometricLockDisabled = () => {
+  try {
+    localSettings.update({ biometric_lock_enabled: false });
+  } catch (err) {
+    logError('biometric_lock_disable_persist', err);
+  }
+};
+
+const verifyCriticalNativePlugins = async () => {
+  if (!isAndroid() || !isBiometricLockEnabled()) return;
+
+  const biometricAvailable = await withLaunchTimeout(
+    isBiometricGateAvailable(),
+    false,
+    'biometric_gate_startup_health_timeout'
+  );
+  if (!biometricAvailable) {
+    setBiometricLockEnabled(false);
+    persistBiometricLockDisabled();
+    console.warn('[biometricLock] startup health check unavailable, lock disabled');
+  }
+};
 
 function AppLoading() {
   return (
@@ -106,8 +142,12 @@ const AuthenticatedApp = () => {
       const settings = await withLaunchTimeout(
         localSettings.hydrateFromNative(),
         localSettings.get(),
-        'settings_hydrate_launch_timeout'
+        'settings_hydrate_launch_timeout',
+        2500,
+        { logTimeout: false }
       );
+      setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
+      await verifyCriticalNativePlugins();
       scheduleDataRetentionPrune(settings.data_retention_months);
       reverifyConfiguredOsrmEndpoint(settings).then(({ result }) => {
         if (result && !result.ok) {
@@ -216,7 +256,11 @@ const AuthenticatedApp = () => {
         <Route path="/achievements" element={<Achievements />} />
         <Route path="/reports" element={<Reports />} />
         {showDebugRoutes && Diagnostics && <Route path="/diagnostics" element={<Diagnostics />} />}
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings" element={(
+          <SectionErrorBoundary context="settings_page">
+            <Settings />
+          </SectionErrorBoundary>
+        )} />
         {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
         <Route path="/vehicles" element={<Vehicles />} />
       </Route>
@@ -258,6 +302,37 @@ function BiometricRouteGuard({ children }) {
       }, Math.min(delayMs, 2_147_483_647));
     };
 
+    const attemptUnlock = async () => {
+      const timeout = new Promise((_, reject) => {
+        window.setTimeout(() => reject(new Error('auth_timeout')), BIOMETRIC_AUTH_TIMEOUT_MS);
+      });
+
+      try {
+        await Promise.race([authenticateBiometricGate(), timeout]);
+        if (cancelled) return;
+        markUnlocked();
+        setAuthState('unlocked');
+        scheduleAutoLockTimer();
+      } catch (err) {
+        if (cancelled) return;
+        if (err?.message === 'auth_timeout' || err?.message === 'unavailable') {
+          clearAutoLockTimer();
+          setBiometricLockEnabled(false);
+          persistBiometricLockDisabled();
+          markUnlocked();
+          setAuthState('unlocked');
+          console.warn('[biometricLock] auth unavailable, lock disabled:', err.message);
+          return;
+        }
+        if (err?.message === 'cancelled') {
+          setAuthState('locked');
+          return;
+        }
+        logError('biometric_gate_authenticate', err);
+        setAuthState('locked');
+      }
+    };
+
     const verify = async () => {
       if (!isAndroid()) {
         clearAutoLockTimer();
@@ -266,8 +341,13 @@ function BiometricRouteGuard({ children }) {
         return;
       }
 
+      if (!isBiometricLockEnabled()) {
+        clearAutoLockTimer();
+        setAuthState('unlocked');
+        return;
+      }
+
       const settings = localSettings.get();
-      setBiometricLockEnabled(true);
       if (!isLocked(settings)) {
         setAuthState('unlocked');
         scheduleAutoLockTimer();
@@ -275,38 +355,24 @@ function BiometricRouteGuard({ children }) {
       }
 
       setAuthState('checking');
-      try {
-        const result = await authenticateBiometricGate();
-        if (cancelled) return;
-        if (result?.authenticated) {
-          markUnlocked();
-          setAuthState('unlocked');
-          scheduleAutoLockTimer();
-          return;
-        }
-        if (result?.unavailable) {
-          clearAutoLockTimer();
-          setBiometricLockEnabled(false);
-          setAuthState('unlocked');
-          return;
-        }
-        setAuthState('locked');
-      } catch (err) {
-        logError('biometric_gate_authenticate', err);
-        if (!cancelled) setAuthState('locked');
-      }
+      await attemptUnlock();
     };
 
     const verifyOnVisible = () => {
       if (document.visibilityState === 'visible') verify();
     };
+    const verifyOnBiometricSettingsChange = () => {
+      verify();
+    };
 
     verify();
     document.addEventListener('visibilitychange', verifyOnVisible);
+    window.addEventListener(BIOMETRIC_LOCK_STATE_CHANGE_EVENT, verifyOnBiometricSettingsChange);
     return () => {
       cancelled = true;
       clearAutoLockTimer();
       document.removeEventListener('visibilitychange', verifyOnVisible);
+      window.removeEventListener(BIOMETRIC_LOCK_STATE_CHANGE_EVENT, verifyOnBiometricSettingsChange);
     };
   }, []);
 
@@ -330,9 +396,11 @@ function App() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
-        <Router>
-          <AuthenticatedApp />
-        </Router>
+        <PermissionProvider>
+          <Router>
+            <AuthenticatedApp />
+          </Router>
+        </PermissionProvider>
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>

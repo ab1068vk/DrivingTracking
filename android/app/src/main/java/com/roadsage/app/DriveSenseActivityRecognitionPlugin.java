@@ -57,6 +57,10 @@ import java.util.Locale;
         @Permission(
             alias = "backgroundLocation",
             strings = { Manifest.permission.ACCESS_BACKGROUND_LOCATION }
+        ),
+        @Permission(
+            alias = "bluetoothConnect",
+            strings = { Manifest.permission.BLUETOOTH_CONNECT }
         )
     }
 )
@@ -132,6 +136,15 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         requestPermissionForAlias("backgroundLocation", call, "backgroundLocationPermissionCallback");
     }
 
+    @PluginMethod
+    public void requestBluetoothPermission(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            call.resolve(permissionPayload());
+            return;
+        }
+        requestPermissionForAlias("bluetoothConnect", call, "bluetoothPermissionCallback");
+    }
+
     @PermissionCallback
     private void activityPermissionCallback(PluginCall call) {
         call.resolve(permissionPayload());
@@ -139,6 +152,11 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     @PermissionCallback
     private void backgroundLocationPermissionCallback(PluginCall call) {
+        call.resolve(permissionPayload());
+    }
+
+    @PermissionCallback
+    private void bluetoothPermissionCallback(PluginCall call) {
         call.resolve(permissionPayload());
     }
 
@@ -689,6 +707,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         JSObject payload = new JSObject();
         payload.put("activityRecognition", permissionString());
         payload.put("backgroundLocation", backgroundPermissionString());
+        payload.put("bluetoothConnect", bluetoothPermissionString());
         return payload;
     }
 
@@ -703,6 +722,14 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private String backgroundPermissionString() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "granted";
         PermissionState state = getPermissionState("backgroundLocation");
+        if (state == PermissionState.GRANTED) return "granted";
+        if (state == PermissionState.DENIED) return "denied";
+        return "prompt";
+    }
+
+    private String bluetoothPermissionString() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return "granted";
+        PermissionState state = getPermissionState("bluetoothConnect");
         if (state == PermissionState.GRANTED) return "granted";
         if (state == PermissionState.DENIED) return "denied";
         return "prompt";

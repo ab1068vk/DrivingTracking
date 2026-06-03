@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getAndroidBatteryOptimizationStatus } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { getPermissionStatus } from '@/lib/permissions';
+import { useOptionalPermissions } from '@/lib/permissions/PermissionContext';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -95,6 +96,8 @@ export function buildPermissionMonitorIssues({
 }
 
 export function usePermissionMonitor(trackingMode) {
+  const permissionContext = useOptionalPermissions();
+  const refreshPermissionStatus = permissionContext?.refresh;
   const [issues, setIssues] = useState([]);
   const [isChecking, setIsChecking] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState(null);
@@ -108,38 +111,46 @@ export function usePermissionMonitor(trackingMode) {
 
     setIsChecking(true);
 
-    let permissionStatus = null;
-    let batteryStatus = null;
-    let permissionCheckFailed = false;
-    let batteryCheckFailed = false;
-
     try {
-      permissionStatus = await getPermissionStatus();
-    } catch {
-      permissionCheckFailed = true;
-    }
+      let permissionStatus = null;
+      let batteryStatus = null;
+      let permissionCheckFailed = false;
+      let batteryCheckFailed = false;
 
-    if (isAndroid() && trackingMode === 'background_auto') {
       try {
-        batteryStatus = await getAndroidBatteryOptimizationStatus();
+        permissionStatus = refreshPermissionStatus
+          ? await refreshPermissionStatus()
+          : await getPermissionStatus();
       } catch {
-        batteryCheckFailed = true;
+        permissionCheckFailed = true;
       }
+
+      if (isAndroid() && trackingMode === 'background_auto') {
+        try {
+          batteryStatus = await getAndroidBatteryOptimizationStatus();
+        } catch {
+          batteryCheckFailed = true;
+        }
+      }
+
+      const found = buildPermissionMonitorIssues({
+        trackingMode,
+        permissionStatus,
+        batteryStatus,
+        permissionCheckFailed,
+        batteryCheckFailed,
+      });
+
+      setIssues(found);
+      setLastCheckedAt(new Date().toISOString());
+      return found;
+    } catch (err) {
+      console.warn('[usePermissionMonitor] check failed:', err);
+      return [];
+    } finally {
+      setIsChecking(false);
     }
-
-    const found = buildPermissionMonitorIssues({
-      trackingMode,
-      permissionStatus,
-      batteryStatus,
-      permissionCheckFailed,
-      batteryCheckFailed,
-    });
-
-    setIssues(found);
-    setLastCheckedAt(new Date().toISOString());
-    setIsChecking(false);
-    return found;
-  }, [trackingMode]);
+  }, [refreshPermissionStatus, trackingMode]);
 
   useEffect(() => {
     let cancelled = false;

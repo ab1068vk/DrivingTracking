@@ -186,10 +186,15 @@ const logNativeAutoStopFailure = (err, settings = {}, extra = {}) => {
 };
 
 function useActiveTripSnapshot() {
+  const subscribe = activeTripStore.subscribe || (() => () => {});
+  const getSnapshot = activeTripStore.getSnapshot || (() => ({
+    trip: activeTripStore.get?.() || null,
+    version: 0,
+  }));
   return useSyncExternalStore(
-    activeTripStore.subscribe,
-    activeTripStore.getSnapshot,
-    activeTripStore.getSnapshot
+    subscribe,
+    getSnapshot,
+    getSnapshot
   );
 }
 
@@ -1942,7 +1947,22 @@ export default function Dashboard() {
         : scoredTrips.some(({ component }) => component.evidence === 'developing')
           ? 'developing'
           : 'high';
-    const baseline = aggregateBaseline;
+    const baseline = aggregateBaseline || {
+      baseline_avg: null,
+      baseline_confidence_interval_label: 'not enough history',
+      baseline_includes_older_scores: false,
+      baseline_label: 'not enough history',
+      baseline_trip_count: completedTrips.length,
+      delta: null,
+      percentile: null,
+      percentile_min_weeks: 4,
+      this_week_avg: null,
+      trend: 'unknown',
+    };
+    const peakStress = aggregatePeakStress || {
+      insufficient_data: true,
+      peak_stress_label: 'insufficient off-peak data',
+    };
     const baselineRangeLabel = baseline.baseline_includes_older_scores
       ? baseline.baseline_label
       : baseline.baseline_confidence_interval_label;
@@ -1969,7 +1989,7 @@ export default function Dashboard() {
       baseline,
       baselineRangeLabel,
       baselineText,
-      peakStress: aggregatePeakStress,
+      peakStress,
       eventTotals: completedTrips.reduce((totals, trip) => ({
         harshBrakes: totals.harshBrakes + (trip.harsh_brakes_count || 0),
         rapidAccel: totals.rapidAccel + (trip.rapid_accel_count || 0),

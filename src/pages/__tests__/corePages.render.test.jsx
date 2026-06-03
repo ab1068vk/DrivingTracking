@@ -193,6 +193,15 @@ vi.mock('@/lib/trackingStore', () => ({
   validateSettingsPatch: vi.fn(() => ({ valid: true, errors: [] })),
 }));
 
+vi.mock('@/lib/encryptedCapacitorStorage', () => ({
+  encryptedCapacitorStorage: {
+    get: vi.fn(async () => ({ value: null })),
+    set: vi.fn(async () => ({})),
+    remove: vi.fn(async () => ({})),
+    clear: vi.fn(async () => ({})),
+  },
+}));
+
 vi.mock('@/lib/activityRecognition', () => ({
   AUTO_START_GPS_FALLBACK_SECONDS: 2,
   AUTO_START_IN_VEHICLE_CONFIDENCE: 65,
@@ -234,9 +243,13 @@ vi.mock('@/lib/permissions', () => ({
 }));
 
 describe('core page component renders', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { localSettings } = await import('@/lib/trackingStore');
     queryData.clear();
     delete settings.advanced_safety_detection_enabled;
+    localSettings.get.mockReturnValue(settings);
+    localSettings.hydrateFromNative.mockResolvedValue(settings);
+    localSettings.update.mockImplementation((patch) => Object.assign(settings, patch));
     queryData.set(JSON.stringify(['recent-trips']), [sampleTrip]);
     queryData.set(JSON.stringify(['vehicles']), [{ id: 'vehicle-1', name: 'Commuter', fuel_type: 'gasoline' }]);
     queryData.set(JSON.stringify(['trip', 'trip-1']), sampleTrip);
@@ -436,6 +449,17 @@ describe('core page component renders', () => {
     expect(html).not.toContain('Enable all notifications');
     expect(html).not.toContain('Detection Features');
     expect(html).toContain('Share route samples with OSRM?');
+  });
+
+  it('renders Settings when native storage reads return null', async () => {
+    const { localSettings } = await import('@/lib/trackingStore');
+    const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
+    localSettings.get.mockReturnValue(null);
+    localSettings.hydrateFromNative.mockResolvedValue(null);
+    encryptedCapacitorStorage.get.mockResolvedValue({ value: null });
+
+    const { default: Settings } = await import('@/pages/Settings');
+    expect(() => renderToStaticMarkup(<Settings />)).not.toThrow();
   });
 
   it('shows tire-life estimate calibration warning on Vehicles', async () => {

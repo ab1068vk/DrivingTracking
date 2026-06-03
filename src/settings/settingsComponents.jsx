@@ -36,9 +36,12 @@ export function Toggle({ value, onChange, disabled = false }) {
   );
 }
 
-export function PermissionBadge({ value }) {
-  const granted = value === 'granted';
-  const unavailable = value === 'unavailable';
+export function PermissionBadge({ value, status, label }) {
+  const resolvedStatus = status ?? value ?? 'unknown';
+  const granted = resolvedStatus === 'granted';
+  const unavailable = resolvedStatus === 'unavailable';
+  const denied = resolvedStatus === 'denied';
+  const needsSettings = resolvedStatus === 'needs_settings';
   return (
     <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
       granted
@@ -47,18 +50,20 @@ export function PermissionBadge({ value }) {
           ? 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300'
           : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
     }`}>
-      {granted ? 'Granted' : unavailable ? 'Unavailable' : value === 'denied' ? 'Denied' : 'Needs setup'}
+      {granted ? (label ?? 'Granted') : unavailable ? 'Unavailable' : needsSettings ? 'Open Settings' : denied ? 'Denied' : 'Needs setup'}
     </span>
   );
 }
 
-export function FeaturePermissionBadge({ value }) {
-  if (value === 'none') {
+export function FeaturePermissionBadge({ value, status, label }) {
+  const resolvedStatus = status ?? value;
+  if (resolvedStatus == null) return null;
+  if (resolvedStatus === 'none') {
     return (
       <span className="rounded-full bg-secondary px-2 py-1 text-xs font-semibold text-muted-foreground">
         No prompt
       </span>
     );
   }
-  return <PermissionBadge value={value} />;
+  return <PermissionBadge status={resolvedStatus} label={label} />;
 }

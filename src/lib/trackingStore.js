@@ -10,7 +10,14 @@ import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigrati
 import { isValidLatLng } from '@/lib/mapDefaults';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
-import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import {
+  BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
+  BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES,
+  BIOMETRIC_LOCK_TIMEOUT_MIN_MINUTES,
+  BIOMETRIC_LOCK_DEFAULT_ENABLED,
+  NIGHT_END_TIME,
+  NIGHT_START_TIME,
+} from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
 import { isNativePlatform } from '@/lib/nativePlatform';
@@ -196,11 +203,30 @@ const preferencesModule = async () => {
   return { Preferences };
 };
 
+const nativeDriveSenseMethods = [
+  'clearLastParkedLocation',
+  'getLastParkedLocation',
+  'getPrivacyZones',
+  'getSettings',
+  'saveLastParkedLocation',
+  'savePrivacyZones',
+  'saveSettings',
+];
+
+const nativeDriveSenseApi = Object.freeze(nativeDriveSenseMethods.reduce((api, method) => {
+  const nativeMethod = DriveSenseActivityRecognition?.[method];
+  if (typeof nativeMethod !== 'function') return api;
+  return {
+    ...api,
+    [method]: (...args) => nativeMethod(...args),
+  };
+}, {}));
+
 const androidNativeDriveSensePlugin = async () => {
   try {
     const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.getPlatform?.() !== 'android') return null;
-    return DriveSenseActivityRecognition;
+    return nativeDriveSenseApi;
   } catch {
     return null;
   }
@@ -383,12 +409,13 @@ export const DEFAULT_SETTINGS = {
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
   activity_permission_granted: false,
+  biometric_lock_enabled: BIOMETRIC_LOCK_DEFAULT_ENABLED,
   // PRIVACY: auto-delete completed trips older than this many months.
   // 0 = never delete automatically.
   data_retention_months: 24,
   // PRIVACY: require biometric re-authentication after this many unlocked minutes.
   // 0 = never time out while the app remains visible; backgrounding still locks.
-  lock_timeout_minutes: 5,
+  lock_timeout_minutes: BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -584,7 +611,7 @@ export function migrateDefaultSettings(parsed = {}) {
 
 const IMPORT_NUMBER_RANGES = {
   data_retention_months: [0, 120],
-  lock_timeout_minutes: [0, 30],
+  lock_timeout_minutes: [BIOMETRIC_LOCK_TIMEOUT_MIN_MINUTES, BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES],
   voice_alert_rate: [0.7, 1.2],
   voice_alert_volume: [0.3, 1],
   voice_alerts_min_severity: [0, 3],

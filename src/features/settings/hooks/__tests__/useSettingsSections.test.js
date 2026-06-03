@@ -33,4 +33,21 @@ describe('settings section search', () => {
   it('limits results to the strongest six matches', () => {
     expect(getSettingsSearchResults('settings score map data permission auto').length).toBeLessThanOrEqual(6);
   });
+
+  it('finds important nested settings rows', () => {
+    expect(getSettingsSearchResults('stealth')[0]).toMatchObject({
+      label: 'Stealth Trip Mode',
+      sectionId: 'settings-privacy-data',
+    });
+    expect(getSettingsSearchResults('app lock')[0]).toMatchObject({
+      label: 'App lock',
+      sectionId: 'settings-privacy-data',
+    });
+    expect(getSettingsSearchResults('location')[0].sectionId).toBe('settings-android-permissions');
+    expect(getSettingsSearchResults('calibration')[0].sectionId).toBe('settings-calibration');
+    expect(getSettingsSearchResults('threshold')[0]).toMatchObject({
+      label: 'Detection thresholds',
+      sectionId: 'settings-detection-thresholds',
+    });
+  });
 });

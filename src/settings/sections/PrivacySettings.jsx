@@ -1,5 +1,17 @@
+import { useState } from 'react';
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
 import { LEGAL_DISCLAIMER_ITEMS, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
+import {
+  isBiometricLockEnabled,
+  isLocked,
+  markUnlocked,
+  notifyBiometricLockSettingsChanged,
+  setBiometricLockEnabled,
+} from '@/lib/biometricLock';
+import {
+  BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
+  BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES,
+} from '@/lib/appConstants';
 import { PRIVACY_CONSENT_POINTS, PRIVACY_NOTICE_HIGHLIGHTS, PRIVACY_NOTICE_SUMMARY } from '@/lib/privacyNotice';
 
 export function PrivacySettings({ ctx, visibleSectionIds = null }) {
@@ -9,12 +21,27 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
     addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
+  const settings = cfg ?? {};
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
+  const [biometricLockEnabled, setBiometricLockEnabledState] = useState(() => isBiometricLockEnabled());
+  const lockTimeout = settings?.lock_timeout_minutes ?? BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES;
   const draftRadiusValue = Number(privacyDraft.radius_m);
   const showDraftRadiusWarning =
     Number.isFinite(draftRadiusValue) &&
     draftRadiusValue >= PRIVACY_RADIUS_MIN_M &&
     draftRadiusValue < RECOMMENDED_PRIVACY_RADIUS_M;
+  const updateBiometricLockEnabled = (enabled) => {
+    const wasLocked = isLocked(settings);
+    updateCfg({ biometric_lock_enabled: enabled === true });
+    setBiometricLockEnabled(enabled);
+    if (enabled && !wasLocked) markUnlocked();
+    setBiometricLockEnabledState(isBiometricLockEnabled());
+    notifyBiometricLockSettingsChanged();
+  };
+  const updateBiometricLockTimeout = (minutes) => {
+    updateCfg({ lock_timeout_minutes: minutes });
+    notifyBiometricLockSettingsChanged();
+  };
 
   return (
     <>
@@ -85,25 +112,36 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                 </SettingRow>
                 <SettingRow
                   icon={Lock}
+                  label="App lock (optional)"
+                  sublabel="Requires device credential after inactivity. Off by default."
+                >
+                  <Toggle
+                    value={biometricLockEnabled}
+                    onChange={updateBiometricLockEnabled}
+                  />
+                </SettingRow>
+                <SettingRow
+                  icon={Clock}
                   label="Auto-lock after"
                   sublabel="Require biometric re-authentication after this unlocked session timeout. Backgrounding still locks immediately."
                 >
                   <select
-                    value={cfg.lock_timeout_minutes ?? 5}
-                    onChange={(event) => updateCfg({ lock_timeout_minutes: Number(event.target.value) })}
+                    value={lockTimeout}
+                    onChange={(event) => updateBiometricLockTimeout(Number(event.target.value))}
+                    disabled={!biometricLockEnabled}
                     className="bg-card border border-border rounded-lg text-xs px-2 py-1"
                     aria-label="Auto-lock timeout"
                   >
                     <option value={1}>1 minute</option>
-                    <option value={5}>5 minutes (default)</option>
+                    <option value={BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES}>{BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES} minutes (default)</option>
                     <option value={15}>15 minutes</option>
-                    <option value={30}>30 minutes</option>
+                    <option value={BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES}>{BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES} minutes</option>
                     <option value={0}>Never</option>
                   </select>
                 </SettingRow>
-                <div className="my-3 rounded-2xl border border-amber-400/50 bg-amber-500/10 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-2">
+                <div className="my-3 overflow-hidden rounded-2xl border border-amber-400/50 bg-amber-500/10 p-3">
+                  <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
+                    <div className="flex min-w-0 items-start gap-2 self-stretch">
                       <Shield className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-foreground">Stealth Trip Mode</div>
@@ -112,11 +150,13 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                         </p>
                       </div>
                     </div>
-                    <Toggle
-                      value={ephemeralModeState?.stealthNextTrip === true}
-                      onChange={setStealthNextTripEnabled}
-                      disabled={stealthTripToggleDisabled}
-                    />
+                    <div className="flex w-full justify-end min-[420px]:w-auto min-[420px]:shrink-0">
+                      <Toggle
+                        value={ephemeralModeState?.stealthNextTrip === true}
+                        onChange={setStealthNextTripEnabled}
+                        disabled={stealthTripToggleDisabled}
+                      />
+                    </div>
                   </div>
                   {ephemeralModeState?.stealthNextTrip && (
                     <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">

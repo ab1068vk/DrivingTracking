@@ -16,27 +16,30 @@ export function getScoreGradient(score) {
 
 // ─── Format Utilities ──────────────────────────────────────────────────────────
 export function formatDuration(seconds) {
-  if (!seconds) return '0m';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
+  const safeSeconds = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
+  if (!safeSeconds) return '0m';
+  const h = Math.floor(safeSeconds / 3600);
+  const m = Math.floor((safeSeconds % 3600) / 60);
+  const s = Math.floor(safeSeconds % 60);
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
 
 export function formatDistance(km, units = 'metric') {
+  const safeKm = Number.isFinite(Number(km)) ? Math.max(0, Number(km)) : 0;
   if (units === 'imperial') {
-    const miles = km * 0.621371;
+    const miles = safeKm * 0.621371;
     return `${miles.toFixed(1)} mi`;
   }
-  if (km < 1) return `${Math.round(km * 1000)} m`;
-  return `${km.toFixed(1)} km`;
+  if (safeKm < 1) return `${Math.round(safeKm * 1000)} m`;
+  return `${safeKm.toFixed(1)} km`;
 }
 
 export function formatSpeed(kmh, units = 'metric') {
-  if (units === 'imperial') return `${Math.round(kmh * 0.621371)} mph`;
-  return `${Math.round(kmh)} km/h`;
+  const safeKmh = Number.isFinite(Number(kmh)) ? Math.max(0, Number(kmh)) : 0;
+  if (units === 'imperial') return `${Math.round(safeKmh * 0.621371)} mph`;
+  return `${Math.round(safeKmh)} km/h`;
 }
 
 export function formatDate(dateStr) {
