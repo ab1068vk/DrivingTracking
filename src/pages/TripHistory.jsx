@@ -17,6 +17,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useStaleTripDetection } from '@/hooks/useStaleTripDetection';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
+import { notifyUserError } from '@/lib/userFeedback';
 import {
   TRIP_TAG_OPTIONS,
   buildTripSearchText,
@@ -140,16 +141,28 @@ export default function TripHistory() {
   const { data: trips = [], isLoading } = useQuery({
     queryKey: ['all-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
+    meta: {
+      errorTitle: 'Trip history unavailable',
+      errorDescription: 'Road Sage could not load your saved trips. Try refreshing after storage or network access is available.',
+    },
   });
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    meta: {
+      errorTitle: 'Vehicle names unavailable',
+      errorDescription: 'Trips are still shown, but vehicle names may be missing until vehicle data loads.',
+    },
   });
 
   const { data: calibrationMarkers = {} } = useQuery({
     queryKey: ['calibration-survey-markers'],
     queryFn: () => calibrationLabelService.listTripSurveyMarkers(),
+    meta: {
+      errorTitle: 'Ratings status unavailable',
+      errorDescription: 'Road Sage could not load which trips still need ratings.',
+    },
   });
 
   const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
@@ -161,6 +174,11 @@ export default function TripHistory() {
   const updateTripMut = useMutation({
     mutationFn: (/** @type {{id:any,patch:any}} */ vars) => tripService.update(vars.id, vars.patch),
     onSuccess: invalidateTrips,
+    meta: {
+      name: 'trip_history_update_trip',
+      errorTitle: 'Trip update failed',
+      errorDescription: 'Road Sage could not update this trip. Try again from the trip detail page.',
+    },
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');
@@ -238,8 +256,11 @@ export default function TripHistory() {
 
   useEffect(() => {
     if (!savedFiltersLoaded) return;
-    setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {
-      // Intentionally silent - saved filter persistence is a UI convenience only.
+    setJson(SAVED_FILTERS_KEY, savedFilters).catch((error) => {
+      notifyUserError('trip_history_saved_filters', error, {
+        title: 'Filter was not saved',
+        description: 'This filter is active for now, but Road Sage could not save it for next time.',
+      });
     });
   }, [savedFilters, savedFiltersLoaded]);
 
@@ -275,6 +296,11 @@ export default function TripHistory() {
       await tripService.markCompletedForRescore({ onlyProvenanceMismatch: true });
       await qc.invalidateQueries({ queryKey: ['all-trips'] });
       await qc.invalidateQueries({ queryKey: ['recent-trips'] });
+    } catch (error) {
+      notifyUserError('trip_history_rescore_stale', error, {
+        title: 'Could not queue re-score',
+        description: 'Road Sage could not mark older trips for re-scoring. Try again from Settings.',
+      });
     } finally {
       setIsRescoring(false);
     }

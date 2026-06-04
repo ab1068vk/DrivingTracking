@@ -1,9 +1,10 @@
 // Lightweight local toast state inspired by common toast patterns.
 import { useState, useEffect } from "react";
 
-const TOAST_LIMIT = 20;
+const TOAST_LIMIT = 6;
 const TOAST_REMOVE_DELAY = 300;
 const DEFAULT_TOAST_DURATION = 5000;
+const TOAST_DEDUPE_WINDOW_MS = 2500;
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
@@ -21,6 +22,7 @@ function genId() {
 
 const toastTimeouts = new Map();
 const autoDismissTimeouts = new Map();
+const recentToastKeys = new Map();
 
 const clearAutoDismiss = (toastId) => {
   const timeout = autoDismissTimeouts.get(toastId);
@@ -142,7 +144,31 @@ function dispatch(action) {
 }
 
 function toast({ ...props }) {
+  const dedupeKey = props.dedupeKey || [
+    props.variant || '',
+    props.title || '',
+    props.description || '',
+  ].join('|');
+  const now = Date.now();
+  const recent = recentToastKeys.get(dedupeKey);
+  if (recent && now - recent.at < TOAST_DEDUPE_WINDOW_MS) {
+    dispatch({
+      type: actionTypes.UPDATE_TOAST,
+      toast: { ...props, id: recent.id, open: true },
+    });
+    scheduleAutoDismiss(recent.id, props.duration);
+    return {
+      id: recent.id,
+      dismiss: () => dispatch({ type: actionTypes.DISMISS_TOAST, toastId: recent.id }),
+      update: (nextProps) => dispatch({
+        type: actionTypes.UPDATE_TOAST,
+        toast: { ...nextProps, id: recent.id },
+      }),
+    };
+  }
+
   const id = genId();
+  recentToastKeys.set(dedupeKey, { id, at: now });
 
   const update = (props) =>
     dispatch({
@@ -183,7 +209,7 @@ function useToast() {
         listeners.splice(index, 1);
       }
     };
-  }, [state]);
+  }, []);
 
   return {
     ...state,

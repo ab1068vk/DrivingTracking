@@ -31,6 +31,7 @@ import { computeUBIReport } from '@/lib/ubiReport';
 import { notifyExportSaved } from '@/lib/notificationService';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -58,11 +59,19 @@ export default function Reports() {
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['report-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Reports unavailable',
+      errorDescription: 'Road Sage could not load trips for reports. Try again after trip storage is available.',
+    },
   });
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    meta: {
+      errorTitle: 'Vehicle report data unavailable',
+      errorDescription: 'Reports will still load, but fuel and maintenance estimates may be incomplete.',
+    },
   });
 
   const completed = allTrips.filter(t => t.status === 'completed');
@@ -213,46 +222,60 @@ export default function Reports() {
   };
 
   const handleExport = async () => {
-    const csv = tripsToCSV(trips);
-    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
-    if (!password) return;
-    const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`, { password });
-    toast({
-      title: 'Encrypted export saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'CSV report'} is downloading.`,
-    });
-    if (result?.native) {
-      await notifyExportSaved({
-        filename: result.filename,
-        uri: result.uri,
-        mimeType: 'application/octet-stream',
-        label: 'CSV export',
-      }).catch((err) => {
-        logError('export_saved_notification', err, { filename: result.filename, label: 'CSV export' });
+    try {
+      const csv = tripsToCSV(trips);
+      const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+      if (!password) return;
+      const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`, { password });
+      toast({
+        title: 'Encrypted export saved',
+        description: result?.native
+          ? `${result.filename} was saved to Downloads.`
+          : `${result?.filename || 'CSV report'} is downloading.`,
+      });
+      if (result?.native) {
+        await notifyExportSaved({
+          filename: result.filename,
+          uri: result.uri,
+          mimeType: 'application/octet-stream',
+          label: 'CSV export',
+        }).catch((err) => {
+          logError('export_saved_notification', err, { filename: result.filename, label: 'CSV export' });
+        });
+      }
+    } catch (error) {
+      notifyUserError('report_csv_export', error, {
+        title: 'CSV export failed',
+        description: 'Road Sage could not create the encrypted CSV export. Check the password and try again.',
       });
     }
   };
 
   const handlePdfExport = async () => {
-    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
-    if (!password) return;
-    const result = await exportMonthlyReportPDF(trips, period, settings, { password });
-    toast({
-      title: 'Encrypted PDF saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Monthly PDF report'} is downloading.`,
-    });
-    if (result?.native) {
-      await notifyExportSaved({
-        filename: result.filename,
-        uri: result.uri,
-        mimeType: 'application/octet-stream',
-        label: 'PDF report',
-      }).catch((err) => {
-        logError('export_saved_notification', err, { filename: result.filename, label: 'PDF report' });
+    try {
+      const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+      if (!password) return;
+      const result = await exportMonthlyReportPDF(trips, period, settings, { password });
+      toast({
+        title: 'Encrypted PDF saved',
+        description: result?.native
+          ? `${result.filename} was saved to Downloads.`
+          : `${result?.filename || 'Monthly PDF report'} is downloading.`,
+      });
+      if (result?.native) {
+        await notifyExportSaved({
+          filename: result.filename,
+          uri: result.uri,
+          mimeType: 'application/octet-stream',
+          label: 'PDF report',
+        }).catch((err) => {
+          logError('export_saved_notification', err, { filename: result.filename, label: 'PDF report' });
+        });
+      }
+    } catch (error) {
+      notifyUserError('report_pdf_export', error, {
+        title: 'PDF export failed',
+        description: 'Road Sage could not create the encrypted PDF report. Check the password and try again.',
       });
     }
   };
@@ -261,23 +284,31 @@ export default function Reports() {
     const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
     if (!password) return;
     setUbiLoading(true);
-    const result = await exportUBIReportPDF(ubiReport, settings, { password });
-    setUbiLoading(false);
-    toast({
-      title: 'Encrypted score card saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Score card PDF'} is downloading.`,
-    });
-    if (result?.native) {
-      await notifyExportSaved({
-        filename: result.filename,
-        uri: result.uri,
-        mimeType: 'application/octet-stream',
-        label: 'Score card',
-      }).catch((err) => {
-        logError('export_saved_notification', err, { filename: result.filename, label: 'Score card' });
+    try {
+      const result = await exportUBIReportPDF(ubiReport, settings, { password });
+      toast({
+        title: 'Encrypted score card saved',
+        description: result?.native
+          ? `${result.filename} was saved to Downloads.`
+          : `${result?.filename || 'Score card PDF'} is downloading.`,
       });
+      if (result?.native) {
+        await notifyExportSaved({
+          filename: result.filename,
+          uri: result.uri,
+          mimeType: 'application/octet-stream',
+          label: 'Score card',
+        }).catch((err) => {
+          logError('export_saved_notification', err, { filename: result.filename, label: 'Score card' });
+        });
+      }
+    } catch (error) {
+      notifyUserError('report_ubi_export', error, {
+        title: 'Score card export failed',
+        description: 'Road Sage could not create the encrypted score card PDF. Check the password and try again.',
+      });
+    } finally {
+      setUbiLoading(false);
     }
   };
 

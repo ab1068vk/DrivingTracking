@@ -98,7 +98,7 @@ export const tripService = {
     return { success: true };
   },
 
-  upsertMany: (trips) => {
+  upsertMany: (trips, options = {}) => {
     if (isEphemeralModeActive()) {
       return Promise.resolve(trips.map((trip, index) => ({
         ...trip,
@@ -107,7 +107,7 @@ export const tripService = {
       })));
     }
     const local = repository();
-    if (local) return local.upsertMany(trips);
+    if (local) return local.upsertMany(trips, options);
     return Promise.all(trips.map((trip) => (
       trip.id
         ? apiClient.patch(`/trips/${encodeURIComponent(trip.id)}`, trip).catch(() => apiClient.post("/trips", trip))

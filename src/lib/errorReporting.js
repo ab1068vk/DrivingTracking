@@ -19,6 +19,8 @@ const SENSITIVE_EXTRA_KEYS = new Set([
   'reverse_geocode',
   'reverseGeocode',
 ]);
+const ERROR_DEDUPE_WINDOW_MS = 2000;
+const recentErrorEvents = new Map();
 
 export const scrubDiagnosticText = (value = '', maxLength = 500) => String(value || '')
   .replace(URL_QUERY_PATTERN, (_match, separator, key) => `${separator}${key}=[REDACTED]`)
@@ -61,7 +63,17 @@ const sanitizeDiagnosticExtra = (extra = {}) => {
 export function logError(context, error, extra = {}) {
   const sanitized = sanitizeError(error);
   const safeExtra = sanitizeDiagnosticExtra(extra);
-  return recordTrackingDiagnostic({
+  const dedupeKey = [
+    context,
+    sanitized.name,
+    sanitized.message,
+    JSON.stringify(safeExtra),
+  ].join('|');
+  const now = Date.now();
+  const recent = recentErrorEvents.get(dedupeKey);
+  if (recent && now - recent.at < ERROR_DEDUPE_WINDOW_MS) return recent.event;
+
+  const event = recordTrackingDiagnostic({
     type: 'operation_error',
     title: `Operation failed: ${context}`,
     detail: sanitized.message,
@@ -70,6 +82,8 @@ export function logError(context, error, extra = {}) {
     stack_preview: sanitized.stack,
     ...safeExtra,
   });
+  recentErrorEvents.set(dedupeKey, { at: now, event });
+  return event;
 }
 
 export function initializeErrorReporting() {

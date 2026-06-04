@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+
 export const STORAGE_KEY_MIGRATION_DONE_KEY = 'road_sage_key_migration_v1_done';
 
 export const STORAGE_KEY_RENAMES = Object.freeze({
@@ -86,7 +88,6 @@ export async function runStorageKeyMigration() {
   }
 
   try {
-    const { Capacitor } = await import('@capacitor/core');
     if (!Capacitor.isNativePlatform()) return migrated;
 
     const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');

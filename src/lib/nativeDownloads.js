@@ -45,3 +45,7 @@ export async function saveExportToDownloads({ filename, data, mimeType, base64 }
 export async function openExportLocation(/** @type {any} */ { uri, mimeType } = {}) {
   return DriveSenseNative.openExportLocation({ uri, mimeType });
 }
+
+export async function pickBackupFile() {
+  return DriveSenseNative.pickBackupFile();
+}

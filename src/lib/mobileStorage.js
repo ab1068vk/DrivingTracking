@@ -81,10 +81,14 @@ export async function removeJson(key) {
   const keys = [currentKey, ...legacyStorageKeysFor(key)];
   if (isNativePlatform()) {
     const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
-    const { Preferences } = await import('@capacitor/preferences');
+    const Preferences = await import('@capacitor/preferences')
+      .then((module) => module.Preferences)
+      .catch(() => null);
     await Promise.all([
       ...keys.map((storageKey) => encryptedCapacitorStorage.remove({ key: storageKey })),
-      ...keys.map((storageKey) => Preferences.remove({ key: storageKey })),
+      ...(Preferences
+        ? keys.map((storageKey) => Preferences.remove({ key: storageKey }).catch(() => null))
+        : []),
     ]);
     return;
   }

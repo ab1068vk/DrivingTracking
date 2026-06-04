@@ -5,6 +5,7 @@ import { calibrationLabelService } from '@/api/calibrationLabels';
 import { tripService } from '@/api/trips';
 import PostTripCalibrationSurvey from '@/components/PostTripCalibrationSurvey';
 import { localSettings } from '@/lib/trackingStore';
+import { notifyUserError } from '@/lib/userFeedback';
 
 export default function SurveyPage() {
   const { tripId } = useParams();
@@ -17,6 +18,10 @@ export default function SurveyPage() {
     queryKey: ['trip', tripId],
     queryFn: () => tripService.getById(tripId),
     enabled: Boolean(tripId),
+    meta: {
+      errorTitle: 'Survey trip unavailable',
+      errorDescription: 'Road Sage could not load the trip for this survey.',
+    },
   });
 
   useEffect(() => {
@@ -29,6 +34,12 @@ export default function SurveyPage() {
       if (cancelled) return;
       setSurveyStatus(marker);
       setLabelCount(count);
+    }).catch((error) => {
+      if (cancelled) return;
+      notifyUserError('survey_status_load', error, {
+        title: 'Survey status unavailable',
+        description: 'You can still answer the survey, but Road Sage could not load previous rating status.',
+      });
     });
     return () => {
       cancelled = true;
@@ -38,11 +49,21 @@ export default function SurveyPage() {
   const submitMutation = useMutation({
     mutationFn: (surveyInput) => calibrationLabelService.submitTripSurveyLabel(trip, surveyInput),
     onSuccess: () => navigate('/trips'),
+    meta: {
+      name: 'survey_submit',
+      errorTitle: 'Survey not saved',
+      errorDescription: 'Road Sage could not save this rating. Try again so the calibration label is not lost.',
+    },
   });
 
   const skipMutation = useMutation({
     mutationFn: () => calibrationLabelService.skipTripSurvey(tripId),
     onSuccess: () => navigate('/trips'),
+    meta: {
+      name: 'survey_skip',
+      errorTitle: 'Survey skip not saved',
+      errorDescription: 'Road Sage could not mark this survey as skipped.',
+    },
   });
 
   if (isLoading) {

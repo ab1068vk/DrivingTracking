@@ -20,35 +20,45 @@ import javax.crypto.SecretKeyFactory;
 
 final class EncryptedPreferenceStore {
     private static final String MASTER_KEY_ALIAS = "road_sage_master_key_v3";
+    private static final Object PREFS_CACHE_LOCK = new Object();
     private static final Map<String, SharedPreferences> PREFS_CACHE = new HashMap<>();
+    private static MasterKey cachedMasterKey = null;
 
     private EncryptedPreferenceStore() {}
 
-    static synchronized SharedPreferences open(Context context, String prefsName) {
-        SharedPreferences cached = PREFS_CACHE.get(prefsName);
+    static SharedPreferences open(Context context, String prefsName) {
+        SharedPreferences cached = cachedPrefs(prefsName);
         if (cached != null) return cached;
 
         Context appContext = context.getApplicationContext();
-        MasterKey masterKey;
-        try {
-            masterKey = buildHardwareMasterKey(appContext);
-        } catch (GeneralSecurityException | IOException error) {
-            throw new IllegalStateException("Encrypted preferences are unavailable.", error);
-        }
+        MasterKey masterKey = masterKey(appContext);
 
         try {
             SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, masterKey);
-            PREFS_CACHE.put(prefsName, prefs);
-            return prefs;
+            return cachePrefs(prefsName, prefs);
         } catch (GeneralSecurityException | IOException firstOpenError) {
             SecureDelete.wipePlaintextPrefs(appContext, prefsName);
             try {
                 SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, masterKey);
-                PREFS_CACHE.put(prefsName, prefs);
-                return prefs;
+                return cachePrefs(prefsName, prefs);
             } catch (GeneralSecurityException | IOException secondOpenError) {
                 throw new IllegalStateException("Encrypted preferences are unavailable.", secondOpenError);
             }
+        }
+    }
+
+    private static SharedPreferences cachedPrefs(String prefsName) {
+        synchronized (PREFS_CACHE_LOCK) {
+            return PREFS_CACHE.get(prefsName);
+        }
+    }
+
+    private static SharedPreferences cachePrefs(String prefsName, SharedPreferences prefs) {
+        synchronized (PREFS_CACHE_LOCK) {
+            SharedPreferences cached = PREFS_CACHE.get(prefsName);
+            if (cached != null) return cached;
+            PREFS_CACHE.put(prefsName, prefs);
+            return prefs;
         }
     }
 
@@ -61,6 +71,20 @@ final class EncryptedPreferenceStore {
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             );
+    }
+
+    static void warmMasterKey(Context context) {
+        masterKey(context.getApplicationContext());
+    }
+
+    private static synchronized MasterKey masterKey(Context context) {
+        if (cachedMasterKey != null) return cachedMasterKey;
+        try {
+            cachedMasterKey = buildHardwareMasterKey(context);
+            return cachedMasterKey;
+        } catch (GeneralSecurityException | IOException error) {
+            throw new IllegalStateException("Encrypted preferences are unavailable.", error);
+        }
     }
 
     static String keyBacking(Context context) {

@@ -11,10 +11,11 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { PermissionProvider } from '@/lib/permissions/PermissionContext';
 import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
-import { startNativeAutoTracking } from '@/lib/activityRecognition';
+import { getNativeAutoTrackingStatus, startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
 import {
   BIOMETRIC_LOCK_STATE_CHANGE_EVENT,
@@ -25,7 +26,7 @@ import {
   msUntilAutoLock,
   setBiometricLockEnabled,
 } from '@/lib/biometricLock';
-import { authenticateBiometricGate, isBiometricGateAvailable } from '@/lib/nativeBiometricGate';
+import { authenticateBiometricGate } from '@/lib/nativeBiometricGate';
 import { BIOMETRIC_AUTH_TIMEOUT_MS } from '@/lib/appConstants';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
@@ -101,18 +102,14 @@ const persistBiometricLockDisabled = () => {
   }
 };
 
-const verifyCriticalNativePlugins = async () => {
-  if (!isAndroid() || !isBiometricLockEnabled()) return;
-
-  const biometricAvailable = await withLaunchTimeout(
-    isBiometricGateAvailable(),
-    false,
-    'biometric_gate_startup_health_timeout'
-  );
-  if (!biometricAvailable) {
-    setBiometricLockEnabled(false);
-    persistBiometricLockDisabled();
-    console.warn('[biometricLock] startup health check unavailable, lock disabled');
+const ensureNativeAutoTrackingStarted = async (settings, context) => {
+  if (!isAndroid() || settings?.tracking_mode !== 'background_auto' || settings?.tracking_paused) return;
+  try {
+    const status = await getNativeAutoTrackingStatus();
+    if (status?.enabled === true) return;
+    await startNativeAutoTracking();
+  } catch (err) {
+    logError(context, err, { mode: settings?.tracking_mode });
   }
 };
 
@@ -131,25 +128,26 @@ function AppLoading() {
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
-  const [onboardingDone, setOnboardingDone] = useState(null);
+  const [onboardingDone, setOnboardingDone] = useState(() => localSettings.get().onboarding_completed);
   const navigate = useNavigate();
 
   useEffect(() => {
+    let nativeHydrationTimer = null;
+
     const bootstrapSettings = async () => {
       configureNotificationChannels().catch((err) => {
-        logError('notification_channel_configure', err);
+        notifyUserError('notification_channel_configure', err, {
+          title: 'Notification setup delayed',
+          description: 'Road Sage could not finish notification setup. Trip tracking still works, but reminders may not appear yet.',
+        });
       });
-      const settings = await withLaunchTimeout(
-        localSettings.hydrateFromNative(),
-        localSettings.get(),
-        'settings_hydrate_launch_timeout',
-        2500,
-        { logTimeout: false }
-      );
-      setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
-      await verifyCriticalNativePlugins();
-      scheduleDataRetentionPrune(settings.data_retention_months);
-      reverifyConfiguredOsrmEndpoint(settings).then(({ result }) => {
+      const cachedSettings = localSettings.get();
+      setBiometricLockEnabled(cachedSettings?.biometric_lock_enabled === true);
+      setOnboardingDone(cachedSettings.onboarding_completed);
+      applyThemeMode(cachedSettings.dark_mode);
+
+      scheduleDataRetentionPrune(cachedSettings.data_retention_months);
+      reverifyConfiguredOsrmEndpoint(cachedSettings).then(({ result }) => {
         if (result && !result.ok) {
           toast({
             title: 'OSRM route snapping disabled',
@@ -160,30 +158,43 @@ const AuthenticatedApp = () => {
       }).catch((err) => {
         logError('osrm_launch_reverify', err);
       });
-      syncReminderNotifications(settings, { requestPermission: false }).catch((err) => {
-        logError('reminder_notification_sync', err, { tracking_mode: settings.tracking_mode });
-      });
-      setOnboardingDone(settings.onboarding_completed);
-      if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-        startNativeAutoTracking().catch((err) => {
-          logError('native_auto_tracking_start_bootstrap', err, { mode: settings.tracking_mode });
+      syncReminderNotifications(cachedSettings, { requestPermission: false }).catch((err) => {
+        notifyUserError('reminder_notification_sync', err, {
+          title: 'Reminder sync delayed',
+          description: 'Reminder notifications could not be refreshed. Road Sage will try again when settings reload.',
+          extra: { tracking_mode: cachedSettings.tracking_mode },
         });
-      }
-
-      applyThemeMode(settings.dark_mode);
+      });
+      nativeHydrationTimer = window.setTimeout(async () => {
+        const settings = await withLaunchTimeout(
+          localSettings.hydrateFromNative(),
+          cachedSettings,
+          'settings_hydrate_deferred_timeout',
+          2500,
+          { logTimeout: false }
+        );
+        setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
+        setOnboardingDone(settings.onboarding_completed);
+        applyThemeMode(settings.dark_mode);
+        scheduleDataRetentionPrune(settings.data_retention_months);
+        await ensureNativeAutoTrackingStarted(settings, 'native_auto_tracking_start_after_hydration');
+      }, 2500);
     };
     bootstrapSettings();
+    return () => {
+      if (nativeHydrationTimer !== null) window.clearTimeout(nativeHydrationTimer);
+    };
   }, []);
 
   useEffect(() => {
     const lockOnHidden = () => {
-      if (document.visibilityState === 'hidden') lock();
+      if (document.visibilityState === 'hidden' && isBiometricLockEnabled()) lock();
     };
     document.addEventListener('visibilitychange', lockOnHidden);
 
     let appStateListener;
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive) lock();
+      if (!isActive && isBiometricLockEnabled()) lock();
     }).then((handle) => {
       appStateListener = handle;
     }).catch((err) => {
@@ -206,7 +217,11 @@ const AuthenticatedApp = () => {
       else if (extra.type === 'maintenance') navigate('/vehicles');
       else if (extra.type === 'export_saved') {
         openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch((err) => {
-          logError('export_location_open', err, { uri: extra.uri, mimeType: extra.mimeType });
+          notifyUserError('export_location_open', err, {
+            title: 'Could not open export',
+            description: 'The file was saved, but Road Sage could not open its location. Check Downloads from your device file manager.',
+            extra: { uri: extra.uri, mimeType: extra.mimeType },
+          });
           navigate('/reports');
         });
       }
@@ -272,7 +287,8 @@ const AuthenticatedApp = () => {
 };
 
 function BiometricRouteGuard({ children }) {
-  const [authState, setAuthState] = useState(() => (isAndroid() ? 'checking' : 'unlocked'));
+  const [authState, setAuthState] = useState('unlocked');
+  const [unlockRequest, setUnlockRequest] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,7 +390,7 @@ function BiometricRouteGuard({ children }) {
       document.removeEventListener('visibilitychange', verifyOnVisible);
       window.removeEventListener(BIOMETRIC_LOCK_STATE_CHANGE_EVENT, verifyOnBiometricSettingsChange);
     };
-  }, []);
+  }, [unlockRequest]);
 
   if (authState === 'unlocked') return children;
 
@@ -384,9 +400,21 @@ function BiometricRouteGuard({ children }) {
         <div className="mb-2 font-semibold">{authState === 'locked' ? 'Road Sage is locked' : 'Unlocking Road Sage...'}</div>
         <div className="text-sm text-muted-foreground">
           {authState === 'locked'
-            ? 'Close and reopen the app, then confirm your device credential to continue.'
+            ? 'Confirm your device credential to continue.'
             : 'Confirm your device credential to access trip data.'}
         </div>
+        {authState === 'locked' && (
+          <button
+            type="button"
+            className="mt-4 rounded-lg border border-border bg-secondary px-4 py-2 text-sm font-semibold text-foreground"
+            onClick={() => {
+              setAuthState('checking');
+              setUnlockRequest((value) => value + 1);
+            }}
+          >
+            Unlock
+          </button>
+        )}
       </div>
     </div>
   );

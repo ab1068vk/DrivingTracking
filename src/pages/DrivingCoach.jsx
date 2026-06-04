@@ -17,6 +17,7 @@ import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { notifyUserError } from '@/lib/userFeedback';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -42,6 +43,10 @@ export default function DrivingCoach() {
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['coach-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Coach data unavailable',
+      errorDescription: 'Road Sage could not load trips for coaching insights.',
+    },
   });
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');
@@ -74,6 +79,11 @@ export default function DrivingCoach() {
         logError('driver_signature_save', err, {
           trip_count: completed.length,
           style_shift_count: driverSignature.style_shifts?.length || 0,
+        });
+        notifyUserError('driver_signature_save', err, {
+          title: 'Coach profile not saved',
+          description: 'Driving insights are still shown, but Road Sage could not save this driver profile for later.',
+          log: false,
         });
       });
     }

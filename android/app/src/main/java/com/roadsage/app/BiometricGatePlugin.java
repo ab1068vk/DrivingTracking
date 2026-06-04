@@ -7,9 +7,7 @@ import android.content.Intent;
 import android.os.Build;
 
 import androidx.activity.result.ActivityResult;
-import androidx.biometric.BiometricPrompt;
-import androidx.core.content.ContextCompat;
-import androidx.fragment.app.FragmentActivity;
+import androidx.biometric.BiometricManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -18,64 +16,35 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.util.concurrent.Executor;
-
 @CapacitorPlugin(name = "BiometricGate")
 public class BiometricGatePlugin extends Plugin {
+    private static final int APP_LOCK_AUTHENTICATORS =
+        BiometricManager.Authenticators.BIOMETRIC_WEAK |
+        BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+
     @PluginMethod
     public void isAvailable(PluginCall call) {
         JSObject result = new JSObject();
-        result.put("available", isDeviceSecure());
+        result.put("available", isAuthenticatorAvailable());
         call.resolve(result);
     }
 
     @PluginMethod
     public void authenticate(PluginCall call) {
         Activity activity = getActivity();
-        if (activity == null || !isDeviceSecure()) {
+        if (activity == null || !isAuthenticatorAvailable()) {
             resolveStatus(call, "unavailable", null);
             return;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && activity instanceof FragmentActivity) {
-            authenticateWithBiometricPrompt((FragmentActivity) activity, call);
-            return;
-        }
-
-        authenticateWithDeviceCredentialIntent(activity, call);
-    }
-
-    @SuppressWarnings("deprecation")
-    private void authenticateWithBiometricPrompt(FragmentActivity activity, PluginCall call) {
-        Executor executor = ContextCompat.getMainExecutor(activity);
-        BiometricPrompt.AuthenticationCallback callback = new BiometricPrompt.AuthenticationCallback() {
-            @Override
-            public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-                resolveStatus(call, "success", null);
+        call.setKeepAlive(true);
+        activity.runOnUiThread(() -> {
+            try {
+                authenticateWithDeviceCredentialIntent(activity, call);
+            } catch (Exception error) {
+                resolveStatus(call, "error", safeErrorMessage(error));
             }
-
-            @Override
-            public void onAuthenticationError(int errorCode, CharSequence errString) {
-                String status = errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
-                    errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON
-                    ? "cancelled"
-                    : "error";
-                resolveStatus(call, status, errString == null ? null : errString.toString());
-            }
-
-            @Override
-            public void onAuthenticationFailed() {
-                // Keep the prompt open so the user can retry.
-            }
-        };
-
-        BiometricPrompt prompt = new BiometricPrompt(activity, executor, callback);
-        BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock Road Sage")
-            .setSubtitle("Use your device credential to continue")
-            .setDeviceCredentialAllowed(true)
-            .build();
-        prompt.authenticate(promptInfo);
+        });
     }
 
     private void authenticateWithDeviceCredentialIntent(Activity activity, PluginCall call) {
@@ -92,6 +61,7 @@ public class BiometricGatePlugin extends Plugin {
             resolveStatus(call, "unavailable", null);
             return;
         }
+        call.setKeepAlive(true);
         startActivityForResult(call, intent, "credentialResult");
     }
 
@@ -110,7 +80,16 @@ public class BiometricGatePlugin extends Plugin {
         if (message != null) {
             result.put("message", message);
         }
-        call.resolve(result);
+        Activity activity = getActivity();
+        Runnable resolve = () -> {
+            call.setKeepAlive(false);
+            call.resolve(result);
+        };
+        if (activity == null) {
+            resolve.run();
+            return;
+        }
+        activity.runOnUiThread(resolve);
     }
 
     private boolean isDeviceSecure() {
@@ -124,5 +103,23 @@ public class BiometricGatePlugin extends Plugin {
 
     private KeyguardManager keyguardManager() {
         return (KeyguardManager) getContext().getSystemService(Context.KEYGUARD_SERVICE);
+    }
+
+    private boolean isAuthenticatorAvailable() {
+        if (!isDeviceSecure()) return false;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return true;
+        try {
+            return BiometricManager.from(getContext()).canAuthenticate(APP_LOCK_AUTHENTICATORS) ==
+                BiometricManager.BIOMETRIC_SUCCESS;
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private String safeErrorMessage(Exception error) {
+        String message = error == null ? null : error.getMessage();
+        return message == null || message.trim().isEmpty()
+            ? "Device credential prompt could not be opened."
+            : message;
     }
 }

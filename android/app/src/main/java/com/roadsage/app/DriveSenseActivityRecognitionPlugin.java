@@ -1,6 +1,7 @@
 package com.roadsage.app;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -8,6 +9,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
@@ -18,6 +20,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
@@ -28,6 +31,7 @@ import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
@@ -35,13 +39,16 @@ import com.google.android.gms.location.ActivityRecognition;
 import com.google.android.gms.location.ActivityRecognitionClient;
 import com.google.android.gms.location.DetectedActivity;
 
+import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
@@ -66,6 +73,7 @@ import java.util.Locale;
 )
 public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private static final String SECURE_EXPORT_MIME_TYPE = "application/octet-stream";
+    private static final long MAX_BACKUP_IMPORT_BYTES = 50L * 1024L * 1024L;
     private static final int BACKUP_ENC_VERSION = 1;
     private static final int BACKUP_ENC_HEADER_BYTES = 1 + 32 + 12;
     private static final int MIN_ENCRYPTED_EXPORT_BYTES = BACKUP_ENC_HEADER_BYTES + 16;
@@ -569,11 +577,51 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
         try {
             new JSONObject(settingsJson);
-            NativeSettingsStore.saveSettingsJson(getContext(), settingsJson);
-            call.resolve();
         } catch (JSONException error) {
             call.reject("settingsJson must be valid JSON.", error);
+            return;
         }
+
+        Context appContext = getContext().getApplicationContext();
+        call.setKeepAlive(true);
+        new Thread(() -> {
+            try {
+                if (!NativeSettingsStore.saveSettingsJson(appContext, settingsJson)) {
+                    resolveSettingsSaveFailure(call, "Settings could not be saved to encrypted native storage.", null);
+                    return;
+                }
+                resolveSettingsSaveSuccess(call);
+            } catch (Exception error) {
+                resolveSettingsSaveFailure(call, "Settings could not be saved to encrypted native storage.", error);
+            }
+        }).start();
+    }
+
+    private void resolveSettingsSaveSuccess(PluginCall call) {
+        Activity activity = getActivity();
+        Runnable resolve = () -> {
+            call.setKeepAlive(false);
+            call.resolve();
+        };
+        if (activity == null) {
+            resolve.run();
+            return;
+        }
+        activity.runOnUiThread(resolve);
+    }
+
+    private void resolveSettingsSaveFailure(PluginCall call, String message, Exception error) {
+        Activity activity = getActivity();
+        Runnable reject = () -> {
+            call.setKeepAlive(false);
+            if (error == null) call.reject(message);
+            else call.reject(message, error);
+        };
+        if (activity == null) {
+            reject.run();
+            return;
+        }
+        activity.runOnUiThread(reject);
     }
 
     @PluginMethod
@@ -672,6 +720,64 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         }
     }
 
+    @PluginMethod
+    public void pickBackupFile(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+            "application/json",
+            "application/octet-stream",
+            "text/plain"
+        });
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        try {
+            startActivityForResult(call, intent, "pickBackupFileResult");
+        } catch (ActivityNotFoundException error) {
+            call.reject("No file picker is available on this device.", error);
+        }
+    }
+
+    @ActivityCallback
+    private void pickBackupFileResult(PluginCall call, ActivityResult result) {
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) {
+            JSObject payload = new JSObject();
+            payload.put("cancelled", true);
+            call.resolve(payload);
+            return;
+        }
+
+        Uri uri = result.getData().getData();
+        Context appContext = getContext().getApplicationContext();
+        call.setKeepAlive(true);
+        new Thread(() -> {
+            try {
+                BackupImportMetadata metadata = readBackupImportMetadata(appContext, uri);
+                if (metadata.size > MAX_BACKUP_IMPORT_BYTES) {
+                    rejectBackupPickFailure(call, "Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.", null);
+                    return;
+                }
+
+                byte[] bytes = readSelectedBackupBytes(appContext, uri);
+                if (bytes.length > MAX_BACKUP_IMPORT_BYTES) {
+                    rejectBackupPickFailure(call, "Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.", null);
+                    return;
+                }
+
+                JSObject payload = new JSObject();
+                payload.put("cancelled", false);
+                payload.put("name", metadata.name);
+                payload.put("size", bytes.length);
+                payload.put("mimeType", metadata.mimeType);
+                payload.put("data", new String(bytes, StandardCharsets.UTF_8));
+                resolveBackupPickSuccess(call, payload);
+            } catch (Exception error) {
+                rejectBackupPickFailure(call, error.getMessage(), error);
+            }
+        }).start();
+    }
+
     private static boolean isAllowedSecureExportFilename(String filename) {
         String normalized = filename == null ? "" : filename.trim().toLowerCase(Locale.US);
         return normalized.endsWith(".rsexport") || normalized.endsWith(".rsbackup");
@@ -679,6 +785,79 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     private static boolean isSecureExportMimeType(String mimeType) {
         return SECURE_EXPORT_MIME_TYPE.equalsIgnoreCase(String.valueOf(mimeType).trim());
+    }
+
+    private void resolveBackupPickSuccess(PluginCall call, JSObject payload) {
+        Activity activity = getActivity();
+        Runnable resolve = () -> {
+            call.setKeepAlive(false);
+            call.resolve(payload);
+        };
+        if (activity == null) {
+            resolve.run();
+            return;
+        }
+        activity.runOnUiThread(resolve);
+    }
+
+    private void rejectBackupPickFailure(PluginCall call, String message, Exception error) {
+        Activity activity = getActivity();
+        Runnable reject = () -> {
+            call.setKeepAlive(false);
+            String resolvedMessage = message == null || message.trim().isEmpty()
+                ? "Could not read the selected backup file."
+                : message;
+            if (error == null) call.reject(resolvedMessage);
+            else call.reject(resolvedMessage, error);
+        };
+        if (activity == null) {
+            reject.run();
+            return;
+        }
+        activity.runOnUiThread(reject);
+    }
+
+    private BackupImportMetadata readBackupImportMetadata(Context context, Uri uri) {
+        String name = "road-sage-backup";
+        long size = -1L;
+        String mimeType = context.getContentResolver().getType(uri);
+
+        try (Cursor cursor = context.getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0) {
+                    String displayName = cursor.getString(nameIndex);
+                    if (displayName != null && !displayName.trim().isEmpty()) {
+                        name = displayName;
+                    }
+                }
+
+                int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                    size = cursor.getLong(sizeIndex);
+                }
+            }
+        }
+
+        return new BackupImportMetadata(name, size, mimeType == null ? "" : mimeType);
+    }
+
+    private byte[] readSelectedBackupBytes(Context context, Uri uri) throws Exception {
+        ContentResolver resolver = context.getContentResolver();
+        try (InputStream input = resolver.openInputStream(uri);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) throw new Exception("Unable to open selected backup file.");
+
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+                if (output.size() > MAX_BACKUP_IMPORT_BYTES) {
+                    throw new Exception("Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.");
+                }
+            }
+            return output.toByteArray();
+        }
     }
 
     private static boolean looksLikeEncryptedRoadSagePayload(String value) {
@@ -689,6 +868,18 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
                 decoded[0] == (byte) BACKUP_ENC_VERSION;
         } catch (IllegalArgumentException error) {
             return false;
+        }
+    }
+
+    private static class BackupImportMetadata {
+        final String name;
+        final long size;
+        final String mimeType;
+
+        BackupImportMetadata(String name, long size, String mimeType) {
+            this.name = name;
+            this.size = size;
+            this.mimeType = mimeType;
         }
     }
 

@@ -112,6 +112,7 @@ import {
   recordTrackingDiagnostic,
 } from '@/lib/trackingDiagnostics';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
@@ -559,11 +560,19 @@ export default function Dashboard() {
   const { data: recentTrips = [], refetch } = useQuery({
     queryKey: ['recent-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Dashboard trips unavailable',
+      errorDescription: 'Road Sage could not load recent trips. Start/end tracking still works, but dashboard stats may be stale.',
+    },
   });
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
+    meta: {
+      errorTitle: 'Dashboard vehicle data unavailable',
+      errorDescription: 'Vehicle-linked stats may be incomplete until vehicle profiles load.',
+    },
   });
 
   const { data: scoreMigrationSummary = {
@@ -572,6 +581,10 @@ export default function Dashboard() {
   } } = useQuery({
     queryKey: ['score-migration-summary'],
     queryFn: () => tripService.getScoreMigrationSummary(),
+    meta: {
+      errorTitle: 'Score refresh status unavailable',
+      errorDescription: 'Road Sage could not check whether recent trips need score updates.',
+    },
   });
 
   const completedTrips = useMemo(
@@ -621,7 +634,10 @@ export default function Dashboard() {
         setReadinessThresholdFit(thresholdFit);
       })
       .catch((err) => {
-        logError('readiness_calibration_context_load', err);
+        notifyUserError('readiness_calibration_context_load', err, {
+          title: 'Readiness estimate limited',
+          description: 'Road Sage could not load readiness calibration data. Trip tracking still works.',
+        });
       });
     return () => {
       cancelled = true;
@@ -630,13 +646,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch((err) => {
-      logError('parked_location_load', err);
+      notifyUserError('parked_location_load', err, {
+        title: 'Parked location unavailable',
+        description: 'Road Sage could not load the last parked location for the dashboard map.',
+      });
     });
   }, [completedTrips[0]?.id]);
 
   useEffect(() => {
     loadDangerZones().then(setDangerZones).catch((err) => {
-      logError('danger_zones_load', err);
+      notifyUserError('danger_zones_load', err, {
+        title: 'Repeated-event areas unavailable',
+        description: 'Road Sage could not load repeated-event areas. Tracking and trip history still work.',
+      });
     });
   }, [completedTrips[0]?.id]);
 
@@ -2420,7 +2442,14 @@ export default function Dashboard() {
                     const nextOptions = pendingStartOptions || {};
                     setFatigueDialogOpen(false);
                     setPendingStartOptions(null);
-                    handleStartTrip({ ...nextOptions, bypassFatigueWarning: true });
+                    handleStartTrip({ ...nextOptions, bypassFatigueWarning: true }).catch((error) => {
+                      const message = 'Road Sage could not start this trip. Check permissions and try again.';
+                      setLocationError(message);
+                      notifyUserError('dashboard_start_trip', error, {
+                        title: 'Trip did not start',
+                        description: message,
+                      });
+                    });
                   }}
                   className="rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
                 >
@@ -2439,7 +2468,14 @@ export default function Dashboard() {
             fallbackTrip={activeTrip}
             hazardMessage={hazardMessage}
             onAcknowledgeEmergency={acknowledgeEmergencyWorkflow}
-            onEndTrip={handleEndTrip}
+            onEndTrip={() => handleEndTrip().catch((error) => {
+              const message = 'Road Sage could not finish saving this trip. Keep the app open and try ending again.';
+              setLocationError(message);
+              notifyUserError('dashboard_end_trip', error, {
+                title: 'Trip not saved yet',
+                description: message,
+              });
+            })}
             parkedLocation={parkedLocation}
             settings={settings}
             stealthTripActive={stealthTripActive}
@@ -2465,7 +2501,14 @@ export default function Dashboard() {
                 />
               </div>
               <button
-                onClick={() => handleStartTrip()}
+                onClick={() => handleStartTrip().catch((error) => {
+                  const message = 'Road Sage could not start this trip. Check permissions and try again.';
+                  setLocationError(message);
+                  notifyUserError('dashboard_start_trip', error, {
+                    title: 'Trip did not start',
+                    description: message,
+                  });
+                })}
                 className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
               >
                 <Play className="w-7 h-7 text-white ml-0.5" />

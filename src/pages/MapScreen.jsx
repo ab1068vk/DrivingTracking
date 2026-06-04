@@ -24,6 +24,7 @@ import {
 } from '@/lib/openSourceTripContext';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
+import { notifyUserError } from '@/lib/userFeedback';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -84,6 +85,10 @@ export default function MapScreen() {
   const { data: trips = [] } = useQuery({
     queryKey: ['map-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    meta: {
+      errorTitle: 'Map trips unavailable',
+      errorDescription: 'Road Sage could not load trips for the map. Try again after trip storage is available.',
+    },
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
@@ -109,6 +114,10 @@ export default function MapScreen() {
     },
     onError: (error) => {
       setOsmFetchStatus(error?.message || 'Could not get road data');
+      notifyUserError('map_road_context_fetch', error, {
+        title: 'Road data unavailable',
+        description: 'Road Sage could not fetch speed limits or map matching for this trip. The GPS route is unchanged.',
+      });
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
@@ -204,8 +213,13 @@ export default function MapScreen() {
       setCurrentLocation({ lat: point.lat, lng: point.lng });
       setShowCurrentLoc(true);
       setLocError(null);
-    } catch {
-      setLocError('Could not get location. Check location permission and GPS settings.');
+    } catch (error) {
+      const message = 'Could not get location. Check location permission and GPS settings.';
+      setLocError(message);
+      notifyUserError('map_current_location', error, {
+        title: 'Location unavailable',
+        description: message,
+      });
     }
   };
 
@@ -235,37 +249,54 @@ export default function MapScreen() {
       }
     };
 
-    rebuildOverlays();
+    rebuildOverlays().catch((error) => {
+      if (cancelled) return;
+      setDangerZones([]);
+      setRouteRiskIndex(new Map());
+      notifyUserError('map_overlay_rebuild', error, {
+        title: 'Map layers unavailable',
+        description: 'Repeated-event and route-risk layers could not be rebuilt. Trip routes can still be viewed.',
+      });
+    });
     return () => {
       cancelled = true;
     };
   }, [allCompleted.length, trips, privacyZonesKey]);
 
   const handleWhereParked = async () => {
-    const stored = await getLastParkedLocation();
-    if (!stored) {
-      setParkingError('No parked location saved yet.');
-      return;
-    }
-
-    let next = stored;
-    if (!stored.address) {
-      const inPrivacyZone = isPointInPrivacyZone(stored, privacyZones);
-      if (inPrivacyZone) {
-        next = { ...stored, address: 'Private location' };
-      } else {
-        const address = await reverseGeocodeIfPermitted(stored.lat, stored.lng, { privacyZones });
-        next = { ...stored, address: address || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-        if (address) await saveLastParkedLocation(next);
+    try {
+      const stored = await getLastParkedLocation();
+      if (!stored) {
+        setParkingError('No parked location saved yet.');
+        return;
       }
-      if (!next.address) {
-        next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-      }
-    }
 
-    setParkedLocation(next);
-    setParkingError(null);
-    setPlaybackMode(false);
+      let next = stored;
+      if (!stored.address) {
+        const inPrivacyZone = isPointInPrivacyZone(stored, privacyZones);
+        if (inPrivacyZone) {
+          next = { ...stored, address: 'Private location' };
+        } else {
+          const address = await reverseGeocodeIfPermitted(stored.lat, stored.lng, { privacyZones });
+          next = { ...stored, address: address || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+          if (address) await saveLastParkedLocation(next);
+        }
+        if (!next.address) {
+          next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+        }
+      }
+
+      setParkedLocation(next);
+      setParkingError(null);
+      setPlaybackMode(false);
+    } catch (error) {
+      const message = 'Could not load your last parked location.';
+      setParkingError(message);
+      notifyUserError('map_parked_location', error, {
+        title: 'Parked location unavailable',
+        description: message,
+      });
+    }
   };
 
   return (

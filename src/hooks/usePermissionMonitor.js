@@ -119,8 +119,8 @@ export function usePermissionMonitor(trackingMode) {
 
       try {
         permissionStatus = refreshPermissionStatus
-          ? await refreshPermissionStatus()
-          : await getPermissionStatus();
+          ? await refreshPermissionStatus({ force: true })
+          : await getPermissionStatus(null, { force: true });
       } catch {
         permissionCheckFailed = true;
       }

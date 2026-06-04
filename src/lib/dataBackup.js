@@ -1,5 +1,6 @@
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
+import { Capacitor } from '@capacitor/core';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
@@ -587,7 +588,6 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   let nativeFallbackError = null;
 
   try {
-    const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.isNativePlatform()) {
       const result = await saveExportToDownloads({
         filename: outputName,
@@ -778,11 +778,23 @@ export function parseDriveSenseBackup(text) {
   };
 }
 
+export function countTripsOutsideRetentionWindow(trips = [], retentionMonths = 0, nowMs = Date.now()) {
+  const months = Number(retentionMonths);
+  if (!Number.isFinite(months) || months <= 0) return 0;
+
+  const cutoff = nowMs - months * 30.44 * 24 * 60 * 60 * 1000;
+  return (Array.isArray(trips) ? trips : []).filter((trip) => {
+    if (trip?.status !== 'completed') return false;
+    const startedAt = new Date(trip.start_time || trip.end_time || trip.created_at || 0).getTime();
+    return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;
+  }).length;
+}
+
 export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false, password = null } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
-  let text = await file.text();
+  let text = (await file.text()).replace(/^\uFEFF/, '');
   const encryptedBackup = isEncryptedBackup(text);
   if (encryptedBackup) {
     if (!password) return { error: 'password_required' };
@@ -809,8 +821,30 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     };
   }
 
+  const currentSettings = localSettings.get();
+  let sanitizedSettings = includeSettings && backup.settings
+    ? sanitizeImportedSettings(backup.settings)
+    : null;
+  const effectiveSettings = sanitizedSettings
+    ? { ...currentSettings, ...sanitizedSettings }
+    : currentSettings;
+  const retentionPreservedTripCount = countTripsOutsideRetentionWindow(
+    backup.trips,
+    effectiveSettings.data_retention_months
+  );
+  if (retentionPreservedTripCount > 0 && includeSettings) {
+    sanitizedSettings = {
+      ...(sanitizedSettings || {}),
+      data_retention_months: 0,
+    };
+    localSettings.set({ ...localSettings.get(), data_retention_months: 0 });
+  }
+
+  const importedTrips = await tripService.upsertMany(backup.trips, {
+    skipRetentionPrune: true,
+    skipRescore: true,
+  });
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
-  const importedTrips = await tripService.upsertMany(backup.trips);
 
   const privacyZonesNeedReconfiguration = includeSettings && Array.isArray(backup.settings?.privacy_zones)
     ? backup.settings.privacy_zones.filter((zone) => (
@@ -820,8 +854,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     : 0;
 
   let importedSettings = false;
-  if (includeSettings && backup.settings) {
-    const sanitizedSettings = sanitizeImportedSettings(backup.settings);
+  if (includeSettings && sanitizedSettings) {
     localSettings.set({ ...localSettings.get(), ...sanitizedSettings });
     importedSettings = Object.keys(sanitizedSettings).length > 0;
   }
@@ -847,5 +880,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
+    retentionAutoDeleteDisabled: retentionPreservedTripCount > 0 && includeSettings,
+    retentionPreservedTripCount,
   };
 }

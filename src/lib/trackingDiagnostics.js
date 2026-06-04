@@ -7,6 +7,8 @@ import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigrati
 
 const DIAGNOSTIC_EVENTS_KEY = 'road_sage_tracking_diagnostics';
 const MAX_EVENTS = 120;
+let diagnosticEventsCache = null;
+let diagnosticStorageRef = null;
 
 const safeJsonParse = (raw, fallback) => {
   try {
@@ -22,9 +24,16 @@ export function getTrackingDiagnostics() {
   if (typeof localStorage === 'undefined') {
     return { events: [], lastAutoStart: null, lastAutoStop: null, lastTripEnd: null };
   }
-  const raw = localStorage.getItem(resolveStorageKey(DIAGNOSTIC_EVENTS_KEY)) ||
-    legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).map((key) => localStorage.getItem(key)).find((value) => value != null);
-  const events = asArray(safeJsonParse(raw, []));
+  if (diagnosticStorageRef !== localStorage) {
+    diagnosticEventsCache = null;
+    diagnosticStorageRef = localStorage;
+  }
+  if (!diagnosticEventsCache) {
+    const raw = localStorage.getItem(resolveStorageKey(DIAGNOSTIC_EVENTS_KEY)) ||
+      legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).map((key) => localStorage.getItem(key)).find((value) => value != null);
+    diagnosticEventsCache = asArray(safeJsonParse(raw, []));
+  }
+  const events = diagnosticEventsCache;
   const lastAutoStart = [...events].reverse().find((event) => event.type === 'auto_start' || event.type === 'trip_started') || null;
   const lastAutoStop = [...events].reverse().find((event) => event.type === 'auto_stop' || event.type === 'trip_ended') || null;
   const lastTripEnd = [...events].reverse().find((event) => event.type === 'trip_ended' || event.type === 'trip_discarded') || null;
@@ -41,8 +50,13 @@ export function recordTrackingDiagnostic(event = {}) {
     type: 'info',
     ...event,
   };
+  if (diagnosticStorageRef !== localStorage) {
+    diagnosticEventsCache = null;
+    diagnosticStorageRef = localStorage;
+  }
   const current = getTrackingDiagnostics().events;
   const next = [nextEvent, ...current].slice(0, MAX_EVENTS);
+  diagnosticEventsCache = next;
   try {
     localStorage.setItem(DIAGNOSTIC_EVENTS_KEY, JSON.stringify(next));
   } catch {
@@ -53,6 +67,7 @@ export function recordTrackingDiagnostic(event = {}) {
 
 export function clearTrackingDiagnostics() {
   try {
+    diagnosticEventsCache = [];
     localStorage.removeItem(DIAGNOSTIC_EVENTS_KEY);
     legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).forEach((key) => localStorage.removeItem(key));
   } catch {

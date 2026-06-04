@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
 import { getPermissionStatus, invalidatePermissionCache } from '@/lib/permissions';
 import {
   PERMISSION_STATES,
@@ -51,17 +51,50 @@ function reducer(state, action) {
 
 export function PermissionProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const refreshInFlightRef = useRef(null);
+  const refreshVersionRef = useRef(0);
+  const mountedRef = useRef(false);
 
-  const refresh = useCallback(async () => {
-    dispatch({ type: 'SET_LOADING', value: true });
-    try {
-      const statuses = await getPermissionStatus();
-      dispatch({ type: 'SET_ALL', statuses, checkedAt: new Date().toISOString() });
-      return statuses;
-    } finally {
-      dispatch({ type: 'SET_LOADING', value: false });
-    }
+  const refresh = useCallback(async ({ force = false } = {}) => {
+    if (!force && refreshInFlightRef.current) return refreshInFlightRef.current;
+
+    const version = ++refreshVersionRef.current;
+    if (mountedRef.current) dispatch({ type: 'SET_LOADING', value: true });
+
+    const task = getPermissionStatus(null, { force })
+      .then((statuses) => {
+        if (mountedRef.current && version === refreshVersionRef.current) {
+          dispatch({ type: 'SET_ALL', statuses, checkedAt: new Date().toISOString() });
+        }
+        return statuses;
+      })
+      .finally(() => {
+        if (refreshInFlightRef.current === task) {
+          refreshInFlightRef.current = null;
+        }
+        if (mountedRef.current && version === refreshVersionRef.current) {
+          dispatch({ type: 'SET_LOADING', value: false });
+        }
+      });
+
+    refreshInFlightRef.current = task;
+    return task;
   }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      refreshVersionRef.current += 1;
+    };
+  }, []);
+
+  const refreshNow = useCallback(async () => {
+    if (mountedRef.current) {
+      return refresh({ force: true }).catch(() => null);
+    }
+    return null;
+  }, [refresh]);
 
   const setOne = useCallback((key, status) => {
     dispatch({ type: 'SET_ONE', key, status });
@@ -71,7 +104,7 @@ export function PermissionProvider({ children }) {
     let cancelled = false;
     const run = ({ force = false } = {}) => {
       if (force) invalidatePermissionCache();
-      if (!cancelled) refresh().catch(() => null);
+      if (!cancelled) refresh({ force }).catch(() => null);
     };
 
     run();
@@ -90,7 +123,7 @@ export function PermissionProvider({ children }) {
     };
   }, [refresh]);
 
-  const value = useMemo(() => ({ ...state, refresh, setOne }), [refresh, setOne, state]);
+  const value = useMemo(() => ({ ...state, refresh, refreshNow, setOne }), [refresh, refreshNow, setOne, state]);
 
   return (
     <PermissionContext.Provider value={value}>

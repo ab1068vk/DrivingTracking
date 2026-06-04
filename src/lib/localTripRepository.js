@@ -769,16 +769,26 @@ const rescoreTripsIfNeeded = async (trips = []) => {
   });
   for (const trip of trips) {
     if (needsRescore(trip, thresholds, rescoreOptions)) {
-      const rescored = rescoreTrip(trip, vehicles);
-      rescoredTrips.push(rescored);
-      next.push(rescored);
-      completed += 1;
-      emitRescoreProgress({
-        status: 'running',
-        completed,
-        total,
-        reason: autoProvenanceTripIds.has(trip.id) ? 'auto_provenance' : 'schema_refresh',
-      });
+      try {
+        const rescored = rescoreTrip(trip, vehicles);
+        rescoredTrips.push(rescored);
+        next.push(rescored);
+      } catch (error) {
+        logError('trip_rescore_failed', error, { tripId: trip.id });
+        next.push({
+          ...trip,
+          needs_rescore: true,
+          score_confidence_flag: trip.score_confidence_flag || 'rescore_failed',
+        });
+      } finally {
+        completed += 1;
+        emitRescoreProgress({
+          status: 'running',
+          completed,
+          total,
+          reason: autoProvenanceTripIds.has(trip.id) ? 'auto_provenance' : 'schema_refresh',
+        });
+      }
     } else {
       next.push(trip);
     }
@@ -800,6 +810,7 @@ const importNativeCompletedTrips = async () => {
   if (!isAndroid() || importingNativeTrips) return;
 
   importingNativeTrips = true;
+  let importedCount = 0;
   try {
     const nativeTrips = await getNativeCompletedTrips();
     if (!nativeTrips.length) return;
@@ -851,6 +862,7 @@ const importNativeCompletedTrips = async () => {
       const calibratedImportedTrip = await maybeUpdateReadinessCalibration(importedTrip);
       if (calibratedImportedTrip !== importedTrip) await putTrip(calibratedImportedTrip);
       await mergeCompletedTripRouteRisk(calibratedImportedTrip);
+      importedCount += 1;
 
       const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
       const endedStopped = calibratedImportedTrip.parking_stop_detected ||
@@ -870,8 +882,8 @@ const importNativeCompletedTrips = async () => {
 
     await clearNativeCompletedTrips();
     await invalidateTripDerivedCaches();
-  } catch {
-    // The existing JS store remains usable if the native bridge is unavailable.
+  } catch (error) {
+    logError('native_completed_trip_import_failed', error, { importedCount });
   } finally {
     importingNativeTrips = false;
   }
@@ -1139,7 +1151,7 @@ export const localTripRepository = {
     return { success: true };
   },
 
-  async upsertMany(trips = []) {
+  async upsertMany(trips = [], { skipRetentionPrune = false, skipRescore = false } = {}) {
     if (isEphemeralModeActive()) {
       return trips.map((trip, index) => ({
         ...trip,
@@ -1154,7 +1166,17 @@ export const localTripRepository = {
         ...trip,
         created_at: trip.created_at || trip.start_time || new Date().toISOString(),
       });
-      return withRouteRiskCells(needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next);
+      if (skipRescore) return next;
+      try {
+        return withRouteRiskCells(needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next);
+      } catch (error) {
+        logError('trip_import_rescore_failed', error, { tripId: next.id });
+        return {
+          ...next,
+          needs_rescore: true,
+          score_confidence_flag: next.score_confidence_flag || 'rescore_failed',
+        };
+      }
     });
     await putTrips(normalized);
     const calibrated = await Promise.all(normalized.map(maybeUpdateReadinessCalibration));
@@ -1165,7 +1187,7 @@ export const localTripRepository = {
       await invalidateDangerZoneCache();
       for (const trip of completed) await mergeCompletedTripRouteRisk(trip);
     }
-    await pruneExpiredTrips();
+    if (!skipRetentionPrune) await pruneExpiredTrips();
     return calibrated;
   },
 

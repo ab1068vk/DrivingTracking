@@ -9,6 +9,7 @@ import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calc
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { getTripComponentScore } from '@/lib/scoring/componentScores';
@@ -231,11 +232,19 @@ export default function Vehicles() {
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
+    meta: {
+      errorTitle: 'Vehicles unavailable',
+      errorDescription: 'Road Sage could not load vehicle profiles. Trip history is still available.',
+    },
   });
 
   const { data: trips = [] } = useQuery({
     queryKey: ['all-trips-vehicles'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Vehicle trip stats unavailable',
+      errorDescription: 'Vehicle profiles loaded, but Road Sage could not calculate per-vehicle trip stats yet.',
+    },
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });
@@ -243,11 +252,21 @@ export default function Vehicles() {
   const createMut = useMutation({
     mutationFn: (/** @type {any} */ d) => vehicleService.create(d),
     onSuccess: () => { invalidate(); setShowAdd(false); },
+    meta: {
+      name: 'vehicle_create',
+      errorTitle: 'Vehicle not added',
+      errorDescription: 'Road Sage could not save this vehicle. Check the form and try again.',
+    },
   });
 
   const updateMut = useMutation({
     mutationFn: (/** @type {{id:any,d:any}} */ vars) => vehicleService.update(vars.id, vars.d),
     onSuccess: () => { invalidate(); setEditId(null); },
+    meta: {
+      name: 'vehicle_update',
+      errorTitle: 'Vehicle not updated',
+      errorDescription: 'Road Sage could not save the vehicle changes.',
+    },
   });
 
   const deleteMut = useMutation({
@@ -255,6 +274,11 @@ export default function Vehicles() {
     onSuccess: () => {
       invalidate();
       toast({ title: 'Vehicle deleted', description: 'Vehicle stats were removed. Existing trips are kept.' });
+    },
+    meta: {
+      name: 'vehicle_delete',
+      errorTitle: 'Vehicle not deleted',
+      errorDescription: 'Road Sage could not remove this vehicle. Existing trips were not changed.',
     },
   });
 
@@ -264,20 +288,35 @@ export default function Vehicles() {
   };
 
   const handleSetDefault = async (id) => {
-    for (const v of vehicles) {
-      await vehicleService.update(v.id, { is_default: v.id === id });
+    try {
+      for (const v of vehicles) {
+        await vehicleService.update(v.id, { is_default: v.id === id });
+      }
+      invalidate();
+    } catch (error) {
+      notifyUserError('vehicle_set_default', error, {
+        title: 'Default vehicle not changed',
+        description: 'Road Sage could not update the default vehicle. Try again after vehicle data refreshes.',
+      });
     }
-    invalidate();
   };
 
   const handleServiceDone = async (vehicle, item, odometerKm) => {
-    const items = getMaintenanceStatus(vehicle, trips).map((entry) => (
-      entry.id === item.id
-        ? { ...entry, last_service_km: odometerKm }
-        : entry
-    ));
-    await vehicleService.update(vehicle.id, { maintenance_items: items });
-    invalidate();
+    try {
+      const items = getMaintenanceStatus(vehicle, trips).map((entry) => (
+        entry.id === item.id
+          ? { ...entry, last_service_km: odometerKm }
+          : entry
+      ));
+      await vehicleService.update(vehicle.id, { maintenance_items: items });
+      invalidate();
+      toast({ title: 'Maintenance updated', description: `${item.label || 'Service item'} was marked complete.` });
+    } catch (error) {
+      notifyUserError('vehicle_service_done', error, {
+        title: 'Maintenance not updated',
+        description: 'Road Sage could not save this maintenance update.',
+      });
+    }
   };
 
   useEffect(() => {
@@ -322,11 +361,19 @@ export default function Vehicles() {
   }, [vehicles, trips]);
 
   const handleRenewalDone = async (vehicle, reminder) => {
-    const nextDate = new Date();
-    nextDate.setFullYear(nextDate.getFullYear() + 1);
-    const key = reminder.id === 'registration' ? 'registration_renewal_date' : 'insurance_renewal_date';
-    await vehicleService.update(vehicle.id, { [key]: nextDate.toISOString().slice(0, 10) });
-    invalidate();
+    try {
+      const nextDate = new Date();
+      nextDate.setFullYear(nextDate.getFullYear() + 1);
+      const key = reminder.id === 'registration' ? 'registration_renewal_date' : 'insurance_renewal_date';
+      await vehicleService.update(vehicle.id, { [key]: nextDate.toISOString().slice(0, 10) });
+      invalidate();
+      toast({ title: 'Renewal updated', description: `${reminder.label || 'Renewal'} was moved ahead one year.` });
+    } catch (error) {
+      notifyUserError('vehicle_renewal_done', error, {
+        title: 'Renewal not updated',
+        description: 'Road Sage could not save the renewal date.',
+      });
+    }
   };
 
   const tripListFor = (vehicle) => trips.filter(t => (

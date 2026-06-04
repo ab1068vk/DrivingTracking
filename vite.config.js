@@ -56,6 +56,7 @@ const manualChunks = (id) => {
     return 'app-core';
   }
   if (!moduleId.includes('/node_modules/')) return undefined;
+  if (moduleId.includes('/@capacitor/')) return 'app-core';
   if (
     moduleId.includes('/react/') ||
     moduleId.includes('/react-dom/') ||
@@ -67,7 +68,6 @@ const manualChunks = (id) => {
   if (moduleId.includes('/recharts/')) return 'charts-vendor';
   if (moduleId.includes('/html2canvas/')) return 'html2canvas-vendor';
   if (moduleId.includes('/jspdf/')) return 'jspdf-vendor';
-  if (moduleId.includes('/@capacitor/')) return 'capacitor-vendor';
   return undefined;
 };
 

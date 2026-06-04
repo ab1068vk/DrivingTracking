@@ -3,6 +3,7 @@ import {
   BACKUP_INTEGRITY_ERROR,
   importDriveSenseBackup,
   BACKUP_VERSION,
+  countTripsOutsideRetentionWindow,
   MAX_BACKUP_BYTES,
   MAX_IMPORTED_TRIP_DRIVING_EVENTS,
   MAX_IMPORTED_TRIP_NOTES_LENGTH,
@@ -12,7 +13,9 @@ import {
   sealPlaintextBackup,
   verifyPlaintextBackupIntegrity,
 } from '@/lib/dataBackup';
+import { tripService } from '@/api/trips';
 import { encryptBackup } from '@/lib/backupEncryption';
+import { DEFAULT_SETTINGS, localSettings } from '@/lib/trackingStore';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 vi.mock('@/api/trips', () => ({
@@ -35,7 +38,9 @@ const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
 
 describe('backup trip import sanitization', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+    localSettings.set(DEFAULT_SETTINGS);
   });
 
   it('rejects oversized backup files before reading them', async () => {
@@ -64,6 +69,64 @@ describe('backup trip import sanitization', () => {
       vehicles: 0,
     });
     expect(file.text).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts JSON backups with a UTF-8 BOM prefix', async () => {
+    const file = {
+      size: 200,
+      text: vi.fn(async () => `\uFEFF${JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [],
+        trips: [{ id: 'trip-bom', status: 'completed' }],
+      })}`),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      trips: 1,
+      vehicles: 0,
+    });
+  });
+
+  it('keeps older restored trips visible by disabling retention during full backup import', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-06-01T12:00:00.000Z').getTime());
+    localSettings.set({ ...DEFAULT_SETTINGS, data_retention_months: 24 });
+    const file = {
+      size: 300,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        settings: { data_retention_months: 24 },
+        vehicles: [],
+        trips: [{
+          id: 'legacy-json-trip',
+          status: 'completed',
+          start_time: '2020-01-01T12:00:00.000Z',
+          end_time: '2020-01-01T12:20:00.000Z',
+        }],
+      })),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      trips: 1,
+      retentionAutoDeleteDisabled: true,
+      retentionPreservedTripCount: 1,
+    });
+    expect(tripService.upsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: 'legacy-json-trip' })]),
+      { skipRetentionPrune: true, skipRescore: true }
+    );
+    expect(localSettings.get().data_retention_months).toBe(0);
+  });
+
+  it('counts completed trips outside the active retention window', () => {
+    const now = new Date('2026-06-01T12:00:00.000Z').getTime();
+
+    expect(countTripsOutsideRetentionWindow([
+      { id: 'old-completed', status: 'completed', start_time: '2020-01-01T12:00:00.000Z' },
+      { id: 'old-discarded', status: 'discarded', start_time: '2020-01-01T12:00:00.000Z' },
+      { id: 'recent-completed', status: 'completed', start_time: '2026-05-01T12:00:00.000Z' },
+    ], 24, now)).toBe(1);
   });
 
   it('sanitizes active trips from backup imports', () => {

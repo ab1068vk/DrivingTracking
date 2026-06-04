@@ -1,6 +1,7 @@
 import {
   saveExportToDownloads
 } from '../../lib/nativeDownloads.js';
+import { Capacitor } from '@capacitor/core';
 import {
   buildEncryptedExport,
   encryptedExportFilename
@@ -623,7 +624,6 @@ export async function downloadCSV(content, filename, { password } = {}) {
   const exportFilename = encryptedExportFilename(safeFilename);
 
   try {
-    const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.isNativePlatform()) {
       const result = await saveExportToDownloads({
         filename: exportFilename,

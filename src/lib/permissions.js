@@ -18,10 +18,14 @@ const STATUS_CACHE_TTL_MS = 10_000;
 
 let statusCache = null;
 let statusCacheAt = 0;
+let statusRefreshInFlight = null;
+let statusCacheGeneration = 0;
 
 export function invalidatePermissionCache() {
   statusCache = null;
   statusCacheAt = 0;
+  statusRefreshInFlight = null;
+  statusCacheGeneration += 1;
 }
 
 async function safeNativeRead(key, fallback = null) {
@@ -84,6 +88,35 @@ function storedSettingForStatus(status, storedValue) {
   return false;
 }
 
+function settingsPatchForStatus(status, storedSettings = {}) {
+  return {
+    location_permission_granted: storedSettingForStatus(status.foregroundLocation, storedSettings.location_permission_granted),
+    notification_permission_granted: storedSettingForStatus(status.notifications, storedSettings.notification_permission_granted),
+    activity_permission_granted: storedSettingForStatus(status.activityRecognition, storedSettings.activity_permission_granted),
+    background_location_granted: storedSettingForStatus(status.backgroundLocation, storedSettings.background_location_granted),
+    phone_usage_access_granted: storedSettingForStatus(status.phoneUsageAccess, storedSettings.phone_usage_access_granted),
+  };
+}
+
+function patchChanged(patch, settings = {}) {
+  return Object.entries(patch).some(([key, value]) => settings?.[key] !== value);
+}
+
+function parseStatusArgs(permissionTypeOrOptions, options = {}) {
+  if (permissionTypeOrOptions && typeof permissionTypeOrOptions === 'object') {
+    return {
+      permissionType: null,
+      force: permissionTypeOrOptions.force === true,
+      persist: permissionTypeOrOptions.persist !== false,
+    };
+  }
+  return {
+    permissionType: permissionTypeOrOptions || null,
+    force: options.force === true,
+    persist: options.persist !== false,
+  };
+}
+
 function maybePromoteDeniedToNeedsSettings(status, storedSettings, key) {
   if (status !== PERMISSION_STATES.DENIED) return status;
   return storedPermissionState(storedSettings, key) === PERMISSION_STATES.NEEDS_SETTINGS
@@ -91,13 +124,35 @@ function maybePromoteDeniedToNeedsSettings(status, storedSettings, key) {
     : status;
 }
 
-export async function getPermissionStatus(permissionType = null) {
+export async function getPermissionStatus(permissionType = null, options = {}) {
+  const { permissionType: requestedPermissionType, force, persist } = parseStatusArgs(permissionType, options);
   const now = Date.now();
-  if (statusCache && now - statusCacheAt < STATUS_CACHE_TTL_MS) {
+  if (!force && statusCache && now - statusCacheAt < STATUS_CACHE_TTL_MS) {
     const cached = { ...statusCache };
-    return permissionType ? { status: cached[permissionType] || PERMISSION_STATES.UNKNOWN } : cached;
+    return requestedPermissionType ? { status: cached[requestedPermissionType] || PERMISSION_STATES.UNKNOWN } : cached;
   }
 
+  if (!force && statusRefreshInFlight) {
+    const pending = await statusRefreshInFlight;
+    const snapshot = { ...pending };
+    return requestedPermissionType ? { status: snapshot[requestedPermissionType] || PERMISSION_STATES.UNKNOWN } : snapshot;
+  }
+
+  const generation = statusCacheGeneration;
+  statusRefreshInFlight = readPermissionStatus({ persist, generation })
+    .finally(() => {
+      statusRefreshInFlight = null;
+    });
+
+  const snapshot = await statusRefreshInFlight;
+  return requestedPermissionType ? { status: snapshot[requestedPermissionType] || PERMISSION_STATES.UNKNOWN } : snapshot;
+}
+
+export async function refreshPermissionStatus(options = {}) {
+  return getPermissionStatus(null, { ...options, force: true });
+}
+
+async function readPermissionStatus({ persist = true, generation = statusCacheGeneration } = {}) {
   const status = unknownPermissionStatus();
 
   try {
@@ -193,29 +248,39 @@ export async function getPermissionStatus(permissionType = null) {
       status.bluetooth = bluetoothSupport.supported ? PERMISSION_STATES.NOT_REQUESTED : PERMISSION_STATES.UNAVAILABLE;
     }
 
-    try {
-      localSettings.update({
-        location_permission_granted: storedSettingForStatus(status.foregroundLocation, storedSettings.location_permission_granted),
-        notification_permission_granted: storedSettingForStatus(status.notifications, storedSettings.notification_permission_granted),
-        activity_permission_granted: storedSettingForStatus(status.activityRecognition, storedSettings.activity_permission_granted),
-        background_location_granted: storedSettingForStatus(status.backgroundLocation, storedSettings.background_location_granted),
-        phone_usage_access_granted: storedSettingForStatus(status.phoneUsageAccess, storedSettings.phone_usage_access_granted),
-      });
-    } catch (err) {
-      logError('permission_status_settings_update', err);
+    if (persist) {
+      try {
+        const patch = settingsPatchForStatus(status, storedSettings);
+        if (patchChanged(patch, storedSettings)) {
+          localSettings.update(patch);
+        }
+      } catch (err) {
+        logError('permission_status_settings_update', err);
+      }
     }
 
-    statusCache = { ...status };
-    statusCacheAt = Date.now();
-    return permissionType ? { status: status[permissionType] || PERMISSION_STATES.UNKNOWN } : status;
+    if (generation === statusCacheGeneration) {
+      statusCache = { ...status };
+      statusCacheAt = Date.now();
+    }
+    return status;
   } catch (err) {
-    console.warn('[permissions] getPermissionStatus failed:', permissionType, err);
-    return permissionType ? { status: PERMISSION_STATES.UNKNOWN } : status;
+    console.warn('[permissions] getPermissionStatus failed:', err);
+    return status;
   }
+}
+
+async function currentPermissionState(permissionType) {
+  const result = await refreshPermissionStatus({ persist: false }).catch(() => null);
+  return result?.[permissionType] || PERMISSION_STATES.UNKNOWN;
 }
 
 export async function requestForegroundLocationPermission() {
   invalidatePermissionCache();
+  if (await currentPermissionState('foregroundLocation') === PERMISSION_STATES.GRANTED) {
+    localSettings.update({ location_permission_granted: true, _location_denial_count: 0 });
+    return true;
+  }
   if (isNativePlatform()) {
     const settings = localSettings.get();
     const priorDenials = Number(settings._location_denial_count || 0);
@@ -269,6 +334,10 @@ export async function requestForegroundLocationPermission() {
 
 export async function requestNotificationPermission() {
   invalidatePermissionCache();
+  if (await currentPermissionState('notifications') === PERMISSION_STATES.GRANTED) {
+    localSettings.update({ notification_permission_granted: true, _notification_denial_count: 0 });
+    return true;
+  }
   if (isNativePlatform()) {
     const settings = localSettings.get();
     const priorDenials = Number(settings._notification_denial_count || 0);
@@ -309,6 +378,10 @@ export async function requestNotificationPermission() {
 export async function requestActivityRecognitionPermission() {
   if (!isAndroid()) return false;
   invalidatePermissionCache();
+  if (await currentPermissionState('activityRecognition') === PERMISSION_STATES.GRANTED) {
+    localSettings.update({ activity_permission_granted: true, _activity_denial_count: 0 });
+    return true;
+  }
   const settings = localSettings.get();
   const priorDenials = Number(settings._activity_denial_count || 0);
   try {
@@ -337,6 +410,10 @@ export async function requestActivityRecognitionPermission() {
 
 export async function requestBackgroundLocationPermission() {
   invalidatePermissionCache();
+  if (await currentPermissionState('backgroundLocation') === PERMISSION_STATES.GRANTED) {
+    localSettings.update({ background_location_granted: true });
+    return true;
+  }
   const foregroundGranted = await requestForegroundLocationPermission();
   if (!foregroundGranted) return false;
 

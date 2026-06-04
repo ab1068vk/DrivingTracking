@@ -4,6 +4,7 @@
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { Capacitor } from '@capacitor/core';
 import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
 import { truncateCoord, truncateRoutePoint, truncateTripCoordinates } from '@/lib/gps/sanitize';
 import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
@@ -48,6 +49,7 @@ const PRIVACY_ZONE_RADIUS_MIN_M = 50;
 const PRIVACY_ZONE_RADIUS_MAX_M = 500;
 const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
+let pendingNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 const LIVE_POINTS_MAX = 6000;
@@ -224,7 +226,6 @@ const nativeDriveSenseApi = Object.freeze(nativeDriveSenseMethods.reduce((api, m
 
 const androidNativeDriveSensePlugin = async () => {
   try {
-    const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.getPlatform?.() !== 'android') return null;
     return nativeDriveSenseApi;
   } catch {
@@ -234,7 +235,6 @@ const androidNativeDriveSensePlugin = async () => {
 
 const isAndroidNativePlatform = async () => {
   try {
-    const { Capacitor } = await import('@capacitor/core');
     return Capacitor.getPlatform?.() === 'android';
   } catch {
     return false;
@@ -374,16 +374,20 @@ export async function isInPrivacyZone(lat, lng, zones = null) {
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;
   const serialized = JSON.stringify(settings);
-  if (serialized === lastNativeSettingsSync) return;
-  lastNativeSettingsSync = serialized;
-  import('@capacitor/core')
-    .then(({ Capacitor }) => {
-      if (!Capacitor.isNativePlatform()) return null;
-      return androidNativeDriveSensePlugin();
-    })
+  if (serialized === lastNativeSettingsSync || serialized === pendingNativeSettingsSync) return;
+  pendingNativeSettingsSync = serialized;
+  Promise.resolve(Capacitor.isNativePlatform() ? androidNativeDriveSensePlugin() : null)
     .then((nativePlugin) => {
-      if (!nativePlugin?.saveSettings) return;
-      nativePlugin.saveSettings({ settingsJson: serialized }).catch((err) => {
+      if (!nativePlugin?.saveSettings) {
+        if (pendingNativeSettingsSync === serialized) pendingNativeSettingsSync = '';
+        return;
+      }
+      nativePlugin.saveSettings({ settingsJson: serialized }).then(() => {
+        if (pendingNativeSettingsSync === serialized) {
+          lastNativeSettingsSync = serialized;
+          pendingNativeSettingsSync = '';
+        }
+      }).catch((err) => {
         logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
       });
     })
@@ -391,6 +395,36 @@ const syncSettingsForNative = (settings) => {
       logError('native_settings_sync_module_load', err);
     });
 };
+
+export function reconcileSettingsHydrationSnapshot(nativeSettings, pendingSettingsJson = '') {
+  const { settings: normalizedNative } = migrateDefaultSettings(nativeSettings || {});
+  const nativeSerialized = JSON.stringify(normalizedNative);
+  if (!pendingSettingsJson || pendingSettingsJson === nativeSerialized) {
+    return {
+      settings: normalizedNative,
+      serialized: nativeSerialized,
+      shouldPersistPending: false,
+      invalidPending: false,
+    };
+  }
+
+  try {
+    const { settings: pendingSettings } = migrateDefaultSettings(JSON.parse(pendingSettingsJson));
+    return {
+      settings: pendingSettings,
+      serialized: JSON.stringify(pendingSettings),
+      shouldPersistPending: true,
+      invalidPending: false,
+    };
+  } catch {
+    return {
+      settings: normalizedNative,
+      serialized: nativeSerialized,
+      shouldPersistPending: false,
+      invalidPending: true,
+    };
+  }
+}
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
@@ -938,7 +972,6 @@ export function saveLastMapCenter({ lat, lng, tripId = null, source = 'tracking'
 export const localSettings = {
   async hydrateFromNative() {
     try {
-      const { Capacitor } = await import('@capacitor/core');
       if (!Capacitor.isNativePlatform()) return this.get();
 
       const nativePlugin = await androidNativeDriveSensePlugin();
@@ -946,14 +979,17 @@ export const localSettings = {
         const native = await nativePlugin.getSettings();
         if (native?.settingsJson) {
           const parsed = JSON.parse(native.settingsJson);
-          const { settings: merged, changed } = migrateDefaultSettings(parsed);
-          const serialized = JSON.stringify(merged);
-          cacheSettingsForRuntime(merged);
-          if (changed && nativePlugin.saveSettings) {
-            await nativePlugin.saveSettings({ settingsJson: serialized });
+          const reconciled = reconcileSettingsHydrationSnapshot(parsed, pendingNativeSettingsSync);
+          cacheSettingsForRuntime(reconciled.settings);
+          if (reconciled.invalidPending) pendingNativeSettingsSync = '';
+          if ((reconciled.shouldPersistPending || JSON.stringify(parsed) !== reconciled.serialized) && nativePlugin.saveSettings) {
+            await nativePlugin.saveSettings({ settingsJson: reconciled.serialized });
           }
-          lastNativeSettingsSync = serialized;
-          return merged;
+          lastNativeSettingsSync = reconciled.serialized;
+          if (pendingNativeSettingsSync === reconciled.serialized || reconciled.invalidPending) {
+            pendingNativeSettingsSync = '';
+          }
+          return reconciled.settings;
         }
       }
 
@@ -992,9 +1028,7 @@ export const localSettings = {
         const { settings: merged, changed } = migrateDefaultSettings(parsed);
         if (changed) {
           storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
-          syncSettingsForNative(merged);
         }
-        syncSettingsForNative(merged);
         return merged;
       }
       if (!storage && memorySettings) {
@@ -1006,7 +1040,6 @@ export const localSettings = {
       const defaults = { ...DEFAULT_SETTINGS };
       if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults));
       else memorySettings = defaults;
-      syncSettingsForNative(defaults);
       return defaults;
     } catch {
       return { ...DEFAULT_SETTINGS };

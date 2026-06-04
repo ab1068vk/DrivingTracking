@@ -47,13 +47,29 @@ const buildUrl = (path, query) => {
 };
 
 const parseJsonSafely = async (response) => {
-  const text = await response.text();
+  let text = "";
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new ApiError("Could not read the server response.", {
+      status: response.status,
+      response,
+      data: { parse_error: error?.message || "response_read_failed" },
+    });
+  }
   if (!text) return null;
 
   try {
     return JSON.parse(text);
-  } catch {
-    return text;
+  } catch (error) {
+    if (response.ok) {
+      throw new ApiError("The server returned data Road Sage could not read.", {
+        status: response.status,
+        response,
+        data: { parse_error: error?.message || "invalid_json", preview: text.slice(0, 120) },
+      });
+    }
+    return text.slice(0, 500);
   }
 };
 
@@ -63,18 +79,33 @@ const parseJsonSafely = async (response) => {
  */
 async function request(path, { method = "GET", body, headers, query, ...options } = {}) {
   const hasBody = body !== undefined && body !== null;
+  let url;
+  try {
+    url = buildUrl(path, query);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(error?.message || "Could not prepare the request.");
+  }
 
-  const response = await fetch(buildUrl(path, query), {
-    method,
-    credentials: "include",
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...headers,
-    },
-    body: hasBody ? JSON.stringify(body) : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      credentials: "include",
+      ...options,
+      headers: {
+        Accept: "application/json",
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+        ...headers,
+      },
+      body: hasBody ? JSON.stringify(body) : undefined,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw new ApiError("Network request failed. Check your connection and try again.", {
+      data: { original_error: error?.message || "fetch_failed" },
+    });
+  }
 
   const data = await parseJsonSafely(response);
 

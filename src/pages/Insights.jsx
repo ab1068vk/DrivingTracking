@@ -32,6 +32,10 @@ export default function Insights() {
   const { data: trips = [], isLoading } = useQuery({
     queryKey: ['insight-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Insights unavailable',
+      errorDescription: 'Road Sage could not load trips for driving insights.',
+    },
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');

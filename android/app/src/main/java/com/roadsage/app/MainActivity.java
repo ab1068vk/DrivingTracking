@@ -65,20 +65,32 @@ public class MainActivity extends BridgeActivity {
             WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         }
         registerRoadSagePlugins();
-        PrivacyZoneStore.migratePlaintextPrefsIfNeeded(this);
-        DriveSenseNativeTripStore.migratePlaintextPrefsIfNeeded(this);
         suspendTrackingOnCompromisedRuntime();
         sanitizeLaunchIntent(getIntent());
         super.onCreate(savedInstanceState);
         hardenWebView();
         disableWebViewAutofill();
         installSecurityHeaderWebViewClient();
+        warmSecureStoresAfterLaunch();
     }
 
     private void registerRoadSagePlugins() {
         for (Class<? extends Plugin> pluginClass : ROAD_SAGE_PLUGIN_ALLOWLIST) {
             registerPlugin(pluginClass);
         }
+    }
+
+    private void warmSecureStoresAfterLaunch() {
+        View decorView = getWindow() == null ? null : getWindow().getDecorView();
+        if (decorView == null) return;
+
+        decorView.postDelayed(() -> new Thread(() -> {
+            try {
+                EncryptedPreferenceStore.warmMasterKey(this);
+            } catch (Exception error) {
+                Log.w(TAG, "Secure store warmup deferred after launch failed.", error);
+            }
+        }, "RoadSageSecureStoreWarmup").start(), 1500L);
     }
 
     private void suspendTrackingOnCompromisedRuntime() {
@@ -237,7 +249,6 @@ public class MainActivity extends BridgeActivity {
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
         }
 
-        clearWebViewCache();
     }
 
     private void clearWebViewCache() {

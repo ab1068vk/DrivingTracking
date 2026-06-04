@@ -13,8 +13,6 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.security.KeyStore;
-import java.security.SecureRandom;
-
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -23,7 +21,7 @@ import javax.crypto.spec.GCMParameterSpec;
 
 @CapacitorPlugin(name = "SecureKey")
 public class SecureKeyPlugin extends Plugin {
-    private static final String KEY_ALIAS = "road_sage_js_enc_key_v3";
+    private static final String KEY_ALIAS = "road_sage_js_enc_key_v4";
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
 
@@ -37,10 +35,12 @@ public class SecureKeyPlugin extends Plugin {
 
         try {
             SecretKey key = getOrCreateKey();
-            byte[] iv = new byte[IV_BYTES];
-            new SecureRandom().nextBytes(iv);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
+            cipher.init(Cipher.ENCRYPT_MODE, key);
+            byte[] iv = cipher.getIV();
+            if (iv == null || iv.length != IV_BYTES) {
+                throw new java.security.GeneralSecurityException("Android Keystore did not provide a valid AES-GCM IV.");
+            }
             byte[] ct = cipher.doFinal(Base64.decode(plaintextB64, Base64.NO_WRAP));
             JSObject result = new JSObject();
             result.put("iv", Base64.encodeToString(iv, Base64.NO_WRAP));
@@ -92,19 +92,8 @@ public class SecureKeyPlugin extends Plugin {
     static SecretKey getOrCreateKey() throws Exception {
         KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
         keyStore.load(null);
-        if (keyStore.containsAlias(KEY_ALIAS) && !isRequiredBacking(keyStore)) {
-            keyStore.deleteEntry(KEY_ALIAS);
-        }
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             generateKey();
-        }
-        if (!isRequiredBacking(keyStore)) {
-            keyStore.deleteEntry(KEY_ALIAS);
-            throw new java.security.GeneralSecurityException(
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                    ? "Road Sage requires a StrongBox-backed Android Keystore key."
-                    : "Road Sage requires a hardware-backed Android Keystore key."
-            );
         }
         return ((KeyStore.SecretKeyEntry) keyStore.getEntry(KEY_ALIAS, null)).getSecretKey();
     }
@@ -134,29 +123,10 @@ public class SecureKeyPlugin extends Plugin {
             .setKeySize(256)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
             .setUserAuthenticationRequired(false);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            builder.setIsStrongBoxBacked(true);
-        }
 
         generator.init(builder.build());
         generator.generateKey();
-    }
-
-    private static boolean isRequiredBacking(KeyStore keyStore) {
-        try {
-            KeyStore.Entry entry = keyStore.getEntry(KEY_ALIAS, null);
-            if (!(entry instanceof KeyStore.SecretKeyEntry)) return false;
-            SecretKey key = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
-            SecretKeyFactory factory = SecretKeyFactory.getInstance(key.getAlgorithm(), "AndroidKeyStore");
-            KeyInfo info = (KeyInfo) factory.getKeySpec(key, KeyInfo.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                return info.getSecurityLevel() == KeyProperties.SECURITY_LEVEL_STRONGBOX;
-            }
-            return info.isInsideSecureHardware();
-        } catch (Exception ignored) {
-            return false;
-        }
     }
 }

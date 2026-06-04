@@ -17,6 +17,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 import { activeTripStore, applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import { BIOMETRIC_LOCK_DEFAULT_ENABLED, BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES, NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { downloadCSV, tripsToCSV } from '@/engine/export/index.js';
@@ -35,12 +36,14 @@ import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
   getPermissionStatus,
+  refreshPermissionStatus,
   requestActivityRecognitionPermission,
   requestBackgroundLocationPermission,
   requestBluetoothPermission,
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
+import { useOptionalPermissions } from '@/lib/permissions/PermissionContext';
 import { isAndroid } from '@/lib/nativePlatform';
 import {
   getAndroidBatteryOptimizationStatus,
@@ -250,6 +253,7 @@ const SETTINGS_RENDER_FALLBACKS = {
   biometric_lock_enabled: BIOMETRIC_LOCK_DEFAULT_ENABLED,
   osrm_map_matching_url: '',
 };
+const SETTINGS_ANDROID_STATUS_POLL_MS = 30_000;
 
 function normalizeSettingsSnapshot(settings) {
   return {
@@ -325,7 +329,10 @@ export default function Settings() {
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => readLocalSettingsSnapshot().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
+  const refreshPermissionsInFlightRef = useRef(null);
+  const backupImportPickerBusy = false;
   const qc = useQueryClient();
+  const permissionContext = useOptionalPermissions();
 
   // Load settings from local storage
   const [cfg, setCfg] = useState(readLocalSettingsSnapshot);
@@ -334,6 +341,10 @@ export default function Settings() {
   const { data: allTrips = [] } = useQuery({
     queryKey: ['settings-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Settings trip data unavailable',
+      errorDescription: 'Some trip-based settings and score summaries may be incomplete until trips load.',
+    },
   });
 
   const { data: scoreMigrationSummary = {
@@ -352,11 +363,19 @@ export default function Settings() {
   } } = useQuery({
     queryKey: ['score-migration-summary'],
     queryFn: () => tripService.getScoreMigrationSummary(),
+    meta: {
+      errorTitle: 'Score migration status unavailable',
+      errorDescription: 'Road Sage could not check whether older trips need score updates.',
+    },
   });
 
   const { data: allVehicles = [] } = useQuery({
     queryKey: ['settings-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 200 }),
+    meta: {
+      errorTitle: 'Settings vehicle data unavailable',
+      errorDescription: 'Vehicle settings may be incomplete until vehicle profiles load.',
+    },
   });
 
   const updateCfg = (patch) => {
@@ -381,11 +400,19 @@ export default function Settings() {
       });
       return cfg;
     }
-    const updated = normalizeSettingsSnapshot(localSettings.update(patch));
-    setCfg(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    return updated;
+    try {
+      const updated = normalizeSettingsSnapshot(localSettings.update(patch));
+      setCfg(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      return updated;
+    } catch (error) {
+      notifyUserError('settings_save', error, {
+        title: 'Setting not saved',
+        description: 'Road Sage could not write this setting. Try again after storage is available.',
+      });
+      return currentCfg;
+    }
   };
 
   useEffect(() => {
@@ -405,6 +432,12 @@ export default function Settings() {
         Number(version || scoreMigrationSummary.event_migration_version || 0) >= TRIP_EVENT_MIGRATION_VERSION &&
         dismissed !== true
       );
+    }).catch((error) => {
+      if (!active) return;
+      notifyUserError('settings_migration_notice_load', error, {
+        title: 'Settings notice unavailable',
+        description: 'Road Sage could not load one saved notice state. Settings still work.',
+      });
     });
     return () => {
       active = false;
@@ -436,8 +469,15 @@ export default function Settings() {
   }, [qc]);
 
   const dismissHeadingEventMigrationNote = async () => {
-    await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
-    setHeadingEventMigrationNoteVisible(false);
+    try {
+      await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
+      setHeadingEventMigrationNoteVisible(false);
+    } catch (error) {
+      notifyUserError('settings_migration_notice_dismiss', error, {
+        title: 'Notice not dismissed',
+        description: 'Road Sage could not save that this notice was dismissed.',
+      });
+    }
   };
 
   const enableOsrmMapMatching = (enabled) => {
@@ -584,44 +624,89 @@ export default function Settings() {
   };
 
   const runVoiceTest = async () => {
-    const ok = await testVoiceAlert(cfg);
-    setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
-    setTimeout(() => setVoiceTestStatus(''), 3000);
+    try {
+      const ok = await testVoiceAlert(cfg);
+      setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
+      setTimeout(() => setVoiceTestStatus(''), 3000);
+    } catch (error) {
+      setVoiceTestStatus('Voice test failed.');
+      notifyUserError('settings_voice_test', error, {
+        title: 'Voice test failed',
+        description: 'Road Sage could not play the voice alert test on this device.',
+      });
+      setTimeout(() => setVoiceTestStatus(''), 3000);
+    }
   };
 
   const runCalibration = async () => {
     setCalibLoading(true);
-    const trips = await tripService.listAll({ sort: '-start_time' });
-    const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
-    await saveCalibrationProfile(profile);
-    setCalibProfile(profile);
-    setCalibLoading(false);
+    try {
+      const trips = await tripService.listAll({ sort: '-start_time' });
+      const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
+      await saveCalibrationProfile(profile);
+      setCalibProfile(profile);
+    } catch (error) {
+      notifyUserError('settings_calibration_run', error, {
+        title: 'Calibration failed',
+        description: 'Road Sage could not build a calibration profile from your trips.',
+      });
+    } finally {
+      setCalibLoading(false);
+    }
   };
 
   const applyCalibration = async () => {
-    const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
-      const normalizedNext = normalizeSettingsSnapshot(next);
-      localSettings.set(normalizedNext);
-      setCfg(normalizedNext);
-    });
-    const count = await tripService.markCompletedForRescore().catch(() => 0);
-    await qc.invalidateQueries();
-    setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
-    setCfg(normalizeSettingsSnapshot(updated));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    setCalibProfile(await loadCalibrationProfile());
+    try {
+      const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
+        const normalizedNext = normalizeSettingsSnapshot(next);
+        localSettings.set(normalizedNext);
+        setCfg(normalizedNext);
+      });
+      let count = 0;
+      try {
+        count = await tripService.markCompletedForRescore();
+      } catch (error) {
+        notifyUserError('settings_calibration_rescore_queue', error, {
+          title: 'Calibration applied, re-score delayed',
+          description: 'New settings were saved, but Road Sage could not queue trips for re-scoring.',
+        });
+      }
+      await qc.invalidateQueries();
+      setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
+      setCfg(normalizeSettingsSnapshot(updated));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      setCalibProfile(await loadCalibrationProfile());
+    } catch (error) {
+      notifyUserError('settings_calibration_apply', error, {
+        title: 'Calibration not applied',
+        description: 'Road Sage could not save the calibration profile.',
+      });
+    }
   };
 
   const rescoreTrips = async () => {
-    await getPermissionStatus().catch(() => null);
-    const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
-    const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
-    await qc.invalidateQueries();
-    setRescoreStatus(onlyProvenanceMismatch
-      ? `${count} outdated trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`
-      : `${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
-    setTimeout(() => setRescoreStatus(''), 5000);
+    try {
+      await refreshPermissionStatus({ persist: false }).catch((error) => {
+        notifyUserError('settings_rescore_permission_refresh', error, {
+          title: 'Permission refresh skipped',
+          description: 'Road Sage will still queue re-scoring, but permission status may be stale.',
+        });
+        return null;
+      });
+      const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
+      const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
+      await qc.invalidateQueries();
+      setRescoreStatus(onlyProvenanceMismatch
+        ? `${count} outdated trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`
+        : `${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
+      setTimeout(() => setRescoreStatus(''), 5000);
+    } catch (error) {
+      notifyUserError('settings_rescore_trips', error, {
+        title: 'Re-score not queued',
+        description: 'Road Sage could not mark trips for re-scoring.',
+      });
+    }
   };
 
   const dismissCalibration = async () => {
@@ -630,25 +715,32 @@ export default function Settings() {
   };
 
   const updateNotificationSetting = async (patch) => {
-    const wantsNotifications = patch.notifications_enabled === true ||
-      Object.entries(patch).some(([key, value]) => key !== 'notifications_enabled' && value === true);
+    try {
+      const wantsNotifications = patch.notifications_enabled === true ||
+        Object.entries(patch).some(([key, value]) => key !== 'notifications_enabled' && value === true);
 
-    if (wantsNotifications) {
-      const granted = await requestNotificationPermission();
-      if (!granted) {
-        toast({
-          title: 'Notification permission needed',
-          description: getPermissionExplanation('notifications'),
-          variant: 'destructive',
-        });
-        await refreshPermissions();
-        return;
+      if (wantsNotifications) {
+        const granted = await requestNotificationPermission();
+        if (!granted) {
+          toast({
+            title: 'Notification permission needed',
+            description: getPermissionExplanation('notifications'),
+            variant: 'destructive',
+          });
+          await refreshPermissions();
+          return;
+        }
       }
-    }
 
-    const updated = updateCfg(patch);
-    await syncReminderNotifications(updated);
-    await refreshPermissions();
+      const updated = updateCfg(patch);
+      await syncReminderNotifications(updated);
+      await refreshPermissions();
+    } catch (error) {
+      notifyUserError('settings_notification_update', error, {
+        title: 'Notification setting not saved',
+        description: 'Road Sage could not update notification settings or reminder schedules.',
+      });
+    }
   };
 
   const updateRetention = async (months) => {
@@ -808,26 +900,47 @@ export default function Settings() {
   };
 
   const refreshPermissions = async () => {
-    const status = await getPermissionStatus();
-    setPermissionStatus(status);
-    try {
-      setCfg(normalizeSettingsSnapshot(localSettings.get()));
-    } catch (err) {
-      logError('settings_permission_snapshot_refresh', err);
-    }
+    if (refreshPermissionsInFlightRef.current) return refreshPermissionsInFlightRef.current;
 
-    if (isAndroid()) {
+    const task = (async () => {
+      const statusPromise = permissionContext?.refresh
+        ? permissionContext.refresh({ force: true })
+        : getPermissionStatus(null, { force: true });
+      const nativeStatusPromise = isAndroid()
+        ? getNativeAutoTrackingStatus().catch((err) => {
+            logError('settings_native_tracking_status', err);
+            return null;
+          })
+        : Promise.resolve(null);
+      const batteryStatusPromise = isAndroid()
+        ? getAndroidBatteryOptimizationStatus().catch((err) => {
+            logError('settings_battery_optimization_status', err);
+            return null;
+          })
+        : Promise.resolve(null);
+
+      const [status, nextNativeStatus, nextBatteryStatus] = await Promise.all([
+        statusPromise,
+        nativeStatusPromise,
+        batteryStatusPromise,
+      ]);
+
+      setPermissionStatus(status);
       try {
-        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        setCfg(normalizeSettingsSnapshot(localSettings.get()));
       } catch (err) {
-        logError('settings_native_tracking_status', err);
+        logError('settings_permission_snapshot_refresh', err);
       }
-      try {
-        setBatteryStatus(await getAndroidBatteryOptimizationStatus());
-      } catch (err) {
-        logError('settings_battery_optimization_status', err);
-      }
-    }
+
+      if (nextNativeStatus) setNativeTrackingStatus(nextNativeStatus);
+      if (nextBatteryStatus) setBatteryStatus(nextBatteryStatus);
+      return status;
+    })().finally(() => {
+      refreshPermissionsInFlightRef.current = null;
+    });
+
+    refreshPermissionsInFlightRef.current = task;
+    return task;
   };
 
   const refreshSettingsFromNative = async ({ restartIfReady = false } = {}) => {
@@ -839,8 +952,13 @@ export default function Settings() {
 
     if (restartIfReady && isAndroid() && latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
       try {
-        await startNativeAutoTracking();
-        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        const currentNativeStatus = await getNativeAutoTrackingStatus();
+        if (currentNativeStatus?.enabled !== true) {
+          await startNativeAutoTracking();
+          setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        } else {
+          setNativeTrackingStatus(currentNativeStatus);
+        }
       } catch (err) {
         logError('native_auto_tracking_start_settings_refresh', err, { mode: latest.tracking_mode });
       }
@@ -973,7 +1091,7 @@ export default function Settings() {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshAndRestartIfReady();
     };
-    const interval = window.setInterval(refreshAndRestartIfReady, 2000);
+    const interval = window.setInterval(refreshAndRestartIfReady, SETTINGS_ANDROID_STATUS_POLL_MS);
     window.addEventListener('focus', refreshAndRestartIfReady);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -1169,15 +1287,18 @@ export default function Settings() {
     setCfg(latestSettings);
     applyThemeMode(latestSettings.dark_mode);
     await qc.invalidateQueries();
+    const retentionNote = result.retentionAutoDeleteDisabled
+      ? ` Auto-delete was set to Never so ${result.retentionPreservedTripCount} older imported trip${result.retentionPreservedTripCount === 1 ? '' : 's'} stay visible.`
+      : '';
     toast({
       title: 'Import complete',
       description: result.truncatedFields
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}${retentionNote}`
         : !result.savedFiltersRestored && result.savedFilters
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.${retentionNote}`
         : result.privacy_zones_need_reconfiguration
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
-        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.${retentionNote}`
+        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.${retentionNote}`,
       variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
     });
     setBackupImportOpen(false);
@@ -1203,9 +1324,14 @@ export default function Settings() {
     }
   };
 
-  const handleImportBackup = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  const confirmImportBackup = (file) => {
+    const legacyPlaintextWarning = /\.json$/i.test(file.name || '')
+      ? 'This backup is unencrypted. Anyone with this file can read your driving history.\n\n'
+      : '';
+    return confirm(`${legacyPlaintextWarning}Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.`);
+  };
+
+  const startImportBackup = async (file) => {
     if (!file) return;
     if (Number(file.size) > MAX_BACKUP_BYTES) {
       toast({
@@ -1215,10 +1341,7 @@ export default function Settings() {
       });
       return;
     }
-    const legacyPlaintextWarning = /\.json$/i.test(file.name || '')
-      ? 'This backup is unencrypted. Anyone with this file can read your driving history.\n\n'
-      : '';
-    if (!confirm(`${legacyPlaintextWarning}Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.`)) return;
+    if (!confirmImportBackup(file)) return;
 
     try {
       await finishImportBackup(file);
@@ -1231,6 +1354,16 @@ export default function Settings() {
         variant: 'destructive',
       });
     }
+  };
+
+  const handleOpenImportBackup = () => {
+    importInputRef.current?.click();
+  };
+
+  const handleImportBackup = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    await startImportBackup(file);
   };
 
   const effectiveTrackingMode = cfg.tracking_paused ? 'manual' : cfg.tracking_mode;
@@ -1248,7 +1381,7 @@ export default function Settings() {
   const settingsContext = {
     AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
     AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
-    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, backupImportPickerBusy, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected: handleImportBackup, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleImportBackup: handleOpenImportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
   };
 
   return (
@@ -1308,14 +1441,6 @@ export default function Settings() {
         settingsSearch={settingsSearch}
         setSettingsSearch={setSettingsSearch}
         settingSearchResults={settingSearchResults}
-      />
-
-      <input
-        ref={importInputRef}
-        type="file"
-        accept="application/json,application/octet-stream,.json,.rsbackup"
-        className="hidden"
-        onChange={handleImportBackup}
       />
 
       <Dialog open={backupExportOpen} onOpenChange={(open) => {

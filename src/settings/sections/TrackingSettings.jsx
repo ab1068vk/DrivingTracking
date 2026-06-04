@@ -8,6 +8,12 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
+  const notificationPermissionState = permissionStatus?.notifications ||
+    (cfg.notification_permission_granted === true ? 'granted' : cfg.notification_permission_granted);
+  const notificationPermissionGranted = notificationPermissionState === 'granted';
+  const notificationsMasterOn = cfg.notifications_enabled !== false && notificationPermissionGranted;
+  const notificationControlsDisabled = !notificationsMasterOn;
+  const notificationToggleValue = (key) => notificationsMasterOn && cfg[key] !== false;
 
   return (
     <>
@@ -223,15 +229,15 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
                 <SettingRow
                   icon={Bell}
                   label="Enable all notifications"
-                  sublabel="Disabling this turns off all notification groups below"
+                  sublabel={notificationPermissionGranted ? 'Disabling this turns off all notification groups below' : 'Android notification permission is not granted'}
                 >
-                  <Toggle value={cfg.notifications_enabled !== false} onChange={v => updateNotificationSetting({ notifications_enabled: v })} />
+                  <Toggle value={notificationsMasterOn} onChange={v => updateNotificationSetting({ notifications_enabled: v })} />
                 </SettingRow>
-                <div className={`${cfg.notifications_enabled === false ? 'pointer-events-none opacity-50' : ''}`}>
+                <div className={`${notificationControlsDisabled ? 'pointer-events-none opacity-50' : ''}`}>
                   <div className="rounded-2xl bg-secondary/40 p-3">
                     <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Quiet Hours</div>
                     <SettingRow label="Quiet hours" sublabel="Suppress non-safety notifications during this window">
-                      <Toggle value={cfg.notif_quiet_hours_enabled === true} onChange={v => updateNotificationSetting({ notif_quiet_hours_enabled: v })} disabled={cfg.notifications_enabled === false} />
+                      <Toggle value={notificationsMasterOn && cfg.notif_quiet_hours_enabled === true} onChange={v => updateNotificationSetting({ notif_quiet_hours_enabled: v })} disabled={notificationControlsDisabled} />
                     </SettingRow>
                     <div className="grid grid-cols-2 gap-3 px-1 pt-3">
                       <label className="text-xs font-medium">
@@ -268,8 +274,8 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
                       { key: 'danger_zone_alerts_enabled', label: 'Repeated event area alerts', sub: 'Warn when approaching your own repeated driving-event locations' },
                       { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
                     ].map(({ key, label, sub }) => (
-                      <SettingRow key={key} label={label} sublabel={sub}>
-                        <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_safety_alerts_enabled' && cfg.notif_safety_alerts_enabled === false)} />
+                        <SettingRow key={key} label={label} sublabel={sub}>
+                        <Toggle value={notificationToggleValue(key)} onChange={v => updateNotificationSetting({ [key]: v })} disabled={notificationControlsDisabled || (key !== 'notif_safety_alerts_enabled' && cfg.notif_safety_alerts_enabled === false)} />
                       </SettingRow>
                     ))}
                   </div>
@@ -285,7 +291,7 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
                       { key: 'notif_post_trip_fuel_saving', label: 'Eco fuel savings', sub: 'Call out efficient trips with fuel savings' },
                     ].map(({ key, label, sub }) => (
                       <SettingRow key={key} label={label} sublabel={sub}>
-                        <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key.startsWith('notif_post_trip_') && cfg.notif_post_trip_summary_enabled === false && key !== 'notif_post_trip_summary_enabled')} />
+                        <Toggle value={notificationToggleValue(key)} onChange={v => updateNotificationSetting({ [key]: v })} disabled={notificationControlsDisabled || (key.startsWith('notif_post_trip_') && cfg.notif_post_trip_summary_enabled === false && key !== 'notif_post_trip_summary_enabled')} />
                       </SettingRow>
                     ))}
                     <div className="px-1 pt-3">
@@ -300,6 +306,7 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
                         step={5}
                         value={cfg.notif_min_score_for_post_trip ?? 0}
                         onChange={e => updateNotificationSetting({ notif_min_score_for_post_trip: Number(e.target.value) })}
+                        disabled={notificationControlsDisabled}
                         className="w-full accent-primary"
                       />
                       <p className="mt-1 text-xs text-muted-foreground">0 means always notify when a post-trip rule matches.</p>
@@ -318,7 +325,7 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
                       { key: 'safe_driving_reminder', label: 'Safe driving tips', sub: 'Occasional driving reminders' },
                     ].map(({ key, label, sub }) => (
                       <SettingRow key={key} label={label} sublabel={sub}>
-                        <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_coaching_enabled' && cfg.notif_coaching_enabled === false && key.startsWith('notif_'))} />
+                        <Toggle value={notificationToggleValue(key)} onChange={v => updateNotificationSetting({ [key]: v })} disabled={notificationControlsDisabled || (key !== 'notif_coaching_enabled' && cfg.notif_coaching_enabled === false && key.startsWith('notif_'))} />
                       </SettingRow>
                     ))}
                   </div>
@@ -326,15 +333,15 @@ export function TrackingSettings({ ctx, visibleSectionIds = null }) {
                   <div className="rounded-2xl bg-secondary/40 p-3">
                     <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Vehicle</div>
                     <SettingRow label="Maintenance reminders" sublabel="Vehicle service due and soon notifications">
-                      <Toggle value={cfg.notif_maintenance_enabled !== false} onChange={v => updateNotificationSetting({ notif_maintenance_enabled: v })} disabled={cfg.notifications_enabled === false} />
+                      <Toggle value={notificationToggleValue('notif_maintenance_enabled')} onChange={v => updateNotificationSetting({ notif_maintenance_enabled: v })} disabled={notificationControlsDisabled} />
                     </SettingRow>
                     <SettingRow label="No-trip nudge" sublabel="Remind after a period with no recorded trips">
-                      <Toggle value={cfg.notif_inactive_nudge_enabled !== false} onChange={v => updateNotificationSetting({ notif_inactive_nudge_enabled: v })} disabled={cfg.notifications_enabled === false} />
+                      <Toggle value={notificationToggleValue('notif_inactive_nudge_enabled')} onChange={v => updateNotificationSetting({ notif_inactive_nudge_enabled: v })} disabled={notificationControlsDisabled} />
                     </SettingRow>
                     <SettingRow label="Nudge after" sublabel="Days without a completed trip">
                       <select
                         value={cfg.notif_inactive_nudge_days ?? 7}
-                        disabled={cfg.notif_inactive_nudge_enabled === false}
+                        disabled={notificationControlsDisabled || cfg.notif_inactive_nudge_enabled === false}
                         onChange={e => updateNotificationSetting({ notif_inactive_nudge_days: Number(e.target.value) })}
                         className="bg-card border border-border rounded-lg text-xs px-2 py-1 disabled:opacity-60"
                       >

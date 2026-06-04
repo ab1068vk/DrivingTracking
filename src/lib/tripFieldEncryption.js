@@ -4,6 +4,7 @@ import { isNativePlatform } from '@/lib/nativePlatform';
 const FIELDS_TO_ENCRYPT = ['route_points', 'driving_events', 'notes'];
 const ENCRYPTION_ALGORITHM = 'AES-GCM';
 const IV_LENGTH_BYTES = 12;
+const NATIVE_SECURE_KEY_TIMEOUT_MS = 8000;
 
 const SecureKey = registerPlugin('SecureKey');
 
@@ -38,6 +39,13 @@ const isEncryptedValue = (value) => (
   typeof value.iv === 'string' &&
   typeof value.ct === 'string'
 );
+
+const withTimeout = (promise, message, timeoutMs = NATIVE_SECURE_KEY_TIMEOUT_MS) => new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  Promise.resolve(promise)
+    .then(resolve, reject)
+    .finally(() => clearTimeout(timeout));
+});
 
 async function getWebSessionKey() {
   if (!hasWebCrypto() || !canEncode()) throw new Error('WebCrypto unavailable.');
@@ -75,7 +83,10 @@ async function decryptWithWebSessionKey(value) {
 async function encryptBytes(bytes) {
   if (canEncode()) {
     try {
-      const { iv, ct, backing } = await SecureKey.encrypt({ data: bytesToBase64(bytes) });
+      const { iv, ct, backing } = await withTimeout(
+        SecureKey.encrypt({ data: bytesToBase64(bytes) }),
+        'SecureKey encrypt timed out.'
+      );
       return { iv, ct, _key: backing || 'android-keystore' };
     } catch (error) {
       if (isNativePlatform()) {
@@ -93,7 +104,10 @@ async function decryptBytes(value) {
 
   if (value._key !== 'web-session' && canEncode()) {
     try {
-      const { data } = await SecureKey.decrypt({ iv: value.iv, ct: value.ct });
+      const { data } = await withTimeout(
+        SecureKey.decrypt({ iv: value.iv, ct: value.ct }),
+        'SecureKey decrypt timed out.'
+      );
       return base64ToBytes(data);
     } catch (error) {
       if (isNativePlatform()) {

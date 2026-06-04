@@ -13,9 +13,9 @@ final class NativeSettingsStore {
         return prefs(context).getString(SETTINGS_KEY, null);
     }
 
-    static void saveSettingsJson(Context context, String settingsJson) {
-        if (settingsJson == null || settingsJson.trim().isEmpty()) return;
-        prefs(context).edit().putString(SETTINGS_KEY, settingsJson).apply();
+    static boolean saveSettingsJson(Context context, String settingsJson) {
+        if (settingsJson == null || settingsJson.trim().isEmpty()) return false;
+        return prefs(context).edit().putString(SETTINGS_KEY, settingsJson).commit();
     }
 
     private static SharedPreferences prefs(Context context) {

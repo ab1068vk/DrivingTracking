@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, migrateDefaultSettings, sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
+import {
+  DEFAULT_SETTINGS,
+  migrateDefaultSettings,
+  reconcileSettingsHydrationSnapshot,
+  sanitizeImportedSettings,
+  validateSettingsPatch,
+} from '@/lib/trackingStore';
 
 describe('tracking store default settings', () => {
   it('keeps external context auto-fetch enabled by default', () => {
@@ -51,6 +57,34 @@ describe('tracking store default settings', () => {
     });
     expect(validateSettingsPatch({ lock_timeout_minutes: 0 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ lock_timeout_minutes: 31 })).toMatchObject({ valid: false });
+  });
+
+  it('keeps pending local settings ahead of stale native hydration', () => {
+    const pending = {
+      ...DEFAULT_SETTINGS,
+      tracking_mode: 'manual',
+      auto_tracking_enabled: false,
+      background_tracking_enabled: false,
+      tracking_paused: false,
+      biometric_lock_enabled: false,
+    };
+    const staleNative = {
+      ...DEFAULT_SETTINGS,
+      tracking_mode: 'background_auto',
+      auto_tracking_enabled: true,
+      background_tracking_enabled: true,
+      biometric_lock_enabled: true,
+    };
+
+    const reconciled = reconcileSettingsHydrationSnapshot(staleNative, JSON.stringify(pending));
+
+    expect(reconciled.shouldPersistPending).toBe(true);
+    expect(reconciled.settings).toMatchObject({
+      tracking_mode: 'manual',
+      auto_tracking_enabled: false,
+      background_tracking_enabled: false,
+      biometric_lock_enabled: false,
+    });
   });
 
   it('stores the last map center as an opt-in contextual fallback', () => {

@@ -12,31 +12,61 @@ import {
   BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
   BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES,
 } from '@/lib/appConstants';
+import { authenticateBiometricGate, isBiometricGateAvailable } from '@/lib/nativeBiometricGate';
 import { PRIVACY_CONSENT_POINTS, PRIVACY_NOTICE_HIGHLIGHTS, PRIVACY_NOTICE_SUMMARY } from '@/lib/privacyNotice';
+import { toast } from '@/components/ui/use-toast';
 
 export function PrivacySettings({ ctx, visibleSectionIds = null }) {
   const {
     AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
     AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, FeaturePermissionBadge: FeaturePermissionBadgeFromCtx, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
-    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
   const settings = cfg ?? {};
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
   const [biometricLockEnabled, setBiometricLockEnabledState] = useState(() => isBiometricLockEnabled());
+  const [biometricLockBusy, setBiometricLockBusy] = useState(false);
   const lockTimeout = settings?.lock_timeout_minutes ?? BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES;
   const draftRadiusValue = Number(privacyDraft.radius_m);
   const showDraftRadiusWarning =
     Number.isFinite(draftRadiusValue) &&
     draftRadiusValue >= PRIVACY_RADIUS_MIN_M &&
     draftRadiusValue < RECOMMENDED_PRIVACY_RADIUS_M;
-  const updateBiometricLockEnabled = (enabled) => {
+  const updateBiometricLockEnabled = async (enabled) => {
+    if (biometricLockBusy) return;
+    setBiometricLockBusy(true);
     const wasLocked = isLocked(settings);
-    updateCfg({ biometric_lock_enabled: enabled === true });
-    setBiometricLockEnabled(enabled);
-    if (enabled && !wasLocked) markUnlocked();
-    setBiometricLockEnabledState(isBiometricLockEnabled());
-    notifyBiometricLockSettingsChanged();
+    try {
+      if (enabled === true && isAndroid()) {
+        const available = await isBiometricGateAvailable();
+        if (!available) {
+          toast({
+            title: 'App lock unavailable',
+            description: 'Set up a device PIN, password, pattern, or fingerprint before turning on App lock.',
+            variant: 'destructive',
+          });
+          return;
+        }
+        await authenticateBiometricGate();
+      }
+
+      updateCfg({ biometric_lock_enabled: enabled === true });
+      setBiometricLockEnabled(enabled);
+      if (enabled && !wasLocked) markUnlocked();
+      setBiometricLockEnabledState(isBiometricLockEnabled());
+      notifyBiometricLockSettingsChanged();
+    } catch (error) {
+      if (error?.message !== 'cancelled') {
+        toast({
+          title: 'Could not enable App lock',
+          description: error?.message || 'Confirm your device credential and try again.',
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setBiometricLockBusy(false);
+    }
   };
   const updateBiometricLockTimeout = (minutes) => {
     updateCfg({ lock_timeout_minutes: minutes });
@@ -118,6 +148,7 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                   <Toggle
                     value={biometricLockEnabled}
                     onChange={updateBiometricLockEnabled}
+                    disabled={biometricLockBusy}
                   />
                 </SettingRow>
                 <SettingRow
@@ -327,14 +358,28 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                 >
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </SettingRow>
-                <SettingRow
-                  icon={Upload}
-                  label="Import Backup"
-                  sublabel="Restore a Road Sage backup into local storage"
-                  onClick={() => importInputRef.current?.click()}
-                >
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                </SettingRow>
+                <label className="relative -mx-1 flex cursor-pointer items-center justify-between gap-3 rounded-xl border-b border-border/50 px-2 py-3 transition-colors hover:bg-secondary/50">
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept="application/json,application/octet-stream,.json,.rsbackup"
+                    className="absolute inset-0 z-10 cursor-pointer opacity-0"
+                    onChange={handleBackupFileSelected}
+                    aria-label="Import Backup"
+                  />
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-secondary">
+                      <Upload className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="break-words text-sm font-medium">Import Backup</div>
+                      <div className="mt-0.5 break-words text-xs text-muted-foreground">
+                        Restore a Road Sage backup into local storage
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                </label>
                 <SettingRow
                   icon={Info}
                   label="Data Retention"

@@ -1,6 +1,6 @@
 import { Component } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 
 export function DefaultSectionErrorFallback({
   title = 'Something went wrong',
@@ -36,9 +36,13 @@ export default class SectionErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    logError(this.props.context || 'react_section_error', error, {
-      component_stack: info?.componentStack || '',
-      section: this.props.context || 'unknown',
+    notifyUserError(this.props.context || 'react_section_error', error, {
+      title: this.props.title || 'Section unavailable',
+      description: this.props.message || 'This section could not be displayed. Reload the page to try again.',
+      extra: {
+        component_stack: info?.componentStack || '',
+        section: this.props.context || 'unknown',
+      },
     });
   }
 
