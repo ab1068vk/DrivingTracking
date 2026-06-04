@@ -62,10 +62,28 @@ async function connectedDeviceId() {
 async function launchApp() {
   await adb(['logcat', '-c'], { allowFailure: true });
   await adb(['shell', 'am', 'force-stop', APP_PACKAGE], { allowFailure: true });
-  const launchOutput = await adb(['shell', 'monkey', '-p', APP_PACKAGE, '1'], { timeoutMs: 15_000 });
-  assert.match(launchOutput, /Events injected:\s*1/, 'monkey did not launch the app');
+  const launchOutput = await launchPackage();
   await sleep(5000);
   launched = true;
+  return launchOutput;
+}
+
+async function launchPackage() {
+  const monkeyOutput = await adb(['shell', 'monkey', '-p', APP_PACKAGE, '1'], {
+    timeoutMs: 15_000,
+    allowFailure: true,
+  });
+  if (/Events injected:\s*1/.test(monkeyOutput)) return monkeyOutput;
+
+  const startOutput = await adb(['shell', 'am', 'start', '-n', `${APP_PACKAGE}/.MainActivity`], {
+    timeoutMs: 15_000,
+    allowFailure: true,
+  });
+  if (/Starting: Intent|cmp=|Warning: Activity not started/i.test(startOutput) && !/Error type|does not exist|not found/i.test(startOutput)) {
+    return startOutput;
+  }
+
+  throw new Error(`app launch failed. monkey: ${monkeyOutput || '(no output)'}; am start: ${startOutput || '(no output)'}`);
 }
 
 async function ensureAppLaunched() {

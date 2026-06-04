@@ -2,7 +2,7 @@
 
 Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, scores driving behavior, generates reports, and keeps trip history on the device unless an optional backend is configured.
 
-The generated current-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). It lists the app version, Android versioning, scoring engine hash, settings schema, trip schema, backup format, encrypted backup format, and default privacy/network state from source.
+The generated current-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). It lists the app version, Android versioning, scoring engine hash, settings schema, trip schema, backup format, encrypted backup format, and default privacy/network state from source. Closeout history is tracked in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md).
 
 ## Current App Surface
 
@@ -54,13 +54,13 @@ The markdown is regenerated from the current source tree and reflects the latest
 - Calculation-heavy UI is isolated with `SectionErrorBoundary`: TripMap, TripPlayback, the Trip Detail score summary, the Trip Detail page shell, and the Dashboard readiness/context panel now show a friendly reloadable fallback and log the caught error instead of blanking the whole app.
 - Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, confirmed phone-use alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed. Diagnostic sanitization redacts coordinate query parameters, bare GPS-like coordinates, and sensitive extra fields before persistence.
 - Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.
-- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, historical-context risk, repeated-event route layers, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.
+- Numeric clamping is centralized in `src/lib/mathUtils.ts`; score, historical-context risk, repeated-event route layers, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.
 - Daily fatigue readiness now uses break-corrected active driving minutes instead of a hard 60-minute day total. The default onset is 90 active minutes, learned habit-profile onset is honored by dashboard and post-trip warnings, and breaks over 30 minutes reduce accumulated fatigue on a 180-minute recovery curve.
 - Trip readiness now captures pre-trip signal snapshots and pairs them with completed-trip outcomes. After enough paired records, it applies local per-signal calibration offsets, discounts signals that do not correlate with actual outcomes, dampens highly correlated signal pairs so commuter schedule signals do not double-count the same evidence, fits moderate/high risk floors from readiness history, and shows a readiness interval from signal variance. Before enough evidence exists, Dashboard distinguishes bootstrapping, developing, and calibrated states instead of presenting the estimate as fully proven.
 - Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, Android phone-use source gating, diagnostic proxy separation, finite anomaly/sensor scores, persisted reviewed-event rescoring, and weighted evidence blends that omit unavailable components instead of filling them with 100.
 - Score display is centralized in `src/lib/scoreDisplay.js`: approximate score surfaces use a leading `~`, monthly PDFs state that scores are estimates not validated against crash data, and UBI score-card UI/PDF output is visibly labelled `NOT AN INSURANCE RATING`.
 - Scoring and calibration policy is centralized in `src/lib/scoringConstants.js`: provisional thresholds, normalized blend weights, risk assumptions, UBI assumptions, and `PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS` declare affected metrics, labeled-dataset requirements, fitting steps, and promotion criteria. New score records carry a generated content-hash `SCORING_VERSION`, `component_scores` evidence envelopes, `score_provenance`, and `score_explanation`; Trip Detail and Settings expose provenance and approximate calibration status instead of presenting provisional output as validated.
-- Scoring now has named pipeline/explanation helpers in `src/lib/scoring/pipeline.js` and `src/lib/scoring/explainer.js`. Tests validate stage audit trails, top score contributors, non-negative normalized blend weights, and the Safety phone-use weight mirror used by legacy UI impact calculations.
+- Scoring now has named pipeline/explanation helpers in `src/lib/scoring/pipeline.ts` and `src/lib/scoring/explainer.ts`. Tests validate stage audit trails, top score contributors, non-negative normalized blend weights, and the Safety phone-use weight mirror used by legacy UI impact calculations.
 - Trip Detail includes a dismissible post-trip calibration survey for optional 1-5 drive ratings, score-accuracy feedback, driver/passenger confirmation, difficulty, context tags, and readiness-accuracy feedback when a pre-trip readiness estimate was captured. Feedback stays local unless the user opts into calibration sharing in Settings; shared records go to `/trip_calibration_labels` as summary-only payloads with a 30-day rotating anonymous install hash, score output, trip feature summary, survey label, quality flags, and a trip-start timestamp protected with Laplace noise calibrated to epsilon=1.0 / 1-hour sensitivity before hour rounding. Raw GPS, exact addresses, route polylines, personal identifiers, and free-text notes are never included. Passenger, short, low-quality GPS, heavily privacy-masked, test/debug, incomplete, or crash-recovered trips are excluded from calibration.
 - Base score penalty normalization now uses named `PENALTY_SCALE_FACTOR = 40`: under the current provisional calibration, 2.5 severity-weighted penalty points per km reaches the score floor. This factor must be recalibrated against a labeled driving dataset before being treated as validated.
 - Fatigue contribution to Safety now uses named `FATIGUE_SAFETY_PENALTY_SCALE = 0.15` and `FATIGUE_SAFETY_MAX_PENALTY = 15`: maximum normalized fatigue adds a capped 15-point Safety deduction after event-rate normalization. This cited coefficient maps the maximum fatigue proxy to a conservative 0.05% BAC-equivalent impairment assumption from Williamson & Feyer (Occupational and Environmental Medicine, 2000); it is not crash-outcome calibrated.
@@ -125,7 +125,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 
 ## Documentation
 
-The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). The compact generated app-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). They are generated from the repository and include:
+The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). The compact generated app-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). Closeout history lives in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md). The generated docs are built from the repository and include:
 
 - current app version, Android versioning, scoring engine, schema versions, backup format, and default privacy/network state
 - concise source/module inventory focused on app-critical files and top-level scan counts
@@ -140,6 +140,8 @@ Regenerate it after meaningful code or README changes:
 node scripts/generate-technical-reference.mjs
 npm run docs:state
 ```
+
+Version closeout history is kept in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md). Update it when a version is declared complete and before starting the next version.
 
 ## Architecture And Data
 
@@ -210,6 +212,19 @@ Run browser smoke e2e tests:
 ```bash
 npm run test:e2e
 ```
+
+Release-readiness local gate:
+
+```bash
+npm run check:repo-hygiene
+npm run lint
+npm run typecheck
+npm run test
+npm run build
+npm run test:e2e
+```
+
+Android device and emulator closeout commands are listed in [docs/E2E_TESTING_PLAN.md](docs/E2E_TESTING_PLAN.md). They require a booted emulator or attached device with the debug APK installable.
 
 Run live external contract tests (hits Overpass, Open-Meteo, and OSRM):
 

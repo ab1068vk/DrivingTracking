@@ -108,7 +108,9 @@ import {
   subscribeEphemeralTripMode,
 } from '@/lib/ephemeralTripMode';
 import {
+  BACKUP_PASSWORD_MIN_LENGTH,
   BACKUP_PASSWORD_MAX_LENGTH,
+  BACKUP_PBKDF2_ITERATIONS,
   getBackupPasswordValidation,
 } from '@/lib/backupEncryption';
 import { recordOutboundDataEvent } from '@/lib/privacyControls';
@@ -167,6 +169,41 @@ function PermissionBadge({ value, status, label }) {
     }`}>
       {granted ? (label ?? 'Granted') : unavailable ? 'Unavailable' : needsSettings ? 'Open Settings' : denied ? 'Denied' : 'Needs setup'}
     </span>
+  );
+}
+
+function BackupPasswordSecurityPanel({ mode = 'backup' }) {
+  return (
+    <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs leading-relaxed text-sky-950 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+      <div className="flex items-start gap-2">
+        <Shield className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <div className="font-semibold">
+            {mode === 'import' ? 'Encrypted backup password' : 'Local encryption before download'}
+          </div>
+          <p className="mt-1">
+            Road Sage uses PBKDF2-HMAC-SHA-256 with {BACKUP_PBKDF2_ITERATIONS.toLocaleString()} iterations and AES-256-GCM.
+            Passwords must be {BACKUP_PASSWORD_MIN_LENGTH}-{BACKUP_PASSWORD_MAX_LENGTH} characters. Road Sage cannot recover forgotten passwords.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BackupPasswordChecklist({ checks }) {
+  return (
+    <div className="grid gap-1.5 text-xs">
+      {checks.map((check) => (
+        <div
+          key={check.id}
+          className={`flex items-center gap-2 ${check.valid ? 'text-green-600' : 'text-muted-foreground'}`}
+        >
+          {check.valid ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5 opacity-40" />}
+          <span>{check.label}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1523,6 +1560,7 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            <BackupPasswordSecurityPanel />
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
               {backupExportMode === 'csv'
                 ? 'The export is encrypted locally before download. You will need this password to open it later.'
@@ -1534,7 +1572,7 @@ export default function Settings() {
               </div>
             )}
             <label className="block text-sm font-medium">
-              Password
+              Export password
               <div className="mt-1 flex rounded-lg border border-border bg-card focus-within:border-primary">
                 <input
                   type={backupExportPasswordVisible ? 'text' : 'password'}
@@ -1545,7 +1583,9 @@ export default function Settings() {
                   }}
                   className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
                   autoComplete="new-password"
+                  placeholder="12+ chars, mixed case, number, symbol"
                   maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                  aria-label="Export password"
                 />
                 <button
                   type="button"
@@ -1558,7 +1598,7 @@ export default function Settings() {
               </div>
             </label>
             <label className="block text-sm font-medium">
-              Confirm password
+              Confirm export password
               <div className={`mt-1 flex rounded-lg border bg-card focus-within:border-primary ${backupExportConfirm && !backupPasswordsMatch ? 'border-red-300' : 'border-border'}`}>
                 <input
                   type={backupExportPasswordVisible ? 'text' : 'password'}
@@ -1566,7 +1606,9 @@ export default function Settings() {
                   onChange={(event) => setBackupExportConfirm(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH))}
                   className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
                   autoComplete="new-password"
+                  placeholder="Retype export password"
                   maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                  aria-label="Confirm export password"
                 />
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center text-muted-foreground">
                   <KeyRound className="h-4 w-4" />
@@ -1596,14 +1638,7 @@ export default function Settings() {
                   : `${backupExportValidation.message || 'Password requirements are incomplete.'} Current strength: ${backupPasswordStrengthLabel}`}
               </div>
             </div>
-            <div className="grid gap-1.5 text-xs">
-              {backupExportValidation.checks.map((check) => (
-                <div key={check.id} className={`flex items-center gap-2 ${check.valid ? 'text-green-600' : 'text-muted-foreground'}`}>
-                  <Check className={`h-3.5 w-3.5 ${check.valid ? 'opacity-100' : 'opacity-30'}`} />
-                  <span>{check.label}</span>
-                </div>
-              ))}
-            </div>
+            <BackupPasswordChecklist checks={backupExportValidation.checks} />
           </div>
           <DialogFooter>
             <button
@@ -1646,12 +1681,13 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
+            <BackupPasswordSecurityPanel mode="import" />
             <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
               Importing merges trips, route points, driving events, vehicles, saved filters, and safe settings into local storage. Privacy-zone coordinates are not restored; re-add private places after import if needed.
             </div>
             {backupImportError === 'wrong_password' && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-                Wrong password. Check the password and try again.
+                Wrong password. Road Sage could not decrypt this `.rsbackup`; check the password and try again.
               </div>
             )}
             {backupImportError === 'password_invalid' && (
@@ -1661,11 +1697,11 @@ export default function Settings() {
             )}
             {backupImportError === 'password_required' && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-                This backup is encrypted.
+                This backup is encrypted. Enter the password that was used when the `.rsbackup` was created.
               </div>
             )}
             <label className="block text-sm font-medium">
-              Password
+              Backup password
               <div className={`mt-1 flex rounded-lg border bg-card focus-within:border-primary ${backupImportPassword && !backupImportValidation.valid ? 'border-red-300' : 'border-border'}`}>
                 <input
                   type={backupImportPasswordVisible ? 'text' : 'password'}
@@ -1679,7 +1715,9 @@ export default function Settings() {
                   }}
                   className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none"
                   autoComplete="current-password"
+                  placeholder="Password for this .rsbackup"
                   maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                  aria-label="Backup import password"
                 />
                 <button
                   type="button"
@@ -1692,7 +1730,7 @@ export default function Settings() {
               </div>
             </label>
             <div className={`text-xs font-medium ${backupImportValidation.valid ? 'text-green-600' : 'text-muted-foreground'}`}>
-              Backup passwords must be 12-{BACKUP_PASSWORD_MAX_LENGTH} characters. Older backups keep their original password rules.
+              Backup passwords must be {BACKUP_PASSWORD_MIN_LENGTH}-{BACKUP_PASSWORD_MAX_LENGTH} characters. Imports accept older 12+ character backup passwords even if they do not meet the current export-strength rules.
             </div>
           </div>
           <DialogFooter>

@@ -5,6 +5,8 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 if (typeof globalThis.window === 'undefined') {
   globalThis.window = globalThis;
@@ -202,6 +204,16 @@ const stats = { total: 0, passed: 0, failed: 0, skipped: 0 };
 const importSkips = [];
 
 async function tryImport(path) {
+  if (path.endsWith('.ts')) {
+    const filePath = fileURLToPath(new URL(path, import.meta.url));
+    const reason = existsSync(filePath)
+      ? `plain Node runner cannot import TypeScript module ${path}; covered by Vitest/typecheck`
+      : `TypeScript module not found: ${path}`;
+    importSkips.push(reason);
+    console.warn(`  SKIP: ${reason}`);
+    return null;
+  }
+
   try {
     return await import(path);
   } catch (error) {
@@ -315,11 +327,11 @@ const headingDrift = await tryImport('../src/engine/detection/headingDrift.js');
 const speeding = await tryImport('../src/engine/detection/speeding.js');
 const laneCurvature = await tryImport('../src/engine/detection/laneCurvature.js');
 const overtakePattern = await tryImport('../src/engine/detection/overtakePattern.js');
-const ecoScore = await tryImport('../src/engine/scoring/ecoScore.js') || await tryImport('../src/lib/scoring/ecoScore.js');
-const safetyScore = await tryImport('../src/engine/scoring/safetyScore.js') || await tryImport('../src/lib/scoring/safetyScore.js');
-const smoothnessScore = await tryImport('../src/engine/scoring/smoothnessScore.js') || await tryImport('../src/lib/scoring/smoothnessScore.js');
-const ubiScore = await tryImport('../src/engine/scoring/ubiScore.js') || await tryImport('../src/lib/scoring/componentScores.js');
-const scoringPipeline = await tryImport('../src/engine/scoring/pipeline.js') || await tryImport('../src/lib/tripEngine.js');
+const ecoScore = await tryImport('../src/engine/scoring/ecoScore.ts') || await tryImport('../src/lib/scoring/ecoScore.ts');
+const safetyScore = await tryImport('../src/engine/scoring/safetyScore.ts') || await tryImport('../src/lib/scoring/safetyScore.ts');
+const smoothnessScore = await tryImport('../src/engine/scoring/smoothnessScore.ts') || await tryImport('../src/lib/scoring/smoothnessScore.ts');
+const ubiScore = await tryImport('../src/engine/scoring/ubiScore.ts') || await tryImport('../src/lib/scoring/componentScores.ts');
+const scoringPipeline = await tryImport('../src/engine/scoring/pipeline.ts') || await tryImport('../src/lib/tripEngine.js');
 const speedLimitSource = await tryImport('../src/lib/speedLimitSource.js');
 const routeRiskGrid = await tryImport('../src/lib/routeRisk/grid.js');
 const routeRiskScoring = await tryImport('../src/lib/routeRisk/scoring.js');
@@ -336,7 +348,7 @@ const dangerZones = await tryImport('../src/lib/dangerZoneEngine.js');
 const habitProfile = await tryImport('../src/lib/habitProfile.js');
 const ephemeralMode = await tryImport('../src/lib/ephemeralTripMode.js');
 const scoringConstants = await tryImport('../src/lib/scoringConstants.js');
-const mathUtils = await tryImport('../src/lib/mathUtils.js');
+const mathUtils = await tryImport('../src/lib/mathUtils.ts');
 
 // -- SECTION 1: GPS Math -----------------------------------------------------
 describe('Section 1: GPS Math Utilities', () => {
@@ -885,7 +897,7 @@ process.on('uncaughtException', (err) => {
 });
 
 before(() => {
-  console.log(`Import skips discovered: ${importSkips.length}`);
+  console.log(`Import/coverage skips discovered: ${importSkips.length}`);
 });
 
 after(() => {
@@ -893,7 +905,7 @@ after(() => {
   console.log(`Total:   ${stats.total + stats.skipped} tests`);
   console.log(`Passed:  ${stats.passed}`);
   console.log(`Failed:  ${stats.failed}`);
-  console.log(`Skipped: ${stats.skipped} (${importSkips.length} import failures)`);
+  console.log(`Skipped: ${stats.skipped} (${importSkips.length} import/coverage skips)`);
   console.log(`Uncaught: ${uncaught.length} exceptions`);
   console.log('-------------------------');
 });

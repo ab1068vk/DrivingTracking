@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BACKUP_PASSWORD_MAX_LENGTH,
+  BACKUP_PASSWORD_MIN_LENGTH,
+  BACKUP_PBKDF2_ITERATIONS,
   decryptBackup,
   encryptBackup,
   getBackupPasswordValidation,
@@ -7,6 +10,12 @@ import {
 } from '@/lib/backupEncryption';
 
 describe('backup encryption', () => {
+  it('exports password contract values used by the UI', () => {
+    expect(BACKUP_PASSWORD_MIN_LENGTH).toBe(12);
+    expect(BACKUP_PASSWORD_MAX_LENGTH).toBe(128);
+    expect(BACKUP_PBKDF2_ITERATIONS).toBe(600000);
+  });
+
   it('round-trips plaintext with AES-GCM password encryption', async () => {
     const encrypted = await encryptBackup('{"app":"Road Sage","trips":[]}', 'correct horse battery');
 

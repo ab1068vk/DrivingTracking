@@ -2,7 +2,7 @@ export const BACKUP_ENC_VERSION = 1;
 export const BACKUP_PASSWORD_MIN_LENGTH = 12;
 export const BACKUP_PASSWORD_MAX_LENGTH = 128;
 
-const PBKDF2_ITERATIONS = 600000;
+export const BACKUP_PBKDF2_ITERATIONS = 600000;
 const SALT_BYTES = 32;
 const IV_BYTES = 12;
 const HEADER_SIZE = 1 + SALT_BYTES + IV_BYTES;
@@ -89,7 +89,7 @@ async function deriveKey(password, salt) {
   );
 
   return cryptoApi.deriveKey(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: BACKUP_PBKDF2_ITERATIONS, hash: 'SHA-256' },
     baseKey,
     { name: 'AES-GCM', length: 256 },
     false,
