@@ -12,16 +12,19 @@ This document is the master checklist for building complete end-to-end coverage 
 
 ## Current Test Assets
 
-- `npm run test:e2e` builds the Vite app and runs Playwright from `e2e/`.
-- `e2e/app-smoke.spec.js` currently covers dashboard/settings navigation and empty trip history.
+- `npm run test:e2e` builds the Vite app, serves `dist/` through `scripts/serve-dist-for-playwright.mjs`, and runs Playwright from `e2e/`.
+- `e2e/00-app-shell.spec.js` covers onboarding redirect behavior, app-shell rendering, desktop and mobile navigation, unknown-route recovery, browser back behavior, external-script policy, and biometric guard fallback.
+- `e2e/app-smoke.spec.js` covers dashboard/settings navigation and empty trip history.
+- `e2e/fixtures/seedRoadSage.js` and `e2e/helpers/globalAssert.js` provide shared storage seeding and cross-route runtime assertions.
 - `tests/android-uiautomator-full-app.mjs` already performs a broad Android WebView sweep with seeded trips, vehicles, privacy zones, settings, backups, native bridges, and logcat checks.
+- `tests/android-uiautomator-onboarding.mjs`, `tests/android-uiautomator-settings-full.mjs`, and `tests/android-uiautomator-backup-import.mjs` cover focused Android onboarding, settings persistence, and backup import flows when a device is attached.
 - `android/app/src/androidTest/java/com/roadsage/app/uitest/RoadSageFullSuite.kt` groups native UI tests `T01` through `T19`.
 - Unit and integration coverage lives under `src/**/__tests__`, `src/lib/*.test.js`, `src/engine/**`, and `tests/full-suite.test.mjs`.
 
 ## Test Layers
 
 1. **Playwright web E2E**
-   - Runs against Vite preview at `http://127.0.0.1:4173`.
+   - Runs against the built production bundle served at `http://127.0.0.1:4173`.
    - Best for route coverage, layout, forms, local storage, IndexedDB, responsive behavior, console errors, and cross-page workflows.
 
 2. **Android UIAutomator and Espresso WebView E2E**
@@ -36,7 +39,7 @@ This document is the master checklist for building complete end-to-end coverage 
 
 ## Required Fixtures
 
-Create one shared seed module for Playwright, for example `e2e/fixtures/seedRoadSage.js`.
+Maintain the shared Playwright seed module in `e2e/fixtures/seedRoadSage.js` and shared runtime assertions in `e2e/helpers/globalAssert.js`.
 
 Seed data must include:
 
@@ -86,9 +89,10 @@ Apply these checks to every route and every major workflow:
 
 ## Playwright Suite Plan
 
-Suggested files:
+Current and planned files:
 
-- `e2e/00-app-shell.spec.js`: launch, onboarding redirect, layout, desktop/mobile navigation, 404, console-error capture.
+- `e2e/00-app-shell.spec.js`: implemented release-blocking baseline for launch, onboarding redirect, layout, desktop/mobile navigation, 404, browser back behavior, console-error capture, and unsafe external script checks.
+- `e2e/app-smoke.spec.js`: implemented smoke coverage for dashboard/settings navigation and empty trip history.
 - `e2e/01-dashboard-tracking.spec.js`: dashboard summaries, readiness, permissions, start/stop controls, active trip, stale trip.
 - `e2e/02-trip-history.spec.js`: empty state, seeded cards, search/sort/filter/saved filters, virtual scroll, open detail.
 - `e2e/03-trip-detail.spec.js`: detail panels, map, events, feedback, edit/save/cancel, split/delete guards.
@@ -159,6 +163,9 @@ Keep and extend the existing Android coverage around these areas:
 Run the normal checks before merging E2E work:
 
 ```powershell
+npm.cmd run check:repo-hygiene
+npm.cmd run lint
+npm.cmd run typecheck
 npm.cmd test
 npm.cmd run build
 npm.cmd run test:e2e
@@ -168,17 +175,22 @@ Run Android checks when an emulator or device is available:
 
 ```powershell
 cd android
+.\gradlew.bat assembleDebug
 .\gradlew.bat connectedDebugAndroidTest
 cd ..
+node tests/android-uiautomator-onboarding.mjs
 node tests/android-uiautomator-full-app.mjs
 node tests/android-uiautomator-settings-full.mjs
 node tests/android-uiautomator-backup-import.mjs
+npm.cmd run test:android:settings
 ```
+
+`connectedDebugAndroidTest` and the UIAutomator `.mjs` scripts require a booted emulator or physical Android device with the debug APK installed or installable.
 
 ## Implementation Phases
 
 1. **Stabilize fixtures**
-   - Build shared seed/reset helpers for local storage, IndexedDB, trips, vehicles, privacy zones, settings, survey markers, and backup files.
+   - Keep shared seed/reset helpers current for local storage, IndexedDB, trips, vehicles, privacy zones, settings, survey markers, and backup files.
 
 2. **Expand Playwright from smoke to route coverage**
    - Add the route matrix tests first, with global console/error assertions and desktop/mobile coverage.

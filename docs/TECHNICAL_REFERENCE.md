@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-06-04T18:43:35.833Z
+Updated: 2026-06-04T18:55:07.111Z
 
 This document is generated from the current repository. It is intentionally high-signal: architecture, security, storage, routes, major calculations, test coverage, and deployment notes are kept; exhaustive import/export, function, literal, and handler dumps are omitted.
 

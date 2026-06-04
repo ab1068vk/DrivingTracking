@@ -490,10 +490,11 @@ Useful commands:
 
 ```powershell
 .\gradlew.bat test
-.\gradlew.bat connectedAndroidTest
+.\gradlew.bat assembleDebug
+.\gradlew.bat connectedDebugAndroidTest
 ```
 
-Run these from the `android` directory.
+Run these from the `android` directory. `connectedDebugAndroidTest` requires a booted emulator or physical Android device.
 
 ## Important Files
 
