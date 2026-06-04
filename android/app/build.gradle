@@ -91,7 +91,7 @@ dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
-    testImplementation "org.json:json:20240303"
+    testImplementation "org.json:json:20260522"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     androidTestImplementation 'androidx.test.espresso:espresso-web:3.6.1'
