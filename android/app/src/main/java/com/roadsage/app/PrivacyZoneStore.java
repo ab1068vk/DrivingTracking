@@ -18,6 +18,7 @@ public final class PrivacyZoneStore {
     private static final String NATIVE_PREFS = "road_sage_privacy_zones";
     private static final String ENCRYPTED_PREFS = "road_sage_privacy_zones_v2";
     private static final String NATIVE_KEY = "zones_json";
+    private static final String WIDGET_STORAGE_UNAVAILABLE_ZONE_NAME = "Private area";
 
     private PrivacyZoneStore() {}
 
@@ -36,18 +37,7 @@ public final class PrivacyZoneStore {
         }
 
         try {
-            JSONArray array = new JSONArray(json);
-            List<PrivacyZone> zones = new ArrayList<>();
-            for (int i = 0; i < array.length(); i++) {
-                try {
-                    zones.add(PrivacyZone.fromJson(array.getJSONObject(i)));
-                } catch (JSONException e) {
-                    if (BuildConfig.DEBUG) {
-                        Log.w(TAG, "Skipping invalid privacy zone", e);
-                    }
-                }
-            }
-            return zones;
+            return parseZones(json, false);
         } catch (JSONException e) {
             if (BuildConfig.DEBUG) {
                 Log.w(TAG, "Failed to parse privacy zones", e);
@@ -64,13 +54,26 @@ public final class PrivacyZoneStore {
     @Nullable
     public static PrivacyZone findMatchingZone(double lat, double lng, Context context) {
         for (PrivacyZone zone : getZones(context)) {
-            float[] results = new float[1];
-            android.location.Location.distanceBetween(lat, lng, zone.lat, zone.lng, results);
-            if (results[0] <= zone.radiusMeters + MATCH_GUARD_BUFFER_M) {
-                return zone;
-            }
+            if (matches(zone, lat, lng)) return zone;
         }
         return null;
+    }
+
+    @Nullable
+    public static PrivacyZone findMatchingZoneForWidget(double lat, double lng, Context context) {
+        try {
+            String json = getZonesJson(context);
+            if (json == null || json.trim().isEmpty()) return null;
+            for (PrivacyZone zone : parseZones(json, true)) {
+                if (matches(zone, lat, lng)) return zone;
+            }
+            return null;
+        } catch (Exception e) {
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Privacy zones unavailable; withholding widget location", e);
+            }
+            return new PrivacyZone(WIDGET_STORAGE_UNAVAILABLE_ZONE_NAME, lat, lng, 1f);
+        }
     }
 
     public static void saveZones(Context context, List<PrivacyZone> zones) {
@@ -106,6 +109,28 @@ public final class PrivacyZoneStore {
 
     private static SharedPreferences encryptedPrefs(Context context) {
         return EncryptedPreferenceStore.open(context, ENCRYPTED_PREFS);
+    }
+
+    private static List<PrivacyZone> parseZones(String json, boolean strict) throws JSONException {
+        JSONArray array = new JSONArray(json == null ? "[]" : json);
+        List<PrivacyZone> zones = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) {
+            try {
+                zones.add(PrivacyZone.fromJson(array.getJSONObject(i)));
+            } catch (JSONException e) {
+                if (strict) throw e;
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Skipping invalid privacy zone", e);
+                }
+            }
+        }
+        return zones;
+    }
+
+    private static boolean matches(PrivacyZone zone, double lat, double lng) {
+        float[] results = new float[1];
+        android.location.Location.distanceBetween(lat, lng, zone.lat, zone.lng, results);
+        return results[0] <= zone.radiusMeters + MATCH_GUARD_BUFFER_M;
     }
 
     private static String normalizedPlaintextZones(Context context) {

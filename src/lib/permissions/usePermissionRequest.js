@@ -26,10 +26,16 @@ export function usePermissionRequest(permissionKey, requestFn) {
   const proceed = useCallback(async () => {
     setShowRationale(false);
     setOne(permissionKey, PERMISSION_STATES.REQUESTING);
-    const result = await requestFn();
-    setOne(permissionKey, resultToPermissionState(result));
-    await refresh();
-    return result;
+    try {
+      const result = await requestFn();
+      setOne(permissionKey, resultToPermissionState(result));
+      return result;
+    } catch (error) {
+      setOne(permissionKey, PERMISSION_STATES.UNKNOWN);
+      throw error;
+    } finally {
+      await refresh({ force: true }).catch(() => null);
+    }
   }, [permissionKey, refresh, requestFn, setOne]);
 
   return {

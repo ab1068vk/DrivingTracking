@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, KeyRound
 } from 'lucide-react';
 import {
   Dialog,
@@ -92,7 +92,6 @@ import {
   PRIVACY_NOTICE_HIGHLIGHTS,
   PRIVACY_NOTICE_LAST_UPDATED,
   PRIVACY_NOTICE_SUMMARY,
-  PRIVACY_NOTICE_TOAST_DESCRIPTION,
 } from '@/lib/privacyNotice';
 import { secureWipeAllData } from '@/lib/privacyWipe';
 import {
@@ -108,6 +107,11 @@ import {
   setStealthNextTrip,
   subscribeEphemeralTripMode,
 } from '@/lib/ephemeralTripMode';
+import {
+  BACKUP_PASSWORD_MAX_LENGTH,
+  getBackupPasswordValidation,
+} from '@/lib/backupEncryption';
+import { recordOutboundDataEvent } from '@/lib/privacyControls';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -317,12 +321,16 @@ export default function Settings() {
   const [osrmConsentChecked, setOsrmConsentChecked] = useState(false);
   const [osrmPendingEndpoint, setOsrmPendingEndpoint] = useState('');
   const [backupExportOpen, setBackupExportOpen] = useState(false);
+  const [backupExportMode, setBackupExportMode] = useState('backup');
   const [backupExportPassword, setBackupExportPassword] = useState('');
   const [backupExportConfirm, setBackupExportConfirm] = useState('');
   const [backupExportBusy, setBackupExportBusy] = useState(false);
+  const [backupExportError, setBackupExportError] = useState('');
+  const [backupExportPasswordVisible, setBackupExportPasswordVisible] = useState(false);
   const [backupImportOpen, setBackupImportOpen] = useState(false);
   const [backupImportPassword, setBackupImportPassword] = useState('');
   const [backupImportError, setBackupImportError] = useState('');
+  const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [backupImportBusy, setBackupImportBusy] = useState(false);
   const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
@@ -485,6 +493,14 @@ export default function Settings() {
       updateCfg({ map_matching_enabled: false });
       return;
     }
+    if (cfg.external_requests_local_only === true) {
+      toast({
+        title: 'Local-only mode is on',
+        description: 'Turn off Local-only mode before enabling OSRM route snapping.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!hasVerifiedOsrmEndpoint(cfg)) {
       toast({
         title: 'OSRM endpoint not ready',
@@ -506,6 +522,14 @@ export default function Settings() {
 
   const saveOsrmEndpoint = async (endpoint, consented = false) => {
     const value = String(endpoint || '').trim().replace(/\/$/, '');
+    if (cfg.external_requests_local_only === true && value) {
+      toast({
+        title: 'Local-only mode is on',
+        description: 'Turn off Local-only mode before checking or saving an OSRM endpoint.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!value) {
       updateCfg({
         map_matching_enabled: false,
@@ -585,8 +609,16 @@ export default function Settings() {
       updateCfg({ external_context_auto_fetch_enabled: false });
       return;
     }
+    if (cfg.external_requests_local_only === true) {
+      toast({
+        title: 'Local-only mode is on',
+        description: 'Automatic road data stays off while external requests are disabled.',
+        variant: 'destructive',
+      });
+      return;
+    }
     const ok = typeof window === 'undefined' || window.confirm(
-      'Automatic road data sends route-area boxes to OpenStreetMap and a privacy-safe route point/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
+      'Automatic road data can contact the external services you allow below whenever a trip is saved. OpenStreetMap receives route-area boxes for speed limits, Open-Meteo receives a privacy-guarded route point/date for weather, and OSRM remains manual unless separately configured. Continue?'
     );
     if (!ok) return;
     updateCfg({ external_context_auto_fetch_enabled: true });
@@ -754,11 +786,6 @@ export default function Settings() {
 
   const showPrivacyPolicy = () => {
     setPrivacyNoticeOpen(true);
-    toast({
-      title: 'Privacy, legal, and local data',
-      description: `${PRIVACY_NOTICE_TOAST_DESCRIPTION} ${LEGAL_DISCLAIMER_SUMMARY}`,
-      duration: 9000,
-    });
   };
 
   const stopNativeAutoTrackingSafely = async (title = 'Auto tracking could not be turned off') => {
@@ -1186,29 +1213,24 @@ export default function Settings() {
   };
 
   const handleExportAll = async () => {
-    const completed = allTrips.filter(t => t.status === 'completed');
-    const csv = tripsToCSV(completed);
-    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
-    if (!password) return;
-    const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`, { password });
-    toast({
-      title: 'Encrypted export saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Trip CSV'} is downloading.`,
-    });
+    setBackupExportMode('csv');
+    setBackupExportPassword('');
+    setBackupExportConfirm('');
+    setBackupExportError('');
+    setBackupExportPasswordVisible(false);
+    setBackupExportOpen(true);
   };
 
-  const backupPasswordStrong = backupExportPassword.length >= 12;
+  const backupExportValidation = getBackupPasswordValidation(backupExportPassword);
+  const backupImportValidation = getBackupPasswordValidation(backupImportPassword, { requireStrong: false });
+  const backupPasswordStrong = backupExportValidation.valid;
   const backupPasswordsMatch = backupExportPassword === backupExportConfirm;
   const backupExportReady = backupPasswordStrong && backupPasswordsMatch;
   const backupPasswordStrengthScore = backupExportPassword
-    ? [
-      backupExportPassword.length >= 12,
-      /[a-z]/.test(backupExportPassword) && /[A-Z]/.test(backupExportPassword),
-      /\d/.test(backupExportPassword),
-      /[^A-Za-z0-9]/.test(backupExportPassword),
-    ].filter(Boolean).length
+    ? Math.max(
+      backupExportValidation.checks.find((check) => check.id === 'passphrase')?.valid ? 4 : 0,
+      Math.min(4, Number(backupExportValidation.checks[0]?.valid) + backupExportValidation.complexityScore)
+    )
     : 0;
   const backupPasswordStrengthLabel = backupPasswordStrengthScore >= 4
     ? 'Strong'
@@ -1232,27 +1254,54 @@ export default function Settings() {
   };
 
   const handleExportBackup = () => {
+    setBackupExportMode('backup');
     setBackupExportPassword('');
     setBackupExportConfirm('');
+    setBackupExportError('');
+    setBackupExportPasswordVisible(false);
     setBackupExportOpen(true);
   };
 
   const performExportBackup = async () => {
     if (!backupExportReady || backupExportBusy) return;
     setBackupExportBusy(true);
+    setBackupExportError('');
     try {
-      const result = await exportDriveSenseBackup({
-        trips: allTrips,
-        vehicles: allVehicles,
-        settings: cfg,
-        password: backupExportPassword,
+      const result = backupExportMode === 'csv'
+        ? await downloadCSV(
+          tripsToCSV(allTrips.filter(t => t.status === 'completed')),
+          `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`,
+          { password: backupExportPassword }
+        )
+        : await exportDriveSenseBackup({
+          trips: allTrips,
+          vehicles: allVehicles,
+          settings: cfg,
+          password: backupExportPassword,
+        });
+      await recordOutboundDataEvent({
+        service: 'export_file',
+        status: 'used',
+        detail: backupExportMode === 'csv'
+          ? 'Encrypted CSV export created with completed trips and privacy-masked route/event fields.'
+          : 'Encrypted backup created with trips, route points, vehicles, settings, privacy-zone metadata, saved filters, and calibration metadata.',
       });
       setBackupExportOpen(false);
-      showBackupExportToast(result);
+      if (backupExportMode === 'csv') {
+        toast({
+          title: 'Encrypted export saved',
+          description: result?.native
+            ? `${result.filename} was saved to Downloads.`
+            : `${result?.filename || 'Trip CSV'} is downloading.`,
+        });
+      } else {
+        showBackupExportToast(result);
+      }
     } catch (error) {
+      setBackupExportError(error.message || 'Try again with a different export password.');
       toast({
-        title: 'Could not export backup',
-        description: error.message || 'Try again with a different backup password.',
+        title: backupExportMode === 'csv' ? 'Could not export trips' : 'Could not export backup',
+        description: error.message || 'Try again with a different export password.',
         variant: 'destructive',
       });
     } finally {
@@ -1265,6 +1314,7 @@ export default function Settings() {
     if (result?.error === 'password_required' || result?.error === 'wrong_password') {
       setPendingBackupImportFile(file);
       setBackupImportError(result.error);
+      setBackupImportPasswordVisible(false);
       setBackupImportOpen(true);
       return null;
     }
@@ -1284,6 +1334,11 @@ export default function Settings() {
       return finishImportBackup(file, { password, acknowledgeTruncation: true });
     }
     const latestSettings = readLocalSettingsSnapshot();
+    await recordOutboundDataEvent({
+      service: 'import_file',
+      status: 'used',
+      detail: 'Backup import merged trips, vehicles, saved filters, and safe settings into local storage.',
+    });
     setCfg(latestSettings);
     applyThemeMode(latestSettings.dark_mode);
     await qc.invalidateQueries();
@@ -1309,7 +1364,12 @@ export default function Settings() {
   };
 
   const handleImportPasswordSubmit = async () => {
-    if (!pendingBackupImportFile || backupImportPassword.length < 12 || backupImportBusy) return;
+    if (!pendingBackupImportFile || !backupImportValidation.valid || backupImportBusy) {
+      if (backupImportPassword && !backupImportValidation.valid) {
+        setBackupImportError('password_invalid');
+      }
+      return;
+    }
     setBackupImportBusy(true);
     try {
       await finishImportBackup(pendingBackupImportFile, { password: backupImportPassword });
@@ -1328,7 +1388,7 @@ export default function Settings() {
     const legacyPlaintextWarning = /\.json$/i.test(file.name || '')
       ? 'This backup is unencrypted. Anyone with this file can read your driving history.\n\n'
       : '';
-    return confirm(`${legacyPlaintextWarning}Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.`);
+    return confirm(`${legacyPlaintextWarning}Import this Road Sage backup? It can merge trips, route points, driving events, vehicles, saved filters, and safe settings. Matching IDs will be updated, and new records will be added.`);
   };
 
   const startImportBackup = async (file) => {
@@ -1446,37 +1506,72 @@ export default function Settings() {
       <Dialog open={backupExportOpen} onOpenChange={(open) => {
         if (backupExportBusy) return;
         setBackupExportOpen(open);
+        if (!open) {
+          setBackupExportPassword('');
+          setBackupExportConfirm('');
+          setBackupExportError('');
+          setBackupExportPasswordVisible(false);
+        }
       }}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Export Backup</DialogTitle>
+            <DialogTitle>{backupExportMode === 'csv' ? 'Export Trips' : 'Export Backup'}</DialogTitle>
             <DialogDescription>
-              Protect trip history, privacy-masked routes, vehicles, settings, and saved filters with a password before saving the backup file.
+              {backupExportMode === 'csv'
+                ? 'Protect your completed trip CSV with a password before saving the encrypted export file. Includes completed trips, score fields, timestamps, distances, route/event fields that export sanitizers allow, and trip metadata.'
+                : 'Protect the backup with a password before saving it. Includes trips, GPS route points after privacy masking, driving events, vehicles, safe settings, saved filters, calibration metadata, and privacy-zone metadata without private center coordinates.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-              Backups remove privacy-zone center coordinates and mask protected route/event data, but the file still contains sensitive trip history. Anyone with this file and password can restore it.
+              {backupExportMode === 'csv'
+                ? 'The export is encrypted locally before download. You will need this password to open it later.'
+                : 'Backups remove privacy-zone center coordinates and mask protected route/event data, but the file still contains sensitive trip history. Anyone with this file and password can restore it.'}
             </div>
+            {backupExportError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                {backupExportError}
+              </div>
+            )}
             <label className="block text-sm font-medium">
               Password
-              <input
-                type="password"
-                value={backupExportPassword}
-                onChange={(event) => setBackupExportPassword(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
-                autoComplete="new-password"
-              />
+              <div className="mt-1 flex rounded-lg border border-border bg-card focus-within:border-primary">
+                <input
+                  type={backupExportPasswordVisible ? 'text' : 'password'}
+                  value={backupExportPassword}
+                  onChange={(event) => {
+                    setBackupExportError('');
+                    setBackupExportPassword(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH));
+                  }}
+                  className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
+                  autoComplete="new-password"
+                  maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupExportPasswordVisible((visible) => !visible)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-r-lg text-muted-foreground hover:bg-secondary"
+                  aria-label={backupExportPasswordVisible ? 'Hide export password' : 'Show export password'}
+                >
+                  {backupExportPasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </label>
             <label className="block text-sm font-medium">
               Confirm password
-              <input
-                type="password"
-                value={backupExportConfirm}
-                onChange={(event) => setBackupExportConfirm(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
-                autoComplete="new-password"
-              />
+              <div className={`mt-1 flex rounded-lg border bg-card focus-within:border-primary ${backupExportConfirm && !backupPasswordsMatch ? 'border-red-300' : 'border-border'}`}>
+                <input
+                  type={backupExportPasswordVisible ? 'text' : 'password'}
+                  value={backupExportConfirm}
+                  onChange={(event) => setBackupExportConfirm(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH))}
+                  className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
+                  autoComplete="new-password"
+                  maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                />
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center text-muted-foreground">
+                  <KeyRound className="h-4 w-4" />
+                </div>
+              </div>
             </label>
             <div className="space-y-1.5">
               <div className="grid grid-cols-4 gap-1" aria-hidden="true">
@@ -1498,8 +1593,16 @@ export default function Settings() {
                   ? backupPasswordsMatch
                     ? `${backupPasswordStrengthLabel} password`
                     : 'Passwords must match'
-                  : `Use at least 12 characters. Current strength: ${backupPasswordStrengthLabel}`}
+                  : `${backupExportValidation.message || 'Password requirements are incomplete.'} Current strength: ${backupPasswordStrengthLabel}`}
               </div>
+            </div>
+            <div className="grid gap-1.5 text-xs">
+              {backupExportValidation.checks.map((check) => (
+                <div key={check.id} className={`flex items-center gap-2 ${check.valid ? 'text-green-600' : 'text-muted-foreground'}`}>
+                  <Check className={`h-3.5 w-3.5 ${check.valid ? 'opacity-100' : 'opacity-30'}`} />
+                  <span>{check.label}</span>
+                </div>
+              ))}
             </div>
           </div>
           <DialogFooter>
@@ -1517,7 +1620,7 @@ export default function Settings() {
               disabled={!backupExportReady || backupExportBusy}
               className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
-              {backupExportBusy ? 'Exporting...' : 'Export Backup'}
+              {backupExportBusy ? 'Exporting...' : backupExportMode === 'csv' ? 'Export Trips' : 'Export Backup'}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -1530,6 +1633,7 @@ export default function Settings() {
           setPendingBackupImportFile(null);
           setBackupImportPassword('');
           setBackupImportError('');
+          setBackupImportPasswordVisible(false);
         }
       }}>
         <DialogContent className="rounded-2xl">
@@ -1543,11 +1647,16 @@ export default function Settings() {
           </DialogHeader>
           <div className="space-y-2">
             <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
-              Importing merges trips, vehicles, saved filters, and safe settings into local storage. Backups do not restore privacy-zone coordinates; re-add private places after import if needed.
+              Importing merges trips, route points, driving events, vehicles, saved filters, and safe settings into local storage. Privacy-zone coordinates are not restored; re-add private places after import if needed.
             </div>
             {backupImportError === 'wrong_password' && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
                 Wrong password. Check the password and try again.
+              </div>
+            )}
+            {backupImportError === 'password_invalid' && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                {backupImportValidation.message || 'Enter a valid backup password.'}
               </div>
             )}
             {backupImportError === 'password_required' && (
@@ -1557,17 +1666,34 @@ export default function Settings() {
             )}
             <label className="block text-sm font-medium">
               Password
-              <input
-                type="password"
-                value={backupImportPassword}
-                onChange={(event) => setBackupImportPassword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') handleImportPasswordSubmit();
-                }}
-                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
-                autoComplete="current-password"
-              />
+              <div className={`mt-1 flex rounded-lg border bg-card focus-within:border-primary ${backupImportPassword && !backupImportValidation.valid ? 'border-red-300' : 'border-border'}`}>
+                <input
+                  type={backupImportPasswordVisible ? 'text' : 'password'}
+                  value={backupImportPassword}
+                  onChange={(event) => {
+                    setBackupImportError('');
+                    setBackupImportPassword(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH));
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') handleImportPasswordSubmit();
+                  }}
+                  className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none"
+                  autoComplete="current-password"
+                  maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupImportPasswordVisible((visible) => !visible)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-r-lg text-muted-foreground hover:bg-secondary"
+                  aria-label={backupImportPasswordVisible ? 'Hide import password' : 'Show import password'}
+                >
+                  {backupImportPasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </label>
+            <div className={`text-xs font-medium ${backupImportValidation.valid ? 'text-green-600' : 'text-muted-foreground'}`}>
+              Backup passwords must be 12-{BACKUP_PASSWORD_MAX_LENGTH} characters. Older backups keep their original password rules.
+            </div>
           </div>
           <DialogFooter>
             <button
@@ -1581,7 +1707,7 @@ export default function Settings() {
             <button
               type="button"
               onClick={handleImportPasswordSubmit}
-              disabled={backupImportPassword.length < 12 || backupImportBusy}
+              disabled={!backupImportValidation.valid || backupImportBusy}
               className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
               {backupImportBusy ? 'Importing...' : 'Import'}

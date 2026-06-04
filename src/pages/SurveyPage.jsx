@@ -5,7 +5,7 @@ import { calibrationLabelService } from '@/api/calibrationLabels';
 import { tripService } from '@/api/trips';
 import PostTripCalibrationSurvey from '@/components/PostTripCalibrationSurvey';
 import { localSettings } from '@/lib/trackingStore';
-import { notifyUserError } from '@/lib/userFeedback';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 
 export default function SurveyPage() {
   const { tripId } = useParams();
@@ -48,7 +48,13 @@ export default function SurveyPage() {
 
   const submitMutation = useMutation({
     mutationFn: (surveyInput) => calibrationLabelService.submitTripSurveyLabel(trip, surveyInput),
-    onSuccess: () => navigate('/trips'),
+    onSuccess: () => {
+      notifyUserSuccess('survey_submit', {
+        title: 'Trip rating saved',
+        description: 'This rating will help calibration improve over time.',
+      });
+      navigate('/trips');
+    },
     meta: {
       name: 'survey_submit',
       errorTitle: 'Survey not saved',
@@ -58,7 +64,13 @@ export default function SurveyPage() {
 
   const skipMutation = useMutation({
     mutationFn: () => calibrationLabelService.skipTripSurvey(tripId),
-    onSuccess: () => navigate('/trips'),
+    onSuccess: () => {
+      notifyUserSuccess('survey_skip', {
+        title: 'Rating skipped',
+        description: 'Road Sage will not ask for a rating on this trip again.',
+      });
+      navigate('/trips');
+    },
     meta: {
       name: 'survey_skip',
       errorTitle: 'Survey skip not saved',

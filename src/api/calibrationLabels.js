@@ -13,6 +13,7 @@ import { localTripRepository } from '@/lib/localTripRepository';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { assertServerVerifiedPlayIntegrity, requestPlayIntegrityAttestation } from '@/lib/nativePlayIntegrity';
 import { localSettings } from '@/lib/trackingStore';
+import { externalServiceAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 
 const shouldUseRemoteLabelStore = () => API_ENDPOINT_CONFIGURED;
 
@@ -68,9 +69,10 @@ export const calibrationLabelService = {
       includeFreeTextInUpload: false,
     });
     const tripId = trip?.id ?? null;
-    const sharingEnabled = localSettings.get().calibration_sharing_enabled === true;
+    const settings = localSettings.get();
+    const sharingEnabled = externalServiceAllowed(settings, 'calibration_upload') && shouldUseRemoteLabelStore();
 
-    if (sharingEnabled && payload.eligibleForCalibration && shouldUseRemoteLabelStore()) {
+    if (sharingEnabled && payload.eligibleForCalibration) {
       try {
         const attestation = isNativePlatform()
           ? await requestPlayIntegrityAttestation('calibration-upload')
@@ -78,10 +80,15 @@ export const calibrationLabelService = {
         if (isNativePlatform() && !attestation?.token) {
           throw new Error('Play Integrity attestation is required before calibration upload.');
         }
+        recordOutboundDataEvent({
+          service: 'calibration_upload',
+          status: 'used',
+          detail: 'Anonymized survey label and summary features sent for calibration.',
+        }).catch(() => {});
         const saved = await apiClient.post(`/${CALIBRATION_LABEL_COLLECTION}`, {
           ...payload,
           ...(attestation ? { playIntegrity: attestation } : {}),
-        });
+        }, { privacyService: 'calibration_upload' });
         assertServerVerifiedPlayIntegrity(saved, 'calibration-upload');
         await localCalibrationLabelRepository.markTripSubmitted(tripId, {
           label_id: saved?.labelId || saved?.id || payload.labelId,
@@ -108,7 +115,7 @@ export const calibrationLabelService = {
 
     const record = await localCalibrationLabelRepository.create(localRecord, {
       tripId,
-      uploadStatus: sharingEnabled && !payload.eligibleForCalibration ? 'excluded_quality' : 'local_only',
+      uploadStatus: settings.calibration_sharing_enabled === true && !payload.eligibleForCalibration ? 'excluded_quality' : 'local_only',
     });
     await applyReadinessSurveyResponse(trip, surveyInput?.readiness_accuracy ?? surveyInput?.readinessAccuracy);
     return record;

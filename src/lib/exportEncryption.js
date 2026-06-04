@@ -1,4 +1,4 @@
-import { encryptBackup } from '@/lib/backupEncryption';
+import { assertBackupPassword, encryptBackup } from '@/lib/backupEncryption';
 import { assertPlayIntegrityForSensitiveAction } from '@/lib/nativePlayIntegrity';
 
 export function encryptedExportFilename(filename, extension = '.rsexport') {
@@ -9,9 +9,7 @@ export function encryptedExportFilename(filename, extension = '.rsexport') {
 }
 
 export async function buildEncryptedExport({ filename, mimeType, data, password, kind = 'generic' }) {
-  if (typeof password !== 'string' || password.length < 12) {
-    throw new Error('Export password must be at least 12 characters.');
-  }
+  assertBackupPassword(password, { requireStrong: true });
   await assertPlayIntegrityForSensitiveAction(`export:${kind}`);
 
   const payload = {

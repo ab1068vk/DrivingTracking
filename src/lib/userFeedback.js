@@ -83,6 +83,32 @@ export function notifyUserError(context, error, options = {}) {
   });
 }
 
+export function notifyUserMessage(context, options = {}) {
+  const title = options.title || 'Done';
+  const description = options.description || '';
+  const dedupeKey = options.dedupeKey || `${context}|${title}|${description}`;
+  const now = Date.now();
+  const recent = recentMessages.get(dedupeKey);
+  if (recent && now - recent < USER_MESSAGE_DEDUPE_MS) return null;
+
+  recentMessages.set(dedupeKey, now);
+
+  return toast({
+    title,
+    description,
+    variant: options.variant || 'default',
+    dedupeKey,
+    duration: options.duration,
+  });
+}
+
+export function notifyUserSuccess(context, options = {}) {
+  return notifyUserMessage(context, {
+    ...options,
+    variant: options.variant || 'default',
+  });
+}
+
 export async function runWithUserError(context, task, options = {}) {
   try {
     return await task();

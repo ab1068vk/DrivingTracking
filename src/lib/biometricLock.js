@@ -4,7 +4,7 @@ import {
 } from '@/lib/appConstants';
 
 let biometricEnabled = BIOMETRIC_LOCK_DEFAULT_ENABLED;
-let unlockedAt = null;
+let lastActivityAt = null;
 export const BIOMETRIC_LOCK_STATE_CHANGE_EVENT = 'road_sage_biometric_lock_state_change';
 
 export function notifyBiometricLockSettingsChanged() {
@@ -20,7 +20,7 @@ export function notifyBiometricLockSettingsChanged() {
 
 export function setBiometricLockEnabled(enabled) {
   biometricEnabled = enabled === true;
-  if (!biometricEnabled) unlockedAt = null;
+  if (!biometricEnabled) lastActivityAt = null;
 }
 
 export function isBiometricLockEnabled() {
@@ -37,30 +37,34 @@ export function getLockTimeoutMs(settings = {}) {
 }
 
 export function markUnlocked(now = Date.now()) {
-  unlockedAt = Number.isFinite(Number(now)) ? Number(now) : Date.now();
-  return unlockedAt;
+  return markUserActivity(now);
+}
+
+export function markUserActivity(now = Date.now()) {
+  lastActivityAt = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+  return lastActivityAt;
 }
 
 export function lock() {
-  unlockedAt = null;
+  lastActivityAt = null;
 }
 
 export function isLocked(settings = {}, now = Date.now()) {
   if (!isBiometricLockEnabled()) return false;
-  if (!unlockedAt) return true;
+  if (!lastActivityAt) return true;
 
   const timeoutMs = getLockTimeoutMs(settings);
   if (!Number.isFinite(timeoutMs)) return false;
 
-  return Number(now) - unlockedAt > timeoutMs;
+  return Number(now) - lastActivityAt > timeoutMs;
 }
 
 export function msUntilAutoLock(settings = {}, now = Date.now()) {
-  if (!isBiometricLockEnabled() || !unlockedAt) return 0;
+  if (!isBiometricLockEnabled() || !lastActivityAt) return 0;
 
   const timeoutMs = getLockTimeoutMs(settings);
   if (!Number.isFinite(timeoutMs)) return Number.POSITIVE_INFINITY;
 
-  const elapsedMs = Number(now) - unlockedAt;
+  const elapsedMs = Number(now) - lastActivityAt;
   return Math.max(0, timeoutMs - elapsedMs + 1);
 }

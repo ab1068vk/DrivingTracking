@@ -1,6 +1,6 @@
 # Road Sage Technical Reference
 
-Updated: 2026-06-04T06:55:13.584Z
+Updated: 2026-06-04T18:43:35.833Z
 
 This document is generated from the current repository. It is intentionally high-signal: architecture, security, storage, routes, major calculations, test coverage, and deployment notes are kept; exhaustive import/export, function, literal, and handler dumps are omitted.
 
@@ -25,13 +25,13 @@ This document is generated from the current repository. It is intentionally high
 ---
 ## Coverage And Reading Guide
 
-- Text/code files scanned: 529
-- App/source files scanned: 473
+- Text/code files scanned: 538
+- App/source files scanned: 480
 - Machine-local files excluded from scanning: `android/local.properties`, `roadsage-window.xml`
-- Production calculation lines scanned for summary: 2418
-- Test calculation/assertion lines scanned separately: 385
-- Hard-coded production literals scanned for policy constants: 24072
-- Functions/methods scanned for targeted snippets: 2722
+- Production calculation lines scanned for summary: 2440
+- Test calculation/assertion lines scanned separately: 386
+- Hard-coded production literals scanned for policy constants: 24885
+- Functions/methods scanned for targeted snippets: 2856
 
 > WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.
 
@@ -46,7 +46,7 @@ This document is generated from the current repository. It is intentionally high
 | Version | 1.0.0 |
 | Purpose | Local-first driving tracker for trip recording, scoring, playback, reports, evidence-aware context estimates, coaching, backup/import, and Android background auto tracking. |
 | Architecture | React/Vite single-page app plus Capacitor Android shell, native background services, and a parked-car widget. Domain logic is split between focused `src/engine/*` modules and `src/lib/*` services, with `src/lib/tripEngine.js` retained as a compatibility export layer. API adapters live in `src/api/*`; routed UI and feature surfaces live in `src/pages/*`, `src/components/*`, `src/settings/*`, and `src/features/*`. |
-| Primary storage | IndexedDB/localStorage for browser UI state, encrypted Android key-value storage for native UI values, cached-first plus deferred native settings hydration on Android, Android Keystore-backed encrypted trip fields for sensitive route/event/note payloads on native Android, in-memory session-key encrypted trip fields on web/test surfaces, encrypted Android SharedPreferences for native tracking, native settings, native notification state, privacy zones, and parked-location data, coarse route-risk geohash cells, native motion samples, native download/import files, and Android widget map cache files. Android production paths migrate legacy plaintext Capacitor Preferences into encrypted storage where applicable, no longer mirror native settings JSON into WebView localStorage, no longer read legacy plaintext `SharedPreferences`/Capacitor Preferences for native settings, privacy zones, tracking, notifications, or parked locations, and warm encrypted preference keys shortly after launch; legacy native plaintext preference files are delete-only cleanup targets. Completed-trip retention defaults to 24 months and can be changed in Privacy & Data settings. Backup import preserves restored trips outside an imported retention window by setting retention to Never for that import. Stealth Trip Mode bypasses trip, active-trip, map-center, parked-location, and diagnostic persistence while the ephemeral trip is active. |
+| Primary storage | IndexedDB/localStorage for browser UI state, encrypted Android key-value storage for native UI values, cached-first plus deferred native settings hydration on Android, Android Keystore-backed encrypted trip fields for sensitive route/event/note payloads on native Android, in-memory session-key encrypted trip fields on web/test surfaces, encrypted Android SharedPreferences for native tracking, native settings, native notification state, privacy zones, and parked-location data, coarse route-risk geohash cells, native motion samples, native download/import files, Android widget map cache files, and an app-private WebView settings recovery mirror used only to keep stale native/default settings from winning on relaunch. Android production paths migrate legacy plaintext Capacitor Preferences into encrypted storage where applicable, avoid legacy plaintext `SharedPreferences`/Capacitor Preferences as the source of truth for native settings, privacy zones, tracking, notifications, or parked locations, and warm encrypted preference keys shortly after launch; legacy native plaintext preference files are delete-only cleanup targets. Completed-trip retention defaults to 24 months and can be changed in Privacy & Data settings. Backup import preserves restored trips outside an imported retention window by setting retention to Never for that import. Stealth Trip Mode bypasses trip, active-trip, map-center, parked-location, and diagnostic persistence while the ephemeral trip is active. |
 | Privacy session and ephemeral trips | Privacy & Data settings expose a configurable biometric auto-lock timeout and Stealth Trip Mode. Stealth mode arms the next manual trip, pauses Android background auto tracking first, scores the trip in memory only, wipes route points/events when the trip ends or the app backgrounds, and leaves only a dismissible session-local score summary. |
 | Optional backend | `VITE_API_URL`; absent by default. When configured it must normalize through `src/lib/externalEndpointTrust.js` as a trusted HTTPS public-domain URL, and `VITE_TRUSTED_BACKEND_ORIGINS` can restrict managed deployments to a comma/space-separated origin allowlist. Invalid backend URLs fail clearly instead of falling back to localhost. |
 | Local trip database name | `VITE_DB_NAME`; defaults to `road_sage_mobile` and triggers an IndexedDB copy/delete rename migration when changed. |
@@ -155,7 +155,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | android/app/src/main/java/com/roadsage/app/DriveSenseNativeTripStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences, org.json.JSONArray, org.json.JSONException, org.json.JSONObject, java.util.UUID | none | 22 | 2 |
 | android/app/src/main/java/com/roadsage/app/EncryptedPreferenceStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences, android.os.Build, android.security.keystore.KeyInfo, android.security.keystore.KeyProperties, androidx.security.crypto.EncryptedSharedPreferences, androidx.security.crypto.MasterKey, java.io.IOException | none | 22 | 1 |
 | android/app/src/main/java/com/roadsage/app/MainActivity.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Intent, android.net.Uri, android.os.Build, android.os.Bundle, android.util.Log, android.view.View, android.view.WindowManager, android.webkit.CookieManager | none | 24 | 3 |
-| android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.appwidget.AppWidgetManager, android.content.Context, android.content.SharedPreferences, android.graphics.Bitmap, android.graphics.BitmapFactory, android.graphics.Canvas, android.graphics.Color, android.graphics.ColorMatrixColorFilter | none | 23 | 11 |
+| android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.appwidget.AppWidgetManager, android.content.Context, android.content.SharedPreferences, android.graphics.Bitmap, android.graphics.BitmapFactory, android.graphics.Canvas, android.graphics.Color, android.graphics.ColorMatrixColorFilter | none | 27 | 11 |
 | android/app/src/main/java/com/roadsage/app/NativeSettingsStore.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.content.Context, android.content.SharedPreferences | none | 6 | 0 |
 | android/app/src/main/java/com/roadsage/app/ParkedCarWidgetProvider.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | android.app.AlarmManager, android.app.PendingIntent, android.appwidget.AppWidgetManager, android.appwidget.AppWidgetProvider, android.os.Build, android.os.BatteryManager, android.os.Bundle, android.content.ComponentName | none | 24 | 5 |
 | android/app/src/main/java/com/roadsage/app/PlayIntegrityPlugin.java | Android Capacitor shell, native service, resource, Gradle, or manifest file. | com.getcapacitor.JSObject, com.getcapacitor.Plugin, com.getcapacitor.PluginCall, com.getcapacitor.PluginMethod, com.getcapacitor.annotation.CapacitorPlugin, com.google.android.play.core.integrity.IntegrityManager, com.google.android.play.core.integrity.IntegrityManagerFactory, com.google.android.play.core.integrity.IntegrityTokenRequest | none | 2 | 0 |
@@ -174,10 +174,10 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/api/__tests__/clientFallback.test.js | API service adapter with local-first fallback behavior. | vitest, @/api/client, @/api/trips, @/api/vehicles | none | 0 | 0 |
 | src/api/auth.js | API service adapter with local-first fallback behavior. | @/api/client | migrateLegacyAuthTokens, consumeLegacyAuthTokenMigration, authService | 2 | 0 |
 | src/api/calibrationLabels.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/calibrationLabeling, @/lib/calibration/readinessSignalCorrelation, @/lib/calibration/readinessThresholdFit, @/lib/localCalibrationLabelRepository, @/lib/localTripRepository, @/lib/nativePlatform, @/lib/nativePlayIntegrity | calibrationLabelService | 9 | 0 |
-| src/api/client.js | API service adapter with local-first fallback behavior. | @/lib/externalEndpointTrust | API_ENDPOINT_CONFIGURED, API_ENDPOINT_TRUST, API_BASE_URL, ApiError, getAuthToken, apiClient | 5 | 0 |
-| src/api/trips.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/ephemeralTripMode, @/lib/localTripRepository, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripMetadata | shouldUseLocalStore, tripService | 2 | 4 |
-| src/api/vehicles.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/localVehicleRepository, @/lib/nativePlatform | shouldUseLocalStore, vehicleService | 2 | 2 |
-| src/App.jsx | Project configuration or static asset metadata. | @/components/ui/toaster, @tanstack/react-query, @/lib/query-client, react-router-dom, @capacitor/app, @capacitor/local-notifications, ./lib/PageNotFound, @/lib/AuthContext | App | 17 | 2 |
+| src/api/client.js | API service adapter with local-first fallback behavior. | @/lib/externalEndpointTrust, @/lib/trackingStore, @/lib/privacyControls | API_ENDPOINT_CONFIGURED, API_ENDPOINT_TRUST, API_BASE_URL, ApiError, getAuthToken, apiClient | 5 | 0 |
+| src/api/trips.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/ephemeralTripMode, @/lib/localTripRepository, @/lib/trackingStore, @/lib/nativePlatform, @/lib/tripInsights, @/lib/tripMetadata | shouldUseLocalStore, tripService | 2 | 4 |
+| src/api/vehicles.js | API service adapter with local-first fallback behavior. | @/api/client, @/lib/localVehicleRepository, @/lib/nativePlatform, @/lib/trackingStore | shouldUseLocalStore, vehicleService | 2 | 2 |
+| src/App.jsx | Project configuration or static asset metadata. | @/components/ui/toaster, @tanstack/react-query, @/lib/query-client, react-router-dom, @capacitor/app, @capacitor/local-notifications, ./lib/PageNotFound, @/lib/AuthContext | App | 19 | 2 |
 | src/engine/__tests__/fixtures/scoringPipelineTrip.js | Focused domain engine module for scoring, detection, calibration, routing, export, or shared math. | none | buildRealisticScoringTrip, buildPhoneUseGap | 4 | 0 |
 | src/engine/__tests__/scoringPipeline.integration.test.js | Focused domain engine module for scoring, detection, calibration, routing, export, or shared math. | node:perf_hooks, vitest, @/engine/utils, @/engine/detection, @/engine/scoring, @/engine/calibration, @/lib/scoringConstants, ./fixtures/scoringPipelineTrip | none | 3 | 0 |
 | src/engine/calibration/baseline.js | Focused domain engine module for scoring, detection, calibration, routing, export, or shared math. | ../../lib/nativeDownloads.js, ../../lib/mathUtils.js, ../../lib/tripInsights.js, ../../lib/privacyZones.js, ../../lib/metricRegistry.js, ../../lib/appConstants.js, ../../lib/scoringConstants.js, ../../lib/scoreDisplay.js | stableSettingsFingerprint, ECO_SPEED_STABILITY_CV_MULTIPLIER, FUEL_BAND_FULL_SCORE_MULTIPLIER, STOP_START_MIN_HIGHWAY_DISTANCE_KM, STOP_START_MIN_URBAN_DISTANCE_KM, STOP_START_NORMALISATION_WINDOW_KM, STOP_START_MAX_CYCLES_PER_5_KM, STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT, STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY, STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN | 18 | 13 |
@@ -213,7 +213,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/activityRecognition.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/nativePlatform, @/lib/permissions, @/lib/gps/math, @/lib/driveSenseNativePlugin | ACTIVITY_STATE_MAX_AGE_MS, ACTIVITY_POLL_INTERVAL_MS, AUTO_START_IN_VEHICLE_CONFIDENCE, AUTO_START_SPEED_KMH, AUTO_START_IN_VEHICLE_SECONDS, AUTO_START_GPS_FALLBACK_SECONDS, WALKING_SPEED_CUTOFF_KMH, ACTIVITY_TYPES, startActivityRecognition, startNativeAutoTracking | 18 | 14 |
 | src/lib/appConstants.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | ./scoringConstants | NIGHT_START_HOUR, NIGHT_END_HOUR, MORNING_RUSH_START_HOUR, MORNING_RUSH_END_HOUR, EVENING_RUSH_START_HOUR, EVENING_RUSH_END_HOUR, NIGHT_START_TIME, NIGHT_END_TIME, PENALTY_SCALE_FACTOR, FATIGUE_SAFETY_PENALTY_SCALE | 3 | 3 |
 | src/lib/dailyFatigueEngine.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mathUtils, @/lib/scoringConstants | DAILY_FATIGUE_THRESHOLDS, DAILY_FATIGUE_DEFAULTS, getTodayTrips, computeDailyFatigue | 6 | 8 |
-| src/lib/dataBackup.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/api/trips, @/api/vehicles, @capacitor/core, @/lib/nativeDownloads, @/lib/trackingStore, @/lib/privacyZones, @/lib/mobileStorage, @/lib/appConstants | BACKUP_VERSION, MAX_BACKUP_BYTES, BACKUP_TOO_LARGE_MESSAGE, MAX_IMPORTED_TRIP_ROUTE_POINTS, MAX_IMPORTED_TRIP_DRIVING_EVENTS, MAX_IMPORTED_STRING_LENGTH, MAX_IMPORTED_TRIP_NOTES_LENGTH, BACKUP_INTEGRITY_ERROR, sealPlaintextBackup, verifyPlaintextBackupIntegrity | 29 | 17 |
+| src/lib/dataBackup.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/api/trips, @/api/vehicles, @capacitor/core, @/lib/nativeDownloads, @/lib/trackingStore, @/lib/privacyZones, @/lib/mobileStorage, @/lib/appConstants | BACKUP_VERSION, MAX_BACKUP_BYTES, BACKUP_TOO_LARGE_MESSAGE, MAX_IMPORTED_TRIP_ROUTE_POINTS, MAX_IMPORTED_TRIP_DRIVING_EVENTS, MAX_IMPORTED_STRING_LENGTH, MAX_IMPORTED_TRIP_NOTES_LENGTH, BACKUP_INTEGRITY_ERROR, sealPlaintextBackup, verifyPlaintextBackupIntegrity | 30 | 19 |
 | src/lib/errorReporting.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/trackingDiagnostics | scrubDiagnosticText, sanitizeError, logError, initializeErrorReporting | 6 | 2 |
 | src/lib/localTripRepository.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @/lib/rescoreEvents, @/lib/activityRecognition, @/lib/ephemeralTripMode, @/lib/nativePlatform, @/lib/tripFieldEncryption, @/lib/gps/sanitize, @/lib/scoring/componentScores | TRIP_SCHEMA_VERSION, TRIP_EVENT_MIGRATION_VERSION, TRIP_EVENT_MIGRATION_KEY, TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, RESCORE_PROGRESS_EVENT, AUTO_RESCORE_RECENT_WINDOW_DAYS, AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, createIndexedDbMigrationRunner, DB_NAME, DB_NAME_META_KEY | 69 | 23 |
 | src/lib/metricRegistry.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | ./featureGraduationPolicy | DATA_SOURCE_LABELS, METRIC_REGISTRY, COMPONENT_METRIC_KEYS, CSV_METRIC_COLUMNS, CSV_RAW_COLUMNS, MONTHLY_PDF_METRIC_KEYS, UBI_PDF_METRIC_KEYS, UBI_CATEGORY_METRIC_KEYS, formatMetricMetadata, formatDataSourceLabel | 2 | 63 |
@@ -250,17 +250,17 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/lib/scoring/safetyScore.ts | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | calculateAggressiveDrivingScore, calculateDefensiveDrivingScore, calculateEngineStressScore, calculateTireWearUnits | 0 | 0 |
 | src/lib/scoring/smoothnessScore.ts | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | none | calculateBrakeOnsetSmoothness, calculateBrakingEfficiency, calculateCorneringConsistency, calculateSmoothBrakingRatio | 0 | 0 |
 | src/lib/scoringConstants.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | ./scoringVersion.generated.js, ./personalBaselineConstants.js | CALIBRATION_STATUSES, SCORE_OUTPUT_CALIBRATION_STATUSES, SCORING_VERSION, LANE_CHANGING_SAFETY_WEIGHT, PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS, DEFAULT_HOURLY_RISK_PROFILE, SCORING_CONSTANTS, scoringValue, TRIP_THRESHOLD_DEFAULTS, getProvisionalScoringConstants | 6 | 89 |
-| src/lib/trackingStore.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @capacitor/core, @/lib/ephemeralTripMode, @/lib/gps/sanitize, @/lib/storageKeyMigration, @/lib/mapDefaults, @/lib/mathUtils, @/lib/currency | PARKED_LOCATION_PRIVACY_GUARD_M, appendLiveRoutePoint, persistActiveTripMeta, getPrivacyZones, savePrivacyZones, isInPrivacyZone, reconcileSettingsHydrationSnapshot, DEFAULT_SETTINGS, migrateDefaultSettings, sanitizeImportedSettings | 56 | 26 |
+| src/lib/trackingStore.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/lib/mobileStorage, @capacitor/core, @/lib/ephemeralTripMode, @/lib/gps/sanitize, @/lib/storageKeyMigration, @/lib/mapDefaults, @/lib/mathUtils, @/lib/currency | PARKED_LOCATION_PRIVACY_GUARD_M, chooseSettingsHydrationCandidate, appendLiveRoutePoint, persistActiveTripMeta, getPrivacyZones, savePrivacyZones, isInPrivacyZone, reconcileSettingsHydrationSnapshot, DEFAULT_SETTINGS, migrateDefaultSettings | 68 | 27 |
 | src/lib/tripFieldEncryption.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @capacitor/core, @/lib/nativePlatform | encryptTripFields, decryptTripFields | 13 | 0 |
-| src/lib/userFeedback.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/components/ui/use-toast, @/lib/errorReporting | describeUserError, notifyUserError, runWithUserError | 5 | 0 |
+| src/lib/userFeedback.js | Domain/service library for scoring, tracking, storage, reports, context, or native integration. | @/components/ui/use-toast, @/lib/errorReporting | describeUserError, notifyUserError, notifyUserMessage, notifyUserSuccess, runWithUserError | 7 | 0 |
 | src/main.jsx | Project configuration or static asset metadata. | react, react-dom/client, @/App.jsx, @/index.css, @/lib/errorReporting, @/api/auth, @/lib/storageKeyMigration, @/lib/userFeedback | none | 0 | 0 |
-| src/pages/Dashboard.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @/api/trips, @/api/vehicles, @tanstack/react-query, lucide-react, @/lib/gps/formatting, @/lib/gps/math | Dashboard | 21 | 52 |
-| src/pages/MapScreen.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, lucide-react, @/components/TripMap, @/components/TripPlayback, @/lib/gps/formatting | MapScreen | 7 | 27 |
-| src/pages/Onboarding.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, lucide-react, @/lib/trackingStore, @/lib/permissions, @/lib/sensorFusionModel, @/lib/nativePlatform, @/lib/activityRecognition | Onboarding | 15 | 3 |
+| src/pages/Dashboard.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @/api/trips, @/api/vehicles, @tanstack/react-query, lucide-react, @/lib/gps/formatting, @/lib/gps/math | Dashboard | 21 | 55 |
+| src/pages/MapScreen.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, lucide-react, @/components/TripMap, @/components/TripPlayback, @/lib/gps/formatting | MapScreen | 8 | 29 |
+| src/pages/Onboarding.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, lucide-react, @/lib/trackingStore, @/lib/permissions, @/lib/sensorFusionModel, @/lib/nativePlatform, @/lib/activityRecognition | Onboarding | 22 | 4 |
 | src/pages/Report.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, recharts, @/lib/gps/formatting | Reports | 4 | 65 |
-| src/pages/Settings.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/ui/dialog, @/components/ui/checkbox | Settings | 61 | 22 |
-| src/pages/TripDetail.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, react-router-dom, @tanstack/react-query, @/api/calibrationLabels, @/api/trips, @/api/vehicles, framer-motion, lucide-react | TripDetail | 26 | 96 |
-| src/pages/TripHistory.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @tanstack/react-virtual, @/api/trips, @/api/vehicles, @/api/calibrationLabels, lucide-react | SCORE_DELTA_MIN_PREVIOUS_TRIPS, scoreDeltaForTrip, TripHistory | 14 | 17 |
+| src/pages/Settings.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/ui/dialog, @/components/ui/checkbox | Settings | 61 | 26 |
+| src/pages/TripDetail.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, react-router-dom, @tanstack/react-query, @/api/calibrationLabels, @/api/trips, @/api/vehicles, framer-motion, lucide-react | TripDetail | 26 | 100 |
+| src/pages/TripHistory.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @tanstack/react-virtual, @/api/trips, @/api/vehicles, @/api/calibrationLabels, lucide-react | SCORE_DELTA_MIN_PREVIOUS_TRIPS, scoreDeltaForTrip, TripHistory | 14 | 18 |
 | src/pages/Vehicles.jsx | Routed React page/view with data loading, derived presentation metrics, and user actions. | react, framer-motion, @tanstack/react-query, @/api/trips, @/api/vehicles, lucide-react, @/components/VehicleCompare, @/lib/tripInsights | MAX_FUEL_PRICE_PER_UNIT, validateVehicleForm, getVehicleFormWarnings, calculateAverageVehicleScore, Vehicles | 16 | 21 |
 | src/settings/calibration/__tests__/calibrationSettingsHelpers.test.js | Modular Settings screen section, navigator, or shared Settings UI component. | vitest, @/settings/calibration/labelBreakdown, @/settings/calibration/modelStatus, @/settings/calibration/progress, @/settings/calibration/recentUnratedTrips | none | 1 | 0 |
 | src/settings/calibration/labelBreakdown.js | Modular Settings screen section, navigator, or shared Settings UI component. | none | EMPTY_LABEL_BREAKDOWN, labelBreakdownFromMarkers, ratedTripCount | 3 | 0 |
@@ -269,17 +269,17 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | src/settings/calibration/recentUnratedTrips.js | Modular Settings screen section, navigator, or shared Settings UI component. | @/lib/scoring/componentScores | recentUnratedTripCount | 5 | 0 |
 | src/settings/osrm/OsrmEndpointPanel.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | lucide-react, @/lib/osrmEndpointTrust | OsrmEndpointPanel | 2 | 2 |
 | src/settings/privacy-zones/privacyZoneConstants.js | Modular Settings screen section, navigator, or shared Settings UI component. | none | ZONE_RADIUS_MIN_M, ZONE_RADIUS_MAX_M, ZONE_RADIUS_DEFAULT_M, EMPTY_ZONE_DRAFT, clampZoneRadius, createZoneDraft, zoneFromDraft | 3 | 0 |
-| src/settings/privacy-zones/PrivacyZoneDialog.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, lucide-react, @/components/ui/dialog, @/components/ui/slider, ./privacyZoneConstants, ./privacyZoneFormatting | PrivacyZoneDialog | 7 | 1 |
+| src/settings/privacy-zones/PrivacyZoneDialog.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, lucide-react, @/components/ui/dialog, @/components/ui/slider, @/lib/trackingService, @/lib/userFeedback, ./privacyZoneConstants, ./privacyZoneFormatting | PrivacyZoneDialog | 7 | 1 |
 | src/settings/privacy-zones/privacyZoneFormatting.js | Modular Settings screen section, navigator, or shared Settings UI component. | none | formatCoordinateLabel, zoneKey | 2 | 1 |
 | src/settings/privacy-zones/PrivacyZoneInfoCard.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | lucide-react | PrivacyZoneInfoCard | 1 | 0 |
 | src/settings/privacy-zones/PrivacyZoneList.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | lucide-react, ./privacyZoneFormatting | PrivacyZoneList | 2 | 1 |
-| src/settings/privacy-zones/usePrivacyZones.js | Modular Settings screen section, navigator, or shared Settings UI component. | react, @/lib/trackingStore | usePrivacyZones | 1 | 1 |
-| src/settings/PrivacyZonesSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, lucide-react, ./settingsComponents, ./privacy-zones/PrivacyZoneDialog, ./privacy-zones/PrivacyZoneInfoCard, ./privacy-zones/PrivacyZoneList, ./privacy-zones/usePrivacyZones | PrivacyZonesSettings, PrivacyZonesSettings | 7 | 0 |
+| src/settings/privacy-zones/usePrivacyZones.js | Modular Settings screen section, navigator, or shared Settings UI component. | react, @/lib/trackingStore, @/lib/userFeedback | usePrivacyZones | 1 | 1 |
+| src/settings/PrivacyZonesSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, lucide-react, ./settingsComponents, ./privacy-zones/PrivacyZoneDialog, ./privacy-zones/PrivacyZoneInfoCard, ./privacy-zones/PrivacyZoneList, ./privacy-zones/usePrivacyZones, @/lib/userFeedback | PrivacyZonesSettings, PrivacyZonesSettings | 7 | 0 |
 | src/settings/sections/__tests__/ScoringSettings.test.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, react-dom/server, vitest, @/lib/trackingStore, @/settings/sections/ScoringSettings | none | 3 | 0 |
 | src/settings/sections/AdvancedSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | ../settingsComponents, @/settings/osrm/OsrmEndpointPanel, ./CalibrationSettings, @/lib/osrmEndpointTrust | AdvancedSettings | 2 | 8 |
 | src/settings/sections/CalibrationSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, @tanstack/react-query, react-router-dom, lucide-react, @/api/calibrationLabels, @/api/trips, @/components/CalibrationStatusTag, @/components/ui/dialog | CalibrationSettings | 5 | 1 |
-| src/settings/sections/PrivacySettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, ../settingsComponents, @/lib/legalDisclaimers, @/lib/biometricLock, @/lib/appConstants, @/lib/nativeBiometricGate, @/lib/privacyNotice, @/components/ui/use-toast | PrivacySettings | 4 | 6 |
-| src/settings/sections/ScoringSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | ../settingsComponents, @/lib/osrmEndpointTrust | ScoringSettings | 2 | 32 |
+| src/settings/sections/PrivacySettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | react, ../settingsComponents, @/lib/legalDisclaimers, @/lib/biometricLock, @/lib/appConstants, @/lib/nativeBiometricGate, @/lib/privacyNotice, @/components/ui/use-toast | PrivacySettings | 7 | 9 |
+| src/settings/sections/ScoringSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | ../settingsComponents, @/lib/osrmEndpointTrust | ScoringSettings | 2 | 30 |
 | src/settings/sections/TrackingSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | ../settingsComponents | TrackingSettings | 3 | 10 |
 | src/settings/sections/UBISettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | @/components/CalibrationStatusTag, ../settingsComponents | UBISettings | 2 | 2 |
 | src/settings/sections/VehicleSettings.jsx | Modular Settings screen section, navigator, or shared Settings UI component. | ../settingsComponents | VehicleSettings | 2 | 5 |
@@ -297,8 +297,8 @@ Scanned repository size by top-level area:
 | android | 61 | 28 |
 | capacitor.config.ts | 1 | 1 |
 | components.json | 1 | 0 |
-| docs | 11 | 0 |
-| e2e | 1 | 1 |
+| docs | 13 | 0 |
+| e2e | 4 | 4 |
 | eslint.config.js | 1 | 1 |
 | index.html | 1 | 0 |
 | package-lock.json | 1 | 0 |
@@ -306,10 +306,10 @@ Scanned repository size by top-level area:
 | playwright.config.js | 1 | 1 |
 | postcss.config.js | 1 | 1 |
 | README.md | 1 | 0 |
-| scripts | 34 | 34 |
-| src | 404 | 400 |
+| scripts | 36 | 36 |
+| src | 405 | 401 |
 | tailwind.config.js | 1 | 1 |
-| tests | 4 | 4 |
+| tests | 5 | 5 |
 | tsconfig.json | 1 | 0 |
 | vite.config.js | 1 | 1 |
 
@@ -1811,13 +1811,13 @@ The scanner still counts calculation-like lines so reviewers can spot large math
 
 | Domain | Production lines found | Important files |
 | --- | --- | --- |
-| scoring | 475 | src/lib/scoringConstants.js (77), src/lib/tripInsights.js (41), src/engine/detection/cornering.js (22), src/pages/Report.jsx (22), src/lib/habitProfile.js (20) |
+| scoring | 480 | src/lib/scoringConstants.js (77), src/lib/tripInsights.js (41), src/engine/detection/cornering.js (22), src/pages/Report.jsx (22), src/lib/habitProfile.js (20) |
 | risk/prediction | 72 | src/lib/predictiveRouteRisk.js (11), src/lib/scoringConstants.js (9), src/lib/preTripRisk.js (8), src/pages/Dashboard.jsx (6), src/lib/routeRisk/grid.js (3) |
-| map/route | 959 | src/components/TripPlayback.jsx (54), src/components/TripMap.jsx (53), src/pages/TripDetail.jsx (51), src/lib/tripInsights.js (33), src/lib/speedLimitSource.js (29) |
-| driving physics | 556 | src/engine/detection/harshBraking.js (31), src/lib/tripInsights.js (31), src/lib/metricRegistry.js (30), src/engine/scoring/pipeline.ts (23), src/engine/detection/cornering.js (22) |
+| map/route | 969 | src/components/TripMap.jsx (54), src/components/TripPlayback.jsx (54), src/pages/TripDetail.jsx (52), src/lib/tripInsights.js (33), src/lib/speedLimitSource.js (29) |
+| driving physics | 562 | src/engine/detection/harshBraking.js (31), src/lib/tripInsights.js (31), src/lib/metricRegistry.js (30), src/engine/scoring/pipeline.ts (23), src/engine/detection/cornering.js (22) |
 | economics | 47 | src/lib/tripInsights.js (20), src/pages/Report.jsx (7), src/pages/Vehicles.jsx (7), src/lib/mediumInsights.js (4), src/lib/pdfExport.js (2) |
 | timing/control | 4 | src/lib/tripInsights.js (2), src/lib/mediumInsights.js (1), src/pages/Dashboard.jsx (1) |
-| general calculation | 305 | src/lib/tripInsights.js (35), src/engine/detection/cornering.js (18), src/lib/mapPlaybackInsights.js (13), src/engine/detection/harshAcceleration.js (12), src/engine/utils/gps.js (10) |
+| general calculation | 306 | src/lib/tripInsights.js (35), src/engine/detection/cornering.js (18), src/lib/mapPlaybackInsights.js (13), src/engine/detection/harshAcceleration.js (12), src/engine/utils/gps.js (10) |
 
 ---
 ## Important Constants And Policies
@@ -1976,7 +1976,7 @@ Named thresholds and policies are centralized around scoring, route-risk, privac
 | src/lib/dailyFatigueEngine.js:5 | DAILY_FATIGUE_THRESHOLDS | `Object.freeze({` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/dailyFatigueEngine.js:10 | DAILY_FATIGUE_DEFAULTS | `Object.freeze({` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/dataBackup.js:42 | IMPORTED_STRING_LIMITS_BY_FIELD | `{` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
-| src/lib/dataBackup.js:617 | BACKUP_MIGRATIONS | `Object.freeze([` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
+| src/lib/dataBackup.js:671 | BACKUP_MIGRATIONS | `Object.freeze([` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/metricRegistry.js:938 | COMPONENT_METRIC_KEYS | `Object.freeze({` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/metricRegistry.js:1053 | MONTHLY_PDF_METRIC_KEYS | `Object.freeze([` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/metricRegistry.js:1064 | UBI_PDF_METRIC_KEYS | `Object.freeze([` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
@@ -1990,9 +1990,9 @@ Named thresholds and policies are centralized around scoring, route-risk, privac
 | src/lib/scoringConstants.js:10 | SCORE_OUTPUT_CALIBRATION_STATUSES | `Object.freeze({` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/scoringConstants.js:161 | SCORING_CONSTANTS | `Object.freeze({` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 | src/lib/scoringConstants.js:679 | TRIP_THRESHOLD_DEFAULTS | `Object.freeze({` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
-| src/lib/trackingStore.js:39 | ACTIVE_TRIP_STORAGE_KEY | `resolveStorageKey(ACTIVE_TRIP_KEY)` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
-| src/lib/trackingStore.js:40 | SETTINGS_STORAGE_KEY | `resolveStorageKey(SETTINGS_KEY)` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
-| src/lib/trackingStore.js:715 | IMPORT_STRIPPED_KEYS | `new Set([` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
+| src/lib/trackingStore.js:41 | ACTIVE_TRIP_STORAGE_KEY | `resolveStorageKey(ACTIVE_TRIP_KEY)` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
+| src/lib/trackingStore.js:42 | SETTINGS_STORAGE_KEY | `resolveStorageKey(SETTINGS_KEY)` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
+| src/lib/trackingStore.js:850 | IMPORT_STRIPPED_KEYS | `new Set([` | Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior. |
 
 ---
 ## Data Models State And Storage
@@ -2016,31 +2016,31 @@ Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-
 
 | Route | File/line | Element / behavior | Auth |
 | --- | --- | --- | --- |
-| * | src/App.jsx:252 | `{!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}` | Public local-first shell; optional backend token is attached only when configured. |
-| * | src/App.jsx:255 | `<Route element={<BiometricRouteGuard><Layout /></BiometricRouteGuard>}>` | Public local-first shell; optional backend token is attached only when configured. |
-| / | src/App.jsx:256 | `<Route path="/" element={<Dashboard />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /trips | src/App.jsx:257 | `<Route path="/trips" element={<TripHistory />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /survey/:tripId | src/App.jsx:258 | `<Route path="/survey/:tripId" element={<SurveyPage />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /trips/:id | src/App.jsx:259 | `<Route path="/trips/:id" element={(` | Public local-first shell; optional backend token is attached only when configured. |
-| /map | src/App.jsx:268 | `<Route path="/map" element={<MapScreen />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /coach | src/App.jsx:269 | `<Route path="/coach" element={<DrivingCoach />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /insights | src/App.jsx:270 | `<Route path="/insights" element={<Insights />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /achievements | src/App.jsx:271 | `<Route path="/achievements" element={<Achievements />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /reports | src/App.jsx:272 | `<Route path="/reports" element={<Reports />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| /diagnostics | src/App.jsx:273 | `{showDebugRoutes && Diagnostics && <Route path="/diagnostics" element={<Diagnostics />} />}` | Public local-first shell; optional backend token is attached only when configured. |
-| /settings | src/App.jsx:274 | `<Route path="/settings" element={(` | Public local-first shell; optional backend token is attached only when configured. |
-| /android | src/App.jsx:279 | `{showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}` | Public local-first shell; optional backend token is attached only when configured. |
-| /vehicles | src/App.jsx:280 | `<Route path="/vehicles" element={<Vehicles />} />` | Public local-first shell; optional backend token is attached only when configured. |
-| * | src/App.jsx:283 | `<Route path="*" element={<PageNotFound />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| * | src/App.jsx:298 | `<Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| * | src/App.jsx:308 | `<Route element={<BiometricRouteGuard><Layout /></BiometricRouteGuard>}>` | Public local-first shell; optional backend token is attached only when configured. |
+| / | src/App.jsx:309 | `<Route path="/" element={<Dashboard />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /trips | src/App.jsx:310 | `<Route path="/trips" element={<TripHistory />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /survey/:tripId | src/App.jsx:311 | `<Route path="/survey/:tripId" element={<SurveyPage />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /trips/:id | src/App.jsx:312 | `<Route path="/trips/:id" element={(` | Public local-first shell; optional backend token is attached only when configured. |
+| /map | src/App.jsx:321 | `<Route path="/map" element={<MapScreen />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /coach | src/App.jsx:322 | `<Route path="/coach" element={<DrivingCoach />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /insights | src/App.jsx:323 | `<Route path="/insights" element={<Insights />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /achievements | src/App.jsx:324 | `<Route path="/achievements" element={<Achievements />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /reports | src/App.jsx:325 | `<Route path="/reports" element={<Reports />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| /diagnostics | src/App.jsx:326 | `{showDebugRoutes && Diagnostics && <Route path="/diagnostics" element={<Diagnostics />} />}` | Public local-first shell; optional backend token is attached only when configured. |
+| /settings | src/App.jsx:327 | `<Route path="/settings" element={(` | Public local-first shell; optional backend token is attached only when configured. |
+| /android | src/App.jsx:332 | `{showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}` | Public local-first shell; optional backend token is attached only when configured. |
+| /vehicles | src/App.jsx:333 | `<Route path="/vehicles" element={<Vehicles />} />` | Public local-first shell; optional backend token is attached only when configured. |
+| * | src/App.jsx:336 | `<Route path="*" element={<PageNotFound />} />` | Public local-first shell; optional backend token is attached only when configured. |
 
 ### REST / External Calls
 
 | Method | Path/target | Declared at | Auth | Error behavior |
 | --- | --- | --- | --- | --- |
-| FETCH | url | src/api/client.js:92 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
-| FETCH | osrmMatchUrl(sampled, endpoint) | src/lib/mapMatching.js:151 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
-| FETCH | url | src/lib/speedLimitSource.js:267 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
-| FETCH | url | src/lib/weatherContext.js:212 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
+| FETCH | url | src/api/client.js:106 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
+| FETCH | osrmMatchUrl(sampled, endpoint) | src/lib/mapMatching.js:158 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
+| FETCH | url | src/lib/speedLimitSource.js:274 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
+| FETCH | url | src/lib/weatherContext.js:219 | Session token when API backend exists; public external API calls have no app auth. | Throws or returns status object depending on caller. |
 
 When `VITE_API_URL` is configured, event review uses the optional trip backend contract by reading the current trip, PATCHing `event_feedback`, `needs_rescore`, and `feedback_reviewed_at`, and returning the updated trip. Without a backend, `tripService.markEventFeedback` delegates to the local repository, which stores the review and recomputes completed-trip scoring immediately. In Stealth Trip Mode the service returns an ephemeral feedback result without writing to IndexedDB or native storage.
 
@@ -2054,29 +2054,32 @@ When `VITE_API_URL` is configured, event review uses the optional trip backend c
 | GITHUB_EVENT_PATH | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | scripts/ci/calibrationGate/githubEvent.mjs:3 `export async function loadGitHubEvent(eventPath = process.env.GITHUB_EVENT_PATH) {` |
 | GITHUB_OUTPUT | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | scripts/ci/calibrationGate/githubOutput.mjs:3 `export async function writeGitHubOutput(name, value, outputPath = process.env.GITHUB_OUTPUT) {` |
 | GITHUB_EVENT_NAME | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | scripts/evaluate-calibration-gate.mjs:33 `const changedFiles = changedFilesForEvent(process.env.GITHUB_EVENT_NAME, event);` |
-| VITE_API_URL | Vite string | No | blank means local-first storage | Optional backend API base URL; must be a trusted HTTPS public-domain URL with no credentials, query string, localhost/private-network host, or IP literal. | src/api/client.js:3 `const RAW_API_BASE_URL = (import.meta.env.VITE_API_URL \|\| "").trim();` |
-| VITE_TRUSTED_BACKEND_ORIGINS | Vite string | No | blank allowlist | Optional comma/space-separated HTTPS origin allowlist for managed backend deployments; configured `VITE_API_URL` must match when this is set. | src/api/client.js:4 `const TRUSTED_BACKEND_ORIGINS = parseTrustedOrigins(import.meta.env.VITE_TRUSTED_BACKEND_ORIGINS);` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/App.jsx:39 `// import.meta.env.DEV is a compile-time constant set to true by the Vite dev` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/App.jsx:41 `const showDebugRoutes = import.meta.env.DEV;` |
+| PLAYWRIGHT_HOST | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | scripts/serve-dist-for-playwright.mjs:9 `const host = process.env.PLAYWRIGHT_HOST \|\| '127.0.0.1';` |
+| PLAYWRIGHT_PORT | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | scripts/serve-dist-for-playwright.mjs:10 `const port = Number.parseInt(process.env.PLAYWRIGHT_PORT \|\| process.argv[2] \|\| '4173', 10);` |
+| PLAYWRIGHT_IDLE_SHUTDOWN_MS | Node string | No | false/undefined unless set | Feature/debug/build-time switch. | scripts/serve-dist-for-playwright.mjs:11 `const idleShutdownMs = Number.parseInt(process.env.PLAYWRIGHT_IDLE_SHUTDOWN_MS \|\| '15000', 10);` |
+| VITE_API_URL | Vite string | No | blank means local-first storage | Optional backend API base URL; must be a trusted HTTPS public-domain URL with no credentials, query string, localhost/private-network host, or IP literal. | src/api/client.js:5 `const RAW_API_BASE_URL = (import.meta.env.VITE_API_URL \|\| "").trim();` |
+| VITE_TRUSTED_BACKEND_ORIGINS | Vite string | No | blank allowlist | Optional comma/space-separated HTTPS origin allowlist for managed backend deployments; configured `VITE_API_URL` must match when this is set. | src/api/client.js:6 `const TRUSTED_BACKEND_ORIGINS = parseTrustedOrigins(import.meta.env.VITE_TRUSTED_BACKEND_ORIGINS);` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/App.jsx:41 `// import.meta.env.DEV is a compile-time constant set to true by the Vite dev` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/App.jsx:43 `const showDebugRoutes = import.meta.env.DEV;` |
 | DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/components/Layout.jsx:9 `const debugNavItems = import.meta.env.DEV` |
-| VITE_DEFAULT_MAP_LAT | Vite string | No | 43.6532 | Optional last fallback latitude for the TripPlayback review surface when no trip, settings, privacy-zone, parked, or device context exists. | src/components/TripPlayback.jsx:114 `validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)` |
-| VITE_DEFAULT_MAP_LNG | Vite string | No | -79.3832 | Optional last fallback longitude for the TripPlayback review surface when no trip, settings, privacy-zone, parked, or device context exists. | src/components/TripPlayback.jsx:114 `validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)` |
+| VITE_DEFAULT_MAP_LAT | Vite string | No | 43.6532 | Optional last fallback latitude for the TripPlayback review surface when no trip, settings, privacy-zone, parked, or device context exists. | src/components/TripPlayback.jsx:115 `validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)` |
+| VITE_DEFAULT_MAP_LNG | Vite string | No | -79.3832 | Optional last fallback longitude for the TripPlayback review surface when no trip, settings, privacy-zone, parked, or device context exists. | src/components/TripPlayback.jsx:115 `validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)` |
 | LIVE_EXTERNAL_CONTRACTS | Node string | No | false/undefined unless set | Manual opt-in for tests that call public external services. | src/lib/__tests__/liveExternalContracts.test.js:3 `const runLive = process.env.LIVE_EXTERNAL_CONTRACTS === 'true';` |
 | DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/lib/__tests__/releaseBlockers.test.js:158 `expect(appSource).toContain('const showDebugRoutes = import.meta.env.DEV;');` |
 | DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/lib/__tests__/releaseBlockers.test.js:160 `expect(layoutSource).toContain('const debugNavItems = import.meta.env.DEV');` |
 | DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/lib/__tests__/releaseBlockers.test.js:161 `expect(diagnosticsSource).toContain('if (!import.meta.env.DEV)');` |
 | VITE_DB_NAME | Vite string | No | road_sage_mobile | IndexedDB database name for local trip storage; changed names trigger a one-time copy-and-delete migration. | src/lib/localDbConfig.js:5 `export const DB_NAME = String(import.meta.env.VITE_DB_NAME \|\| DEFAULT_DB_NAME).trim() \|\| DEFAULT_DB_NAME;` |
-| VITE_OSRM_TIMEOUT_MS | Vite string | No | 12000 | Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider. | src/lib/mapMatching.js:11 `export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) \|\| DEFAULT_OSRM_TIMEOUT_MS;` |
+| VITE_OSRM_TIMEOUT_MS | Vite string | No | 12000 | Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider. | src/lib/mapMatching.js:12 `export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) \|\| DEFAULT_OSRM_TIMEOUT_MS;` |
 | VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY | Vite string | No | false | Development/test-only override that permits raw Play Integrity tokens without a backend-verified verdict; production native sensitive actions should leave this unset. | src/lib/nativePlayIntegrity.js:6 `const ALLOW_UNVERIFIED_PLAY_INTEGRITY = import.meta.env.VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY === 'true';` |
 | VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER | Vite string | No | undefined | Optional Google Cloud project number passed to the native Play Integrity request. | src/lib/nativePlayIntegrity.js:27 `const cloudProjectNumber = import.meta.env.VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER \|\| undefined;` |
 | VITE_TRUSTED_OSRM_ORIGINS | Vite string | No | blank allowlist | Optional comma/space-separated HTTPS origin allowlist for managed OSRM deployments; saved/default OSRM endpoints must match when this is set. | src/lib/osrmEndpointTrust.js:4 `const TRUSTED_OSRM_ORIGINS = parseTrustedOrigins(import.meta.env.VITE_TRUSTED_OSRM_ORIGINS);` |
-| VITE_DEFAULT_OSRM_URL | Vite string | No | blank | Optional self-hosted OSRM endpoint for deployments that operate a trusted HTTPS public-domain routing server. | src/lib/trackingStore.js:261 `const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL \|\| '').trim();` |
-| VITE_OSRM_TIMEOUT_MS | Vite string | No | 12000 | Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider. | src/lib/trackingStore.js:267 `const value = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS);` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:174 `enabled: import.meta.env.DEV,` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:199 `import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:276 `allowSyntheticTestData: import.meta.env.DEV === true,` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:325 `{import.meta.env.DEV && (` |
-| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:591 `if (!import.meta.env.DEV) {` |
+| VITE_DEFAULT_OSRM_URL | Vite string | No | blank | Optional self-hosted OSRM endpoint for deployments that operate a trusted HTTPS public-domain routing server. | src/lib/trackingStore.js:349 `const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL \|\| '').trim();` |
+| VITE_OSRM_TIMEOUT_MS | Vite string | No | 12000 | Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider. | src/lib/trackingStore.js:355 `const value = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS);` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:175 `enabled: import.meta.env.DEV,` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:200 `import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:312 `allowSyntheticTestData: import.meta.env.DEV === true,` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:379 `{import.meta.env.DEV && (` |
+| DEV | Node string | No | false/undefined unless set | Vite development-mode boolean used for debug-only routes and actions. | src/pages/Diagnostics.jsx:645 `if (!import.meta.env.DEV) {` |
 
 App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.
 
@@ -2096,7 +2099,7 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | Imports/exports | Backup import/export and report export failures show actionable messages while preserving encrypted-file requirements. |
 | Map/tracking actions | Start/end trip, current-location lookup, road-data fetches, map overlays, and parked-location reads fail locally without blanking pages. |
 
-Scanner found 863 try/catch/throw/logging lines; the generated document keeps the strategy summary instead of listing each low-level handler.
+Scanner found 963 try/catch/throw/logging lines; the generated document keeps the strategy summary instead of listing each low-level handler.
 
 ---
 ## Security Analysis
@@ -2148,11 +2151,11 @@ Scanner found 863 try/catch/throw/logging lines; the generated document keeps th
 
 | Area | Scenarios indexed | Representative files |
 | --- | --- | --- |
-| Playwright browser smoke | 2 | e2e/app-smoke.spec.js |
+| Playwright browser smoke | 10 | e2e/00-app-shell.spec.js, e2e/app-smoke.spec.js |
 | Script/CI checks | 9 | scripts/ci/calibrationGate/rules.test.mjs, scripts/scoring-constant-docs/promotionBlockerDocs.test.mjs |
-| Vitest unit/component | 793 | src/api/__tests__/clientFallback.test.js, src/components/__tests__/ScoreRing.test.jsx, src/components/__tests__/SectionErrorBoundary.test.jsx, src/components/__tests__/TrackingHealthChip.test.jsx, src/components/__tests__/TripCard.test.jsx, src/engine/__tests__/scoringPipeline.integration.test.js, src/features/settings/hooks/__tests__/useSettingsSections.test.js, src/hooks/__tests__/usePermissionMonitor.test.js |
+| Vitest unit/component | 805 | src/api/__tests__/clientFallback.test.js, src/components/__tests__/ScoreRing.test.jsx, src/components/__tests__/SectionErrorBoundary.test.jsx, src/components/__tests__/TrackingHealthChip.test.jsx, src/components/__tests__/TripCard.test.jsx, src/engine/__tests__/scoringPipeline.integration.test.js, src/features/settings/hooks/__tests__/useSettingsSections.test.js, src/hooks/__tests__/usePermissionMonitor.test.js |
 | Other | 117 | src/lib/tripEngine.test.js |
-| Connected-device UIAutomator smoke | 6 | tests/android-uiautomator-full-app.mjs |
+| Connected-device UIAutomator smoke | 23 | tests/android-uiautomator-full-app.mjs |
 | Standalone Node suite | 22 | tests/full-suite.test.mjs |
 
 Coverage boundaries inferred from source shape: browser e2e covers smoke navigation; Android tests cover native trip-store persistence plus shared JavaScript/native trip-stat and noise-floor fixtures; Vitest locks the scoring contract with human-verified golden fixtures, metric-registry coverage, and local synthetic test-trip construction; deterministic tests mock Overpass/Open-Meteo/OSRM contracts; opt-in live contract tests call all three public services through `npm run test:contracts:live`.

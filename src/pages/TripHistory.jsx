@@ -17,7 +17,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useStaleTripDetection } from '@/hooks/useStaleTripDetection';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
-import { notifyUserError } from '@/lib/userFeedback';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 import {
   TRIP_TAG_OPTIONS,
   buildTripSearchText,
@@ -173,7 +173,17 @@ export default function TripHistory() {
 
   const updateTripMut = useMutation({
     mutationFn: (/** @type {{id:any,patch:any}} */ vars) => tripService.update(vars.id, vars.patch),
-    onSuccess: invalidateTrips,
+    onSuccess: (_updatedTrip, vars) => {
+      invalidateTrips();
+      if (Object.prototype.hasOwnProperty.call(vars.patch || {}, 'is_favorite')) {
+        notifyUserSuccess('trip_history_favorite_toggle', {
+          title: vars.patch.is_favorite ? 'Trip favorited' : 'Trip unfavorited',
+          description: vars.patch.is_favorite
+            ? 'This trip is now available in the Favorites filter.'
+            : 'This trip was removed from Favorites.',
+        });
+      }
+    },
     meta: {
       name: 'trip_history_update_trip',
       errorTitle: 'Trip update failed',
@@ -277,6 +287,10 @@ export default function TripHistory() {
     };
     setSavedFilters((current) => [preset, ...current.filter((item) => item.name.toLowerCase() !== name.toLowerCase())].slice(0, 8));
     setPresetName('');
+    notifyUserSuccess('trip_history_filter_saved', {
+      title: 'Filter saved',
+      description: `"${name}" is available in saved filters.`,
+    });
   };
 
   const applySavedFilter = (preset) => {
@@ -284,10 +298,19 @@ export default function TripHistory() {
     setSortBy(preset.sortBy || 'date_desc');
     setFilterBy(preset.filterBy || 'all');
     setSelectedTag(preset.selectedTag || 'all');
+    notifyUserSuccess('trip_history_filter_applied', {
+      title: 'Filter applied',
+      description: `"${preset.name || 'Saved filter'}" is active now.`,
+    });
   };
 
   const removeSavedFilter = (id) => {
+    const removed = savedFilters.find((item) => item.id === id);
     setSavedFilters((current) => current.filter((item) => item.id !== id));
+    notifyUserSuccess('trip_history_filter_removed', {
+      title: 'Filter removed',
+      description: removed?.name ? `"${removed.name}" was deleted from saved filters.` : 'Saved filter was deleted.',
+    });
   };
 
   const handleRescoreStaleTrips = async () => {
@@ -296,6 +319,10 @@ export default function TripHistory() {
       await tripService.markCompletedForRescore({ onlyProvenanceMismatch: true });
       await qc.invalidateQueries({ queryKey: ['all-trips'] });
       await qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      notifyUserSuccess('trip_history_rescore_stale', {
+        title: 'Re-score queued',
+        description: 'Older trips were marked for scoring refresh.',
+      });
     } catch (error) {
       notifyUserError('trip_history_rescore_stale', error, {
         title: 'Could not queue re-score',

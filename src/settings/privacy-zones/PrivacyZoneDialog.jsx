@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Slider } from '@/components/ui/slider';
+import { getCurrentLocation } from '@/lib/trackingService';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 import { createZoneDraft, zoneFromDraft, ZONE_RADIUS_MAX_M, ZONE_RADIUS_MIN_M } from './privacyZoneConstants';
 import { formatCoordinateLabel } from './privacyZoneFormatting';
 
@@ -34,28 +36,27 @@ function LocationCapture({ draft, setDraft }) {
     [draft.lat, draft.lng]
   );
 
-  const captureLocation = () => {
-    if (!navigator.geolocation) {
-      alert('Location unavailable');
-      return;
-    }
-
+  const captureLocation = async () => {
     setDraft((current) => ({ ...current, locating: true }));
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setDraft((current) => ({
-          ...current,
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          locating: false,
-        }));
-      },
-      () => {
-        setDraft((current) => ({ ...current, locating: false }));
-        alert('Location unavailable');
-      },
-      { enableHighAccuracy: true, maximumAge: 30000, timeout: 15000 }
-    );
+    try {
+      const point = await getCurrentLocation();
+      setDraft((current) => ({
+        ...current,
+        lat: point.lat,
+        lng: point.lng,
+        locating: false,
+      }));
+      notifyUserSuccess('privacy_zone_location_captured', {
+        title: 'Location captured',
+        description: 'Current GPS coordinates were added to the privacy zone.',
+      });
+    } catch (error) {
+      setDraft((current) => ({ ...current, locating: false }));
+      notifyUserError('privacy_zone_location_capture', error, {
+        title: 'Location unavailable',
+        description: 'Road Sage could not read the current GPS location for this privacy zone.',
+      });
+    }
   };
 
   return (
@@ -105,8 +106,19 @@ export function PrivacyZoneDialog({ mode, open, zone, onOpenChange, onSave }) {
 
   const saveZone = async () => {
     if (saveDisabled) return;
-    await onSave(zoneFromDraft(draft));
-    onOpenChange(false);
+    try {
+      await onSave(zoneFromDraft(draft));
+      notifyUserSuccess('privacy_zone_save', {
+        title: mode === 'edit' ? 'Privacy zone updated' : 'Privacy zone added',
+        description: `${String(draft.name || 'Privacy zone').trim()} was saved.`,
+      });
+      onOpenChange(false);
+    } catch (error) {
+      notifyUserError('privacy_zone_save', error, {
+        title: 'Privacy zone not saved',
+        description: 'Road Sage could not save this privacy zone. Try again.',
+      });
+    }
   };
 
   return (

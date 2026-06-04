@@ -2,6 +2,7 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/gps/math';
 import { withRetry } from '@/lib/retry';
 import { getPrivacyZones } from '@/lib/privacyZones';
+import { externalServiceAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 
 const SPEED_LIMIT_CACHE_KEY = 'road_sage_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -264,6 +265,12 @@ async function fetchOverpassWaysFromUrl(bounds, url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
+    recordOutboundDataEvent({
+      service: 'osm_speed_limits',
+      status: 'used',
+      destination: new URL(url).origin,
+      detail: 'Route-area bounding box sent to OpenStreetMap Overpass.',
+    }).catch(() => {});
     const response = await withRetry(`overpass-speed-limit:${url}`, () => fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -369,8 +376,12 @@ function nearestWayLimit(point, ways = [], maxDistanceM = 75) {
 }
 
 export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
-  if (settings.speed_limit_lookup_enabled === false) {
-    return { ways: [], status: 'disabled', source: 'openstreetmap_overpass' };
+  if (!externalServiceAllowed(settings, 'osm_speed_limits')) {
+    return {
+      ways: [],
+      status: settings.external_requests_local_only === true ? 'local_only' : 'disabled',
+      source: 'openstreetmap_overpass',
+    };
   }
   const privacyZones = getPrivacyZones(settings);
   const safeRoutePoints = privacySafeRoutePoints(routePoints, privacyZones);

@@ -5,6 +5,7 @@ import { PrivacyZoneDialog } from './privacy-zones/PrivacyZoneDialog';
 import { PrivacyZoneInfoCard } from './privacy-zones/PrivacyZoneInfoCard';
 import { PrivacyZoneList } from './privacy-zones/PrivacyZoneList';
 import { usePrivacyZones } from './privacy-zones/usePrivacyZones';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 
 function editingMode(editingIndex) {
   return Number.isInteger(editingIndex) ? 'edit' : 'add';
@@ -42,7 +43,18 @@ export function PrivacyZonesSettings() {
   const confirmDeleteZone = async (index) => {
     const zone = zones[index];
     if (!zone || !confirm(`Delete ${zone.name} privacy zone?`)) return;
-    await deleteZone(index);
+    try {
+      await deleteZone(index);
+      notifyUserSuccess('privacy_zone_delete', {
+        title: 'Privacy zone deleted',
+        description: `${zone.name} was removed.`,
+      });
+    } catch (error) {
+      notifyUserError('privacy_zone_delete', error, {
+        title: 'Privacy zone not deleted',
+        description: 'Road Sage could not delete this privacy zone.',
+      });
+    }
   };
 
   return (

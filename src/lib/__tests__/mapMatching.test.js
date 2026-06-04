@@ -9,6 +9,7 @@ const point = (index) => ({
 });
 
 const verifiedOsrmSettings = (patch = {}) => ({
+  map_matching_enabled: true,
   osrm_map_matching_url: 'https://example.test',
   osrm_data_sharing_consented: true,
   osrm_health_status: 'connected',
@@ -85,6 +86,7 @@ describe('mapMatching', () => {
     vi.stubGlobal('fetch', vi.fn());
 
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      map_matching_enabled: true,
       osrm_map_matching_url: 'https://example.test',
     });
 
@@ -96,6 +98,7 @@ describe('mapMatching', () => {
     vi.stubGlobal('fetch', vi.fn());
 
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      map_matching_enabled: true,
       osrm_map_matching_url: 'https://example.test',
       osrm_data_sharing_consented: 'true',
     });
@@ -108,6 +111,7 @@ describe('mapMatching', () => {
     vi.stubGlobal('fetch', vi.fn());
 
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      map_matching_enabled: true,
       osrm_data_sharing_consented: true,
     });
 
@@ -119,6 +123,7 @@ describe('mapMatching', () => {
     vi.stubGlobal('fetch', vi.fn());
 
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      map_matching_enabled: true,
       osrm_map_matching_url: 'https://example.test',
       osrm_data_sharing_consented: true,
     });
@@ -182,6 +187,7 @@ describe('mapMatching', () => {
     })));
 
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      map_matching_enabled: true,
       osrm_map_matching_url: 'https://router.project-osrm.org',
       osrm_data_sharing_consented: true,
       osrm_health_status: 'connected',

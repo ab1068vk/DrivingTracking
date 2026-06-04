@@ -271,8 +271,47 @@ async function readPermissionStatus({ persist = true, generation = statusCacheGe
 }
 
 async function currentPermissionState(permissionType) {
-  const result = await refreshPermissionStatus({ persist: false }).catch(() => null);
-  return result?.[permissionType] || PERMISSION_STATES.UNKNOWN;
+  try {
+    if (permissionType === 'foregroundLocation') {
+      if (isNativePlatform()) {
+        const location = await Geolocation.checkPermissions();
+        return asState(location.location);
+      }
+      if (navigator.permissions) {
+        const location = await navigator.permissions.query({ name: 'geolocation' });
+        return asState(location.state);
+      }
+      return PERMISSION_STATES.UNKNOWN;
+    }
+
+    if (permissionType === 'notifications') {
+      if (isNativePlatform()) {
+        const notifications = await LocalNotifications.checkPermissions();
+        return asState(notifications.display);
+      }
+      if ('Notification' in window) return asState(Notification.permission);
+      return PERMISSION_STATES.UNAVAILABLE;
+    }
+
+    if (permissionType === 'activityRecognition' && isAndroid()) {
+      const activity = await ActivityRecognition.checkPermissions();
+      return asState(activity.activityRecognition);
+    }
+
+    if (permissionType === 'backgroundLocation' && isAndroid()) {
+      const activity = await ActivityRecognition.checkPermissions();
+      return asState(activity.backgroundLocation);
+    }
+
+    if (permissionType === 'bluetooth' && isAndroid()) {
+      const activity = await ActivityRecognition.checkPermissions();
+      return asState(activity.bluetoothConnect);
+    }
+  } catch (err) {
+    logError(`permission_current_state_${permissionType}`, err);
+  }
+
+  return PERMISSION_STATES.UNKNOWN;
 }
 
 export async function requestForegroundLocationPermission() {

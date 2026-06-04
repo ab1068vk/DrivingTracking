@@ -84,6 +84,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { formatEstimatedScore, formatScoreWithProvenance, isApproximateScoreOutput } from '@/lib/scoreDisplay';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { BETA_FEATURE_POLICIES } from '@/lib/featureGraduationPolicy';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -431,7 +432,16 @@ export default function TripDetail() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      notifyUserSuccess('trip_detail_delete', {
+        title: 'Trip deleted',
+        description: 'The trip was removed from history.',
+      });
       navigate('/trips');
+    },
+    meta: {
+      name: 'trip_detail_delete',
+      errorTitle: 'Trip not deleted',
+      errorDescription: 'Road Sage could not delete this trip. Try again after trip storage refreshes.',
     },
   });
   const splitMutation = useMutation({
@@ -445,7 +455,16 @@ export default function TripDetail() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      notifyUserSuccess('trip_detail_split', {
+        title: 'Trip split',
+        description: 'Separate trips were created and the original trip was removed.',
+      });
       navigate('/trips');
+    },
+    meta: {
+      name: 'trip_detail_split',
+      errorTitle: 'Trip not split',
+      errorDescription: 'Road Sage could not split this trip. The original trip was left unchanged.',
     },
   });
   const tagMutation = useMutation({
@@ -463,6 +482,15 @@ export default function TripDetail() {
         notes: updatedTrip?.notes || trip?.notes || '',
         tags: normalizeTripTags(updatedTrip || trip || {}),
       });
+      notifyUserSuccess('trip_detail_tag_saved', {
+        title: 'Tag added',
+        description: 'The trip tag was saved.',
+      });
+    },
+    meta: {
+      name: 'trip_detail_tag_save',
+      errorTitle: 'Tag not saved',
+      errorDescription: 'Road Sage could not add this tag to the trip.',
     },
   });
   const metadataMutation = useMutation({
@@ -477,6 +505,15 @@ export default function TripDetail() {
         tags: normalizeTripTags(updatedTrip || {}),
       });
       setEditingMetadata(false);
+      notifyUserSuccess('trip_detail_metadata_saved', {
+        title: 'Trip details saved',
+        description: 'Name, notes, and tags were updated.',
+      });
+    },
+    meta: {
+      name: 'trip_detail_metadata_save',
+      errorTitle: 'Trip details not saved',
+      errorDescription: 'Road Sage could not save this trip metadata.',
     },
   });
   const feedbackMutation = useMutation({
@@ -506,7 +543,18 @@ export default function TripDetail() {
       setFeedbackStatus(vars.verdict === 'wrong'
         ? 'Marked wrong. This event is removed from scoring on rescore and used to raise future thresholds.'
         : 'Marked accurate. This event stays in scoring and helps keep calibration from becoming too loose.');
+      notifyUserSuccess('trip_detail_event_feedback', {
+        title: vars.verdict === 'wrong' ? 'Event marked wrong' : 'Event marked accurate',
+        description: vars.verdict === 'wrong'
+          ? 'This event will be removed from scoring on re-score.'
+          : 'This feedback will help keep future calibration steady.',
+      });
       setTimeout(() => setFeedbackStatus(''), 6000);
+    },
+    meta: {
+      name: 'trip_detail_event_feedback',
+      errorTitle: 'Event feedback not saved',
+      errorDescription: 'Road Sage could not save your event feedback.',
     },
   });
   const contextMutation = useMutation({
@@ -523,9 +571,20 @@ export default function TripDetail() {
       qc.invalidateQueries({ queryKey: ['all-trips'] });
       qc.invalidateQueries({ queryKey: ['recent-trips'] });
       qc.invalidateQueries({ queryKey: ['map-trips'] });
+      const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
+      notifyUserSuccess('trip_detail_road_context_fetch', {
+        title: 'Road data updated',
+        description: hasSpeedLimits
+          ? 'Speed-limit context is ready for this trip.'
+          : 'Road context was checked. No speed-limit layer was returned for this trip.',
+      });
     },
     onError: (error) => {
       setOsmFetchStatus(error?.message || 'Could not get road data');
+      notifyUserError('trip_detail_road_context_fetch', error, {
+        title: 'Road data unavailable',
+        description: 'Road Sage could not fetch speed limits or map matching for this trip.',
+      });
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
@@ -543,11 +602,31 @@ export default function TripDetail() {
         submitted_at: record?.createdAt ?? new Date().toISOString(),
       });
       setCalibrationLabelCount(count);
+      notifyUserSuccess('trip_detail_calibration_survey', {
+        title: 'Trip rating saved',
+        description: 'This rating will help calibration improve over time.',
+      });
+    },
+    meta: {
+      name: 'trip_detail_calibration_survey',
+      errorTitle: 'Trip rating not saved',
+      errorDescription: 'Road Sage could not save this calibration rating.',
     },
   });
   const skipCalibrationSurveyMutation = useMutation({
     mutationFn: () => calibrationLabelService.skipTripSurvey(trip.id),
-    onSuccess: (marker) => setCalibrationSurveyStatus(marker || { skipped: true }),
+    onSuccess: (marker) => {
+      setCalibrationSurveyStatus(marker || { skipped: true });
+      notifyUserSuccess('trip_detail_calibration_survey_skip', {
+        title: 'Rating skipped',
+        description: 'Road Sage will not ask for a rating on this trip again.',
+      });
+    },
+    meta: {
+      name: 'trip_detail_calibration_survey_skip',
+      errorTitle: 'Survey skip not saved',
+      errorDescription: 'Road Sage could not mark this trip rating as skipped.',
+    },
   });
   const [dismissedTags, setDismissedTags] = useState([]);
 
@@ -1438,8 +1517,8 @@ export default function TripDetail() {
           </div>
           <div className="mt-2 grid gap-1">
             <div>Get Road Data: checks the enabled options below for this trip.</div>
-            <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.'}</div>
-            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends a privacy-safe route point and date to Open-Meteo.'}</div>
+            <div>Speed limits {settings.speed_limit_lookup_enabled === true ? 'ON' : 'OFF'}: {settings.speed_limit_lookup_enabled === true ? 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.' : 'skips OpenStreetMap; the app uses GPS/fallback limits.'}</div>
+            <div>Weather {settings.weather_context_enabled === true ? 'ON' : 'OFF'}: {settings.weather_context_enabled === true ? 'sends a privacy-safe route point and date to Open-Meteo.' : 'skips Open-Meteo; scores get no weather adjustment.'}</div>
             <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : isOsrmMapMatchingConfigured(settings) ? 'ON' : 'NEEDS VERIFICATION'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : isOsrmMapMatchingConfigured(settings) ? 'sends sampled GPS points to your verified OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint, consent, health check, and domain record are saved in Settings.'}</div>
             <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>

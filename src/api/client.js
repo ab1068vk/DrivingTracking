@@ -1,4 +1,6 @@
 import { normalizeTrustedHttpsEndpoint, parseTrustedOrigins } from "@/lib/externalEndpointTrust";
+import { localSettings } from "@/lib/trackingStore";
+import { externalServiceAllowed, recordOutboundDataEvent } from "@/lib/privacyControls";
 
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_URL || "").trim();
 const TRUSTED_BACKEND_ORIGINS = parseTrustedOrigins(import.meta.env.VITE_TRUSTED_BACKEND_ORIGINS);
@@ -77,7 +79,13 @@ const parseJsonSafely = async (response) => {
  * @param {string} path
  * @param {{method?:string,body?:any,headers?:Record<string,string>,query?:Record<string,any>} & RequestInit} options
  */
-async function request(path, { method = "GET", body, headers, query, ...options } = {}) {
+async function request(path, { method = "GET", body, headers, query, privacyService = "backend_sync", ...options } = {}) {
+  const settings = localSettings.get();
+  if (API_ENDPOINT_CONFIGURED && !externalServiceAllowed(settings, privacyService)) {
+    throw new ApiError(settings.external_requests_local_only === true
+      ? "Local-only mode is on. External requests are disabled."
+      : `${privacyService === "calibration_upload" ? "Calibration sharing" : "Backend sync"} is disabled in Privacy settings.`);
+  }
   const hasBody = body !== undefined && body !== null;
   let url;
   try {
@@ -89,6 +97,12 @@ async function request(path, { method = "GET", body, headers, query, ...options 
 
   let response;
   try {
+    recordOutboundDataEvent({
+      service: privacyService,
+      status: "used",
+      destination: new URL(url).origin,
+      detail: `${method} ${path}`,
+    }).catch(() => {});
     response = await fetch(url, {
       method,
       credentials: "include",

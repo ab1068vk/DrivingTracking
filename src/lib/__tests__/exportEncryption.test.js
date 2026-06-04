@@ -8,6 +8,11 @@ vi.mock('@/lib/nativePlayIntegrity', () => ({
 }));
 
 vi.mock('@/lib/backupEncryption', () => ({
+  assertBackupPassword: vi.fn((password) => {
+    if (typeof password !== 'string' || password.length < 12) {
+      throw new Error('Backup password must be 12-128 characters.');
+    }
+  }),
   encryptBackup: vi.fn(async (plaintext, password) => `encrypted:${password}:${plaintext}`),
 }));
 
@@ -41,7 +46,7 @@ describe('encrypted export wrapper', () => {
       data: 'score,route',
       password: 'short',
       kind: 'csv',
-    })).rejects.toThrow('Export password must be at least 12 characters.');
+    })).rejects.toThrow('12-128 characters');
 
     expect(assertPlayIntegrityForSensitiveAction).not.toHaveBeenCalled();
     expect(encryptBackup).not.toHaveBeenCalled();

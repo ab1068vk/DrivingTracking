@@ -1,3 +1,5 @@
+import { externalServiceAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
+
 const REVERSE_GEOCODE_TIMEOUT_MS = 8000;
 const PRIVACY_GUARD_M = 50;
 const EARTH_RADIUS_M = 6371000;
@@ -46,9 +48,11 @@ export async function reverseGeocodeIfPermitted(lat, lng, options = {}) {
     guardM = PRIVACY_GUARD_M,
     shorten = false,
     shortenAddress,
+    settings = {},
   } = options;
 
   if (typeof fetch !== 'function') return null;
+  if (!externalServiceAllowed(settings, 'nominatim_reverse_geocoding')) return null;
   if (isReverseGeocodePrivatePoint(lat, lng, privacyZones, guardM)) return null;
 
   const key = `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)},${shorten ? 'short' : 'full'}`;
@@ -68,6 +72,12 @@ export async function reverseGeocodeIfPermitted(lat, lng, options = {}) {
         zoom: '17',
         addressdetails: '0',
       });
+      recordOutboundDataEvent({
+        service: 'nominatim_reverse_geocoding',
+        status: 'used',
+        destination: 'https://nominatim.openstreetmap.org',
+        detail: 'One coordinate sent for reverse geocoding.',
+      }).catch(() => {});
       const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`, {
         headers: {
           Accept: 'application/json',

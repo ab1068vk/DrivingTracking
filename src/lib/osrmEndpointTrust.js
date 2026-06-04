@@ -33,7 +33,7 @@ export const evaluateOsrmEndpointTrust = (endpoint) => {
 export const hasVerifiedOsrmEndpoint = (settings = {}) => (
   (() => {
     const trust = evaluateOsrmEndpointTrust(settings.osrm_map_matching_url);
-    return settings.map_matching_enabled !== false &&
+    return settings.map_matching_enabled === true &&
       trust.ok === true &&
       settings.osrm_data_sharing_consented === true &&
       settings.osrm_health_status === 'connected' &&

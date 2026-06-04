@@ -1,11 +1,17 @@
 import { API_ENDPOINT_CONFIGURED, apiClient } from "@/api/client";
 import { isEphemeralModeActive } from "@/lib/ephemeralTripMode";
 import { localTripRepository } from "@/lib/localTripRepository";
+import { localSettings } from "@/lib/trackingStore";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
 
-export const shouldUseLocalStore = () => isNativePlatform() || !API_ENDPOINT_CONFIGURED;
+export const shouldUseLocalStore = () => (
+  isNativePlatform() ||
+  !API_ENDPOINT_CONFIGURED ||
+  localSettings.get().external_requests_local_only === true ||
+  localSettings.get().backend_sync_enabled !== true
+);
 
 const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 

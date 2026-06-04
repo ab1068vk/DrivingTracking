@@ -14,6 +14,7 @@ import {
   verifyPlaintextBackupIntegrity,
 } from '@/lib/dataBackup';
 import { tripService } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
 import { encryptBackup } from '@/lib/backupEncryption';
 import { DEFAULT_SETTINGS, localSettings } from '@/lib/trackingStore';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
@@ -143,6 +144,41 @@ describe('backup trip import sanitization', () => {
     }]);
 
     expect(trip.estimated_private_distance_km).toBe(0.42);
+  });
+
+  it('sanitizes imported vehicles before merging them', async () => {
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [{
+          id: 'vehicle-xss',
+          name: '<img src=x onerror=alert(1)>'.repeat(20),
+          make: 'Road',
+          model: 'Runner',
+          plate: 'ABC<script>',
+          injected: 'nope',
+          maintenance_items: [{
+            id: 'oil',
+            label: '<script>alert(1)</script>',
+            interval_km: 8000,
+            extra: 'nope',
+          }],
+          ['__proto__']: { polluted: true },
+        }],
+        trips: [],
+      })),
+    };
+
+    await importDriveSenseBackup(file);
+
+    const [[vehicles]] = vehicleService.upsertMany.mock.calls;
+    expect(vehicles).toHaveLength(1);
+    expect(vehicles[0].name).toHaveLength(200);
+    expect(vehicles[0].injected).toBeUndefined();
+    expect(vehicles[0].maintenance_items[0].extra).toBeUndefined();
+    expect({}.polluted).toBeUndefined();
   });
 
   it('truncates oversized imported trip routes', () => {

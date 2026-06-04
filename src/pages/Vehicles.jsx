@@ -251,7 +251,11 @@ export default function Vehicles() {
 
   const createMut = useMutation({
     mutationFn: (/** @type {any} */ d) => vehicleService.create(d),
-    onSuccess: () => { invalidate(); setShowAdd(false); },
+    onSuccess: () => {
+      invalidate();
+      setShowAdd(false);
+      toast({ title: 'Vehicle added', description: 'The vehicle profile is ready for trip stats and reminders.' });
+    },
     meta: {
       name: 'vehicle_create',
       errorTitle: 'Vehicle not added',
@@ -261,7 +265,11 @@ export default function Vehicles() {
 
   const updateMut = useMutation({
     mutationFn: (/** @type {{id:any,d:any}} */ vars) => vehicleService.update(vars.id, vars.d),
-    onSuccess: () => { invalidate(); setEditId(null); },
+    onSuccess: () => {
+      invalidate();
+      setEditId(null);
+      toast({ title: 'Vehicle updated', description: 'Vehicle details and cost settings were saved.' });
+    },
     meta: {
       name: 'vehicle_update',
       errorTitle: 'Vehicle not updated',
@@ -293,6 +301,11 @@ export default function Vehicles() {
         await vehicleService.update(v.id, { is_default: v.id === id });
       }
       invalidate();
+      const vehicle = vehicles.find((item) => item.id === id);
+      toast({
+        title: 'Default vehicle updated',
+        description: `${vehicle?.name || 'Selected vehicle'} will be used for new trips.`,
+      });
     } catch (error) {
       notifyUserError('vehicle_set_default', error, {
         title: 'Default vehicle not changed',

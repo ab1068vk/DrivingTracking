@@ -41,6 +41,11 @@ const MAX_IMPORTED_NESTED_ARRAY_ITEMS = 500;
 const MAX_IMPORTED_NESTED_OBJECT_KEYS = 100;
 const IMPORTED_STRING_LIMITS_BY_FIELD = {
   id: 120,
+  name: 200,
+  make: 120,
+  model: 120,
+  plate: 40,
+  color: 32,
   nickname: 200,
   notes: MAX_IMPORTED_TRIP_NOTES_LENGTH,
   tag: 100,
@@ -334,6 +339,38 @@ const IMPORTED_DRIVING_EVENT_FIELDS = new Set([
   'legacy_renamed',
 ]);
 
+const IMPORTED_VEHICLE_FIELDS = new Set([
+  'id',
+  'name',
+  'make',
+  'model',
+  'year',
+  'color',
+  'plate',
+  'odometer_km',
+  'odometer_trip_distance_anchor_km',
+  'auto_odometer_last_sync_at',
+  'fuel_type',
+  'fuel_efficiency_l_per_100km',
+  'ev_efficiency_kwh_per_100km',
+  'fuel_price_per_liter',
+  'maintenance_reserve_per_km',
+  'registration_renewal_date',
+  'insurance_renewal_date',
+  'maintenance_items',
+  'is_default',
+  'created_date',
+  'created_at',
+  'updated_at',
+]);
+
+const IMPORTED_MAINTENANCE_ITEM_FIELDS = new Set([
+  'id',
+  'label',
+  'interval_km',
+  'last_service_km',
+]);
+
 const isPlainObject = (value) => (
   value &&
   typeof value === 'object' &&
@@ -509,6 +546,23 @@ export const sanitizeSavedTripFilters = (filters) => (
       }))
     : []
 );
+
+export function sanitizeImportedVehicle(vehicle, warnings = null) {
+  if (!isPlainObject(vehicle)) return null;
+  const sanitized = sanitizeWhitelistedObject(vehicle, IMPORTED_VEHICLE_FIELDS, warnings);
+  const id = filterString(sanitized.id).trim();
+  const name = String(sanitized.name || '').slice(0, IMPORTED_STRING_LIMITS_BY_FIELD.name).trim();
+  if (!name) return null;
+  sanitized.id = id || `vehicle_import_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  sanitized.name = name;
+  sanitized.maintenance_items = Array.isArray(vehicle.maintenance_items)
+    ? vehicle.maintenance_items
+      .slice(0, 12)
+      .map((item) => sanitizeWhitelistedObject(item, IMPORTED_MAINTENANCE_ITEM_FIELDS, warnings))
+      .filter((item) => item && filterString(item.id).trim())
+    : [];
+  return sanitized;
+}
 
 const migrateLaneChangeEventType = (event) => (
   isPlainObject(event) && event.type === 'lane_change'
@@ -771,7 +825,9 @@ export function parseDriveSenseBackup(text) {
     sourceVersion,
     settings: migrated.settings && typeof migrated.settings === 'object' ? migrated.settings : null,
     ui: migrated.ui && typeof migrated.ui === 'object' ? migrated.ui : null,
-    vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
+    vehicles: Array.isArray(migrated.vehicles)
+      ? migrated.vehicles.map((vehicle) => sanitizeImportedVehicle(vehicle, warnings)).filter(Boolean)
+      : [],
     trips: migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings)),
     warnings,
     truncatedNoteTripCount,

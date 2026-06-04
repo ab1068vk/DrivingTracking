@@ -4,6 +4,7 @@ import { withRetry } from '@/lib/retry';
 import { weightedBlend } from '@/lib/scoring/componentScores';
 import { scoringValue } from '@/lib/scoringConstants';
 import { getPrivacyZones, isPointInPrivacyZone, ZONE_EVENT_GUARD_M } from '@/lib/privacyZones';
+import { externalServiceAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 
 const WEATHER_CACHE_KEY = 'road_sage_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -209,6 +210,12 @@ async function fetchOpenMeteoWeather({ lat, lng, date }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
+    recordOutboundDataEvent({
+      service: 'open_meteo_weather',
+      status: 'used',
+      destination: url.origin,
+      detail: 'Rounded route point and trip date sent for weather context.',
+    }).catch(() => {});
     const response = await withRetry('open-meteo-weather', () => fetch(url, { signal: controller.signal }));
     if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`);
     return response.json();
@@ -265,8 +272,8 @@ function samplesForTrip(data, startTime, endTime) {
 }
 
 export async function fetchWeatherContextForTrip(routePoints = [], startTime, endTime, settings = {}) {
-  if (settings.weather_context_enabled === false) {
-    return unavailableWeatherContext('disabled');
+  if (!externalServiceAllowed(settings, 'open_meteo_weather')) {
+    return unavailableWeatherContext(settings.external_requests_local_only === true ? 'local_only' : 'disabled');
   }
   const privacyZones = getPrivacyZones(settings);
   const privacyBlocked = weatherRequestTouchesPrivacyBuffer(routePoints, privacyZones);

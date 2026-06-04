@@ -42,6 +42,7 @@ import {
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 import PageNotFound from '@/lib/PageNotFound';
 import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import {
@@ -198,6 +199,11 @@ function DiagnosticsContent() {
         refetch(),
         import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),
       ]);
+    } catch (error) {
+      notifyUserError('diagnostics_refresh', error, {
+        title: 'Diagnostics not refreshed',
+        description: 'Road Sage could not refresh all diagnostic status.',
+      });
     } finally {
       setRefreshing(false);
     }
@@ -244,11 +250,21 @@ function DiagnosticsContent() {
   }), [permissionStatus?.motionSensors, settings, activeTrip, latestTrip]);
 
   const clearLogs = async () => {
-    clearTrackingDiagnostics();
-    if (isAndroid()) await clearNativeDiagnostics().catch((err) => {
-      logError('native_diagnostics_clear', err);
-    });
-    await refresh();
+    try {
+      clearTrackingDiagnostics();
+      if (isAndroid()) await clearNativeDiagnostics();
+      await refresh();
+      notifyUserSuccess('diagnostics_clear_logs', {
+        title: 'Diagnostics cleared',
+        description: 'Tracking decision logs were cleared.',
+      });
+    } catch (error) {
+      logError('native_diagnostics_clear', error);
+      notifyUserError('diagnostics_clear_logs', error, {
+        title: 'Diagnostics not fully cleared',
+        description: 'Road Sage could not clear all diagnostic logs.',
+      });
+    }
   };
 
   const requestMotionPermission = async () => {
@@ -256,6 +272,15 @@ function DiagnosticsContent() {
     try {
       await requestMotionSensorPermission();
       await refresh();
+      notifyUserSuccess('diagnostics_motion_permission', {
+        title: 'Motion status refreshed',
+        description: 'Road Sage checked motion sensor permission and diagnostics.',
+      });
+    } catch (error) {
+      notifyUserError('diagnostics_motion_permission', error, {
+        title: 'Motion permission failed',
+        description: 'Road Sage could not request motion sensor permission.',
+      });
     } finally {
       setMotionPermissionBusy(false);
     }
@@ -263,10 +288,21 @@ function DiagnosticsContent() {
 
   const armNative = async () => {
     if (!isAndroid()) return;
-    await startNativeAutoTracking().catch((err) => {
-      logError('native_auto_tracking_start_diagnostics', err);
-    });
-    await refresh();
+    try {
+      await startNativeAutoTracking();
+      await refresh();
+      notifyUserSuccess('diagnostics_arm_native', {
+        title: 'Native tracking armed',
+        description: 'Android background auto tracking was started.',
+      });
+    } catch (error) {
+      logError('native_auto_tracking_start_diagnostics', error);
+      notifyUserError('diagnostics_arm_native', error, {
+        title: 'Native tracking not armed',
+        description: 'Road Sage could not start Android background auto tracking.',
+      });
+      await refresh();
+    }
   };
 
   const seedLocalTestTrips = async () => {
@@ -277,6 +313,15 @@ function DiagnosticsContent() {
       }));
       await refresh();
       setTestDataNotice(`${seeded.length} synthetic trips are available in this local profile.`);
+      notifyUserSuccess('diagnostics_seed_test_trips', {
+        title: 'Test trips seeded',
+        description: `${seeded.length} synthetic trips are available in this local profile.`,
+      });
+    } catch (error) {
+      notifyUserError('diagnostics_seed_test_trips', error, {
+        title: 'Test trips not seeded',
+        description: 'Road Sage could not create local synthetic trips.',
+      });
     } finally {
       setTestDataBusy(false);
     }
@@ -288,6 +333,15 @@ function DiagnosticsContent() {
       await Promise.all(storedTestTrips.map((trip) => tripService.delete(trip.id)));
       await refresh();
       setTestDataNotice(`${storedTestTrips.length} synthetic trips removed from this local profile.`);
+      notifyUserSuccess('diagnostics_remove_test_trips', {
+        title: 'Test trips removed',
+        description: `${storedTestTrips.length} synthetic trips were removed from this local profile.`,
+      });
+    } catch (error) {
+      notifyUserError('diagnostics_remove_test_trips', error, {
+        title: 'Test trips not removed',
+        description: 'Road Sage could not remove all local synthetic trips.',
+      });
     } finally {
       setTestDataBusy(false);
     }

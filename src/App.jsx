@@ -7,7 +7,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { PermissionProvider } from '@/lib/permissions/PermissionContext';
 import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
@@ -17,17 +17,19 @@ import { openExportLocation } from '@/lib/nativeDownloads';
 import { logError } from '@/lib/errorReporting';
 import { notifyUserError } from '@/lib/userFeedback';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
+import { getJson } from '@/lib/mobileStorage';
 import {
   BIOMETRIC_LOCK_STATE_CHANGE_EVENT,
   isBiometricLockEnabled,
   isLocked,
   lock,
+  markUserActivity,
   markUnlocked,
   msUntilAutoLock,
   setBiometricLockEnabled,
 } from '@/lib/biometricLock';
 import { authenticateBiometricGate } from '@/lib/nativeBiometricGate';
-import { BIOMETRIC_AUTH_TIMEOUT_MS } from '@/lib/appConstants';
+import { BIOMETRIC_AUTH_TIMEOUT_MS, ONBOARDING_COMPLETED_KEY } from '@/lib/appConstants';
 import { toast } from '@/components/ui/use-toast';
 import { Route as RouteIcon } from 'lucide-react';
 
@@ -94,14 +96,6 @@ const withLaunchTimeout = (promise, fallback, context, timeoutMs = 2500, { logTi
   });
 };
 
-const persistBiometricLockDisabled = () => {
-  try {
-    localSettings.update({ biometric_lock_enabled: false });
-  } catch (err) {
-    logError('biometric_lock_disable_persist', err);
-  }
-};
-
 const ensureNativeAutoTrackingStarted = async (settings, context) => {
   if (!isAndroid() || settings?.tracking_mode !== 'background_auto' || settings?.tracking_paused) return;
   try {
@@ -111,6 +105,29 @@ const ensureNativeAutoTrackingStarted = async (settings, context) => {
   } catch (err) {
     logError(context, err, { mode: settings?.tracking_mode });
   }
+};
+
+const hasCompletedOnboarding = async (settings, { persistMarker = true } = {}) => {
+  if (settings?.onboarding_completed === true) return true;
+
+  const completedMarker = await getJson(ONBOARDING_COMPLETED_KEY, false).catch((err) => {
+    logError('onboarding_completion_marker_read', err);
+    return false;
+  });
+
+  let browserMarker = false;
+  try {
+    browserMarker = JSON.parse(localStorage.getItem(ONBOARDING_COMPLETED_KEY) || 'false') === true;
+  } catch {
+    browserMarker = false;
+  }
+
+  if (completedMarker === true || browserMarker) {
+    if (persistMarker) localSettings.update({ onboarding_completed: true });
+    return true;
+  }
+
+  return false;
 };
 
 function AppLoading() {
@@ -128,7 +145,7 @@ function AppLoading() {
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
-  const [onboardingDone, setOnboardingDone] = useState(() => localSettings.get().onboarding_completed);
+  const [onboardingDone, setOnboardingDone] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -141,9 +158,23 @@ const AuthenticatedApp = () => {
           description: 'Road Sage could not finish notification setup. Trip tracking still works, but reminders may not appear yet.',
         });
       });
-      const cachedSettings = localSettings.get();
+      const fallbackSettings = localSettings.get();
+      const nativeSettingsPromise = isAndroid()
+        ? localSettings.hydrateFromNative()
+        : null;
+      const cachedSettings = nativeSettingsPromise
+        ? await withLaunchTimeout(
+          nativeSettingsPromise,
+          fallbackSettings,
+          'settings_hydrate_initial_timeout',
+          10_000,
+          { logTimeout: false }
+        )
+        : fallbackSettings;
       setBiometricLockEnabled(cachedSettings?.biometric_lock_enabled === true);
-      setOnboardingDone(cachedSettings.onboarding_completed);
+      setOnboardingDone(await hasCompletedOnboarding(cachedSettings, {
+        persistMarker: !isAndroid(),
+      }));
       applyThemeMode(cachedSettings.dark_mode);
 
       scheduleDataRetentionPrune(cachedSettings.data_retention_months);
@@ -165,16 +196,28 @@ const AuthenticatedApp = () => {
           extra: { tracking_mode: cachedSettings.tracking_mode },
         });
       });
+      nativeSettingsPromise?.then(async (settings) => {
+        if (!settings || settings === cachedSettings) return;
+        setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
+        const completed = await hasCompletedOnboarding(settings);
+        setOnboardingDone((previous) => previous === true || completed);
+        applyThemeMode(settings.dark_mode);
+        scheduleDataRetentionPrune(settings.data_retention_months);
+        await ensureNativeAutoTrackingStarted(settings, 'native_auto_tracking_start_after_late_hydration');
+      }).catch((err) => {
+        logError('settings_hydrate_late', err);
+      });
       nativeHydrationTimer = window.setTimeout(async () => {
         const settings = await withLaunchTimeout(
           localSettings.hydrateFromNative(),
           cachedSettings,
           'settings_hydrate_deferred_timeout',
-          2500,
+          10_000,
           { logTimeout: false }
         );
         setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
-        setOnboardingDone(settings.onboarding_completed);
+        const completed = await hasCompletedOnboarding(settings);
+        setOnboardingDone((previous) => previous === true || completed);
         applyThemeMode(settings.dark_mode);
         scheduleDataRetentionPrune(settings.data_retention_months);
         await ensureNativeAutoTrackingStarted(settings, 'native_auto_tracking_start_after_hydration');
@@ -187,14 +230,17 @@ const AuthenticatedApp = () => {
   }, []);
 
   useEffect(() => {
+    const lockIfIdle = () => {
+      if (isBiometricLockEnabled() && isLocked(localSettings.get())) lock();
+    };
     const lockOnHidden = () => {
-      if (document.visibilityState === 'hidden' && isBiometricLockEnabled()) lock();
+      if (document.visibilityState === 'hidden') lockIfIdle();
     };
     document.addEventListener('visibilitychange', lockOnHidden);
 
     let appStateListener;
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive && isBiometricLockEnabled()) lock();
+      if (!isActive) lockIfIdle();
     }).then((handle) => {
       appStateListener = handle;
     }).catch((err) => {
@@ -245,12 +291,19 @@ const AuthenticatedApp = () => {
     // For other errors (network, unknown), still render the app in public mode
   }
 
+  if (!onboardingDone) {
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <Routes>
+          <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />
+        </Routes>
+      </Suspense>
+    );
+  }
+
   return (
     <Suspense fallback={<PageSkeleton />}>
     <Routes>
-      {/* Onboarding (no layout) - only shown to new users */}
-      {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
-
       {/* Main App with shared Layout */}
       <Route element={<BiometricRouteGuard><Layout /></BiometricRouteGuard>}>
         <Route path="/" element={<Dashboard />} />
@@ -287,8 +340,17 @@ const AuthenticatedApp = () => {
 };
 
 function BiometricRouteGuard({ children }) {
-  const [authState, setAuthState] = useState('unlocked');
+  const [authState, setAuthState] = useState(() => (
+    isAndroid() && isBiometricLockEnabled() && isLocked(localSettings.get())
+      ? 'checking'
+      : 'unlocked'
+  ));
   const [unlockRequest, setUnlockRequest] = useState(0);
+  const authStateRef = useRef(authState);
+
+  useEffect(() => {
+    authStateRef.current = authState;
+  }, [authState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -334,10 +396,9 @@ function BiometricRouteGuard({ children }) {
         if (err?.message === 'auth_timeout' || err?.message === 'unavailable') {
           clearAutoLockTimer();
           setBiometricLockEnabled(false);
-          persistBiometricLockDisabled();
           markUnlocked();
           setAuthState('unlocked');
-          console.warn('[biometricLock] auth unavailable, lock disabled:', err.message);
+          console.warn('[biometricLock] auth unavailable, lock skipped for this session:', err.message);
           return;
         }
         if (err?.message === 'cancelled') {
@@ -380,13 +441,25 @@ function BiometricRouteGuard({ children }) {
     const verifyOnBiometricSettingsChange = () => {
       verify();
     };
+    const recordActivity = () => {
+      if (authStateRef.current !== 'unlocked' || !isBiometricLockEnabled()) return;
+      markUserActivity();
+      scheduleAutoLockTimer();
+    };
 
     verify();
+    const activityEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel'];
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, recordActivity, { passive: true, capture: true });
+    });
     document.addEventListener('visibilitychange', verifyOnVisible);
     window.addEventListener(BIOMETRIC_LOCK_STATE_CHANGE_EVENT, verifyOnBiometricSettingsChange);
     return () => {
       cancelled = true;
       clearAutoLockTimer();
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, recordActivity, { capture: true });
+      });
       document.removeEventListener('visibilitychange', verifyOnVisible);
       window.removeEventListener(BIOMETRIC_LOCK_STATE_CHANGE_EVENT, verifyOnBiometricSettingsChange);
     };
@@ -395,7 +468,7 @@ function BiometricRouteGuard({ children }) {
   if (authState === 'unlocked') return children;
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-background px-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background px-4">
       <div className="max-w-sm rounded-2xl border border-border bg-card p-5 text-center shadow">
         <div className="mb-2 font-semibold">{authState === 'locked' ? 'Road Sage is locked' : 'Unlocking Road Sage...'}</div>
         <div className="text-sm text-muted-foreground">

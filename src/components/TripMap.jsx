@@ -17,6 +17,7 @@ import { calculateBearing, headingDiff, haversineDistance } from '@/lib/gps/math
 import { localSettings } from '@/lib/trackingStore';
 import { getBestMapCenter, isValidLatLng } from '@/lib/mapDefaults';
 import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { mapTilesAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -320,8 +321,10 @@ function TripMapContent({
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
   const [tileErrorCount, setTileErrorCount] = useState(0);
+  const [onlineTilesEnabled, setOnlineTilesEnabled] = useState(() => mapTilesAllowed(localSettings.get()));
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
+  const localOnlyMode = localSettings.get().external_requests_local_only === true;
 
   const selectedRoute = useMemo(() => {
     const routeSets = Array.isArray(routes)
@@ -368,13 +371,22 @@ function TripMapContent({
 
       leafletMapRef.current = map;
 
-      const tileConfig = TILE_STYLES.standard;
-      tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
-        attribution: tileConfig.attribution,
-        maxZoom: tileConfig.maxZoom,
-      })
-        .on('tileerror', () => setTileErrorCount((count) => count + 1))
-        .addTo(map);
+      if (onlineTilesEnabled) {
+        const tileConfig = TILE_STYLES.standard;
+        tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
+          attribution: tileConfig.attribution,
+          maxZoom: tileConfig.maxZoom,
+        })
+          .on('tileerror', () => setTileErrorCount((count) => count + 1))
+          .addTo(map);
+        recordOutboundDataEvent({
+          service: 'map_tiles',
+          status: 'used',
+          screen: 'Map',
+          destination: 'OpenStreetMap tile host',
+          detail: 'Online map tiles loaded for visible map area.',
+        }).catch(() => {});
+      }
 
       layersRef.current = window.L.layerGroup().addTo(map);
       map.setView(initialMapCenter, DEFAULT_MAP_ZOOM);
@@ -394,22 +406,36 @@ function TripMapContent({
         lastBoundsRef.current = null;
       }
     };
-  }, [initialMapCenterKey]);
+  }, [initialMapCenterKey, onlineTilesEnabled]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
-    if (!ready || !map || !window.L || !tileLayerRef.current) return;
+    if (!ready || !map || !window.L) return;
 
     const tileConfig = TILE_STYLES[tileStyle] || TILE_STYLES.standard;
     setTileErrorCount(0);
-    map.removeLayer(tileLayerRef.current);
+    if (!onlineTilesEnabled) {
+      if (tileLayerRef.current) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
+      }
+      return;
+    }
+    if (tileLayerRef.current) map.removeLayer(tileLayerRef.current);
     tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
       attribution: tileConfig.attribution,
       maxZoom: tileConfig.maxZoom,
     })
       .on('tileerror', () => setTileErrorCount((count) => count + 1))
       .addTo(map);
-  }, [ready, tileStyle]);
+    recordOutboundDataEvent({
+      service: 'map_tiles',
+      status: 'used',
+      screen: 'Map',
+      destination: 'OpenStreetMap tile host',
+      detail: `${tileConfig.label} online map tiles loaded for visible map area.`,
+    }).catch(() => {});
+  }, [ready, tileStyle, onlineTilesEnabled]);
 
   useEffect(() => {
     if (tileErrorCount >= 4) setMapFailed(true);
@@ -795,6 +821,19 @@ function TripMapContent({
     }
   };
 
+  const enableOnlineTiles = () => {
+    if (localOnlyMode) return;
+    const settings = localSettings.get();
+    if (settings.map_tiles_first_prompt_seen !== true && typeof window !== 'undefined') {
+      const ok = window.confirm('Load online map tiles?\n\nThe tile host can receive your visible map area and network metadata. Your route line can still be shown on a local plain background if you cancel.');
+      localSettings.update({ map_tiles_first_prompt_seen: true, map_tiles_enabled: ok === true });
+      setOnlineTilesEnabled(ok === true);
+      return;
+    }
+    localSettings.update({ map_tiles_enabled: true, map_tiles_first_prompt_seen: true });
+    setOnlineTilesEnabled(true);
+  };
+
   return (
     <div className={`relative ${className}`} style={{ height, width: '100%' }}>
       <div
@@ -815,10 +854,11 @@ function TripMapContent({
         </button>
         <button
           type="button"
-          onClick={() => setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
+          onClick={() => onlineTilesEnabled && setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
+          disabled={!onlineTilesEnabled}
           title={`Map style: ${TILE_STYLES[tileStyle].label}`}
           aria-label="Toggle map style"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card disabled:opacity-45"
         >
           <Layers className="h-4 w-4 text-muted-foreground" />
         </button>
@@ -834,6 +874,22 @@ function TripMapContent({
           </button>
         )}
       </div>
+      {!onlineTilesEnabled && (
+        <div className="absolute left-3 top-3 z-10 max-w-[min(360px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
+          <div className="font-semibold text-foreground">Online map tiles off</div>
+          <p className="mt-1 text-muted-foreground">
+            Routes and markers are shown on a local plain background.
+          </p>
+          <button
+            type="button"
+            onClick={enableOnlineTiles}
+            disabled={localOnlyMode}
+            className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {localOnlyMode ? 'Local-only mode on' : 'Load map tiles'}
+          </button>
+        </div>
+      )}
       {selectedSegment && (
         <div className="absolute left-3 top-3 z-10 w-[min(340px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
           <div className="mb-2 flex items-center justify-between gap-2">

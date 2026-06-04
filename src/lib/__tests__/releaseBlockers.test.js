@@ -183,7 +183,24 @@ describe('release blocker regressions', () => {
     expect(mapWorkerSource).toContain('private static final String LEGACY_MAP_CACHE_PREFIX = "parked_map_widget_"');
     expect(mapWorkerSource).toContain('static void clearWidgetMapCache(Context context)');
     expect(mapWorkerSource).toContain('deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
+    expect(mapWorkerSource).toContain('PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context)');
     expect(widgetSource).toContain('MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
+    expect(widgetSource).toContain('PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context)');
+    expect(widgetSource).toContain('views.setViewVisibility(R.id.btn_navigate, isPrivate ? View.GONE : View.VISIBLE);');
+    expect(widgetSource).toContain('if (!isPrivate) {');
+    expect(privacyZoneStoreSource).toContain('findMatchingZoneForWidget');
+    expect(privacyZoneStoreSource).toContain('Privacy zones unavailable; withholding widget location');
+  });
+
+  it('uses native-safe location capture for privacy zones because WebView geolocation is disabled', () => {
+    const dialogSource = readFileSync(
+      new URL('../../settings/privacy-zones/PrivacyZoneDialog.jsx', import.meta.url),
+      'utf8'
+    );
+
+    expect(dialogSource).toContain("import { getCurrentLocation } from '@/lib/trackingService';");
+    expect(dialogSource).toContain('const point = await getCurrentLocation();');
+    expect(dialogSource).not.toContain('navigator.geolocation');
   });
 
   it('hardens the Android Capacitor WebView against file, content, geolocation, form, cache, and cookie leakage', () => {
@@ -466,6 +483,31 @@ describe('release blocker regressions', () => {
 
     expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps every external route, weather, tile, geocoding, and sync path behind privacy toggles', () => {
+    const sources = {
+      speedLimitSource: readFileSync(new URL('../speedLimitSource.js', import.meta.url), 'utf8'),
+      weatherContext: readFileSync(new URL('../weatherContext.js', import.meta.url), 'utf8'),
+      mapMatching: readFileSync(new URL('../mapMatching.js', import.meta.url), 'utf8'),
+      geocoding: readFileSync(new URL('../geocoding.js', import.meta.url), 'utf8'),
+      apiClient: readFileSync(new URL('../../api/client.js', import.meta.url), 'utf8'),
+      calibrationLabels: readFileSync(new URL('../../api/calibrationLabels.js', import.meta.url), 'utf8'),
+      tripMap: readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8'),
+      tripPlayback: readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8'),
+      widgetWorker: readFileSync(new URL('../../../android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java', import.meta.url), 'utf8'),
+    };
+
+    expect(sources.speedLimitSource).toContain("externalServiceAllowed(settings, 'osm_speed_limits')");
+    expect(sources.weatherContext).toContain("externalServiceAllowed(settings, 'open_meteo_weather')");
+    expect(sources.mapMatching).toContain("externalServiceAllowed(settings, 'osrm_route_snapping')");
+    expect(sources.geocoding).toContain("externalServiceAllowed(settings, 'nominatim_reverse_geocoding')");
+    expect(sources.apiClient).toContain('externalServiceAllowed(settings, privacyService)');
+    expect(sources.calibrationLabels).toContain("externalServiceAllowed(settings, 'calibration_upload')");
+    expect(sources.tripMap).toContain('mapTilesAllowed(localSettings.get())');
+    expect(sources.tripPlayback).toContain('mapTilesAllowed(localSettings.get())');
+    expect(sources.widgetWorker).toContain('isLocalOnlyMode(context) || !isSettingEnabled(context, "map_tiles_enabled")');
+    expect(sources.widgetWorker).toContain('isLocalOnlyMode(context) || !isSettingEnabled(context, "reverse_geocoding_enabled")');
   });
 
   it('returns finite sensor fusion peaks for empty samples', () => {

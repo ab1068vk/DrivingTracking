@@ -9,6 +9,7 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
+  const localOnlyMode = cfg.external_requests_local_only === true;
 
   return (
     <>
@@ -466,13 +467,19 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
               <SettingRow
                 icon={Info}
                 label="Automatic road-data fetching"
-                sublabel="On by default. Saved trips fetch OpenStreetMap speed limits and Open-Meteo weather when internet is available. OSRM snapping still stays manual."
+                sublabel="Off by default. When on, saved trips may contact only the external services you enable below; OSRM snapping still stays manual."
               >
                 <Toggle
-                  value={cfg.external_context_auto_fetch_enabled !== false}
+                  value={cfg.external_context_auto_fetch_enabled === true && !localOnlyMode}
                   onChange={updateExternalContextAutoFetch}
+                  disabled={localOnlyMode}
                 />
               </SettingRow>
+              {localOnlyMode && (
+                <div className="mx-1 mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+                  Local-only mode is on. Road/weather context and route snapping stay disabled until you turn it off in Privacy settings.
+                </div>
+              )}
               <SettingRow
                 icon={Bell}
                 label="Live Speed Warning"
@@ -486,11 +493,12 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
               <SettingRow
                 icon={Gauge}
                 label="Get posted speed limits"
-                sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"
+                sublabel="Opt-in. Sends route-area boxes outside the app to OpenStreetMap Overpass for road names, geometry, and speed limits."
               >
                 <Toggle
-                  value={cfg.speed_limit_lookup_enabled !== false}
+                  value={cfg.speed_limit_lookup_enabled === true && !localOnlyMode}
                   onChange={v => updateCfg({ speed_limit_lookup_enabled: v })}
+                  disabled={localOnlyMode}
                 />
               </SettingRow>
               <SettingRow
@@ -521,25 +529,26 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
               <SettingRow
                 icon={Droplets}
                 label="Get trip weather"
-                sublabel="When you tap Get Road Data, sends a privacy-safe route point and date to Open-Meteo"
+                sublabel="Opt-in. Sends one privacy-guarded route point and the trip date outside the app to Open-Meteo."
               >
                 <Toggle
-                  value={cfg.weather_context_enabled !== false}
+                  value={cfg.weather_context_enabled === true && !localOnlyMode}
                   onChange={v => updateCfg({ weather_context_enabled: v })}
+                  disabled={localOnlyMode}
                 />
               </SettingRow>
               <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
                 <div className="font-semibold text-foreground">What Get Road Data does</div>
                 <div className="mt-2 grid gap-2">
                   <div>
-                    <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
-                    {cfg.speed_limit_lookup_enabled === false
+                    <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === true ? 'ON' : 'OFF'}:</span>{' '}
+                    {cfg.speed_limit_lookup_enabled !== true
                       ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
                       : `sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
                   </div>
                   <div>
-                    <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
-                    {cfg.weather_context_enabled === false
+                    <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === true ? 'ON' : 'OFF'}:</span>{' '}
+                    {cfg.weather_context_enabled !== true
                       ? 'skips Open-Meteo; scores do not get weather adjustment.'
                       : 'sends a privacy-safe route point and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
                   </div>
@@ -558,9 +567,9 @@ export function ScoringSettings({ ctx, visibleSectionIds = null }) {
                         : 'optional map cleanup only; trips still score correctly without an OSRM endpoint.'}
                   </div>
                   <div>
-                    <span className="font-semibold text-foreground">Automatic road-data fetching {cfg.external_context_auto_fetch_enabled !== false ? 'ON' : 'OFF'}:</span>{' '}
-                    {cfg.external_context_auto_fetch_enabled !== false
-                      ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
+                    <span className="font-semibold text-foreground">Automatic road-data fetching {cfg.external_context_auto_fetch_enabled === true ? 'ON' : 'OFF'}:</span>{' '}
+                    {cfg.external_context_auto_fetch_enabled === true
+                      ? 'new saved trips can fetch whichever OpenStreetMap/Open-Meteo toggles are on; OSRM still waits for manual Get Road Data.'
                       : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
                   </div>
                 </div>

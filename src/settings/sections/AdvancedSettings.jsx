@@ -11,6 +11,7 @@ export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
   } = ctx;
   void FeaturePermissionBadgeFromCtx;
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
+  const localOnlyMode = cfg.external_requests_local_only === true;
 
   return (
     <>
@@ -101,10 +102,16 @@ export function AdvancedSettings({ ctx, visibleSectionIds = null }) {
                       sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
                     >
                       <Toggle
-                        value={hasVerifiedOsrmEndpoint(cfg)}
+                        value={hasVerifiedOsrmEndpoint(cfg) && !localOnlyMode}
                         onChange={enableOsrmMapMatching}
+                        disabled={localOnlyMode}
                       />
                     </SettingRow>
+                    {localOnlyMode && (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+                        Local-only mode is on, so OSRM endpoint checks and route-snapping requests are disabled.
+                      </div>
+                    )}
                     <div className="px-1 py-3 border-b border-border/50">
                       <div className="flex justify-between gap-3 text-xs mb-1.5">
                         <span className="font-medium">Network timeout</span>

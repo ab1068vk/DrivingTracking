@@ -114,7 +114,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
 
         MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);
 
-        if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) {
+        if (PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context) != null) {
             updateWidget(context, manager, widgetId);
             return;
         }
@@ -162,14 +162,14 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
             return;
         }
 
-        PrivacyZone matchedZone = PrivacyZoneStore.findMatchingZone(lat, lng, context);
+        PrivacyZone matchedZone = PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context);
         boolean isPrivate = matchedZone != null;
         String address = parked.optString("address", "").trim();
         boolean hasPublicAddress = !isPrivate && !address.isEmpty();
 
         views.setViewVisibility(R.id.iv_map, View.VISIBLE);
         views.setViewVisibility(R.id.tv_empty_hint, View.GONE);
-        views.setViewVisibility(R.id.btn_navigate, View.VISIBLE);
+        views.setViewVisibility(R.id.btn_navigate, isPrivate ? View.GONE : View.VISIBLE);
         views.setViewVisibility(R.id.btn_clear_parking, View.VISIBLE);
         views.setViewVisibility(R.id.iv_privacy_badge, isPrivate ? View.VISIBLE : View.GONE);
 
@@ -206,7 +206,9 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         }
 
         setClearParkingIntent(context, views, widgetId);
-        setNavigateIntent(context, views, widgetId, lat, lng, hasPublicAddress ? address : "", timestampMs);
+        if (!isPrivate) {
+            setNavigateIntent(context, views, widgetId, lat, lng, hasPublicAddress ? address : "", timestampMs);
+        }
         setDashboardTapIntent(context, views, widgetId + 10_000);
         manager.updateAppWidget(widgetId, views);
     }
@@ -226,7 +228,7 @@ public class ParkedCarWidgetProvider extends AppWidgetProvider {
         double lng = parked.optDouble("lng", Double.NaN);
         long parkedMs = parkedTimestampMs(parked, System.currentTimeMillis());
         PrivacyZone matchedZone = Double.isFinite(lat) && Double.isFinite(lng)
-            ? PrivacyZoneStore.findMatchingZone(lat, lng, context)
+            ? PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context)
             : null;
         String status = buildParkedStatusText(matchedZone, parkedMs, System.currentTimeMillis());
 

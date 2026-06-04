@@ -19,7 +19,7 @@ export function RoadDataPrompt({ settings, onEnable, className = '' }) {
     };
   }, []);
 
-  if (dismissed || settings?.external_context_auto_fetch_enabled !== false) return null;
+  if (dismissed || settings?.external_context_auto_fetch_enabled === true) return null;
 
   const dismiss = () => {
     setDismissed(true);
@@ -35,7 +35,7 @@ export function RoadDataPrompt({ settings, onEnable, className = '' }) {
         <div className="min-w-0 flex-1">
           <p className="font-semibold">Speed limits are estimated</p>
           <p className="mt-0.5 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
-            Enable automatic road data to use posted limits from OpenStreetMap. Route-area boxes are sent; raw GPS coordinates are not sent for OSM speed-limit lookup.
+            Enable automatic road data only if you want saved trips to contact external road/weather services. OpenStreetMap receives route-area boxes for speed limits; Open-Meteo receives a privacy-guarded route point/date for weather.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button

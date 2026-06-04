@@ -3,6 +3,7 @@ import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logError } from '@/lib/errorReporting';
 import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import { externalServiceAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 export { checkOsrmEndpointHealth } from '@/lib/osrmEndpointHealth';
 
 const CACHE_KEY = 'road_sage_map_matching_cache_v2';
@@ -148,6 +149,12 @@ async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIME
   const response = await withRetry('osrm-map-matching', async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    recordOutboundDataEvent({
+      service: 'osrm_route_snapping',
+      status: 'used',
+      destination: new URL(endpoint).origin,
+      detail: `${sampled.length} sampled GPS coordinate pair${sampled.length === 1 ? '' : 's'} sent for route snapping.`,
+    }).catch(() => {});
     return fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
       .finally(() => clearTimeout(timeout));
   });
@@ -190,6 +197,13 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   const hasEndpoint = endpoint.length > 0;
   const isOsrmDemoUrl = isPublicOsrmDemoUrl(endpoint);
 
+  if (!externalServiceAllowed(settings, 'osrm_route_snapping')) {
+    return settings.external_requests_local_only === true
+      ? { routePoints, status: 'local_only', provider: 'osrm', isOsrmDemoUrl }
+      : settings.map_matching_enabled === false
+        ? { routePoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl }
+        : null;
+  }
   if (settings.map_matching_enabled === false) {
     return { routePoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
   }

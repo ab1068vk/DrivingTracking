@@ -1,4 +1,6 @@
 export const BACKUP_ENC_VERSION = 1;
+export const BACKUP_PASSWORD_MIN_LENGTH = 12;
+export const BACKUP_PASSWORD_MAX_LENGTH = 128;
 
 const PBKDF2_ITERATIONS = 600000;
 const SALT_BYTES = 32;
@@ -14,6 +16,52 @@ const subtleCrypto = () => {
   return api;
 };
 
+export function getBackupPasswordValidation(password, { requireStrong = true } = {}) {
+  const value = typeof password === 'string' ? password : '';
+  const checks = [
+    {
+      id: 'length',
+      label: `${BACKUP_PASSWORD_MIN_LENGTH}-${BACKUP_PASSWORD_MAX_LENGTH} characters`,
+      valid: value.length >= BACKUP_PASSWORD_MIN_LENGTH && value.length <= BACKUP_PASSWORD_MAX_LENGTH,
+    },
+    {
+      id: 'case',
+      label: 'Upper and lower case',
+      valid: /[a-z]/.test(value) && /[A-Z]/.test(value),
+    },
+    {
+      id: 'number',
+      label: 'At least one number',
+      valid: /\d/.test(value),
+    },
+    {
+      id: 'symbol',
+      label: 'At least one symbol',
+      valid: /[^A-Za-z0-9\s]/.test(value),
+    },
+    {
+      id: 'passphrase',
+      label: 'Or a 3+ word passphrase',
+      valid: value.trim().split(/\s+/).filter(Boolean).length >= 3 && value.trim().length >= 20,
+    },
+  ];
+  const complexityScore = checks.slice(1, 4).filter((check) => check.valid).length;
+  const strongEnough = checks[0].valid && (checks[4].valid || complexityScore >= 3);
+  const valid = requireStrong ? strongEnough : checks[0].valid;
+  const message = !checks[0].valid
+    ? `Backup password must be ${BACKUP_PASSWORD_MIN_LENGTH}-${BACKUP_PASSWORD_MAX_LENGTH} characters.`
+    : requireStrong && !strongEnough
+      ? 'Use upper and lower case, a number, and a symbol, or use a 3+ word passphrase.'
+      : '';
+  return { valid, checks, complexityScore, strongEnough, message };
+}
+
+export function assertBackupPassword(password, options) {
+  const validation = getBackupPasswordValidation(password, options);
+  if (!validation.valid) throw new Error(validation.message || 'Backup password does not meet requirements.');
+  return validation;
+}
+
 const bytesToBase64 = (bytes) => {
   let binary = '';
   for (let i = 0; i < bytes.length; i += BASE64_CHUNK_SIZE) {
@@ -28,9 +76,7 @@ const base64ToBytes = (value) => (
 );
 
 async function deriveKey(password, salt) {
-  if (typeof password !== 'string' || password.length < 12) {
-    throw new Error('Backup password must be at least 12 characters.');
-  }
+  assertBackupPassword(password, { requireStrong: false });
 
   const cryptoApi = subtleCrypto();
   const encodedPassword = new TextEncoder().encode(password);
@@ -52,6 +98,7 @@ async function deriveKey(password, salt) {
 }
 
 export async function encryptBackup(plaintext, password) {
+  assertBackupPassword(password, { requireStrong: true });
   const salt = globalThis.crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = globalThis.crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const key = await deriveKey(password, salt);

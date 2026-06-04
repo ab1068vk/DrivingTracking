@@ -10,6 +10,7 @@ import { formatDistance, formatDuration, formatSpeed } from '@/lib/gps/formattin
 import { calculateBearing } from '@/lib/gps/math';
 import { getLastParkedLocation, localSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { mapTilesAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -253,6 +254,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
   const [playbackElapsedSeconds, setPlaybackElapsedSeconds] = useState(0);
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const [mapFailed, setMapFailed] = useState(false);
+  const [onlineTilesEnabled, setOnlineTilesEnabled] = useState(() => mapTilesAllowed(localSettings.get()));
+  const localOnlyMode = localSettings.get().external_requests_local_only === true;
 
   const privacySettings = useMemo(() => localSettings.get(), [trip?.id, secondaryTrip?.id]);
   const points = useMemo(() => prepareMapRoutePoints(
@@ -317,7 +320,16 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       if (cancelled || !mapRef.current || leafletMapRef.current) return;
       const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
       leafletMapRef.current = map;
-      window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+      if (onlineTilesEnabled) {
+        window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+        recordOutboundDataEvent({
+          service: 'map_tiles',
+          status: 'used',
+          screen: 'Playback',
+          destination: 'OpenStreetMap tile host',
+          detail: 'Online map tiles loaded for trip playback.',
+        }).catch(() => {});
+      }
       map.whenReady(() => {
         if (!cancelled) setTimeout(() => map.invalidateSize(), 50);
       });
@@ -473,7 +485,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       secondaryMarkerRef.current = null;
       progressLayersRef.current = null;
     };
-  }, [events, points, privacySettings, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
+  }, [events, points, privacySettings, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones, onlineTilesEnabled]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !points[currentIdx]) return;
@@ -623,6 +635,18 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     ? Math.max(0, Math.min(100, (playbackElapsedSeconds / playbackDurationSeconds) * 100))
     : totalPoints > 1 ? (currentIdx / (totalPoints - 1)) * 100 : 0;
   const comparisonRows = secondaryTrip ? routeComparison.rows : [];
+  const enableOnlineTiles = () => {
+    if (localOnlyMode) return;
+    const settings = localSettings.get();
+    if (settings.map_tiles_first_prompt_seen !== true && typeof window !== 'undefined') {
+      const ok = window.confirm('Load online map tiles?\n\nThe tile host can receive your visible map area and network metadata. Playback can still run on a local plain background if you cancel.');
+      localSettings.update({ map_tiles_first_prompt_seen: true, map_tiles_enabled: ok === true });
+      setOnlineTilesEnabled(ok === true);
+      return;
+    }
+    localSettings.update({ map_tiles_enabled: true, map_tiles_first_prompt_seen: true });
+    setOnlineTilesEnabled(true);
+  };
 
   if (!points.length) {
     return (
@@ -682,6 +706,19 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
             </span>
             <span className="capitalize">{currentEvent.type?.replace(/_/g, ' ')}</span>
             <span className="text-white/70">- {currentEvent.severity || 'medium'} severity</span>
+          </div>
+        )}
+        {!onlineTilesEnabled && !mapFailed && (
+          <div className="absolute bottom-3 right-3 z-10 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs shadow backdrop-blur">
+            <span className="mr-2 font-semibold">Tiles off</span>
+            <button
+              type="button"
+              onClick={enableOnlineTiles}
+              disabled={localOnlyMode}
+              className="rounded-lg bg-primary px-2 py-1 font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {localOnlyMode ? 'Local-only' : 'Load'}
+            </button>
           </div>
         )}
       </div>

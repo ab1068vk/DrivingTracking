@@ -14,7 +14,7 @@ export const PRIVACY_NOTICE_HIGHLIGHTS = [
   },
   {
     title: 'External service disclosures',
-    body: 'OpenStreetMap tile hosts can receive map tile requests for visible map areas. Nominatim and Overpass requests are skipped for privacy-zone-protected coordinates where the app can do so. Open-Meteo receives a privacy-safe route point/date for weather context. A verified trusted OSRM HTTPS domain receives sampled GPS coordinate pairs only after explicit consent, and privacy-zone gaps are excluded.',
+    body: 'OpenStreetMap tile hosts can receive map tile requests for visible map areas. If road/weather context is enabled, Nominatim and Overpass requests are skipped for privacy-zone-protected coordinates where the app can do so, and Open-Meteo receives a privacy-safe route point/date for weather context. A verified trusted OSRM HTTPS domain receives sampled GPS coordinate pairs only after explicit consent, and privacy-zone gaps are excluded.',
   },
   {
     title: 'What privacy zones mask',

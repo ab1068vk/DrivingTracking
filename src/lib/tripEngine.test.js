@@ -1998,18 +1998,24 @@ describe('tripEngine', () => {
       ok: true,
       json: async () => ({ display_name: 'Queen Street West, Toronto, Ontario, Canada' }),
     })));
+    const previousReverseGeocoding = localSettings.get().reverse_geocoding_enabled;
+    localSettings.update({ reverse_geocoding_enabled: true });
 
-    const saved = await saveLastParkedLocation({
-      lat: 43.6532,
-      lng: -79.3832,
-      timestamp: '2026-01-01T12:00:00.000Z',
-      tripId: 'park-geocode-test',
-    });
-    const loaded = await getLastParkedLocation();
+    try {
+      const saved = await saveLastParkedLocation({
+        lat: 43.6532,
+        lng: -79.3832,
+        timestamp: '2026-01-01T12:00:00.000Z',
+        tripId: 'park-geocode-test',
+      });
+      const loaded = await getLastParkedLocation();
 
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(saved.address).toBe('Queen Street West, Toronto');
-    expect(loaded.address).toBe('Queen Street West, Toronto');
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(saved.address).toBe('Queen Street West, Toronto');
+      expect(loaded.address).toBe('Queen Street West, Toronto');
+    } finally {
+      localSettings.update({ reverse_geocoding_enabled: previousReverseGeocoding === true });
+    }
   });
 
   it('does not store the last parked location inside a privacy zone guard', async () => {
@@ -2024,8 +2030,11 @@ describe('tripEngine', () => {
     const publicParkedLocation = pointNorthOf(privacyZone, guardBoundaryM + 25);
     const privateParkedLocation = pointNorthOf(privacyZone, guardBoundaryM - 1);
 
+    const previousReverseGeocoding = localSettings.get().reverse_geocoding_enabled;
+
     localSettings.update({
       privacy_zones: [privacyZone],
+      reverse_geocoding_enabled: true,
     });
 
     try {
@@ -2044,7 +2053,10 @@ describe('tripEngine', () => {
       expect(await getLastParkedLocation()).toBeNull();
       expect(fetch).toHaveBeenCalledTimes(1);
     } finally {
-      localSettings.update({ privacy_zones: previousZones || [] });
+      localSettings.update({
+        privacy_zones: previousZones || [],
+        reverse_geocoding_enabled: previousReverseGeocoding === true,
+      });
     }
   });
 

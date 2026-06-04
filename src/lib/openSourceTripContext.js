@@ -10,8 +10,9 @@ import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/spe
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
+import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
 import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import { isLocalOnlyMode, summarizePrivacyZoneFiltering } from '@/lib/privacyControls';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -74,39 +75,57 @@ function skippedMapMatchingContext(originalPoints = [], settings = {}) {
   };
 }
 
-export const isOsrmMapMatchingConfigured = (settings = {}) => hasVerifiedOsrmEndpoint(settings);
+export const isOsrmMapMatchingConfigured = (settings = {}) => (
+  !isLocalOnlyMode(settings) && hasVerifiedOsrmEndpoint(settings)
+);
 
 export const isOsrmMapMatchingEnabled = (settings = {}) => (
-  settings.map_matching_enabled !== false
+  !isLocalOnlyMode(settings) && settings.map_matching_enabled === true
 );
 
 export const isExternalContextAutoFetchEnabled = (settings = {}) => (
-  settings.external_context_auto_fetch_enabled !== false
+  !isLocalOnlyMode(settings) && settings.external_context_auto_fetch_enabled === true
 );
 
-export function buildRoadContextPrivacyMessage(settings = {}) {
+export function buildRoadContextPrivacySummary(routePoints = [], settings = {}) {
+  const privacyZones = getPrivacyZones(settings);
+  const originalPoints = Array.isArray(routePoints) ? routePoints : [];
+  const safePoints = privacyZones.length
+    ? originalPoints.filter((point) => !isPointInPrivacyZone(point, privacyZones))
+    : originalPoints;
+  return summarizePrivacyZoneFiltering({ originalPoints, safePoints, privacyZones });
+}
+
+export function buildRoadContextPrivacyMessage(settings = {}, trip = null) {
   const lines = [
     'Get Road Data will check online services for this selected trip:',
     '',
   ];
-  if (settings.speed_limit_lookup_enabled !== false) {
+  if (settings.external_requests_local_only === true) {
+    lines.push('Local-only mode is on, so external road, weather, and route-snapping requests will be skipped.');
+  }
+  if (settings.speed_limit_lookup_enabled === true) {
     lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
   }
-  if (settings.weather_context_enabled !== false) {
+  if (settings.weather_context_enabled === true) {
     lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather when all candidates are private or the origin, midpoint, or destination is inside the expanded weather privacy guard.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your verified OSRM endpoint, one request per continuous route segment.');
-  } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
+  } else if (settings.map_matching_enabled === true && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
-  } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true) {
+  } else if (settings.map_matching_enabled === true && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true) {
     lines.push('- Snap route to roads has an endpoint but will be skipped until its OSRM health check passes and the verified domain record matches.');
-  } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
+  } else if (settings.map_matching_enabled === true && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
     lines.push('- Snap route to roads has an endpoint but will be skipped until OSRM data-sharing consent is saved.');
   } else if (isOsrmMapMatchingEnabled(settings)) {
     lines.push('- Snap route to roads is on but has no endpoint, so OSRM will be skipped until a link is added.');
   } else {
     lines.push('- Snap route to roads is off, so GPS points are not sent to OSRM.');
+  }
+  if (trip?.route_points?.length) {
+    const privacySummary = buildRoadContextPrivacySummary(trip.route_points, settings);
+    lines.push('', `Privacy zones: ${privacySummary.message}`);
   }
   lines.push('', 'Continue?');
   return lines.join('\n');
@@ -135,6 +154,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const thresholds = buildDrivingThresholds(settings);
   const privacyZones = getPrivacyZones(settings);
+  const privacySummary = buildRoadContextPrivacySummary(originalPoints, settings);
   stage(onProgress, 'Getting weather');
   const weatherPromise = timeout(
     fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
@@ -213,6 +233,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       fallback_country: speedLimitContext.fallback_country,
       query_count: speedLimitContext.query_count,
       error: speedLimitContext.error,
+      privacy_removed_points: privacySummary.removedCount,
     },
     map_matching_context: {
       provider: mapMatchingContext.provider,
@@ -224,6 +245,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     },
     weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
     weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
+    external_context_privacy_summary: privacySummary,
     needs_rescore: false,
   };
 }
@@ -233,6 +255,7 @@ export function describeOsmSpeedLimitStatus(context = {}) {
     return 'OpenStreetMap speed limits have not been fetched for this trip yet.';
   }
   if (context.status === 'manual_required') return 'Speed limits have not been fetched. Tap Get Road Data when you want to send route-area boxes to OpenStreetMap.';
+  if (context.status === 'local_only') return 'Local-only mode is on, so OpenStreetMap speed-limit lookup is disabled.';
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route') return 'This trip does not have enough GPS points to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
@@ -250,6 +273,9 @@ export function describeMapMatchingStatus(context = {}) {
   }
   if (context.status === 'manual_required') {
     return 'Route snapping is configured but waits for Get Road Data before sending sampled GPS points to OSRM.';
+  }
+  if (context.status === 'local_only') {
+    return 'Local-only mode is on, so sampled GPS points are not sent to OSRM.';
   }
   if (context.status === 'disabled') {
     return 'Route snapping was skipped. Add an OSRM endpoint in Settings only if you want sampled GPS points sent there.';

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FeaturePermissionBadge, PermissionBadge, SectionTitle, SettingRow, Toggle } from '../settingsComponents';
 import { LEGAL_DISCLAIMER_ITEMS, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
 import {
@@ -15,6 +15,30 @@ import {
 import { authenticateBiometricGate, isBiometricGateAvailable } from '@/lib/nativeBiometricGate';
 import { PRIVACY_CONSENT_POINTS, PRIVACY_NOTICE_HIGHLIGHTS, PRIVACY_NOTICE_SUMMARY } from '@/lib/privacyNotice';
 import { toast } from '@/components/ui/use-toast';
+import {
+  EXTERNAL_SERVICE_LABELS,
+  readOutboundDataLog,
+} from '@/lib/privacyControls';
+
+function PrivacyBadge({ kind = 'local' }) {
+  const labels = {
+    local: 'Local only',
+    external: 'External request',
+    file: 'File leaves app',
+    location: 'Location-derived',
+  };
+  const classes = {
+    local: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300',
+    external: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300',
+    file: 'bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300',
+    location: 'bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300',
+  };
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${classes[kind] || classes.local}`}>
+      {labels[kind] || labels.local}
+    </span>
+  );
+}
 
 export function PrivacySettings({ ctx, visibleSectionIds = null }) {
   const {
@@ -27,6 +51,7 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
   const sectionVisible = (id) => !visibleSectionIds || visibleSectionIds.includes(id);
   const [biometricLockEnabled, setBiometricLockEnabledState] = useState(() => isBiometricLockEnabled());
   const [biometricLockBusy, setBiometricLockBusy] = useState(false);
+  const [outboundLog, setOutboundLog] = useState([]);
   const lockTimeout = settings?.lock_timeout_minutes ?? BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES;
   const draftRadiusValue = Number(privacyDraft.radius_m);
   const showDraftRadiusWarning =
@@ -72,6 +97,33 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
     updateCfg({ lock_timeout_minutes: minutes });
     notifyBiometricLockSettingsChanged();
   };
+  const updateLocalOnlyMode = (enabled) => {
+    updateCfg({ external_requests_local_only: enabled === true });
+  };
+  const formatOutboundTime = (value) => {
+    const date = value ? new Date(value) : null;
+    return date && Number.isFinite(date.getTime())
+      ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : 'never';
+  };
+
+  useEffect(() => {
+    let active = true;
+    readOutboundDataLog().then((entries) => {
+      if (active) setOutboundLog(entries);
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    settings.external_requests_local_only,
+    settings.map_tiles_enabled,
+    settings.speed_limit_lookup_enabled,
+    settings.weather_context_enabled,
+    settings.map_matching_enabled,
+    settings.calibration_sharing_enabled,
+    settings.backend_sync_enabled,
+  ]);
 
   return (
     <>
@@ -135,11 +187,99 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                   label="Share anonymized calibration labels"
                   sublabel="Uploads only summary features and survey labels. Raw GPS, addresses, trip notes, and route geometry stay local."
                 >
-                  <Checkbox
-                    checked={cfg.calibration_sharing_enabled === true}
-                    onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
+                  <div className="flex items-center gap-2">
+                    <PrivacyBadge kind={cfg.calibration_sharing_enabled === true ? 'external' : 'local'} />
+                    <Checkbox
+                      checked={cfg.calibration_sharing_enabled === true}
+                      disabled={settings.external_requests_local_only === true}
+                      onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
+                    />
+                  </div>
+                </SettingRow>
+                <SettingRow
+                  icon={Shield}
+                  label="Local-only mode"
+                  sublabel="Disables map tiles, road/weather context, OSRM route snapping, reverse geocoding, calibration sharing, backend sync, and nonessential external requests."
+                >
+                  <Toggle
+                    value={settings.external_requests_local_only === true}
+                    onChange={updateLocalOnlyMode}
                   />
                 </SettingRow>
+                <SettingRow
+                  icon={MapPin}
+                  label="Load online map tiles"
+                  sublabel="If off, maps and playback draw routes on a local plain background."
+                >
+                  <div className="flex items-center gap-2">
+                    <PrivacyBadge kind={settings.map_tiles_enabled === true ? 'external' : 'local'} />
+                    <Toggle
+                      value={settings.map_tiles_enabled === true}
+                      disabled={settings.external_requests_local_only === true}
+                      onChange={(enabled) => updateCfg({ map_tiles_enabled: enabled === true, map_tiles_first_prompt_seen: true })}
+                    />
+                  </div>
+                </SettingRow>
+                <SettingRow
+                  icon={Search}
+                  label="Reverse geocode parked locations"
+                  sublabel="Optional address lookup. Sends one non-private coordinate to OpenStreetMap Nominatim."
+                >
+                  <div className="flex items-center gap-2">
+                    <PrivacyBadge kind={settings.reverse_geocoding_enabled === true ? 'external' : 'local'} />
+                    <Toggle
+                      value={settings.reverse_geocoding_enabled === true}
+                      disabled={settings.external_requests_local_only === true}
+                      onChange={(enabled) => updateCfg({ reverse_geocoding_enabled: enabled === true })}
+                    />
+                  </div>
+                </SettingRow>
+                <SettingRow
+                  icon={Upload}
+                  label="Backend sync"
+                  sublabel="Optional configured-server persistence. Local repositories stay the default."
+                >
+                  <div className="flex items-center gap-2">
+                    <PrivacyBadge kind={settings.backend_sync_enabled === true ? 'external' : 'local'} />
+                    <Toggle
+                      value={settings.backend_sync_enabled === true}
+                      disabled={settings.external_requests_local_only === true}
+                      onChange={(enabled) => updateCfg({ backend_sync_enabled: enabled === true })}
+                    />
+                  </div>
+                </SettingRow>
+                <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">Last external requests</div>
+                      <p className="mt-1 text-xs text-muted-foreground">Local audit log for optional requests made from this device.</p>
+                    </div>
+                    <PrivacyBadge kind={settings.external_requests_local_only === true ? 'local' : 'location'} />
+                  </div>
+                  <div className="mt-3 grid gap-2">
+                    {Object.entries(EXTERNAL_SERVICE_LABELS).map(([service, label]) => {
+                      const latest = outboundLog.find((entry) => entry.service === service);
+                      const configuredOff = (
+                        (service === 'map_tiles' && settings.map_tiles_enabled !== true) ||
+                        (service === 'osm_speed_limits' && settings.speed_limit_lookup_enabled !== true) ||
+                        (service === 'open_meteo_weather' && settings.weather_context_enabled !== true) ||
+                        (service === 'osrm_route_snapping' && settings.map_matching_enabled !== true) ||
+                        (service === 'calibration_upload' && settings.calibration_sharing_enabled !== true) ||
+                        (service === 'backend_sync' && settings.backend_sync_enabled !== true) ||
+                        (service === 'nominatim_reverse_geocoding' && settings.reverse_geocoding_enabled !== true)
+                      );
+                      return (
+                        <div key={service} className="rounded-xl bg-card px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-foreground">{label}</span>
+                            <span className="text-muted-foreground">{configuredOff || settings.external_requests_local_only ? 'off' : latest ? formatOutboundTime(latest.at) : 'never'}</span>
+                          </div>
+                          <div className="mt-1 text-muted-foreground">{latest?.detail || 'No request recorded.'}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
                 <SettingRow
                   icon={Lock}
                   label="App lock (optional)"
@@ -348,7 +488,10 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                   sublabel="Download as CSV file"
                   onClick={handleExportAll}
                 >
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex items-center gap-2">
+                    <PrivacyBadge kind="file" />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  </div>
                 </SettingRow>
                 <SettingRow
                   icon={Download}
@@ -356,7 +499,10 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                   sublabel="Encrypted backup with trips, GPS route points, events, vehicles, and settings"
                   onClick={handleExportBackup}
                 >
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  <div className="flex items-center gap-2">
+                    <PrivacyBadge kind="file" />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  </div>
                 </SettingRow>
                 <label className="relative -mx-1 flex cursor-pointer items-center justify-between gap-3 rounded-xl border-b border-border/50 px-2 py-3 transition-colors hover:bg-secondary/50">
                   <input
@@ -378,7 +524,10 @@ export function PrivacySettings({ ctx, visibleSectionIds = null }) {
                       </div>
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  <div className="flex flex-shrink-0 items-center gap-2">
+                    <PrivacyBadge kind="file" />
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
                 </label>
                 <SettingRow
                   icon={Info}

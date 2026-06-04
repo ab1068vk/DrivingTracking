@@ -2,6 +2,8 @@
 
 Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, scores driving behavior, generates reports, and keeps trip history on the device unless an optional backend is configured.
 
+The generated current-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). It lists the app version, Android versioning, scoring engine hash, settings schema, trip schema, backup format, encrypted backup format, and default privacy/network state from source.
+
 ## Current App Surface
 
 - Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, development-only diagnostics, searchable modular settings, and vehicles pages.
@@ -123,8 +125,9 @@ The markdown is regenerated from the current source tree and reflects the latest
 
 ## Documentation
 
-The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:
+The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). The compact generated app-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). They are generated from the repository and include:
 
+- current app version, Android versioning, scoring engine, schema versions, backup format, and default privacy/network state
 - concise source/module inventory focused on app-critical files and top-level scan counts
 - actual calculation snippets for scoring, trip physics, route risk, predictions, reports, imports/exports, and Android native tracking
 - calculation surface summary by domain and important files
@@ -135,6 +138,7 @@ Regenerate it after meaningful code or README changes:
 
 ```bash
 node scripts/generate-technical-reference.mjs
+npm run docs:state
 ```
 
 ## Architecture And Data
@@ -145,7 +149,7 @@ node scripts/generate-technical-reference.mjs
 - Native stack: Capacitor 8 Android shell plus custom Java services/plugins for activity recognition, background tracking, phone usage evidence, native IMU motion sampling, native downloads/import picker, notifications, quick settings tile, parked-car widget, WorkManager tile-preview cache, secure clipboard, Android Keystore-backed field encryption, encrypted native key-value storage, biometric/device-credential gating, local runtime-integrity checks, encrypted SharedPreferences storage, and Android security hardening
 - Optional device evidence: Android Usage Access for confirmed phone use, optional OBD-II BLE evidence where Web Bluetooth is available, Android Nearby Devices/Bluetooth permission through the native `BLUETOOTH_CONNECT` bridge, and browser/native motion sensors for IMU summaries, lane-changing confidence, and possible incident signals. Permission status is centralized in `PermissionProvider`, normalized through `permissionStateMachine`, and cached briefly between native bridge checks.
 - Voice alerts: local TTS only. `src/lib/voiceAlerts.js` sends no GPS, speed, route, or network payloads; it only receives alert text and settings, normalizes the voice-alerts flag, flushes stale Web Speech queues, waits for voice loading in browser/WebView, and uses the first-party native speech bridge on Android.
-- Primary storage: IndexedDB and localStorage for browser UI state, encrypted native key-value storage for Android UI values, cached-first and deferred native settings hydration on Android, Android Keystore-backed encrypted trip fields for sensitive route/event/note payloads on native Android, session-only encrypted trip fields on web/test surfaces, encrypted Android SharedPreferences for native tracking, native settings, native notification state, privacy zones, and parked-location data, coarse route-risk geohash cells, native motion samples on trips, native download/import files, and Android widget map cache files. Android production paths migrate legacy plaintext Capacitor Preferences when possible, no longer mirror native settings JSON into WebView localStorage, no longer read legacy plaintext `SharedPreferences`/Capacitor Preferences for native settings, privacy zones, tracking, notifications, or parked locations, and warm encrypted preference keys after launch; legacy native plaintext preference files are delete-only cleanup targets.
+- Primary storage: IndexedDB and localStorage for browser UI state, encrypted native key-value storage for Android UI values, cached-first and deferred native settings hydration on Android, Android Keystore-backed encrypted trip fields for sensitive route/event/note payloads on native Android, session-only encrypted trip fields on web/test surfaces, encrypted Android SharedPreferences for native tracking, native settings, native notification state, privacy zones, and parked-location data, coarse route-risk geohash cells, native motion samples on trips, native download/import files, Android widget map cache files, and an app-private WebView settings recovery mirror used only to prevent stale native/default settings from winning on relaunch. Android production paths migrate legacy plaintext Capacitor Preferences when possible, avoid legacy plaintext `SharedPreferences`/Capacitor Preferences as the source of truth for native settings, privacy zones, tracking, notifications, or parked locations, and warm encrypted preference keys after launch; legacy native plaintext preference files are delete-only cleanup targets.
 - Optional backend: set `VITE_API_URL` to a trusted HTTPS public-domain URL; when it is absent, trips and vehicles use local repositories. Set `VITE_TRUSTED_BACKEND_ORIGINS` to a comma-separated HTTPS origin allowlist for managed deployments.
 - Local trip database: set `VITE_DB_NAME` to override the IndexedDB name. The default is `road_sage_mobile`; when the configured name changes, startup copies trips from the previously recorded database name and then removes the old database after count verification.
 - Optional external services: OpenStreetMap Overpass for speed limits, Open-Meteo for weather context, Nominatim reverse geocoding outside privacy zones, trusted user-configured OSRM for route snapping after explicit consent, and pinned OpenStreetMap tile hosts for non-private Android parked-car widget map previews. Set `VITE_TRUSTED_OSRM_ORIGINS` to a comma-separated HTTPS origin allowlist for managed OSRM deployments. Set `VITE_OSRM_TIMEOUT_MS` to tune the build default OSRM timeout; users can override it in Settings from 5 to 30 seconds.
@@ -199,7 +203,7 @@ Run tests:
 npm run test
 ```
 
-`npm run build` regenerates `src/lib/scoringVersion.generated.js`; `npm run test` checks that the generated scoring version matches the scoring constants before running Vitest.
+`npm run build` regenerates `src/lib/scoringVersion.generated.js` and refreshes `docs/APP_STATE.md`; `npm run test` checks both generated artifacts before running Vitest.
 
 Run browser smoke e2e tests:
 

@@ -1,8 +1,14 @@
 import { API_ENDPOINT_CONFIGURED, apiClient } from "@/api/client";
 import { localVehicleRepository } from "@/lib/localVehicleRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
+import { localSettings } from "@/lib/trackingStore";
 
-export const shouldUseLocalStore = () => isNativePlatform() || !API_ENDPOINT_CONFIGURED;
+export const shouldUseLocalStore = () => (
+  isNativePlatform() ||
+  !API_ENDPOINT_CONFIGURED ||
+  localSettings.get().external_requests_local_only === true ||
+  localSettings.get().backend_sync_enabled !== true
+);
 
 const repository = () => (shouldUseLocalStore() ? localVehicleRepository : null);
 

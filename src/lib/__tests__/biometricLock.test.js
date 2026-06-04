@@ -4,6 +4,7 @@ import {
   isBiometricLockEnabled,
   isLocked,
   lock,
+  markUserActivity,
   markUnlocked,
   setBiometricLockEnabled,
 } from '@/lib/biometricLock';
@@ -45,6 +46,16 @@ describe('biometric lock session timeout', () => {
     expect(isBiometricLockEnabled()).toBe(true);
     expect(isLocked({ lock_timeout_minutes: 1 }, 1_000 + 60 * 1000)).toBe(false);
     expect(isLocked({ lock_timeout_minutes: 1 }, 1_000 + 60 * 1000 + 1)).toBe(true);
+  });
+
+  it('resets the idle timeout when the user interacts with the app', () => {
+    setBiometricLockEnabled(true);
+    markUnlocked(1_000);
+    markUserActivity(1_000 + 45 * 1000);
+
+    expect(isLocked({ lock_timeout_minutes: 1 }, 1_000 + 60 * 1000 + 1)).toBe(false);
+    expect(isLocked({ lock_timeout_minutes: 1 }, 1_000 + 105 * 1000)).toBe(false);
+    expect(isLocked({ lock_timeout_minutes: 1 }, 1_000 + 105 * 1000 + 1)).toBe(true);
   });
 
   it('never locks when disabled, regardless of elapsed time', () => {

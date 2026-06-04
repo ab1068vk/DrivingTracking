@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getPrivacyZones, savePrivacyZones } from '@/lib/trackingStore';
+import { notifyUserError } from '@/lib/userFeedback';
 
 export function usePrivacyZones() {
   const [zones, setZones] = useState([]);
@@ -10,6 +11,14 @@ export function usePrivacyZones() {
     getPrivacyZones()
       .then((loadedZones) => {
         if (active) setZones(loadedZones);
+      })
+      .catch((error) => {
+        if (active) {
+          notifyUserError('privacy_zones_load', error, {
+            title: 'Privacy zones unavailable',
+            description: 'Road Sage could not load saved privacy zones.',
+          });
+        }
       })
       .finally(() => {
         if (active) setLoading(false);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  chooseSettingsHydrationCandidate,
   DEFAULT_SETTINGS,
   migrateDefaultSettings,
   reconcileSettingsHydrationSnapshot,
@@ -8,8 +9,14 @@ import {
 } from '@/lib/trackingStore';
 
 describe('tracking store default settings', () => {
-  it('keeps external context auto-fetch enabled by default', () => {
-    expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(true);
+  it('keeps external road and weather requests opt-in by default', () => {
+    expect(DEFAULT_SETTINGS.external_requests_local_only).toBe(false);
+    expect(DEFAULT_SETTINGS.map_tiles_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.reverse_geocoding_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.backend_sync_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.speed_limit_lookup_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.weather_context_enabled).toBe(false);
   });
 
   it('keeps OSRM route snapping off until an endpoint and consent are saved', () => {
@@ -85,6 +92,64 @@ describe('tracking store default settings', () => {
       background_tracking_enabled: false,
       biometric_lock_enabled: false,
     });
+  });
+
+  it('chooses the newest durable settings snapshot over stale native defaults on relaunch', () => {
+    const staleNative = {
+      ...DEFAULT_SETTINGS,
+      onboarding_completed: false,
+      dark_mode: 'system',
+      _settings_revision: 1,
+      _settings_updated_at: '2026-01-01T00:00:00.000Z',
+    };
+    const savedDuringPreviousSession = {
+      ...DEFAULT_SETTINGS,
+      onboarding_completed: true,
+      dark_mode: 'dark',
+      map_tiles_enabled: true,
+      _settings_revision: 4,
+      _settings_updated_at: '2026-01-01T00:05:00.000Z',
+    };
+
+    const chosen = chooseSettingsHydrationCandidate([
+      {
+        source: 'native_plugin',
+        settings: staleNative,
+        revision: staleNative._settings_revision,
+        updatedAtMs: Date.parse(staleNative._settings_updated_at),
+        onboardingCompleted: 0,
+        deltaCount: 0,
+      },
+      {
+        source: 'browser_mirror',
+        settings: savedDuringPreviousSession,
+        revision: savedDuringPreviousSession._settings_revision,
+        updatedAtMs: Date.parse(savedDuringPreviousSession._settings_updated_at),
+        onboardingCompleted: 1,
+        deltaCount: 3,
+      },
+    ]);
+
+    expect(chosen.source).toBe('browser_mirror');
+    expect(chosen.settings).toMatchObject({
+      onboarding_completed: true,
+      dark_mode: 'dark',
+      map_tiles_enabled: true,
+    });
+  });
+
+  it('strips settings revision metadata from imported backups', () => {
+    const sanitized = sanitizeImportedSettings({
+      _settings_revision: 999,
+      _settings_updated_at: '2099-01-01T00:00:00.000Z',
+      dark_mode: 'dark',
+    });
+
+    expect(sanitized).toMatchObject({
+      dark_mode: 'dark',
+    });
+    expect(sanitized._settings_revision).toBeUndefined();
+    expect(sanitized._settings_updated_at).toBeUndefined();
   });
 
   it('stores the last map center as an opt-in contextual fallback', () => {
@@ -193,7 +258,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(10);
+    expect(legacySunset.settings_defaults_version).toBe(12);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 
@@ -213,6 +278,58 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({ data_retention_months: 36 }).data_retention_months).toBe(36);
     expect(validateSettingsPatch({ data_retention_months: 0 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ data_retention_months: -1 })).toMatchObject({ valid: false });
+  });
+
+  it('migrates older defaulted external context settings back to opt-in', () => {
+    const migrated = migrateDefaultSettings({
+      settings_defaults_version: 10,
+      external_context_auto_fetch_enabled: true,
+      speed_limit_lookup_enabled: true,
+      weather_context_enabled: true,
+      map_tiles_enabled: true,
+      reverse_geocoding_enabled: true,
+      backend_sync_enabled: true,
+    });
+
+    expect(migrated.settings).toMatchObject({
+      external_context_auto_fetch_enabled: false,
+      speed_limit_lookup_enabled: false,
+      weather_context_enabled: false,
+      map_tiles_enabled: false,
+      reverse_geocoding_enabled: false,
+      backend_sync_enabled: false,
+      settings_defaults_version: 12,
+    });
+    expect(migrated.changed).toBe(true);
+  });
+
+  it('local-only mode disables every nonessential external request toggle', () => {
+    const migrated = migrateDefaultSettings({
+      settings_defaults_version: 12,
+      external_requests_local_only: true,
+      map_tiles_enabled: true,
+      speed_limit_lookup_enabled: true,
+      weather_context_enabled: true,
+      external_context_auto_fetch_enabled: true,
+      map_matching_enabled: true,
+      osrm_data_sharing_consented: true,
+      calibration_sharing_enabled: true,
+      backend_sync_enabled: true,
+      reverse_geocoding_enabled: true,
+    }).settings;
+
+    expect(migrated).toMatchObject({
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      speed_limit_lookup_enabled: false,
+      weather_context_enabled: false,
+      external_context_auto_fetch_enabled: false,
+      map_matching_enabled: false,
+      osrm_data_sharing_consented: false,
+      calibration_sharing_enabled: false,
+      backend_sync_enabled: false,
+      reverse_geocoding_enabled: false,
+    });
   });
 
   it('migrates unsupported proxy setting names to neutral metric names', () => {

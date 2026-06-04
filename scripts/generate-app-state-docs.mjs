@@ -1,0 +1,164 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+const ROOT = process.cwd();
+const OUTPUT_RELATIVE = 'docs/APP_STATE.md';
+const OUTPUT_PATH = path.join(ROOT, OUTPUT_RELATIVE);
+const CHECK = process.argv.includes('--check');
+
+function read(relativePath) {
+  return fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+}
+
+function readJson(relativePath) {
+  return JSON.parse(read(relativePath));
+}
+
+function match(source, pattern, label) {
+  const result = source.match(pattern);
+  if (!result) throw new Error(`Could not read ${label}.`);
+  return result[1];
+}
+
+function literalValue(value) {
+  const trimmed = String(value).trim();
+  if (trimmed === 'true' || trimmed === 'false') return trimmed;
+  return trimmed.replace(/^['"`]|['"`]$/g, '');
+}
+
+function settingValue(settingsSource, key) {
+  return literalValue(match(settingsSource, new RegExp(`${key}:\\s*([^,\\n]+)`), `DEFAULT_SETTINGS.${key}`));
+}
+
+function constNumber(source, name, label = name) {
+  return match(source, new RegExp(`(?:export\\s+)?const\\s+${name}\\s*=\\s*([0-9_]+)`), label).replaceAll('_', '');
+}
+
+function constString(source, name, label = name) {
+  return match(source, new RegExp(`(?:export\\s+)?const\\s+${name}\\s*=\\s*['"]([^'"]+)['"]`), label);
+}
+
+function objectString(source, key, label = key) {
+  return match(source, new RegExp(`${key}:\\s*['"]([^'"]+)['"]`), label);
+}
+
+function objectBoolean(source, key, label = key) {
+  return match(source, new RegExp(`${key}:\\s*(true|false)`), label);
+}
+
+const packageJson = readJson('package.json');
+const capacitorConfig = read('capacitor.config.ts');
+const androidBuild = read('android/app/build.gradle');
+const scoringVersion = constString(read('src/lib/scoringVersion.generated.js'), 'SCORING_VERSION');
+const backupSource = read('src/lib/dataBackup.js');
+const backupEncryptionSource = read('src/lib/backupEncryption.js');
+const settingsSource = read('src/lib/trackingStore.js');
+const localTripSource = read('src/lib/localTripRepository.js');
+const localDbSource = read('src/lib/localDbConfig.js');
+const routeRiskSource = read('src/lib/routeRisk/constants.js');
+const calibrationSource = read('src/lib/calibrationLabeling.js');
+const nativeDownloadsSource = read('src/lib/nativeDownloads.js');
+
+const appId = objectString(capacitorConfig, 'appId', 'Capacitor appId');
+const appName = objectString(capacitorConfig, 'appName', 'Capacitor appName');
+const androidVersionCode = match(androidBuild, /versionCode\s*=\s*([0-9]+)/, 'Android versionCode');
+const androidVersionNameSource = match(androidBuild, /versionName\s*=\s*([A-Za-z0-9_."'-]+)/, 'Android versionName');
+const settingsDefaultsVersion = constNumber(settingsSource, 'CURRENT_SETTINGS_DEFAULTS_VERSION');
+const backupVersion = constNumber(backupSource, 'BACKUP_VERSION');
+const backupEncryptionVersion = constNumber(backupEncryptionSource, 'BACKUP_ENC_VERSION');
+const backupPasswordMin = constNumber(backupEncryptionSource, 'BACKUP_PASSWORD_MIN_LENGTH');
+const backupPasswordMax = constNumber(backupEncryptionSource, 'BACKUP_PASSWORD_MAX_LENGTH');
+const pbkdf2Iterations = constNumber(backupEncryptionSource, 'PBKDF2_ITERATIONS');
+const nativeBackupEncryptionVersion = constNumber(nativeDownloadsSource, 'BACKUP_ENC_VERSION', 'native BACKUP_ENC_VERSION');
+const tripSchemaVersion = constNumber(localTripSource, 'TRIP_SCHEMA_VERSION');
+const tripEventMigrationVersion = constNumber(localTripSource, 'TRIP_EVENT_MIGRATION_VERSION');
+const indexedDbVersion = constNumber(localDbSource, 'DB_VERSION');
+const indexedDbName = constString(localDbSource, 'DEFAULT_DB_NAME');
+const routeRiskSchemaVersion = constNumber(routeRiskSource, 'ROUTE_RISK_INDEX_SCHEMA_VERSION');
+const routeRiskGeohashPrecision = constNumber(routeRiskSource, 'ROUTE_RISK_GEOHASH_PRECISION');
+const calibrationLabelSchemaVersion = constNumber(calibrationSource, 'CALIBRATION_LABEL_SCHEMA_VERSION');
+
+const defaultSettings = [
+  ['Tracking mode', settingValue(settingsSource, 'tracking_mode')],
+  ['Retention', `${settingValue(settingsSource, 'data_retention_months')} months`],
+  ['Local-only mode', settingValue(settingsSource, 'external_requests_local_only')],
+  ['Online map tiles', settingValue(settingsSource, 'map_tiles_enabled')],
+  ['Backend sync', settingValue(settingsSource, 'backend_sync_enabled')],
+  ['Reverse geocoding', settingValue(settingsSource, 'reverse_geocoding_enabled')],
+  ['OSM speed-limit lookup', settingValue(settingsSource, 'speed_limit_lookup_enabled')],
+  ['Open-Meteo weather', settingValue(settingsSource, 'weather_context_enabled')],
+  ['Automatic road/weather fetch', settingValue(settingsSource, 'external_context_auto_fetch_enabled')],
+  ['OSRM route snapping', settingValue(settingsSource, 'map_matching_enabled')],
+  ['Calibration sharing', settingValue(settingsSource, 'calibration_sharing_enabled')],
+];
+
+const content = `# Road Sage App State
+
+This file is generated by \`scripts/generate-app-state-docs.mjs\`. Do not edit it by hand.
+
+## Release Identity
+
+| Field | Current value | Source |
+| --- | --- | --- |
+| App name | \`${appName}\` | \`capacitor.config.ts\` |
+| Package | \`${packageJson.name}\` | \`package.json\` |
+| App version | \`${packageJson.version}\` | \`package.json\` |
+| Capacitor app id | \`${appId}\` | \`capacitor.config.ts\` |
+| Android application id | \`com.roadsage.app\` | \`android/app/build.gradle\` |
+| Android versionCode | \`${androidVersionCode}\` | \`android/app/build.gradle\` |
+| Android versionName | \`${androidVersionNameSource === 'appVersionName' ? packageJson.version : androidVersionNameSource}\` | \`android/app/build.gradle\` |
+| Web build stack | React 18, Vite 6, Capacitor 8 | \`package.json\` |
+
+## Versioned Contracts
+
+| Contract | Current version/state | Source |
+| --- | --- | --- |
+| Scoring engine | \`${scoringVersion}\` content hash | \`src/lib/scoringVersion.generated.js\` |
+| Settings defaults schema | \`${settingsDefaultsVersion}\` | \`src/lib/trackingStore.js\` |
+| Settings persistence metadata | \`_settings_revision\` and \`_settings_updated_at\`; native hydration chooses the newest valid snapshot across native plugin, encrypted storage, browser recovery mirror, pending memory, and legacy Preferences | \`src/lib/trackingStore.js\` |
+| Trip record schema | \`${tripSchemaVersion}\` | \`src/lib/localTripRepository.js\` and \`src/lib/schema/tripSchema.js\` |
+| Trip event migration | \`${tripEventMigrationVersion}\` | \`src/lib/localTripRepository.js\` |
+| IndexedDB database | \`${indexedDbName}\` v${indexedDbVersion} | \`src/lib/localDbConfig.js\` |
+| Route-risk index schema | \`${routeRiskSchemaVersion}\`; geohash precision ${routeRiskGeohashPrecision} | \`src/lib/routeRisk/constants.js\` |
+| Backup format | \`.rsbackup\` JSON envelope v${backupVersion}; legacy plaintext import only | \`src/lib/dataBackup.js\` |
+| Backup encryption format | AES-GCM wrapper v${backupEncryptionVersion}; PBKDF2-SHA-256 ${Number(pbkdf2Iterations).toLocaleString('en-US')} iterations; password ${backupPasswordMin}-${backupPasswordMax} chars | \`src/lib/backupEncryption.js\` |
+| Native encrypted export detector | AES-GCM wrapper v${nativeBackupEncryptionVersion} | \`src/lib/nativeDownloads.js\` |
+| Calibration label schema | \`${calibrationLabelSchemaVersion}\` | \`src/lib/calibrationLabeling.js\` |
+
+## Default Privacy And Network State
+
+| Setting | Default |
+| --- | --- |
+${defaultSettings.map(([key, value]) => `| ${key} | \`${value}\` |`).join('\n')}
+
+By default the app is local-first: trips and vehicles use local repositories unless a trusted backend is explicitly configured and enabled, map tiles are off, road/weather context is manual/opt-in, OSRM route snapping is off until a trusted endpoint and consent are saved, reverse geocoding is off, and calibration sharing is off.
+
+## Current App Surface
+
+- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, vehicles, searchable settings, privacy zones, onboarding, and development diagnostics.
+- Manual trips, foreground auto-detect, Android native background auto tracking, quick settings tile support, Android parked-car widget, native trip import, encrypted exports/backups, and Stealth Trip Mode.
+- Scoring covers Safety, Smoothness, Eco, phone-use evidence when Android Usage Access is granted, speed compliance, route/road context, fatigue and heading-drift proxies, calibration/readiness feedback, and score provenance for rescoring.
+- Storage is local-first with IndexedDB/localStorage on web, encrypted native key-value storage and encrypted SharedPreferences on Android, Android Keystore-backed sensitive trip fields, and a WebView settings recovery mirror used to prevent relaunch fallback to defaults.
+- External requests are controlled by explicit settings and logged through the outbound privacy audit flow: OSM/Overpass, Open-Meteo, Nominatim, OSRM, map tiles, calibration upload, and optional backend sync.
+
+## Update Contract
+
+- Run \`npm run docs:state\` to refresh this file after changing app versions, schema versions, backup formats, scoring constants, settings defaults, Android versioning, or privacy/network defaults.
+- \`npm run build\` refreshes this file automatically before building.
+- \`npm run test\` checks this file with \`npm run docs:state:check\` and fails if it is stale.
+`;
+
+const normalized = `${content.trim()}\n`;
+
+if (CHECK) {
+  const current = fs.existsSync(OUTPUT_PATH) ? fs.readFileSync(OUTPUT_PATH, 'utf8').replace(/\r\n/g, '\n') : '';
+  if (current !== normalized) {
+    console.error(`${OUTPUT_RELATIVE} is stale. Run npm run docs:state.`);
+    process.exit(1);
+  }
+  console.log(`${OUTPUT_RELATIVE} is current.`);
+} else {
+  fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
+  fs.writeFileSync(OUTPUT_PATH, normalized, 'utf8');
+  console.log(`Wrote ${OUTPUT_RELATIVE}`);
+}

@@ -112,7 +112,7 @@ import {
   recordTrackingDiagnostic,
 } from '@/lib/trackingDiagnostics';
 import { logError } from '@/lib/errorReporting';
-import { notifyUserError } from '@/lib/userFeedback';
+import { notifyUserError, notifyUserMessage, notifyUserSuccess } from '@/lib/userFeedback';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
@@ -1172,7 +1172,13 @@ export default function Dashboard() {
         reason: 'tracking_paused',
       });
       refreshTrackingStatusContext();
-      setLocationError('Tracking is paused in Settings.');
+      const message = 'Tracking is paused in Settings.';
+      setLocationError(message);
+      notifyUserMessage('dashboard_start_trip_blocked_paused', {
+        title: 'Trip did not start',
+        description: message,
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -1202,7 +1208,13 @@ export default function Dashboard() {
           reason: 'activity_permission_denied',
         });
         refreshTrackingStatusContext();
-        setLocationError('Physical activity permission is required for auto trip detection.');
+        const message = 'Physical activity permission is required for auto trip detection.';
+        setLocationError(message);
+        notifyUserMessage('dashboard_start_trip_activity_denied', {
+          title: 'Trip did not start',
+          description: message,
+          variant: 'destructive',
+        });
         return;
       }
     }
@@ -1221,9 +1233,15 @@ export default function Dashboard() {
         reason: useBackground ? 'background_location_or_notification_denied' : 'location_permission_denied',
       });
       refreshTrackingStatusContext();
-      setLocationError(useBackground
+      const message = useBackground
         ? 'Background tracking needs location and notification permission before a trip can start.'
-        : 'Location permission denied. Please enable location to start a trip.');
+        : 'Location permission denied. Please enable location to start a trip.';
+      setLocationError(message);
+      notifyUserMessage('dashboard_start_trip_location_denied', {
+        title: 'Trip did not start',
+        description: message,
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -1322,6 +1340,10 @@ export default function Dashboard() {
     startTimer(new Date(startTime));
     startGPS();
     if (!candidate && !ephemeralTrip) {
+      notifyUserSuccess('dashboard_start_trip', {
+        title: 'Trip started',
+        description: useBackground ? 'Road Sage is recording with background tracking enabled.' : 'Road Sage is recording this drive now.',
+      });
       notifyTripStarted(tripData).catch((err) => {
         logError('trip_started_notification', err, { start_source: tripData.start_source });
       });
@@ -1416,7 +1438,12 @@ export default function Dashboard() {
           });
         }
         refreshTrackingStatusContext();
-        setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
+        const message = 'Auto-detected movement was ignored because it did not prove vehicle-like.';
+        setLocationError(message);
+        notifyUserMessage('dashboard_candidate_discarded', {
+          title: 'Trip not saved',
+          description: message,
+        });
         return;
       }
       tripToEnd = {
@@ -1508,11 +1535,16 @@ export default function Dashboard() {
         });
       }
       refreshTrackingStatusContext();
-      setLocationError(stealthTripEnding
+      const message = stealthTripEnding
         ? 'Stealth trip was erased because Road Sage did not detect enough movement to score it.'
         : isManualTrip
         ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
-        : 'Auto-detected trip was ignored because it was too short.');
+        : 'Auto-detected trip was ignored because it was too short.';
+      setLocationError(message);
+      notifyUserMessage('dashboard_trip_discarded', {
+        title: 'Trip not saved',
+        description: message,
+      });
       return;
     }
 
@@ -1716,6 +1748,10 @@ export default function Dashboard() {
       setCurrentLocation(null);
       setHazardMessage(null);
       refreshTrackingStatusContext();
+      notifyUserSuccess('dashboard_stealth_trip_ended', {
+        title: 'Stealth trip erased',
+        description: 'The trip ended and was kept out of saved history.',
+      });
       return;
     }
 
@@ -1793,6 +1829,10 @@ export default function Dashboard() {
     }
     refreshTrackingStatusContext();
     refetch();
+    notifyUserSuccess('dashboard_end_trip', {
+      title: 'Trip saved',
+      description: 'Your drive is now available in Trip History.',
+    });
   };
 
   useEffect(() => {
@@ -2054,8 +2094,16 @@ export default function Dashboard() {
     batteryOptimizationIgnored: trackingStatusContext.batteryStatus?.batteryOptimizationIgnored,
   };
   const enableAutomaticRoadData = () => {
-    const updated = localSettings.update({ external_context_auto_fetch_enabled: true });
+    const updated = localSettings.update({
+      external_context_auto_fetch_enabled: true,
+      speed_limit_lookup_enabled: true,
+      weather_context_enabled: true,
+    });
     setSettings(updated);
+    notifyUserSuccess('dashboard_automatic_road_data', {
+      title: 'Road data enabled',
+      description: 'New trips can fetch OpenStreetMap speed-limit context and Open-Meteo weather automatically.',
+    });
   };
   const dismissReadinessPanel = useCallback(() => {
     setReadinessDismissed(true);
@@ -2070,20 +2118,44 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ['recent-trips'] }),
       ]);
       setRescoreBannerDismissed(true);
+      notifyUserSuccess('dashboard_rescore_stale', {
+        title: 'Re-score queued',
+        description: 'Older trips were marked for scoring refresh.',
+      });
+    } catch (error) {
+      notifyUserError('dashboard_rescore_stale', error, {
+        title: 'Could not queue re-score',
+        description: 'Road Sage could not mark older trips for re-scoring. Try again from Settings.',
+      });
     } finally {
       setRescoreBannerBusy(false);
     }
   };
   const handleTrackingSetupAction = async (action) => {
-    if (action === 'location') await requestForegroundLocationPermission();
-    if (action === 'activity') await requestActivityRecognitionPermission();
-    if (action === 'background') await requestBackgroundLocationPermission();
-    if (action === 'notifications') await requestNotificationPermission();
-    if (action === 'battery') await openAndroidBatteryOptimizationSettings();
-    if (action === 'native') await startNativeAutoTracking().catch((err) => {
-      logNativeAutoStartFailure(err, settings, { reason: 'dashboard_setup_action' });
-    });
-    await refreshTrackingStatusContext();
+    try {
+      if (action === 'location') await requestForegroundLocationPermission();
+      if (action === 'activity') await requestActivityRecognitionPermission();
+      if (action === 'background') await requestBackgroundLocationPermission();
+      if (action === 'notifications') await requestNotificationPermission();
+      if (action === 'battery') await openAndroidBatteryOptimizationSettings();
+      if (action === 'native') await startNativeAutoTracking();
+      await refreshTrackingStatusContext();
+      notifyUserSuccess('dashboard_tracking_setup_action', {
+        title: 'Setup check refreshed',
+        description: action === 'battery'
+          ? 'Battery settings opened. Return after changing Android battery access.'
+          : 'Road Sage refreshed tracking readiness.',
+      });
+    } catch (error) {
+      if (action === 'native') {
+        logNativeAutoStartFailure(error, settings, { reason: 'dashboard_setup_action' });
+      }
+      notifyUserError('dashboard_tracking_setup_action', error, {
+        title: 'Setup action failed',
+        description: 'Road Sage could not complete this tracking setup action.',
+      });
+      await refreshTrackingStatusContext();
+    }
   };
   const trackingReadiness = (() => {
     const mode = effectiveTrackingMode;

@@ -57,9 +57,10 @@ describe('open-source trip context', () => {
   });
 
   it('describes external road-context data before manual fetch', () => {
-    expect(isExternalContextAutoFetchEnabled({})).toBe(true);
+    expect(isExternalContextAutoFetchEnabled({})).toBe(false);
     expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: false })).toBe(false);
     expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: true })).toBe(true);
+    expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: true, external_requests_local_only: true })).toBe(false);
     const message = buildRoadContextPrivacyMessage({
       speed_limit_lookup_enabled: true,
       weather_context_enabled: true,
@@ -91,6 +92,18 @@ describe('open-source trip context', () => {
     expect(message).toContain('public OSRM demo is help text only');
     expect(describeMapMatchingStatus({ status: 'matched', snapped_coverage: 100, isOsrmDemoUrl: true })).toContain('public OSRM demo');
     expect(describeMapMatchingStatus({ status: 'public_demo_blocked' })).toContain('example');
+  });
+
+  it('describes local-only mode for manual road context', () => {
+    expect(buildRoadContextPrivacyMessage({
+      external_requests_local_only: true,
+      speed_limit_lookup_enabled: true,
+      weather_context_enabled: true,
+    }, {
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    })).toContain('Local-only mode is on');
+    expect(describeOsmSpeedLimitStatus({ status: 'local_only' })).toContain('Local-only mode');
+    expect(describeMapMatchingStatus({ status: 'local_only' })).toContain('Local-only mode');
   });
 
   it('penalizes harsh events more during risky weather', () => {

@@ -48,6 +48,7 @@ describe('external service contracts', () => {
     })));
 
     const result = await annotateRouteSpeedLimits(route, {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
     });
 
@@ -83,6 +84,7 @@ describe('external service contracts', () => {
     })));
 
     const result = await annotateRouteSpeedLimits(route, {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       configurable_country_defaults: 'gb',
     });
@@ -105,6 +107,7 @@ describe('external service contracts', () => {
     const boundaryPoint = { lat: 43, lng: -79.00123, privacy_boundary: true };
     const publicPoint = { lat: 43.005, lng: -79 };
     await loadOsmSpeedLimitWays([boundaryPoint, publicPoint], {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
     });
@@ -127,6 +130,7 @@ describe('external service contracts', () => {
       { lat: 43, lng: -79, masked_for_privacy: true },
       { lat: 43, lng: -79.00123, privacy_boundary: true },
     ], {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
     });
@@ -148,6 +152,7 @@ describe('external service contracts', () => {
     ];
 
     const result = await annotateRouteSpeedLimits(maskedRoute, {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
     });
@@ -178,7 +183,9 @@ describe('external service contracts', () => {
       }),
     })));
 
-    const result = await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {});
+    const result = await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {
+      weather_context_enabled: true,
+    });
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [rawUrl] = fetch.mock.calls[0];
@@ -207,6 +214,7 @@ describe('external service contracts', () => {
       { lat: 43.0005, lng: -79, timestamp: '2026-05-23T14:05:00.000Z' },
       { lat: 43.01, lng: -79, timestamp: '2026-05-23T14:10:00.000Z' },
     ], '2026-05-23T14:00:00.000Z', '2026-05-23T14:10:00.000Z', {
+      weather_context_enabled: true,
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 200 }],
     });
 
@@ -227,6 +235,7 @@ describe('external service contracts', () => {
       { lat: 43, lng: -79, timestamp: '2026-05-23T14:00:00.000Z' },
       { lat: 43.0005, lng: -79, timestamp: '2026-05-23T14:05:00.000Z' },
     ], '2026-05-23T14:00:00.000Z', '2026-05-23T14:05:00.000Z', {
+      weather_context_enabled: true,
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 200 }],
     });
 
@@ -260,6 +269,7 @@ describe('external service contracts', () => {
     })));
 
     const result = await mapMatchRoute(route, {
+      map_matching_enabled: true,
       osrm_map_matching_url: 'https://osrm.example',
       osrm_data_sharing_consented: true,
       osrm_health_status: 'connected',

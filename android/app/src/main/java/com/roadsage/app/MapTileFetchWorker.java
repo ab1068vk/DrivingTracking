@@ -70,8 +70,13 @@ public class MapTileFetchWorker extends Worker {
         if (widgetId == -1 || !Double.isFinite(lat) || !Double.isFinite(lng)) return Result.failure();
         if (
             getInputData().getBoolean(KEY_PRIVACY_ZONE, false) ||
-            PrivacyZoneStore.findMatchingZone(lat, lng, context) != null
+            PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context) != null
         ) {
+            deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);
+            showPrivacyPlaceholder(context, widgetId);
+            return Result.success();
+        }
+        if (isLocalOnlyMode(context) || !isSettingEnabled(context, "map_tiles_enabled")) {
             deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);
             showPrivacyPlaceholder(context, widgetId);
             return Result.success();
@@ -275,7 +280,8 @@ public class MapTileFetchWorker extends Worker {
         String existing = getInputData().getString(KEY_EXISTING_ADDRESS);
         boolean priv = getInputData().getBoolean(KEY_PRIVACY_ZONE, false);
         if (priv || (existing != null && !existing.trim().isEmpty())) return;
-        if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) return;
+        if (isLocalOnlyMode(context) || !isSettingEnabled(context, "reverse_geocoding_enabled")) return;
+        if (PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context) != null) return;
 
         synchronized (GEOCODE_LOCK) {
             if (hasStoredAddress(context)) return;
@@ -305,7 +311,7 @@ public class MapTileFetchWorker extends Worker {
 
     @Nullable
     private static JSONObject reverseGeocodeIfPermitted(Context context, double lat, double lng) {
-        if (PrivacyZoneStore.findMatchingZone(lat, lng, context) != null) return null;
+        if (PrivacyZoneStore.findMatchingZoneForWidget(lat, lng, context) != null) return null;
 
         try {
             String geoUrl = String.format(
@@ -358,6 +364,20 @@ public class MapTileFetchWorker extends Worker {
             return parts[0].trim() + ", " + parts[1].trim();
         }
         return trimmed;
+    }
+
+    private static boolean isLocalOnlyMode(Context context) {
+        return isSettingEnabled(context, "external_requests_local_only");
+    }
+
+    private static boolean isSettingEnabled(Context context, String key) {
+        String raw = NativeSettingsStore.getSettingsJson(context);
+        if (raw == null || raw.trim().isEmpty()) return false;
+        try {
+            return new JSONObject(raw).optBoolean(key, false);
+        } catch (JSONException e) {
+            return false;
+        }
     }
 
     private static void updateStoredAddress(Context context, String addr) {

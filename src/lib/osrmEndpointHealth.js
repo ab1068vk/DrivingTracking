@@ -1,4 +1,6 @@
 import { evaluateOsrmEndpointTrust } from '@/lib/osrmEndpointTrust';
+import { localSettings } from '@/lib/trackingStore';
+import { isLocalOnlyMode, recordOutboundDataEvent } from '@/lib/privacyControls';
 
 const OSRM_HEALTH_TIMEOUT_MS = 5000;
 const OSRM_HEADER_NAMES = [
@@ -48,6 +50,14 @@ export function buildOsrmHealthPatch(result) {
 }
 
 export async function checkOsrmEndpointHealth(endpoint) {
+  if (isLocalOnlyMode(localSettings.get())) {
+    return {
+      status: 'unreachable',
+      ok: false,
+      checked_at: new Date().toISOString(),
+      error: 'Local-only mode is on, so OSRM endpoint checks are disabled.',
+    };
+  }
   let url;
   try {
     url = normalizeEndpointUrl(endpoint);
@@ -64,6 +74,12 @@ export async function checkOsrmEndpointHealth(endpoint) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OSRM_HEALTH_TIMEOUT_MS);
+    recordOutboundDataEvent({
+      service: 'osrm_route_snapping',
+      status: 'used',
+      destination: new URL(url).origin,
+      detail: 'OSRM endpoint health check requested.',
+    }).catch(() => {});
     const response = await fetch(url, {
       method: 'OPTIONS',
       signal: controller.signal,
