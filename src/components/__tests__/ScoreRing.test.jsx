@@ -49,4 +49,10 @@ describe('ScoreRing evidence styles', () => {
     expect(html).toContain('>74</span>');
     expect(html).not.toContain('>~74</span>');
   });
+
+  it('explains early approximate scores before the baseline target is reached', () => {
+    const html = renderToStaticMarkup(<ScoreRing score={74} evidence="high" animated={false} tripCount={4} />);
+
+    expect(html).toContain('Estimate - improves after 6 more trips');
+  });
 });

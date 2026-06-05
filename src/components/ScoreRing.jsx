@@ -1,12 +1,12 @@
-import { getScoreColor } from '@/lib/tripEngine';
+import { getScoreColor } from '@/lib/gps/formatting';
 import { motion } from 'framer-motion';
-import { isApproximateScoreOutput } from '@/lib/scoreDisplay';
+import { isApproximateScoreOutput, scoreEstimateProgressText } from '@/lib/scoreDisplay';
 
 /**
  * Circular score display with animated ring.
  * Uses SVG for the ring and color-codes based on score.
  */
-export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '', approximate = true, scoreProvenance = null }) {
+export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '', approximate = true, scoreProvenance = null, tripCount = null }) {
   const evidenceLevel = evidence || (score == null ? 'unavailable' : 'low');
   const unavailable = evidenceLevel === 'unavailable' || score == null;
   const provisional = !unavailable && (scoreProvenance ? isApproximateScoreOutput(scoreProvenance) : approximate !== false);
@@ -25,6 +25,9 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
     low: 'low evidence',
     unavailable: 'unavailable evidence',
   }[evidenceLevel] || 'low evidence';
+  const estimateProgressText = !unavailable && provisional
+    ? scoreEstimateProgressText(tripCount)
+    : null;
 
   return (
     <div className="flex flex-col items-center gap-2" title={title || undefined} data-evidence={evidenceLevel}>
@@ -85,6 +88,11 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
       )}
       {!label && evidenceLevel !== 'high' && (
         <div className="text-center text-[11px] capitalize text-muted-foreground">{evidenceText}</div>
+      )}
+      {estimateProgressText && (
+        <div className="mt-1 max-w-[120px] text-center text-xs text-muted-foreground">
+          {estimateProgressText}
+        </div>
       )}
     </div>
   );

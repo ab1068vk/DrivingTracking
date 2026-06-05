@@ -1,5 +1,5 @@
 import { analyzeDayOfWeek, analyzeTimeOfDay, computePersonalBaseline } from '@/lib/tripInsights';
-import { weightedBlend } from '@/lib/tripEngine';
+import { weightedBlend } from '@/lib/scoring/componentScores';
 import { getTimeBucket } from '@/lib/habitProfile';
 import { clamp } from '@/lib/mathUtils';
 import { scoringValue } from '@/lib/scoringConstants';

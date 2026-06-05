@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildRouteRiskCellsForTrip,
   buildRouteRiskIndex,
+  getRouteRiskCellsForBounds,
   getSegmentsForTrip,
   loadRouteRiskIndex,
   ROUTE_RISK_CONSTANTS,
@@ -26,6 +28,7 @@ const trip = (events = []) => ({
 describe('routeRiskIndex', () => {
   it('segmentKey is commutative', () => {
     expect(segmentKey(1, 2, 3, 4)).toBe(segmentKey(3, 4, 1, 2));
+    expect(segmentKey(43.6532, -79.3832, 43.6542, -79.3832)).toMatch(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/);
   });
 
   it('empty trips return empty Map', () => {
@@ -34,7 +37,7 @@ describe('routeRiskIndex', () => {
 
   it('two trips on the same segment increase tripCount to 2', () => {
     const index = buildRouteRiskIndex([trip(), trip()]);
-    expect([...index.values()][0].tripCount).toBe(2);
+    expect(Math.max(...[...index.values()].map((cell) => cell.tripCount))).toBe(2);
   });
 
   it('riskScore is 0 when no events are associated', () => {
@@ -64,8 +67,8 @@ describe('routeRiskIndex', () => {
       trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]),
     ]);
 
-    expect([...generalIndex.values()][0].riskScore).toBe(20);
-    expect([...harshIndex.values()][0].riskScore).toBe(60);
+    expect(Math.max(...[...generalIndex.values()].map((cell) => cell.riskScore))).toBe(20);
+    expect(Math.max(...[...harshIndex.values()].map((cell) => cell.riskScore))).toBe(60);
   });
 
   it('excludes low-confidence proxy events from repeated-event route layers', () => {
@@ -75,24 +78,30 @@ describe('routeRiskIndex', () => {
         { type: 'close_proximity', lat: 43.6537, lng: -79.3832 },
       ]),
     ]);
-    const firstSegment = [...index.values()][0];
+    const firstSegment = [...index.values()].find((cell) => cell.totalEvents === 0);
 
     expect(firstSegment.totalEvents).toBe(0);
     expect(firstSegment.eventTypes).toEqual({});
-    expect(firstSegment.riskScore).toBe(0);
+    expect(Math.max(...[...index.values()].map((cell) => cell.riskScore))).toBe(0);
   });
 
-  it('does not persist segment midpoints inside the privacy-zone guard', () => {
+  it('does not persist exact segment coordinates in route-risk cells', () => {
     const index = buildRouteRiskIndex([trip()], [{
       id: 'home',
       lat: 43.6537,
       lng: -79.3832,
       radius_m: 40,
     }]);
-    const midpoints = [...index.values()].map((item) => [item.lat, item.lng]);
+    const cells = [...index.values()];
 
-    expect(midpoints).not.toContainEqual([43.6537, -79.3832]);
-    expect(index.size).toBe(1);
+    expect(cells.every((item) => item.key === item.cellHash)).toBe(true);
+    expect(cells.every((item) => item.lookupHash === item.key.slice(0, 4))).toBe(true);
+    expect(cells.every((item) => item.lat == null && item.lng == null)).toBe(true);
+    expect(cells.every((item) => item.bounds == null)).toBe(true);
+    expect(cells.every((item) => item.segmentKeys == null)).toBe(true);
+    expect(JSON.stringify(cells)).not.toContain('43.6537');
+    expect(JSON.stringify(cells)).not.toContain('-79.3832');
+    expect(index.size).toBeGreaterThan(0);
   });
 
   it('skips privacy boundary segments even without current zone settings', () => {
@@ -117,14 +126,32 @@ describe('routeRiskIndex', () => {
     expect(getSegmentsForTrip(trip(), buildRouteRiskIndex([trip(), trip()])).length).toBeGreaterThan(0);
   });
 
+  it('pre-computes per-trip hashed cells for direct bounding-box lookup', () => {
+    const routeRiskCells = buildRouteRiskCellsForTrip(trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]));
+    const index = buildRouteRiskIndex([{ ...trip(), route_risk_cells: routeRiskCells }]);
+    const matches = getRouteRiskCellsForBounds(index, {
+      minLat: 43.65365,
+      maxLat: 43.65375,
+      minLng: -79.38325,
+      maxLng: -79.38315,
+    });
+
+    expect(routeRiskCells.length).toBeGreaterThan(0);
+    expect(routeRiskCells.every((cell) => cell.lat == null && cell.lng == null)).toBe(true);
+    expect(matches.some((cell) => cell.totalEvents > 0)).toBe(true);
+  });
+
   it('saveRouteRiskIndex/loadRouteRiskIndex round-trips a small index', async () => {
     const index = buildRouteRiskIndex([trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]), trip()]);
     await saveRouteRiskIndex(index);
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(index.size);
+    expect([...loaded.values()].every((cell) => cell.lat == null && cell.lng == null)).toBe(true);
+    expect(JSON.stringify([...loaded.values()])).not.toContain('43.6537');
+    expect(JSON.stringify([...loaded.values()])).not.toContain('-79.3832');
   });
 
-  it('merges stored risk cells whose midpoints are within GPS-noise distance', async () => {
+  it('migrates nearby legacy midpoint cells into the same coarse hash', async () => {
     await saveRouteRiskIndex(new Map([
       ['a', { lat: 43.6532, lng: -79.3832, tripCount: 1, totalEvents: 1, harshCount: 1, speedSum: 40, eventTypes: { harsh_brake: 1 }, riskScore: 50, riskLevel: 'moderate' }],
       ['b', { lat: 43.65327, lng: -79.3832, tripCount: 1, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
@@ -132,12 +159,14 @@ describe('routeRiskIndex', () => {
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(1);
     expect([...loaded.values()][0].tripCount).toBe(2);
+    expect(JSON.stringify([...loaded.values()])).not.toContain('43.6532');
+    expect(JSON.stringify([...loaded.values()])).not.toContain('-79.3832');
   });
 
   it('filters stored risk cells inside the privacy-zone guard', async () => {
     await saveRouteRiskIndex(new Map([
       ['private', { lat: 43.6537, lng: -79.3832, tripCount: 2, totalEvents: 1, harshCount: 1, speedSum: 40, eventTypes: { harsh_brake: 1 }, riskScore: 60, riskLevel: 'high' }],
-      ['public', { lat: 43.6567, lng: -79.3832, tripCount: 2, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
+      ['public', { lat: 43.7567, lng: -79.1832, tripCount: 2, totalEvents: 0, harshCount: 0, speedSum: 40, eventTypes: {}, riskScore: 0, riskLevel: 'low' }],
     ]));
 
     const loaded = await loadRouteRiskIndex([{
@@ -147,8 +176,10 @@ describe('routeRiskIndex', () => {
       radius_m: 50,
     }]);
 
-    expect(loaded.has('private')).toBe(false);
-    expect(loaded.has('public')).toBe(true);
+    expect(loaded.size).toBe(1);
+    expect([...loaded.values()][0].totalEvents).toBe(0);
+    expect(JSON.stringify([...loaded.values()])).not.toContain('43.6537');
+    expect(JSON.stringify([...loaded.values()])).not.toContain('-79.3832');
   });
 
   it('trims storage when serialized index exceeds 2 MB', async () => {
@@ -165,5 +196,23 @@ describe('routeRiskIndex', () => {
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(5000);
     expect(loaded.has('seg-5999')).toBe(true);
+  });
+
+  it('builds the pre-computed risk index for 500 synthetic trips in under 1 second', () => {
+    const baseTrip = trip([{ type: 'harsh_brake', lat: 43.6537, lng: -79.3832 }]);
+    const routeRiskCells = buildRouteRiskCellsForTrip(baseTrip);
+    const syntheticTrips = Array.from({ length: 500 }, (_, index) => ({
+      ...baseTrip,
+      id: `synthetic-${index}`,
+      start_time: new Date(Date.UTC(2026, 0, 1, 12, index)).toISOString(),
+      route_risk_cells: routeRiskCells,
+    }));
+
+    const started = performance.now();
+    const index = buildRouteRiskIndex(syntheticTrips);
+    const elapsed = performance.now() - started;
+
+    expect(index.size).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(1000);
   });
 });

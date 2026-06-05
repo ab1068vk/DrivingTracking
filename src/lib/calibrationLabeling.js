@@ -1,5 +1,5 @@
-import { SCORING_VERSION } from '@/lib/tripEngine';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
+import { getJson, getOrCreateInstallHash, setJson } from '@/lib/mobileStorage';
 import {
   MIN_CALIBRATION_LABEL_COUNT,
   surveyRatingToTargetScore,
@@ -8,17 +8,25 @@ import {
 export const CALIBRATION_LABEL_SCHEMA_VERSION = 1;
 export const CALIBRATION_LABEL_TARGET_COUNT = MIN_CALIBRATION_LABEL_COUNT;
 export const CALIBRATION_LABEL_COLLECTION = 'trip_calibration_labels';
+export const CALIBRATION_MILESTONES = Object.freeze([
+  { count: 10, label: 'Getting started', benefit: 'Trip rating history begins' },
+  { count: 50, label: 'Early insights', benefit: 'Trend patterns emerging' },
+  { count: 200, label: 'Personalized', benefit: 'Local threshold suggestions unlocked' },
+  { count: 500, label: 'Well-calibrated', benefit: 'Scoring models refined to your style' },
+  { count: 2000, label: 'Fully calibrated', benefit: 'Community calibration eligible' },
+]);
 export const POST_TRIP_SURVEY_QUESTION = 'How did this drive feel? (1 risky - 5 excellent)';
 export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
 export const SURVEY_RATING_OPTIONS = Object.freeze([
-  { value: 1, label: 'Risky' },
-  { value: 2, label: 'Poor' },
-  { value: 3, label: 'Okay' },
-  { value: 4, label: 'Good' },
-  { value: 5, label: 'Excellent' },
+  { value: 5, label: 'Careful drive', shortLabel: 'Careful' },
+  { value: 4, label: 'Normal drive', shortLabel: 'Normal' },
+  { value: 3, label: 'Rushed/stressed', shortLabel: 'Rushed' },
+  { value: 1, label: 'Something happened', shortLabel: 'Something happened' },
 ]);
 export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'too_low']);
 export const WAS_DRIVER_OPTIONS = Object.freeze(['yes', 'no', 'unsure']);
+export const FATIGUE_SELF_REPORT_QUESTION = 'How alert did you feel during this drive?';
+export const FATIGUE_SELF_REPORT_OPTIONS = Object.freeze(['alert', 'normal', 'tired', 'very_tired']);
 export const TRIP_CONTEXT_TAG_OPTIONS = Object.freeze([
   'traffic',
   'weather',
@@ -44,6 +52,69 @@ const numberOrNull = (value) => {
 };
 
 const boolOrNull = (value) => (typeof value === 'boolean' ? value : null);
+
+function normalizedLabelCount(labelCount) {
+  const count = Math.floor(Number(labelCount));
+  return Number.isFinite(count) ? Math.max(0, count) : 0;
+}
+
+export function getCalibrationMilestone(labelCount) {
+  const count = normalizedLabelCount(labelCount);
+  return CALIBRATION_MILESTONES
+    .slice()
+    .reverse()
+    .find((milestone) => count >= milestone.count) ?? null;
+}
+
+export function getNextCalibrationMilestone(labelCount) {
+  const count = normalizedLabelCount(labelCount);
+  return CALIBRATION_MILESTONES.find((milestone) => count < milestone.count) ?? null;
+}
+
+const tripIdOf = (item = {}) => {
+  const id = item.trip_id ?? item.tripId ?? item.id;
+  return id == null ? null : String(id);
+};
+
+const hasComputedScore = (trip = {}) => (
+  trip.score_overall != null ||
+  trip.overall_score != null ||
+  trip.scoreOutput?.overall != null
+);
+
+const tripTimeMs = (trip = {}) => {
+  const value = trip.end_time ?? trip.start_time ?? trip.created_at ?? trip.createdAt;
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+};
+
+export function getCompletionRate(allTrips = [], labels = []) {
+  const trips = Array.isArray(allTrips) ? allTrips.filter(hasComputedScore) : [];
+  const total = trips.length;
+  const now = Date.now();
+  const recentCutoff = now - 30 * 24 * 60 * 60 * 1000;
+  const labelValues = Array.isArray(labels)
+    ? labels
+    : Object.values(labels && typeof labels === 'object' ? labels : {});
+  const labeledTripIds = new Set(labelValues
+    .filter((label) => label && label.skipped !== true)
+    .map(tripIdOf)
+    .filter(Boolean));
+  const labeled = labeledTripIds.size > 0
+    ? trips.filter((trip) => labeledTripIds.has(String(trip.id))).length
+    : Math.min(labelValues.filter((label) => label && label.skipped !== true).length, total);
+  const unlabeled_recent_30d = trips.filter((trip) => {
+    const time = tripTimeMs(trip);
+    return time != null && time >= recentCutoff && !labeledTripIds.has(String(trip.id));
+  }).length;
+
+  return {
+    labeled,
+    total,
+    rate: total > 0 ? labeled / total : 0,
+    unlabeled_recent_30d,
+  };
+}
 
 const round = (value, digits = 3) => {
   const number = Number(value);
@@ -89,12 +160,40 @@ function normalizeRating(value, { optional = false } = {}) {
   return normalized;
 }
 
+function normalizeFatigueSelfReport(value) {
+  if (value == null || value === '') return null;
+  if (!FATIGUE_SELF_REPORT_OPTIONS.includes(value)) {
+    throw new Error(`fatigue_self_report must be one of: ${FATIGUE_SELF_REPORT_OPTIONS.join(', ')}.`);
+  }
+  return value;
+}
+
+function tripEndTimeMs(trip = {}) {
+  const value = trip.end_time ?? trip.endTime ?? trip.completed_at ?? trip.completedAt;
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+}
+
+function tripEndHour(trip = {}) {
+  const time = tripEndTimeMs(trip);
+  if (time == null) return null;
+  return new Date(time).getHours();
+}
+
+export function shouldAskFatigueSelfReport(trip = {}) {
+  const durationMin = Math.max(0, numberOrNull(trip.duration_seconds) || 0) / 60;
+  const hour = tripEndHour(trip);
+
+  return durationMin > 45 && hour != null && (hour >= 20 || hour < 8);
+}
+
 function normalizeSurveyLabel(input = {}) {
   const source = typeof input === 'number' ? { overallDriveRating: input } : input || {};
   const overallDriveRating = normalizeRating(source.overallDriveRating ?? source.rating);
   const scoreAccuracy = source.scoreAccuracy || null;
   const wasDriver = source.wasDriver || 'unsure';
   const tripDifficulty = normalizeRating(source.tripDifficulty, { optional: true });
+  const fatigueSelfReport = normalizeFatigueSelfReport(source.fatigue_self_report ?? source.fatigueSelfReport);
 
   if (scoreAccuracy != null && !SCORE_ACCURACY_OPTIONS.includes(scoreAccuracy)) {
     throw new Error(`scoreAccuracy must be one of: ${SCORE_ACCURACY_OPTIONS.join(', ')}.`);
@@ -116,6 +215,7 @@ function normalizeSurveyLabel(input = {}) {
     wasDriver,
     tripDifficulty,
     contextTags,
+    fatigue_self_report: fatigueSelfReport,
   };
 }
 
@@ -240,14 +340,9 @@ function roundedCreatedAt(value, granularity = 'hour') {
   return date.toISOString();
 }
 
-const randomInstallId = () => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return `install_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-};
-
 export async function getAnonymousInstallIdHash() {
   const existing = await getJson(ANONYMOUS_INSTALL_ID_KEY, null);
-  const installId = typeof existing === 'string' && existing ? existing : randomInstallId();
+  const installId = typeof existing === 'string' && existing ? existing : await getOrCreateInstallHash();
   if (!existing) await setJson(ANONYMOUS_INSTALL_ID_KEY, installId);
   const input = `road-sage-calibration:${installId}`;
 
@@ -264,7 +359,10 @@ export async function getAnonymousInstallIdHash() {
 }
 
 export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {}) {
-  const surveyLabel = normalizeSurveyLabel(surveyInput);
+  const normalizedSurveyLabel = normalizeSurveyLabel(surveyInput);
+  const surveyLabel = shouldAskFatigueSelfReport(trip)
+    ? normalizedSurveyLabel
+    : { ...normalizedSurveyLabel, fatigue_self_report: null };
   const tripFeatureSummary = buildTripFeatureSummary(trip);
   const scoreOutput = buildScoreOutputSummary(trip);
   const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabel, tripFeatureSummary);

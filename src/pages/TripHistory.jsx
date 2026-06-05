@@ -3,11 +3,17 @@ import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
+import { calibrationLabelService } from '@/api/calibrationLabels';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
+import { StaleTripsPrompt } from '@/components/StaleTripsPrompt';
 import { localSettings } from '@/lib/trackingStore';
-import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { useSettingsVersion } from '@/hooks/useSettingsVersion';
+import { useSearchParams } from 'react-router-dom';
+import { useStaleTripDetection } from '@/hooks/useStaleTripDetection';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
 import {
@@ -36,6 +42,7 @@ const QUICK_FILTERS = [
   { id: 'night', label: 'Night Drives' },
   { id: 'high_risk', label: 'High Risk' },
   { id: 'favorites', label: 'Favorites' },
+  { id: 'unlabeled', label: 'Needs Ratings' },
 ];
 
 const SCORE_SPARKLINES = [
@@ -111,15 +118,18 @@ const matchesQuickFilter = (trip, filter) => {
 };
 
 export default function TripHistory() {
+  const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
-  const [filterBy, setFilterBy] = useState('all');
+  const [filterBy, setFilterBy] = useState(() => (searchParams.get('filter') === 'unlabeled' ? 'unlabeled' : 'all'));
   const [selectedTag, setSelectedTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
+  const [isRescoring, setIsRescoring] = useState(false);
   const settings = localSettings.get();
+  const settingsVersion = useSettingsVersion(settings);
   const units = settings.units || 'metric';
   const qc = useQueryClient();
 
@@ -131,6 +141,11 @@ export default function TripHistory() {
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+  });
+
+  const { data: calibrationMarkers = {} } = useQuery({
+    queryKey: ['calibration-survey-markers'],
+    queryFn: () => calibrationLabelService.listTripSurveyMarkers(),
   });
 
   const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
@@ -145,6 +160,7 @@ export default function TripHistory() {
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');
+  const staleTripIds = useStaleTripDetection(completed, settings, settingsVersion);
   const recentChronological = [...completed]
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(-5);
@@ -157,8 +173,13 @@ export default function TripHistory() {
   }));
   const improvement = calculateRecentBrakingImprovement(completed);
   const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  const isTripUnlabeled = (trip) => (
+    getTripComponentScore(trip, 'overall').value != null &&
+    !Number.isInteger(Number(calibrationMarkers?.[String(trip.id)]?.rating))
+  );
 
   const filtered = completed.filter((trip) => {
+    if (filterBy === 'unlabeled' && !isTripUnlabeled(trip)) return false;
     if (!matchesQuickFilter(trip, filterBy)) return false;
     if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
     if (search) {
@@ -167,6 +188,10 @@ export default function TripHistory() {
     }
     return true;
   });
+
+  useEffect(() => {
+    if (searchParams.get('filter') === 'unlabeled') setFilterBy('unlabeled');
+  }, [searchParams]);
 
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
@@ -201,7 +226,9 @@ export default function TripHistory() {
 
   useEffect(() => {
     if (!savedFiltersLoaded) return;
-    setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {});
+    setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {
+      // Intentionally silent - saved filter persistence is a UI convenience only.
+    });
   }, [savedFilters, savedFiltersLoaded]);
 
   const saveCurrentFilter = () => {
@@ -230,6 +257,17 @@ export default function TripHistory() {
     setSavedFilters((current) => current.filter((item) => item.id !== id));
   };
 
+  const handleRescoreStaleTrips = async () => {
+    setIsRescoring(true);
+    try {
+      await tripService.markCompletedForRescore({ onlyProvenanceMismatch: true });
+      await qc.invalidateQueries({ queryKey: ['all-trips'] });
+      await qc.invalidateQueries({ queryKey: ['recent-trips'] });
+    } finally {
+      setIsRescoring(false);
+    }
+  };
+
   return (
     <div className="space-y-5 pb-4">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
@@ -254,6 +292,12 @@ export default function TripHistory() {
           <span className="font-semibold">{improvement.message}</span>
         </div>
       )}
+
+      <StaleTripsPrompt
+        staleCount={staleTripIds.length}
+        onRescore={handleRescoreStaleTrips}
+        isRescoring={isRescoring}
+      />
 
       {sparklineData.length > 1 && (
         <div className="grid grid-cols-2 gap-2">
@@ -435,11 +479,13 @@ export default function TripHistory() {
               trip={trip}
               units={units}
               index={index}
+              tripCount={completed.length}
               scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
               onToggleFavorite={(target) => updateTripMut.mutate({
                 id: target.id,
                 patch: { is_favorite: target.is_favorite !== true },
               })}
+              onCalibrationLabelSaved={() => qc.invalidateQueries({ queryKey: ['calibration-survey-markers'] })}
             />
           ))}
         </div>

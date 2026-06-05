@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { authService } from '@/api/auth';
-import { getAuthToken } from '@/api/client';
+import { authService, consumeLegacyAuthTokenMigration } from '@/api/auth';
+import { API_BASE_URL } from '@/api/client';
 
 const AuthContext = createContext();
 
@@ -23,14 +23,25 @@ export const AuthProvider = ({ children }) => {
     setIsLoadingPublicSettings(false);
     setAuthError(null);
 
-    const token = getAuthToken();
-    if (token) {
-      await checkUserAuth();
-    } else {
+    if (!API_BASE_URL) {
       setIsLoadingAuth(false);
       setIsAuthenticated(false);
       setAuthChecked(true);
+      return;
     }
+
+    if (consumeLegacyAuthTokenMigration()) {
+      setIsLoadingAuth(false);
+      setIsAuthenticated(false);
+      setAuthChecked(true);
+      setAuthError({
+        type: 'auth_required',
+        message: 'Authentication required',
+      });
+      return;
+    }
+
+    await checkUserAuth();
   };
 
   const checkUserAuth = async () => {
