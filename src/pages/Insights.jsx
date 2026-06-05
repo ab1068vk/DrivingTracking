@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Award, CalendarDays, CheckCircle2, Clock, Flag, MapPinned, Route, ShieldAlert, Target, TrendingUp } from 'lucide-react';
 import { tripService } from '@/api/trips';
 import { localSettings } from '@/lib/trackingStore';
-import { formatDistance, getScoreColor } from '@/lib/tripEngine';
+import { formatDistance, getScoreColor } from '@/lib/gps/formatting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import {
   buildCommuteDetections,
@@ -32,6 +32,10 @@ export default function Insights() {
   const { data: trips = [], isLoading } = useQuery({
     queryKey: ['insight-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Insights unavailable',
+      errorDescription: 'Road Sage could not load trips for driving insights.',
+    },
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');

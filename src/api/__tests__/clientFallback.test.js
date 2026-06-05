@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { API_BASE_URL, apiClient } from '@/api/client';
+import { API_BASE_URL, API_ENDPOINT_CONFIGURED, apiClient } from '@/api/client';
 import { shouldUseLocalStore as shouldUseLocalTripStore } from '@/api/trips';
 import { shouldUseLocalStore as shouldUseLocalVehicleStore } from '@/api/vehicles';
 
 describe('API backend fallback', () => {
   it('does not fall back to a localhost backend URL', () => {
     expect(API_BASE_URL).toBe('');
+    expect(API_ENDPOINT_CONFIGURED).toBe(false);
     expect(API_BASE_URL).not.toBe('http://localhost:5000/api');
   });
 

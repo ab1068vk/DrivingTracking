@@ -1,10 +1,17 @@
-import { API_BASE_URL, apiClient } from "@/api/client";
+import { API_ENDPOINT_CONFIGURED, apiClient } from "@/api/client";
+import { isEphemeralModeActive } from "@/lib/ephemeralTripMode";
 import { localTripRepository } from "@/lib/localTripRepository";
+import { localSettings } from "@/lib/trackingStore";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
 
-export const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
+export const shouldUseLocalStore = () => (
+  isNativePlatform() ||
+  !API_ENDPOINT_CONFIGURED ||
+  localSettings.get().external_requests_local_only === true ||
+  localSettings.get().backend_sync_enabled !== true
+);
 
 const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 
@@ -25,6 +32,13 @@ export const tripService = {
   },
 
   create: (trip) => {
+    if (isEphemeralModeActive()) {
+      return Promise.resolve({
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}`,
+        ephemeral_trip: true,
+      });
+    }
     const local = repository();
     const suggestion = suggestTripTag(trip);
     const withSuggestion = {
@@ -42,8 +56,39 @@ export const tripService = {
   },
 
   update: (id, patch) => {
+    if (isEphemeralModeActive()) return Promise.resolve({ id, ...patch, ephemeral_trip: true });
     const local = repository();
     return local ? local.update(id, patch) : apiClient.patch(`/trips/${encodeURIComponent(id)}`, patch);
+  },
+
+  markEventFeedback: async (id, feedback) => {
+    if (isEphemeralModeActive()) {
+      return Promise.resolve({
+        id,
+        event_feedback: {
+          [feedback.eventKey]: feedback.record,
+        },
+        needs_rescore: true,
+        ephemeral_trip: true,
+      });
+    }
+    const local = repository();
+    if (local?.markEventFeedback) return local.markEventFeedback(id, feedback);
+
+    const current = await apiClient.get(`/trips/${encodeURIComponent(id)}`);
+    const reviewedAt = feedback.reviewedAt || new Date().toISOString();
+    const updated = await apiClient.patch(`/trips/${encodeURIComponent(id)}`, {
+      event_feedback: {
+        ...(current?.event_feedback || {}),
+        [feedback.eventKey]: {
+          ...feedback.record,
+          reviewed_at: reviewedAt,
+        },
+      },
+      needs_rescore: true,
+      feedback_reviewed_at: reviewedAt,
+    });
+    return updated;
   },
 
   delete: (id) => {
@@ -51,9 +96,24 @@ export const tripService = {
     return local ? local.delete(id) : apiClient.delete(`/trips/${encodeURIComponent(id)}`);
   },
 
-  upsertMany: (trips) => {
+  deleteAll: async () => {
     const local = repository();
-    if (local) return local.upsertMany(trips);
+    if (local?.deleteAll) return local.deleteAll();
+    const trips = await apiClient.get("/trips", { query: { sort: "-start_time", limit: 10000 } });
+    await Promise.all(trips.map((trip) => apiClient.delete(`/trips/${encodeURIComponent(trip.id)}`)));
+    return { success: true };
+  },
+
+  upsertMany: (trips, options = {}) => {
+    if (isEphemeralModeActive()) {
+      return Promise.resolve(trips.map((trip, index) => ({
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}_${index}`,
+        ephemeral_trip: true,
+      })));
+    }
+    const local = repository();
+    if (local) return local.upsertMany(trips, options);
     return Promise.all(trips.map((trip) => (
       trip.id
         ? apiClient.patch(`/trips/${encodeURIComponent(trip.id)}`, trip).catch(() => apiClient.post("/trips", trip))

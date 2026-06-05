@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, KeyRound
 } from 'lucide-react';
 import {
   Dialog,
@@ -16,13 +16,16 @@ import {
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
-import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
-import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
-import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
-import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
+import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
+import { activeTripStore, applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
+import { BIOMETRIC_LOCK_DEFAULT_ENABLED, BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES, NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import { downloadCSV, tripsToCSV } from '@/engine/export/index.js';
+import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/scoring/componentScores';
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
+  enforceDataRetention,
   RESCORE_PROGRESS_EVENT,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
@@ -33,11 +36,14 @@ import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
   getPermissionStatus,
+  refreshPermissionStatus,
   requestActivityRecognitionPermission,
   requestBackgroundLocationPermission,
+  requestBluetoothPermission,
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
+import { useOptionalPermissions } from '@/lib/permissions/PermissionContext';
 import { isAndroid } from '@/lib/nativePlatform';
 import {
   getAndroidBatteryOptimizationStatus,
@@ -49,6 +55,7 @@ import {
 } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
 import {
+  BACKUP_INTEGRITY_ERROR,
   BACKUP_TOO_LARGE_MESSAGE,
   exportDriveSenseBackup,
   importDriveSenseBackup,
@@ -63,19 +70,30 @@ import {
   saveCalibrationProfile,
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
-import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
+import { getPrivacyZones, removePrivacyZoneAsync, upsertPrivacyZoneAsync } from '@/lib/privacyZones';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { checkOsrmEndpointHealth } from '@/lib/mapMatching';
+import { checkOsrmEndpointHealth, buildOsrmHealthPatch } from '@/lib/osrmEndpointHealth';
+import { evaluateOsrmEndpointTrust, hasVerifiedOsrmEndpoint, normalizeOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
   speedLimitDefaultCountryKey,
 } from '@/lib/speedLimitSource';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import { useSettingsSections } from '@/features/settings/hooks/useSettingsSections';
+import { SettingsNavigator } from '@/settings/SettingsNavigator';
+import { LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
+import {
+  PRIVACY_CONSENT_POINTS,
+  PRIVACY_NOTICE_HIGHLIGHTS,
+  PRIVACY_NOTICE_LAST_UPDATED,
+  PRIVACY_NOTICE_SUMMARY,
+} from '@/lib/privacyNotice';
+import { secureWipeAllData } from '@/lib/privacyWipe';
 import {
   CALIBRATION_STATUSES,
   SCORING_CONSTANTS,
@@ -84,6 +102,20 @@ import {
   scoringValue,
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
+import {
+  getEphemeralTripModeState,
+  setStealthNextTrip,
+  subscribeEphemeralTripMode,
+} from '@/lib/ephemeralTripMode';
+import {
+  BACKUP_PASSWORD_MIN_LENGTH,
+  BACKUP_PASSWORD_MAX_LENGTH,
+  BACKUP_PBKDF2_ITERATIONS,
+  getBackupPasswordValidation,
+} from '@/lib/backupEncryption';
+import { recordOutboundDataEvent } from '@/lib/privacyControls';
+
+const TILE_BACKGROUND_AUTO_ACTION_KEY = 'road_sage_tile_action_request_background_auto';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -123,9 +155,12 @@ function Toggle({ value, onChange, disabled = false }) {
   );
 }
 
-function PermissionBadge({ value }) {
-  const granted = value === 'granted';
-  const unavailable = value === 'unavailable';
+function PermissionBadge({ value, status, label }) {
+  const resolvedStatus = status ?? value ?? 'unknown';
+  const granted = resolvedStatus === 'granted';
+  const unavailable = resolvedStatus === 'unavailable';
+  const denied = resolvedStatus === 'denied';
+  const needsSettings = resolvedStatus === 'needs_settings';
   return (
     <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
       granted
@@ -134,20 +169,57 @@ function PermissionBadge({ value }) {
           ? 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300'
           : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
     }`}>
-      {granted ? 'Granted' : unavailable ? 'Unavailable' : value === 'denied' ? 'Denied' : 'Needs setup'}
+      {granted ? (label ?? 'Granted') : unavailable ? 'Unavailable' : needsSettings ? 'Open Settings' : denied ? 'Denied' : 'Needs setup'}
     </span>
   );
 }
 
-function FeaturePermissionBadge({ value }) {
-  if (value === 'none') {
+function BackupPasswordSecurityPanel({ mode = 'backup' }) {
+  return (
+    <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs leading-relaxed text-sky-950 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+      <div className="flex items-start gap-2">
+        <Shield className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <div className="font-semibold">
+            {mode === 'import' ? 'Encrypted backup password' : 'Local encryption before download'}
+          </div>
+          <p className="mt-1">
+            Road Sage uses PBKDF2-HMAC-SHA-256 with {BACKUP_PBKDF2_ITERATIONS.toLocaleString()} iterations and AES-256-GCM.
+            Passwords must be {BACKUP_PASSWORD_MIN_LENGTH}-{BACKUP_PASSWORD_MAX_LENGTH} characters. Road Sage cannot recover forgotten passwords.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BackupPasswordChecklist({ checks }) {
+  return (
+    <div className="grid gap-1.5 text-xs">
+      {checks.map((check) => (
+        <div
+          key={check.id}
+          className={`flex items-center gap-2 ${check.valid ? 'text-green-600' : 'text-muted-foreground'}`}
+        >
+          {check.valid ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5 opacity-40" />}
+          <span>{check.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FeaturePermissionBadge({ value, status, label }) {
+  const resolvedStatus = status ?? value;
+  if (resolvedStatus == null) return null;
+  if (resolvedStatus === 'none') {
     return (
       <span className="rounded-full bg-secondary px-2 py-1 text-xs font-semibold text-muted-foreground">
         No prompt
       </span>
     );
   }
-  return <PermissionBadge value={value} />;
+  return <PermissionBadge status={resolvedStatus} label={label} />;
 }
 
 const DRIVING_PATTERN_DEFINITIONS = [
@@ -203,12 +275,57 @@ const DRIVING_PATTERN_DEFINITIONS = [
 
 const PRIVACY_RADIUS_MIN_M = 50;
 const PRIVACY_RADIUS_MAX_M = 1000;
-const PRIVACY_RADIUS_DEFAULT_M = 180;
+const RECOMMENDED_PRIVACY_RADIUS_M = 200;
+const PRIVACY_RADIUS_DEFAULT_M = RECOMMENDED_PRIVACY_RADIUS_M;
 const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
+const PASSWORD_DIALOG_CONTENT_CLASS = 'max-h-[85vh] overflow-y-auto rounded-2xl';
 const PENALTY_SCALE_CALIBRATION = Object.freeze({
   key: 'PENALTY_SCALE_FACTOR',
   ...SCORING_CONSTANTS.PENALTY_SCALE_FACTOR,
 });
+const SETTINGS_RENDER_FALLBACKS = {
+  tracking_mode: 'manual',
+  units: 'metric',
+  dark_mode: 'system',
+  lock_timeout_minutes: BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
+  data_retention_months: 24,
+  notifications_enabled: true,
+  tracking_paused: false,
+  auto_tracking_enabled: false,
+  background_tracking_enabled: false,
+  calibration_sharing_enabled: false,
+  biometric_lock_enabled: BIOMETRIC_LOCK_DEFAULT_ENABLED,
+  osrm_map_matching_url: '',
+};
+const SETTINGS_ANDROID_STATUS_POLL_MS = 30_000;
+const BACKUP_IMPORT_ACTIVE_STAGES = new Set(['reading', 'decrypting', 'verifying', 'parsing', 'validating', 'saving']);
+const BACKUP_IMPORT_STAGE_LABELS = {
+  idle: '',
+  reading: 'Reading backup file...',
+  decrypting: 'Decrypting backup... this may take a moment',
+  verifying: 'Checking backup integrity...',
+  parsing: 'Reading backup contents...',
+  validating: 'Checking backup data...',
+  saving: 'Saving your data...',
+  done: 'Import complete',
+  error: 'Import could not be completed',
+};
+
+function normalizeSettingsSnapshot(settings) {
+  return {
+    ...SETTINGS_RENDER_FALLBACKS,
+    ...(settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}),
+  };
+}
+
+function readLocalSettingsSnapshot() {
+  try {
+    return normalizeSettingsSnapshot(localSettings.get());
+  } catch (err) {
+    logError('settings_read_safe_fallback', err);
+    return normalizeSettingsSnapshot(null);
+  }
+}
 
 function calibrationStatusLabel(status) {
   return status === CALIBRATION_STATUSES.PROVISIONAL ? 'Provisional' : status;
@@ -249,23 +366,50 @@ export default function Settings() {
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [rescoreStatus, setRescoreStatus] = useState('');
+  const [ephemeralModeState, setEphemeralModeState] = useState(() => getEphemeralTripModeState());
   const [rescoreProgress, setRescoreProgress] = useState(null);
   const [headingEventMigrationNoteVisible, setHeadingEventMigrationNoteVisible] = useState(false);
   const [osrmConsentOpen, setOsrmConsentOpen] = useState(false);
   const [osrmConsentChecked, setOsrmConsentChecked] = useState(false);
   const [osrmPendingEndpoint, setOsrmPendingEndpoint] = useState('');
-  const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
+  const [backupExportOpen, setBackupExportOpen] = useState(false);
+  const [backupExportMode, setBackupExportMode] = useState('backup');
+  const [backupExportPassword, setBackupExportPassword] = useState('');
+  const [backupExportConfirm, setBackupExportConfirm] = useState('');
+  const [backupExportBusy, setBackupExportBusy] = useState(false);
+  const [backupExportError, setBackupExportError] = useState('');
+  const [backupExportPasswordVisible, setBackupExportPasswordVisible] = useState(false);
+  const [backupImportOpen, setBackupImportOpen] = useState(false);
+  const [backupImportPassword, setBackupImportPassword] = useState('');
+  const [backupImportError, setBackupImportError] = useState('');
+  const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
+  const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
+  const [backupImportBusy, setBackupImportBusy] = useState(false);
+  const [backupImportStage, setBackupImportStage] = useState('idle');
+  const [backupImportStatusDetail, setBackupImportStatusDetail] = useState('');
+  const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
+  const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => readLocalSettingsSnapshot().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
+  const backupImportStatusTimeoutRef = useRef(null);
+  const refreshPermissionsInFlightRef = useRef(null);
+  const trackingModeRequestInFlightRef = useRef(false);
+  const settingsSaveGenerationRef = useRef(0);
+  const [trackingModeRequestInFlight, setTrackingModeRequestInFlight] = useState(false);
   const qc = useQueryClient();
+  const permissionContext = useOptionalPermissions();
 
   // Load settings from local storage
-  const [cfg, setCfg] = useState(() => localSettings.get());
+  const [cfg, setCfg] = useState(readLocalSettingsSnapshot);
   const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
 
   const { data: allTrips = [] } = useQuery({
     queryKey: ['settings-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Settings trip data unavailable',
+      errorDescription: 'Some trip-based settings and score summaries may be incomplete until trips load.',
+    },
   });
 
   const { data: scoreMigrationSummary = {
@@ -284,14 +428,22 @@ export default function Settings() {
   } } = useQuery({
     queryKey: ['score-migration-summary'],
     queryFn: () => tripService.getScoreMigrationSummary(),
+    meta: {
+      errorTitle: 'Score migration status unavailable',
+      errorDescription: 'Road Sage could not check whether older trips need score updates.',
+    },
   });
 
   const { data: allVehicles = [] } = useQuery({
     queryKey: ['settings-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 200 }),
+    meta: {
+      errorTitle: 'Settings vehicle data unavailable',
+      errorDescription: 'Vehicle settings may be incomplete until vehicle profiles load.',
+    },
   });
 
-  const updateCfg = (patch) => {
+  const updateCfg = useCallback(async (patch) => {
     const validation = validateSettingsPatch(patch);
     if (!validation.valid) {
       toast({
@@ -301,10 +453,11 @@ export default function Settings() {
       });
       return cfg;
     }
-    const nextCfg = { ...cfg, ...patch };
+    const currentCfg = normalizeSettingsSnapshot(cfg);
+    const optimistic = normalizeSettingsSnapshot({ ...currentCfg, ...patch });
     const touchesEcoMultipliers = Object.prototype.hasOwnProperty.call(patch, 'eco_cruise_score_multiplier') ||
       Object.prototype.hasOwnProperty.call(patch, 'eco_idle_penalty_multiplier');
-    if (touchesEcoMultipliers && wouldDisableEcoScore(nextCfg)) {
+    if (touchesEcoMultipliers && wouldDisableEcoScore(optimistic)) {
       toast({
         title: 'Eco setting not saved',
         description: 'Eco scoring needs either the cruise multiplier or idle multiplier above 0.',
@@ -312,16 +465,75 @@ export default function Settings() {
       });
       return cfg;
     }
-    const updated = localSettings.update(patch);
-    setCfg(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    return updated;
-  };
+
+    const saveGeneration = settingsSaveGenerationRef.current + 1;
+    settingsSaveGenerationRef.current = saveGeneration;
+    setCfg(optimistic);
+
+    try {
+      const updated = normalizeSettingsSnapshot(await localSettings.setAsync(optimistic));
+      if (settingsSaveGenerationRef.current === saveGeneration) {
+        setCfg(updated);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
+      }
+      return updated;
+    } catch (error) {
+      if (settingsSaveGenerationRef.current === saveGeneration) {
+        setCfg(currentCfg);
+        notifyUserError('settings_save', error, {
+          title: 'Setting not saved',
+          description: 'Road Sage could not write this setting to secure storage. Try again.',
+        });
+      }
+      return currentCfg;
+    }
+  }, [cfg]);
+
+  useEffect(() => {
+    if (!isAndroid()) return undefined;
+
+    let cancelled = false;
+
+    const hydrateIfNewer = async () => {
+      if (cancelled) return;
+      try {
+        const latest = await localSettings.hydrateFromNative();
+        if (cancelled) return;
+        setCfg((prev) => {
+          const prevRev = prev?._settings_revision ?? 0;
+          const latestRev = latest?._settings_revision ?? 0;
+          return latestRev > prevRev
+            ? normalizeSettingsSnapshot(latest)
+            : prev;
+        });
+      } catch {
+        // Native hydration failures must not interrupt the Settings UI.
+      }
+    };
+
+    const hydrateOnVisible = () => {
+      if (document.visibilityState === 'visible') hydrateIfNewer();
+    };
+
+    hydrateIfNewer();
+    document.addEventListener('visibilitychange', hydrateOnVisible);
+    window.addEventListener('focus', hydrateIfNewer);
+    const interval = window.setInterval(hydrateIfNewer, 2000);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', hydrateOnVisible);
+      window.removeEventListener('focus', hydrateIfNewer);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
-  }, [cfg.osrm_map_matching_url]);
+  }, [cfg?.osrm_map_matching_url]);
+
+  useEffect(() => subscribeEphemeralTripMode(setEphemeralModeState), []);
 
   useEffect(() => {
     let active = true;
@@ -334,6 +546,12 @@ export default function Settings() {
         Number(version || scoreMigrationSummary.event_migration_version || 0) >= TRIP_EVENT_MIGRATION_VERSION &&
         dismissed !== true
       );
+    }).catch((error) => {
+      if (!active) return;
+      notifyUserError('settings_migration_notice_load', error, {
+        title: 'Settings notice unavailable',
+        description: 'Road Sage could not load one saved notice state. Settings still work.',
+      });
     });
     return () => {
       active = false;
@@ -364,44 +582,68 @@ export default function Settings() {
     return () => window.removeEventListener(RESCORE_PROGRESS_EVENT, onProgress);
   }, [qc]);
 
+  useEffect(() => () => {
+    if (backupImportStatusTimeoutRef.current) {
+      clearTimeout(backupImportStatusTimeoutRef.current);
+    }
+  }, []);
+
   const dismissHeadingEventMigrationNote = async () => {
-    await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
-    setHeadingEventMigrationNoteVisible(false);
+    try {
+      await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
+      setHeadingEventMigrationNoteVisible(false);
+    } catch (error) {
+      notifyUserError('settings_migration_notice_dismiss', error, {
+        title: 'Notice not dismissed',
+        description: 'Road Sage could not save that this notice was dismissed.',
+      });
+    }
   };
 
-  const enableOsrmMapMatching = (enabled) => {
+  const enableOsrmMapMatching = async (enabled) => {
     if (!enabled) {
-      updateCfg({ map_matching_enabled: false });
+      await updateCfg({ map_matching_enabled: false });
       return;
     }
-    if (!cfg.osrm_map_matching_url || cfg.osrm_data_sharing_consented !== true) {
+    if (cfg.external_requests_local_only === true) {
       toast({
-        title: 'OSRM endpoint not ready',
-        description: 'Save a trusted OSRM endpoint and confirm data sharing before route snapping can run.',
+        title: 'Local-only mode is on',
+        description: 'Turn off Local-only mode before enabling OSRM route snapping.',
         variant: 'destructive',
       });
       return;
     }
-    updateCfg({ map_matching_enabled: true });
+    if (!hasVerifiedOsrmEndpoint(cfg)) {
+      toast({
+        title: 'OSRM endpoint not ready',
+        description: 'Save a trusted OSRM endpoint that passes the OSRM OPTIONS health check before route snapping can run.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    await updateCfg({ map_matching_enabled: true });
   };
 
   const runOsrmEndpointHealthCheck = async (endpoint) => {
     setOsrmHealthCheckState('checking');
     const result = await checkOsrmEndpointHealth(endpoint);
-    const patch = {
-      osrm_health_status: result.ok ? 'connected' : 'unreachable',
-      osrm_last_health_checked_at: result.checked_at,
-      osrm_last_health_error: result.error || '',
-      ...(result.ok ? { osrm_last_reachable_at: result.checked_at } : {}),
-    };
+    const patch = buildOsrmHealthPatch(result);
     setOsrmHealthCheckState('idle');
     return { result, patch };
   };
 
   const saveOsrmEndpoint = async (endpoint, consented = false) => {
     const value = String(endpoint || '').trim().replace(/\/$/, '');
+    if (cfg.external_requests_local_only === true && value) {
+      toast({
+        title: 'Local-only mode is on',
+        description: 'Turn off Local-only mode before checking or saving an OSRM endpoint.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!value) {
-      updateCfg({
+      await updateCfg({
         map_matching_enabled: false,
         osrm_map_matching_url: '',
         osrm_public_demo_consent_at: '',
@@ -411,48 +653,51 @@ export default function Settings() {
         osrm_last_health_checked_at: '',
         osrm_last_reachable_at: '',
         osrm_last_health_error: '',
+        osrm_verified_endpoint: '',
+        osrm_verified_origin: '',
+        osrm_verified_domain: '',
+        osrm_trust_verified_at: '',
       });
       return;
     }
-    if (isPublicOsrmDemoUrl(value)) {
-      toast({
-        title: 'Public demo not saved',
-        description: `Use a private or trusted OSRM endpoint. ${PUBLIC_OSRM_DEMO_URL} is shown only as an example.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-    try {
-      new URL(value);
-    } catch {
+    const endpointTrust = evaluateOsrmEndpointTrust(value);
+    if (!endpointTrust.ok) {
       toast({
         title: 'Endpoint not saved',
-        description: 'Enter a valid OSRM URL, such as https://your-osrm.example.',
+        description: endpointTrust.error || 'Enter a trusted HTTPS OSRM URL, such as https://your-osrm.example.',
         variant: 'destructive',
       });
       return;
     }
+    const normalizedValue = normalizeOsrmEndpoint(value);
     if (!consented) {
-      setOsrmPendingEndpoint(value);
+      setOsrmPendingEndpoint(normalizedValue);
       setOsrmConsentChecked(false);
       setOsrmConsentOpen(true);
       return;
     }
 
     const consentedAt = new Date().toISOString();
-    const { result, patch } = await runOsrmEndpointHealthCheck(value);
-    updateCfg({
+    const { result, patch } = await runOsrmEndpointHealthCheck(normalizedValue);
+    if (!result.ok) {
+      toast({
+        title: 'Endpoint not saved',
+        description: result.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+    await updateCfg({
       map_matching_enabled: true,
-      osrm_map_matching_url: value,
+      osrm_map_matching_url: normalizedValue,
       osrm_public_demo_consent_at: '',
       osrm_data_sharing_consented: true,
       osrm_data_sharing_consented_at: consentedAt,
       ...patch,
     });
     toast({
-      title: result.ok ? 'OSRM endpoint connected' : 'OSRM endpoint saved, but unreachable',
-      description: result.ok ? 'Route snapping can use this endpoint when you tap Get Road Data.' : result.error,
-      variant: result.ok ? undefined : 'destructive',
+      title: 'OSRM endpoint connected',
+      description: 'Route snapping can use this endpoint when you tap Get Road Data.',
     });
   };
 
@@ -476,8 +721,16 @@ export default function Settings() {
       updateCfg({ external_context_auto_fetch_enabled: false });
       return;
     }
+    if (cfg.external_requests_local_only === true) {
+      toast({
+        title: 'Local-only mode is on',
+        description: 'Automatic road data stays off while external requests are disabled.',
+        variant: 'destructive',
+      });
+      return;
+    }
     const ok = typeof window === 'undefined' || window.confirm(
-      'Automatic road data sends route-area boxes to OpenStreetMap and a privacy-safe route point/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
+      'Automatic road data can contact the external services you allow below whenever a trip is saved. OpenStreetMap receives route-area boxes for speed limits, Open-Meteo receives a privacy-guarded route point/date for weather, and OSRM remains manual unless separately configured. Continue?'
     );
     if (!ok) return;
     updateCfg({ external_context_auto_fetch_enabled: true });
@@ -503,55 +756,101 @@ export default function Settings() {
     effectiveEcoMultiplier(settings.eco_cruise_score_multiplier) === 0 &&
     effectiveEcoMultiplier(settings.eco_idle_penalty_multiplier) === 0
   );
-  const ecoScoreWarning = (key, value = cfg[key]) => {
+  const ecoScoreWarning = (key, value = cfg?.[key]) => {
     if (!['eco_cruise_score_multiplier', 'eco_idle_penalty_multiplier'].includes(key)) return null;
-    const next = { ...cfg, [key]: value };
+    const next = { ...normalizeSettingsSnapshot(cfg), [key]: value };
     return wouldDisableEcoScore(next) ? 'Eco score unavailable' : null;
   };
 
-  const updateTheme = (mode) => {
-    const updated = updateCfg({ dark_mode: mode });
+  const updateTheme = async (mode) => {
+    const updated = await updateCfg({ dark_mode: mode });
     applyThemeMode(updated.dark_mode);
   };
 
   const runVoiceTest = async () => {
-    const ok = await testVoiceAlert(cfg);
-    setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
-    setTimeout(() => setVoiceTestStatus(''), 3000);
+    try {
+      const ok = await testVoiceAlert(cfg);
+      setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
+      setTimeout(() => setVoiceTestStatus(''), 3000);
+    } catch (error) {
+      setVoiceTestStatus('Voice test failed.');
+      notifyUserError('settings_voice_test', error, {
+        title: 'Voice test failed',
+        description: 'Road Sage could not play the voice alert test on this device.',
+      });
+      setTimeout(() => setVoiceTestStatus(''), 3000);
+    }
   };
 
   const runCalibration = async () => {
     setCalibLoading(true);
-    const trips = await tripService.listAll({ sort: '-start_time' });
-    const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
-    await saveCalibrationProfile(profile);
-    setCalibProfile(profile);
-    setCalibLoading(false);
+    try {
+      const trips = await tripService.listAll({ sort: '-start_time' });
+      const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
+      await saveCalibrationProfile(profile);
+      setCalibProfile(profile);
+    } catch (error) {
+      notifyUserError('settings_calibration_run', error, {
+        title: 'Calibration failed',
+        description: 'Road Sage could not build a calibration profile from your trips.',
+      });
+    } finally {
+      setCalibLoading(false);
+    }
   };
 
   const applyCalibration = async () => {
-    const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
-      localSettings.set(next);
-      setCfg(next);
-    });
-    const count = await tripService.markCompletedForRescore().catch(() => 0);
-    await qc.invalidateQueries();
-    setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
-    setCfg(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    setCalibProfile(await loadCalibrationProfile());
+    try {
+      const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
+        const normalizedNext = normalizeSettingsSnapshot(next);
+        await localSettings.setAsync(normalizedNext);
+        setCfg(normalizedNext);
+      });
+      let count = 0;
+      try {
+        count = await tripService.markCompletedForRescore();
+      } catch (error) {
+        notifyUserError('settings_calibration_rescore_queue', error, {
+          title: 'Calibration applied, re-score delayed',
+          description: 'New settings were saved, but Road Sage could not queue trips for re-scoring.',
+        });
+      }
+      await qc.invalidateQueries();
+      setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
+      setCfg(normalizeSettingsSnapshot(updated));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      setCalibProfile(await loadCalibrationProfile());
+    } catch (error) {
+      notifyUserError('settings_calibration_apply', error, {
+        title: 'Calibration not applied',
+        description: 'Road Sage could not save the calibration profile.',
+      });
+    }
   };
 
   const rescoreTrips = async () => {
-    await getPermissionStatus().catch(() => null);
-    const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
-    const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
-    await qc.invalidateQueries();
-    setRescoreStatus(onlyProvenanceMismatch
-      ? `${count} outdated trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`
-      : `${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
-    setTimeout(() => setRescoreStatus(''), 5000);
+    try {
+      await refreshPermissionStatus({ persist: false }).catch((error) => {
+        notifyUserError('settings_rescore_permission_refresh', error, {
+          title: 'Permission refresh skipped',
+          description: 'Road Sage will still queue re-scoring, but permission status may be stale.',
+        });
+        return null;
+      });
+      const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
+      const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
+      await qc.invalidateQueries();
+      setRescoreStatus(onlyProvenanceMismatch
+        ? `${count} outdated trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`
+        : `${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
+      setTimeout(() => setRescoreStatus(''), 5000);
+    } catch (error) {
+      notifyUserError('settings_rescore_trips', error, {
+        title: 'Re-score not queued',
+        description: 'Road Sage could not mark trips for re-scoring.',
+      });
+    }
   };
 
   const dismissCalibration = async () => {
@@ -560,38 +859,45 @@ export default function Settings() {
   };
 
   const updateNotificationSetting = async (patch) => {
-    const wantsNotifications = patch.notifications_enabled === true ||
-      Object.entries(patch).some(([key, value]) => key !== 'notifications_enabled' && value === true);
+    try {
+      const wantsNotifications = patch.notifications_enabled === true ||
+        Object.entries(patch).some(([key, value]) => key !== 'notifications_enabled' && value === true);
 
-    if (wantsNotifications) {
-      const granted = await requestNotificationPermission();
-      if (!granted) {
-        toast({
-          title: 'Notification permission needed',
-          description: getPermissionExplanation('notifications'),
-          variant: 'destructive',
-        });
-        await refreshPermissions();
-        return;
+      if (wantsNotifications) {
+        const granted = await requestNotificationPermission();
+        if (!granted) {
+          toast({
+            title: 'Notification permission needed',
+            description: getPermissionExplanation('notifications'),
+            variant: 'destructive',
+          });
+          await refreshPermissions();
+          return;
+        }
       }
-    }
 
-    const updated = updateCfg(patch);
-    await syncReminderNotifications(updated);
-    await refreshPermissions();
+      const updated = await updateCfg(patch);
+      await syncReminderNotifications(updated);
+      await refreshPermissions();
+    } catch (error) {
+      notifyUserError('settings_notification_update', error, {
+        title: 'Notification setting not saved',
+        description: 'Road Sage could not update notification settings or reminder schedules.',
+      });
+    }
   };
 
-  const updateRetention = async (days) => {
-    updateCfg({ data_retention_days: days });
+  const updateRetention = async (months) => {
+    const updated = await updateCfg({ data_retention_months: months });
+    const deleted = await enforceDataRetention(updated.data_retention_months);
+    if (deleted > 0) {
+      logError('data_retention_pruned', new Error('Retention pruning'), { deleted });
+    }
     await qc.invalidateQueries();
   };
 
   const showPrivacyPolicy = () => {
-    toast({
-      title: 'Privacy and local data',
-      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent.',
-      duration: 9000,
-    });
+    setPrivacyNoticeOpen(true);
   };
 
   const stopNativeAutoTrackingSafely = async (title = 'Auto tracking could not be turned off') => {
@@ -615,13 +921,24 @@ export default function Settings() {
     }
   };
 
+  const stealthTripToggleDisabled = ephemeralModeState.ephemeralActive || Boolean(activeTripStore.get());
+  const setStealthNextTripEnabled = async (enabled) => {
+    if (stealthTripToggleDisabled) return;
+    const nextEnabled = enabled === true;
+    if (nextEnabled && isAndroid()) {
+      const stopped = await stopNativeAutoTrackingSafely('Stealth mode could not pause background tracking');
+      if (!stopped) return;
+    }
+    setStealthNextTrip(nextEnabled);
+  };
+
   const updateTrackingPaused = async (paused) => {
-    const updated = updateCfg({ tracking_paused: paused });
+    const updated = await updateCfg({ tracking_paused: paused });
     if (!isAndroid()) return;
 
     if (paused) {
       const stopped = await stopNativeAutoTrackingSafely('Auto tracking could not be paused');
-      if (!stopped) updateCfg({ tracking_paused: false });
+      if (!stopped) await updateCfg({ tracking_paused: false });
       return;
     }
 
@@ -630,7 +947,7 @@ export default function Settings() {
         await startNativeAutoTracking();
         await refreshPermissions();
       } catch (error) {
-        updateCfg({ tracking_paused: true });
+        await updateCfg({ tracking_paused: true });
         toast({
           title: 'Background tracking could not resume',
           description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
@@ -642,101 +959,186 @@ export default function Settings() {
   };
 
   const enableTrackingMode = async (mode) => {
-    if (cfg.tracking_paused && mode !== 'manual') {
-      updateCfg({ tracking_paused: false });
-    }
+    if (trackingModeRequestInFlightRef.current) return;
+    trackingModeRequestInFlightRef.current = true;
+    setTrackingModeRequestInFlight(true);
+    try {
+      if (cfg.tracking_paused && mode !== 'manual') {
+        await updateCfg({ tracking_paused: false });
+      }
 
-    if (mode === 'manual') {
-      const stopped = await stopNativeAutoTrackingSafely('Manual mode could not stop background tracking');
-      if (!stopped) return;
-      updateCfg({
-        tracking_mode: 'manual',
-        auto_tracking_enabled: false,
-        background_tracking_enabled: false,
-        tracking_paused: false,
-      });
-      return;
-    }
+      if (mode === 'manual') {
+        const stopped = await stopNativeAutoTrackingSafely('Manual mode could not stop background tracking');
+        if (!stopped) return;
+        await updateCfg({
+          tracking_mode: 'manual',
+          auto_tracking_enabled: false,
+          background_tracking_enabled: false,
+          tracking_paused: false,
+        });
+        return;
+      }
 
-    const locationGranted = await requestForegroundLocationPermission();
-    if (!locationGranted) {
-      toast({
-        title: 'Location permission needed',
-        description: getPermissionExplanation('foregroundLocation'),
-        variant: 'destructive',
-      });
-      await refreshPermissions();
-      return;
-    }
-
-    const activityGranted = !isAndroid() || await requestActivityRecognitionPermission();
-    if (!activityGranted) {
-      toast({
-        title: 'Activity permission needed',
-        description: getPermissionExplanation('activityRecognition'),
-        variant: 'destructive',
-      });
-      await refreshPermissions();
-      return;
-    }
-
-    if (mode === 'background_auto') {
-      const backgroundGranted = await requestBackgroundLocationPermission();
-      if (!backgroundGranted) {
+      const locationStatus = await getPermissionStatus('foregroundLocation', { force: true });
+      let locationGranted = locationStatus?.status === 'granted';
+      if (!locationGranted) {
+        locationGranted = await requestForegroundLocationPermission();
+      }
+      if (!locationGranted) {
         toast({
-          title: 'Background location needed',
-          description: 'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.',
+          title: 'Location permission needed',
+          description: getPermissionExplanation('foregroundLocation'),
           variant: 'destructive',
-          duration: 9000,
         });
         await refreshPermissions();
         return;
       }
 
-      if (isAndroid()) {
-        try {
-          await startNativeAutoTracking();
-        } catch (error) {
+      const activityGranted = !isAndroid() || await requestActivityRecognitionPermission();
+      if (!activityGranted) {
+        toast({
+          title: 'Activity permission needed',
+          description: getPermissionExplanation('activityRecognition'),
+          variant: 'destructive',
+        });
+        await refreshPermissions();
+        return;
+      }
+
+      if (mode === 'background_auto') {
+        const liveStatus = await getPermissionStatus(null, { force: true });
+        if (liveStatus?.foregroundLocation !== 'granted') {
           toast({
-            title: 'Background tracking could not start',
-            description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
+            title: 'Location permission needed',
+            description: getPermissionExplanation('foregroundLocation'),
             variant: 'destructive',
           });
           await refreshPermissions();
           return;
         }
-      }
-    }
+        if (liveStatus?.notifications !== 'granted') {
+          const notificationsGranted = await requestNotificationPermission();
+          if (!notificationsGranted) {
+            toast({
+              title: 'Notifications needed',
+              description: getPermissionExplanation('notifications'),
+              variant: 'destructive',
+            });
+            await refreshPermissions();
+            return;
+          }
+        }
 
-    if (mode !== 'background_auto') {
-      const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
-      if (!stopped) return;
+        const backgroundResult = await requestBackgroundLocationPermission();
+        const backgroundGranted = backgroundResult === true || backgroundResult?.granted === true;
+        if (!backgroundGranted) {
+          toast({
+            title: 'Background location needed',
+            description: backgroundResult?.reason === 'partial_grant'
+              ? 'Tap Background Auto again and choose "Allow all the time" for background auto tracking.'
+              : 'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.',
+            variant: 'destructive',
+            duration: 9000,
+          });
+          await refreshPermissions();
+          return;
+        }
+
+        if (isAndroid()) {
+          try {
+            await startNativeAutoTracking();
+          } catch (error) {
+            toast({
+              title: 'Background tracking could not start',
+              description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
+              variant: 'destructive',
+            });
+            await refreshPermissions();
+            return;
+          }
+        }
+      }
+
+      if (mode !== 'background_auto') {
+        const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
+        if (!stopped) return;
+      }
+      await updateCfg({
+        tracking_mode: mode,
+        auto_tracking_enabled: mode !== 'manual',
+        background_tracking_enabled: mode === 'background_auto',
+        tracking_paused: false,
+      });
+      await refreshPermissions();
+    } finally {
+      trackingModeRequestInFlightRef.current = false;
+      setTrackingModeRequestInFlight(false);
     }
-    updateCfg({
-      tracking_mode: mode,
-      auto_tracking_enabled: mode !== 'manual',
-      background_tracking_enabled: mode === 'background_auto',
-      tracking_paused: false,
-    });
-    await refreshPermissions();
   };
 
-  const refreshPermissions = async () => {
-    const status = await getPermissionStatus();
-    setPermissionStatus(status);
-
-    if (isAndroid()) {
-      try {
-        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
-      } catch {}
-      try {
-        setBatteryStatus(await getAndroidBatteryOptimizationStatus());
-      } catch {}
+  useEffect(() => {
+    let timeoutId;
+    try {
+      if (sessionStorage.getItem(TILE_BACKGROUND_AUTO_ACTION_KEY) !== '1') return undefined;
+      sessionStorage.removeItem(TILE_BACKGROUND_AUTO_ACTION_KEY);
+      timeoutId = window.setTimeout(() => {
+        enableTrackingMode('background_auto');
+      }, 250);
+    } catch {
+      return undefined;
     }
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tile handoff should be consumed once on Settings mount.
+  }, []);
+
+  const refreshPermissions = async () => {
+    if (refreshPermissionsInFlightRef.current) return refreshPermissionsInFlightRef.current;
+
+    const task = (async () => {
+      const statusPromise = permissionContext?.refresh
+        ? permissionContext.refresh({ force: true })
+        : getPermissionStatus(null, { force: true });
+      const nativeStatusPromise = isAndroid()
+        ? getNativeAutoTrackingStatus().catch((err) => {
+            logError('settings_native_tracking_status', err);
+            return null;
+          })
+        : Promise.resolve(null);
+      const batteryStatusPromise = isAndroid()
+        ? getAndroidBatteryOptimizationStatus().catch((err) => {
+            logError('settings_battery_optimization_status', err);
+            return null;
+          })
+        : Promise.resolve(null);
+
+      const [status, nextNativeStatus, nextBatteryStatus] = await Promise.all([
+        statusPromise,
+        nativeStatusPromise,
+        batteryStatusPromise,
+      ]);
+
+      setPermissionStatus(status);
+      try {
+        setCfg(normalizeSettingsSnapshot(localSettings.get()));
+      } catch (err) {
+        logError('settings_permission_snapshot_refresh', err);
+      }
+
+      if (nextNativeStatus) setNativeTrackingStatus(nextNativeStatus);
+      if (nextBatteryStatus) setBatteryStatus(nextBatteryStatus);
+      return status;
+    })().finally(() => {
+      refreshPermissionsInFlightRef.current = null;
+    });
+
+    refreshPermissionsInFlightRef.current = task;
+    return task;
   };
 
   const refreshSettingsFromNative = async ({ restartIfReady = false } = {}) => {
-    const latest = await localSettings.hydrateFromNative();
+    const latest = normalizeSettingsSnapshot(await localSettings.hydrateFromNative());
     setCfg((current) => (
       JSON.stringify(current) === JSON.stringify(latest) ? current : latest
     ));
@@ -744,9 +1146,16 @@ export default function Settings() {
 
     if (restartIfReady && isAndroid() && latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
       try {
-        await startNativeAutoTracking();
-        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
-      } catch {}
+        const currentNativeStatus = await getNativeAutoTrackingStatus();
+        if (currentNativeStatus?.enabled !== true) {
+          await startNativeAutoTracking();
+          setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        } else {
+          setNativeTrackingStatus(currentNativeStatus);
+        }
+      } catch (err) {
+        logError('native_auto_tracking_start_settings_refresh', err, { mode: latest.tracking_mode });
+      }
     }
     return latest;
   };
@@ -774,7 +1183,7 @@ export default function Settings() {
     return true;
   };
 
-  const savePrivacyZone = (location, sourceLabel) => {
+  const savePrivacyZone = async (location, sourceLabel) => {
     const validation = validatePrivacyRadius(privacyDraft.radius_m);
     if (!validation.valid) {
       setPrivacyDraftRadiusError(validation.error);
@@ -797,22 +1206,29 @@ export default function Settings() {
       return;
     }
     setPrivacyDraftRadiusError('');
-    const updated = upsertPrivacyZone({
-      label: privacyDraft.label || sourceLabel,
-      radius_m: validation.radius,
-      lat,
-      lng,
-    }, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    try {
+      const updated = await upsertPrivacyZoneAsync({
+        label: privacyDraft.label || sourceLabel,
+        radius_m: validation.radius,
+        lat,
+        lng,
+      }, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(normalizeSettingsSnapshot(updated));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (error) {
+      notifyUserError('settings_privacy_zone_save', error, {
+        title: 'Privacy zone not saved',
+        description: 'Road Sage could not write this privacy zone to secure storage. Try again.',
+      });
+    }
   };
 
   const addCurrentPrivacyZone = async () => {
     try {
       const location = await getCurrentLocation();
-      savePrivacyZone(location, 'Current location');
+      await savePrivacyZone(location, 'Current location');
     } catch (error) {
       toast({
         title: 'Could not get current location',
@@ -822,25 +1238,32 @@ export default function Settings() {
     }
   };
 
-  const deletePrivacyZone = (id) => {
-    const updated = removePrivacyZone(id, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(updated);
-    setPrivacyRadiusDrafts((drafts) => {
-      const next = { ...drafts };
-      delete next[id];
-      return next;
-    });
-    setPrivacyZoneRadiusErrors((errors) => {
-      const next = { ...errors };
-      delete next[id];
-      return next;
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  const deletePrivacyZone = async (id) => {
+    try {
+      const updated = await removePrivacyZoneAsync(id, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(normalizeSettingsSnapshot(updated));
+      setPrivacyRadiusDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[id];
+        return next;
+      });
+      setPrivacyZoneRadiusErrors((errors) => {
+        const next = { ...errors };
+        delete next[id];
+        return next;
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (error) {
+      notifyUserError('settings_privacy_zone_delete', error, {
+        title: 'Privacy zone not deleted',
+        description: 'Road Sage could not update secure storage. Try again.',
+      });
+    }
   };
 
-  const updatePrivacyZoneRadius = (zone, rawValue) => {
+  const updatePrivacyZoneRadius = async (zone, rawValue) => {
     const validation = validatePrivacyRadius(rawValue);
     if (!validation.valid) {
       setPrivacyZoneRadiusErrors((errors) => ({ ...errors, [zone.id]: validation.error }));
@@ -853,17 +1276,24 @@ export default function Settings() {
     }
 
     const radius = validation.radius;
-    const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(updated);
-    setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
-    setPrivacyZoneRadiusErrors((errors) => {
-      const next = { ...errors };
-      delete next[zone.id];
-      return next;
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    try {
+      const updated = await upsertPrivacyZoneAsync({ ...zone, radius_m: radius }, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(normalizeSettingsSnapshot(updated));
+      setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
+      setPrivacyZoneRadiusErrors((errors) => {
+        const next = { ...errors };
+        delete next[zone.id];
+        return next;
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (error) {
+      notifyUserError('settings_privacy_zone_radius', error, {
+        title: 'Privacy radius not saved',
+        description: 'Road Sage could not write this privacy zone to secure storage. Try again.',
+      });
+    }
   };
 
   useEffect(() => {
@@ -876,7 +1306,7 @@ export default function Settings() {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshAndRestartIfReady();
     };
-    const interval = window.setInterval(refreshAndRestartIfReady, 2000);
+    const interval = window.setInterval(refreshAndRestartIfReady, SETTINGS_ANDROID_STATUS_POLL_MS);
     window.addEventListener('focus', refreshAndRestartIfReady);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -914,10 +1344,18 @@ export default function Settings() {
   const handleObdPairing = async () => {
     setObdPairingStatus('Opening Bluetooth chooser...');
     try {
+      if (isAndroid()) {
+        const bluetoothGranted = await requestBluetoothPermission();
+        if (!bluetoothGranted) {
+          setObdPairingStatus('Nearby Devices/Bluetooth permission is needed before pairing.');
+          await refreshPermissions();
+          return;
+        }
+      }
       const result = await connectObdBleAdapter();
       const name = result.device?.name || 'OBD-II adapter';
       setObdPairingStatus(result.connected ? `${name} connected for this session.` : `${name} selected. Could not open a GATT session.`);
-      updateCfg({ obd_bluetooth_enabled: true });
+      await updateCfg({ obd_bluetooth_enabled: true });
       await refreshPermissions();
     } catch (error) {
       setObdPairingStatus(error?.message || 'Could not connect to the OBD-II adapter.');
@@ -927,37 +1365,84 @@ export default function Settings() {
 
   const handleDeleteAllTrips = async () => {
     if (!confirm('Delete ALL trips? This cannot be undone.')) return;
-    const trips = allTrips;
-    for (const t of trips) {
-      await tripService.delete(t.id);
+    if (tripService.deleteAll) await tripService.deleteAll();
+    else {
+      const trips = allTrips;
+      for (const t of trips) {
+        await tripService.delete(t.id);
+      }
     }
+    const { SecureKey } = await import('@/lib/nativeSecureKey');
+    await SecureKey.wipeAllFiles().catch(() => {});
     qc.invalidateQueries();
     toast({
       title: 'Trips deleted',
-      description: 'All local trip history was removed from this device.',
+      description: 'All local trip history and sensitive native cache files were removed from this device.',
+    });
+  };
+
+  const handleWipeAllData = async () => {
+    if (!confirm('Factory reset Road Sage on this device? This permanently deletes trips, vehicles, settings, calibration labels, active-trip recovery, native caches, and encrypted local preferences.')) return;
+    if (!confirm('Last chance: wipe ALL Road Sage data from this device now?')) return;
+
+    await secureWipeAllData();
+    const resetCfg = readLocalSettingsSnapshot();
+    setCfg(resetCfg);
+    applyThemeMode(resetCfg.dark_mode);
+    setParkedLocation(null);
+    setCalibProfile(null);
+    setEphemeralModeState(getEphemeralTripModeState());
+    await qc.invalidateQueries();
+    await refreshPermissions();
+    toast({
+      title: 'Road Sage data wiped',
+      description: 'Trips, vehicles, calibration labels, settings, active-trip recovery, and sensitive native cache files were removed from this device.',
     });
   };
 
   const handleExportAll = async () => {
-    const completed = allTrips.filter(t => t.status === 'completed');
-    const csv = tripsToCSV(completed);
-    const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
-    toast({
-      title: 'Export saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Trip CSV'} is downloading.`,
-    });
+    setBackupExportMode('csv');
+    setBackupExportPassword('');
+    setBackupExportConfirm('');
+    setBackupExportError('');
+    setBackupExportPasswordVisible(false);
+    setBackupExportOpen(true);
   };
 
-  const handleExportBackup = async () => {
-    const result = await exportDriveSenseBackup({
-      trips: allTrips,
-      vehicles: allVehicles,
-      settings: cfg,
-    });
+  const backupExportValidation = getBackupPasswordValidation(backupExportPassword);
+  const backupImportValidation = getBackupPasswordValidation(backupImportPassword, { requireStrong: false });
+  const backupPasswordStrong = backupExportValidation.valid;
+  const backupPasswordsMatch = backupExportPassword === backupExportConfirm;
+  const backupExportReady = backupPasswordStrong && backupPasswordsMatch;
+  const backupPasswordStrengthScore = backupExportPassword
+    ? Math.max(
+      backupExportValidation.checks.find((check) => check.id === 'passphrase')?.valid ? 4 : 0,
+      Math.min(4, Number(backupExportValidation.checks[0]?.valid) + backupExportValidation.complexityScore)
+    )
+    : 0;
+  const backupPasswordStrengthLabel = backupPasswordStrengthScore >= 4
+    ? 'Strong'
+    : backupPasswordStrengthScore >= 3
+      ? 'Good'
+      : backupPasswordStrengthScore >= 2
+        ? 'Fair'
+        : 'Weak';
+  const pendingBackupImportIsEncrypted = /\.rsbackup$/i.test(pendingBackupImportFile?.name || '');
+  const backupImportPickerBusy = backupImportBusy || BACKUP_IMPORT_ACTIVE_STAGES.has(backupImportStage);
+  const backupImportStatusLabel = backupImportStatusDetail || BACKUP_IMPORT_STAGE_LABELS[backupImportStage] || '';
+
+  const setBackupImportStatus = useCallback(({ stage, detail } = {}) => {
+    if (backupImportStatusTimeoutRef.current) {
+      clearTimeout(backupImportStatusTimeoutRef.current);
+      backupImportStatusTimeoutRef.current = null;
+    }
+    if (stage) setBackupImportStage(stage);
+    setBackupImportStatusDetail(detail || '');
+  }, []);
+
+  const showBackupExportToast = (result) => {
     toast({
-      title: 'Backup saved',
+      title: result?.encrypted ? 'Encrypted backup saved' : 'Backup saved',
       description: result?.nativeFallback
         ? `Could not save to Downloads. ${result?.filename || 'Road Sage backup'} is downloading in the browser instead.`
         : result?.native
@@ -967,9 +1452,185 @@ export default function Settings() {
     });
   };
 
-  const handleImportBackup = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  const handleExportBackup = () => {
+    setBackupExportMode('backup');
+    setBackupExportPassword('');
+    setBackupExportConfirm('');
+    setBackupExportError('');
+    setBackupExportPasswordVisible(false);
+    setBackupExportOpen(true);
+  };
+
+  const performExportBackup = async () => {
+    if (!backupExportReady || backupExportBusy) return;
+    setBackupExportBusy(true);
+    setBackupExportError('');
+    try {
+      const result = backupExportMode === 'csv'
+        ? await downloadCSV(
+          tripsToCSV(allTrips.filter(t => t.status === 'completed')),
+          `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`,
+          { password: backupExportPassword }
+        )
+        : await exportDriveSenseBackup({
+          trips: allTrips,
+          vehicles: allVehicles,
+          settings: cfg,
+          password: backupExportPassword,
+        });
+      await recordOutboundDataEvent({
+        service: 'export_file',
+        status: 'used',
+        detail: backupExportMode === 'csv'
+          ? 'Encrypted CSV export created with completed trips and privacy-masked route/event fields.'
+          : 'Encrypted backup created with trips, route points, vehicles, settings, privacy-zone metadata, saved filters, and calibration metadata.',
+      });
+      setBackupExportOpen(false);
+      if (backupExportMode === 'csv') {
+        toast({
+          title: 'Encrypted export saved',
+          description: result?.native
+            ? `${result.filename} was saved to Downloads.`
+            : `${result?.filename || 'Trip CSV'} is downloading.`,
+        });
+      } else {
+        showBackupExportToast(result);
+      }
+    } catch (error) {
+      setBackupExportError(error.message || 'Try again with a different export password.');
+      toast({
+        title: backupExportMode === 'csv' ? 'Could not export trips' : 'Could not export backup',
+        description: error.message || 'Try again with a different export password.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupExportBusy(false);
+    }
+  };
+
+  const finishImportBackup = async (file, { password = null, acknowledgeTruncation = false, parsedBackup = null } = {}) => {
+    const result = await importDriveSenseBackup(file, {
+      password,
+      acknowledgeTruncation,
+      _parsedBackup: parsedBackup,
+      onProgress: setBackupImportStatus,
+    });
+    if (result?.error === 'password_required' || result?.error === 'wrong_password') {
+      setBackupImportStatus({ stage: 'idle' });
+      setPendingBackupImportFile(file);
+      setBackupImportError(result.error);
+      setBackupImportPasswordVisible(false);
+      setBackupImportOpen(true);
+      return null;
+    }
+    if (result?.error === BACKUP_INTEGRITY_ERROR) {
+      setBackupImportStatus({
+        stage: 'error',
+        detail: 'This backup failed its integrity check. Try exporting a fresh backup.',
+      });
+      toast({
+        title: 'Backup integrity check failed',
+        description: /\.rsbackup$/i.test(file?.name || '')
+          ? 'This backup file appears to be corrupted.'
+          : 'The file may have been modified or exported from another Road Sage install.',
+        variant: 'destructive',
+      });
+      return null;
+    }
+    if (result.requiresAcknowledgement) {
+      setBackupImportStatus({ stage: 'idle' });
+      const affected = result.truncatedNoteTripCount;
+      if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
+      return finishImportBackup(null, {
+        password,
+        acknowledgeTruncation: true,
+        parsedBackup: result._parsedBackup,
+      });
+    }
+    const latestSettings = readLocalSettingsSnapshot();
+    setCfg(latestSettings);
+    applyThemeMode(latestSettings.dark_mode);
+    setBackupImportOpen(false);
+    setPendingBackupImportFile(null);
+    setBackupImportPassword('');
+    setBackupImportError('');
+    setBackupImportBusy(false);
+    await recordOutboundDataEvent({
+      service: 'import_file',
+      status: 'used',
+      detail: 'Backup import merged trips, vehicles, saved filters, and safe settings into local storage.',
+    });
+    void Promise.allSettled([
+      qc.invalidateQueries({ queryKey: ['settings-trips'] }),
+      qc.invalidateQueries({ queryKey: ['all-trips'] }),
+      qc.invalidateQueries({ queryKey: ['recent-trips'] }),
+      qc.invalidateQueries({ queryKey: ['map-trips'] }),
+      qc.invalidateQueries({ queryKey: ['vehicles'] }),
+      qc.invalidateQueries({ queryKey: ['score-migration-summary'] }),
+    ]);
+    const retentionNote = result.retentionAutoDeleteDisabled
+      ? ` Auto-delete was set to Never so ${result.retentionPreservedTripCount} older imported trip${result.retentionPreservedTripCount === 1 ? '' : 's'} stay visible.`
+      : '';
+    const settingsWarning = result.settings === false && result.trips > 0
+      ? ' Trips were imported, but settings could not be restored due to a device storage issue.'
+      : '';
+    const importSummary = `${result.trips} trip${result.trips === 1 ? '' : 's'}, ${result.vehicles} vehicle${result.vehicles === 1 ? '' : 's'}, and ${result.savedFilters || 0} saved filter${result.savedFilters === 1 ? '' : 's'} merged.${retentionNote}${settingsWarning}`;
+    setBackupImportStatus({
+      stage: 'done',
+      detail: importSummary,
+    });
+    backupImportStatusTimeoutRef.current = setTimeout(() => {
+      setBackupImportStage('idle');
+      setBackupImportStatusDetail('');
+      backupImportStatusTimeoutRef.current = null;
+    }, 10_000);
+    toast({
+      title: 'Import complete',
+      description: result.truncatedFields
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}${retentionNote}${settingsWarning}`
+        : !result.savedFiltersRestored && result.savedFilters
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.${retentionNote}${settingsWarning}`
+        : result.privacy_zones_need_reconfiguration
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.${retentionNote}${settingsWarning}`
+        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.${retentionNote}${settingsWarning}`,
+      variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration || settingsWarning ? 'destructive' : undefined,
+    });
+    return result;
+  };
+
+  const handleImportPasswordSubmit = async () => {
+    if (!pendingBackupImportFile || !backupImportValidation.valid || backupImportBusy) {
+      if (backupImportPassword && !backupImportValidation.valid) {
+        setBackupImportError('password_invalid');
+      }
+      return;
+    }
+    setBackupImportBusy(true);
+    try {
+      await finishImportBackup(pendingBackupImportFile, { password: backupImportPassword });
+    } catch (error) {
+      setBackupImportStatus({
+        stage: 'error',
+        detail: error.message || 'Make sure the file is a Road Sage backup file.',
+      });
+      toast({
+        title: 'Could not import backup',
+        description: error.message || 'Make sure the file is a Road Sage backup file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupImportBusy(false);
+    }
+  };
+
+  const confirmImportBackup = (file) => {
+    const legacyPlaintextWarning = /\.json$/i.test(file.name || '')
+      ? 'This backup is unencrypted. Anyone with this file can read your driving history.\n\n'
+      : '';
+    return confirm(`${legacyPlaintextWarning}Import this Road Sage backup? It can merge trips, route points, driving events, vehicles, saved filters, and safe settings. Matching IDs will be updated, and new records will be added.`);
+  };
+
+  const startImportBackup = async (file) => {
     if (!file) return;
     if (Number(file.size) > MAX_BACKUP_BYTES) {
       toast({
@@ -979,36 +1640,42 @@ export default function Settings() {
       });
       return;
     }
-    if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
+    if (!confirmImportBackup(file)) return;
 
+    setBackupImportBusy(true);
+    setBackupImportStatus({ stage: 'reading' });
     try {
-      let result = await importDriveSenseBackup(file);
-      if (result.requiresAcknowledgement) {
-        const affected = result.truncatedNoteTripCount;
-        if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return;
-        result = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
-      }
-      setCfg(localSettings.get());
-      applyThemeMode(localSettings.get().dark_mode);
-      await qc.invalidateQueries();
-      toast({
-        title: 'Import complete',
-        description: result.truncatedFields
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
-          : !result.savedFiltersRestored && result.savedFilters
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
-          : result.privacy_zones_need_reconfiguration
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
-          : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
-        variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
-      });
+      await finishImportBackup(file);
     } catch (error) {
+      setBackupImportStatus({
+        stage: 'error',
+        detail: error.message || 'Make sure the file is a Road Sage backup file.',
+      });
       toast({
         title: 'Could not import backup',
-        description: error.message || 'Make sure the file is a Road Sage backup JSON file.',
+        description: /\.rsbackup$/i.test(file.name || '')
+          ? 'This backup file appears to be corrupted.'
+          : error.message || 'Make sure the file is a Road Sage backup JSON file.',
         variant: 'destructive',
       });
+    } finally {
+      setBackupImportBusy(false);
     }
+  };
+
+  const handleOpenImportBackup = () => {
+    if (backupImportPickerBusy) return;
+    importInputRef.current?.click();
+  };
+
+  const handleImportBackup = async (event) => {
+    if (backupImportPickerBusy) {
+      event.target.value = '';
+      return;
+    }
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    await startImportBackup(file);
   };
 
   const effectiveTrackingMode = cfg.tracking_paused ? 'manual' : cfg.tracking_mode;
@@ -1016,40 +1683,18 @@ export default function Settings() {
   const motionSupport = getMotionSensorSupport();
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
-  const settingsSearchQuery = settingsSearch.trim().toLowerCase();
-  const settingSearchResults = [
-    { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', detail: 'Manual, foreground auto-detect, background auto, and pause controls.', keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement' },
-    { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', detail: 'Location, background location, activity, battery, and native auto service setup.', keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt' },
-    { label: 'Feature permissions', section: 'Feature Permissions', sectionId: 'settings-feature-permissions', detail: 'See which features are blocked by missing permissions.', keywords: 'blocked unavailable permission feature status' },
-    { label: 'Economics', section: 'Economics', sectionId: 'settings-economics', detail: 'Currency, fuel, EV grid emissions, CO2 baseline, and tree-year equivalents used in savings estimates.', keywords: 'currency symbol money cost price co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },
-    { label: 'Notifications', section: 'Notifications', sectionId: 'settings-notifications', detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
-    { label: 'Driving goals', section: 'Driving Goals', sectionId: 'settings-driving-goals', detail: 'Weekly score and behavior targets used by dashboard goals.', keywords: 'weekly score harsh brake speeding night goals target' },
-    { label: 'Detection features', section: 'Detection Features', sectionId: 'settings-detection-thresholds', detail: 'Detection toggles, sensitivity, calibration, re-score, and event feedback behavior.', keywords: 'harsh braking rapid acceleration speeding idle lane changing brake turn heading drift calibration rescore feedback accurate wrong false positive' },
-    { label: 'Advanced models', section: 'Advanced Models', sectionId: 'settings-advanced-models', detail: 'Weather, OSRM, historical context risk, voice alerts, OBD, sensor fusion, and crash signals.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
-    { label: 'Phone use detection', section: 'Phone Use Detection', sectionId: 'settings-phone-use', detail: 'Phone distraction detection, map display, and scoring impact.', keywords: 'distraction usage access phone score map foreground app' },
-    { label: 'Speed warning', section: 'Speed Warning', sectionId: 'settings-speed-warning', detail: 'Live speed warnings and OpenStreetMap limit margin.', keywords: 'speed limits overpass osm warning margin over limit' },
-    { label: 'Privacy zones and backup', section: 'Privacy & Data', sectionId: 'settings-privacy-data', detail: 'Privacy zones, backup, import, export, saved filters, and feedback data.', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
-  ].map((item) => {
-    if (!settingsSearchQuery) return { ...item, score: 0 };
-    const haystack = `${item.label} ${item.section} ${item.detail} ${item.keywords}`.toLowerCase();
-    const terms = settingsSearchQuery.split(/\s+/).filter(Boolean);
-    const score = terms.reduce((sum, term) => (
-      sum + (item.label.toLowerCase().includes(term) ? 6 : 0)
-      + (item.section.toLowerCase().includes(term) ? 4 : 0)
-      + (haystack.includes(term) ? 1 : 0)
-    ), 0);
-    return { ...item, score };
-  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6);
-  const scrollSettingSection = (sectionId) => {
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setSettingsSearch('');
-  };
+  const { settingSearchResults } = useSettingsSections(settingsSearch, setSettingsSearch);
   const rescoreTotal = Number(rescoreProgress?.total) || 0;
   const rescoreCompleted = Number(rescoreProgress?.completed) || 0;
   const rescoreProgressPct = rescoreTotal > 0
     ? Math.min(100, Math.round((rescoreCompleted / rescoreTotal) * 100))
     : 0;
   const autoRescoreVisible = scoreMigrationSummary.auto_rescore_recommended || rescoreProgress?.reason === 'auto_provenance';
+  const settingsContext = {
+    AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
+    AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, backupImportPickerBusy, backupImportStage, backupImportStatusLabel, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected: handleImportBackup, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleImportBackup: handleOpenImportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, trackingModeRequestInFlight, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
+  };
 
   return (
     <div className="space-y-4 pb-6">
@@ -1071,46 +1716,6 @@ export default function Settings() {
           </motion.div>
         )}
       </motion.div>
-
-      <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={settingsSearch}
-            onChange={(event) => setSettingsSearch(event.target.value)}
-            placeholder="Search settings, permissions, auto start, map, feedback..."
-            className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-10 text-sm outline-none focus:border-primary"
-          />
-          {settingsSearch && (
-            <button
-              type="button"
-              onClick={() => setSettingsSearch('')}
-              aria-label="Clear settings search"
-              className="absolute right-2 top-1/2 rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground -translate-y-1/2"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-        {settingsSearch.trim() && (
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
-              <button
-                key={`${item.section}-${item.label}`}
-                type="button"
-                onClick={() => scrollSettingSection(item.sectionId)}
-                className="rounded-xl border border-border bg-secondary/60 px-3 py-2 text-left text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
-              >
-                <span className="font-semibold text-foreground">{item.label}</span>
-                <span className="ml-1">in {item.section}</span>
-                <span className="mt-1 block">{item.detail}</span>
-              </button>
-            )) : (
-              <span className="text-xs text-muted-foreground">No matching settings found.</span>
-            )}
-          </div>
-        )}
-      </div>
 
       <div role="note" className="flex gap-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
@@ -1143,1566 +1748,226 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-
-        {/* Tracking */}
-        <SectionTitle id="settings-tracking">Tracking</SectionTitle>
-        <div className="space-y-1">
-          <div>
-            <div className="text-sm font-medium mb-2 px-1">Tracking Mode</div>
-            <div className="space-y-2">
-              {[
-                { id: 'manual', label: 'Manual Only', sub: 'Start/stop trips manually' },
-                { id: 'auto_detect', label: 'Auto-Detect', sub: 'Detects driving when app is open' },
-                { id: 'background_auto', label: 'Background Auto', sub: '⚠️ Uses more battery' },
-              ].map(opt => (
-                <button
-                  key={opt.id}
-                  onClick={() => enableTrackingMode(opt.id)}
-                  className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
-                    effectiveTrackingMode === opt.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
-                  }`}
-                >
-                  <div>
-                    <div className="text-sm font-medium">{opt.label}</div>
-                    <div className="text-xs text-muted-foreground">{opt.sub}</div>
-                  </div>
-                  {effectiveTrackingMode === opt.id && <Check className="w-4 h-4 text-primary" />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <SettingRow
-            icon={AlertTriangle}
-            label="Pause All Tracking"
-            sublabel="Temporarily disable trip detection"
-          >
-            <Toggle value={cfg.tracking_paused} onChange={updateTrackingPaused} />
-          </SettingRow>
-          <SettingRow
-            icon={Shield}
-            label="Auto-Tracking"
-            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : 'Start only after you enable it and driving signals are strong'}
-          >
-            <Toggle value={!cfg.tracking_paused && cfg.auto_tracking_enabled} onChange={async v => {
-              if (v) {
-                await enableTrackingMode('auto_detect');
-                return;
-              }
-              const stopped = await stopNativeAutoTrackingSafely('Auto tracking could not be turned off');
-              if (!stopped) return;
-              updateCfg({ auto_tracking_enabled: false, tracking_mode: 'manual' });
-            }} />
-          </SettingRow>
-          <SettingRow
-            icon={Shield}
-            label="Background Tracking"
-            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : nativeTrackingStatus?.enabled ? 'Native background auto tracking is running' : 'Keeps recording after the app is minimized with a persistent notification'}
-          >
-            <Toggle value={!cfg.tracking_paused && cfg.background_tracking_enabled} onChange={async v => {
-              if (v) {
-                await enableTrackingMode('background_auto');
-                return;
-              }
-              const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
-              if (!stopped) return;
-              updateCfg({ background_tracking_enabled: false, auto_tracking_enabled: false, tracking_mode: 'manual' });
-              await refreshPermissions();
-            }} />
-          </SettingRow>
-        </div>
-
-        {/* Android Permissions */}
-        <SectionTitle id="settings-android-permissions">Android Permissions</SectionTitle>
-        <div className="space-y-1">
-          {isAndroid() && (
-            <SettingRow
-              icon={Shield}
-              label="Native Auto Tracking"
-              sublabel={nativeTrackingStatus?.enabled ? 'Android service is armed and waiting for driving motion' : 'Android service is not running'}
-            >
-              <PermissionBadge value={nativeTrackingStatus?.enabled ? 'granted' : 'not_requested'} />
-            </SettingRow>
-          )}
-          {[
-            { key: 'foregroundLocation', label: 'Location', sub: getPermissionExplanation('foregroundLocation'), action: requestForegroundLocationPermission },
-            { key: 'backgroundLocation', label: 'Background Location', sub: getPermissionExplanation('backgroundLocation'), action: requestBackgroundLocationPermission },
-            { key: 'activityRecognition', label: 'Physical Activity', sub: getPermissionExplanation('activityRecognition'), action: requestActivityRecognitionPermission },
-            { key: 'notifications', label: 'Notifications', sub: getPermissionExplanation('notifications'), action: requestNotificationPermission },
-            { key: 'motionSensors', label: 'Motion Sensors', sub: getPermissionExplanation('motionSensors'), action: handleMotionPermission },
-            { key: 'bluetooth', label: 'Bluetooth / Nearby Devices', sub: getPermissionExplanation('bluetooth'), action: handleObdPairing },
-            ...(isAndroid() ? [{ key: 'phoneUsageAccess', label: 'Phone Usage Access', sub: getPermissionExplanation('phoneUsageAccess'), action: openAndroidUsageAccessSettings }] : []),
-          ].map(({ key, label, sub, action }) => (
-            <SettingRow key={key} icon={Info} label={label} sublabel={sub}>
-              <div className="flex items-center gap-2">
-                <PermissionBadge value={permissionStatus?.[key]} />
-                {permissionStatus?.[key] !== 'granted' && (
-                  <button
-                    className="text-xs font-semibold text-primary"
-                    onClick={async e => {
-                      e.stopPropagation();
-                      await action();
-                      await refreshPermissions();
-                    }}
-                  >
-                    Enable
-                  </button>
-                )}
-              </div>
-            </SettingRow>
-          ))}
-          <SettingRow
-            icon={AlertTriangle}
-            label="Battery Optimization"
-            sublabel={batteryStatus?.batteryOptimizationIgnored ? 'Battery optimization is already unrestricted for Road Sage' : 'Open Android battery settings and allow unrestricted background activity'}
-            onClick={handleBatteryOptimization}
-          >
-            <div className="flex items-center gap-2">
-              {isAndroid() && (
-                <PermissionBadge value={batteryStatus?.batteryOptimizationIgnored ? 'granted' : 'not_requested'} />
-              )}
-              <ChevronRight className="w-4 h-4 text-muted-foreground" />
-            </div>
-          </SettingRow>
-        </div>
-
-        {/* Feature Permission Check */}
-        <SectionTitle id="settings-feature-permissions">Feature Permissions</SectionTitle>
-        <div className="space-y-1">
-          {[
-            {
-              label: 'Trip history, search, tags, notes, favorites, calendar, weekly summary, goals, costs',
-              sub: 'No new Android permission prompt. These features use local trips, vehicles, and settings already stored on this device.',
-              value: 'none',
-            },
-            {
-              label: 'Route comparison, commute detection, road types, parking reminder, repeated event areas',
-              sub: 'Uses trip GPS data. Android asks for Location when you start tracking, use current location, or enable auto tracking.',
-              value: locationFeatureStatus,
-              action: requestForegroundLocationPermission,
-            },
-            {
-              label: 'Maintenance reminders and weekly driver digests',
-              sub: 'In-app dashboards need no prompt. Android asks for Notifications only if reminder notifications are enabled.',
-              value: notificationFeatureStatus,
-              action: requestNotificationPermission,
-            },
-            {
-              label: 'Background auto tracking for richer repeated-route history',
-              sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications.',
-              value: permissionStatus?.backgroundLocation,
-              action: requestBackgroundLocationPermission,
-            },
-            {
-              label: 'Sensor fusion, crash detection, phone movement, and incident check-in',
-              sub: 'Uses GPS plus device motion and Android activity context. Motion usually has no Android prompt, but this row will request it on platforms that require one.',
-              value: permissionStatus?.motionSensors,
-              action: handleMotionPermission,
-            },
-            {
-              label: 'Real speed limits, weather, optional OSRM matching, and offline route previews',
-              sub: 'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.',
-              value: 'none',
-            },
-            {
-              label: 'Live voice alerts and rule-based driving coach summaries',
-              sub: 'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.',
-              value: 'none',
-            },
-            {
-              label: 'OBD-II Bluetooth diagnostics',
-              sub: 'Optional. Pairing a compatible BLE adapter may trigger Android Nearby Devices/Bluetooth permission and the Bluetooth chooser.',
-              value: permissionStatus?.bluetooth,
-              action: handleObdPairing,
-            },
-          ].map(({ label, sub, value, action }) => (
-            <SettingRow key={label} icon={Info} label={label} sublabel={sub}>
-              <div className="flex items-center gap-2">
-                <FeaturePermissionBadge value={value} />
-                {action && value !== 'granted' && (
-                  <button
-                    className="text-xs font-semibold text-primary"
-                    onClick={async e => {
-                      e.stopPropagation();
-                      await action();
-                      await refreshPermissions();
-                    }}
-                  >
-                    Enable
-                  </button>
-                )}
-              </div>
-            </SettingRow>
-          ))}
-        </div>
-
-        {/* Appearance */}
-        <SectionTitle id="settings-appearance">Appearance</SectionTitle>
-        <div className="space-y-1">
-          <div>
-            <div className="text-sm font-medium mb-2 px-1">Theme</div>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: 'light', icon: Sun, label: 'Light' },
-                { id: 'dark', icon: Moon, label: 'Dark' },
-                { id: 'system', icon: Monitor, label: 'System' },
-              ].map(({ id, icon: Icon, label }) => (
-                <button
-                  key={id}
-                  onClick={() => updateTheme(id)}
-                  className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all ${
-                    cfg.dark_mode === id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span className="text-xs font-medium">{label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-3">
-            <div className="text-sm font-medium mb-2 px-1">Units</div>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { id: 'metric', label: 'Metric (km/h)' },
-                { id: 'imperial', label: 'Imperial (mph)' },
-              ].map(opt => (
-                <button
-                  key={opt.id}
-                  onClick={() => updateCfg({ units: opt.id })}
-                  className={`p-3 rounded-xl border text-sm font-medium transition-all ${
-                    cfg.units === opt.id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Economics */}
-        <SectionTitle id="settings-economics">Economics</SectionTitle>
-        <div className="space-y-1">
-          <SettingRow
-            icon={Banknote}
-            label="Currency symbol"
-            sublabel="Used for fuel, energy, maintenance, and report cost totals"
-          >
-            <select
-              value={cfg.currencySymbol || '$'}
-              onChange={e => updateCfg({ currencySymbol: e.target.value })}
-              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
-            >
-              {CURRENCY_SYMBOL_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </SettingRow>
-          <SettingRow
-            icon={Leaf}
-            label="Average vehicle CO2 baseline"
-            sublabel="kg CO2 per 100 km used for fleet-average estimate comparisons"
-          >
-            <input
-              type="number"
-              min="0"
-              max="50"
-              step="0.1"
-              value={cfg.co2_baseline_kg_per_100km ?? 12}
-              onChange={e => updateCfg({ co2_baseline_kg_per_100km: Number(e.target.value) })}
-              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Zap}
-            label="Default EV efficiency"
-            sublabel="kWh per 100 km used when an electric vehicle has no profile value"
-          >
-            <input
-              type="number"
-              min="5"
-              max="40"
-              step="0.1"
-              value={cfg.default_ev_kwh_per_100km ?? 18}
-              onChange={e => updateCfg({ default_ev_kwh_per_100km: Number(e.target.value) })}
-              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Zap}
-            label="Grid CO2 intensity"
-            sublabel="kg CO2 per kWh used for electric-vehicle trip emissions"
-          >
-            <input
-              type="number"
-              min="0"
-              max="2"
-              step="0.001"
-              value={cfg.grid_co2_kg_per_kwh ?? 0.04}
-              onChange={e => updateCfg({ grid_co2_kg_per_kwh: Number(e.target.value) })}
-              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Leaf}
-            label="Tree-year equivalent"
-            sublabel="kg CO2 per tree per year used in carbon impact summaries"
-          >
-            <input
-              type="number"
-              min="1"
-              max="100"
-              step="0.1"
-              value={cfg.tree_co2_kg_per_year ?? 21}
-              onChange={e => updateCfg({ tree_co2_kg_per_year: Number(e.target.value) })}
-              className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
-            />
-          </SettingRow>
-        </div>
-
-        {/* Notifications */}
-        <SectionTitle id="settings-notifications">Notifications</SectionTitle>
-        <div className="space-y-3">
-          <SettingRow
-            icon={Bell}
-            label="Enable all notifications"
-            sublabel="Disabling this turns off all notification groups below"
-          >
-            <Toggle value={cfg.notifications_enabled !== false} onChange={v => updateNotificationSetting({ notifications_enabled: v })} />
-          </SettingRow>
-          <div className={`${cfg.notifications_enabled === false ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="rounded-2xl bg-secondary/40 p-3">
-              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Quiet Hours</div>
-              <SettingRow label="Quiet hours" sublabel="Suppress non-safety notifications during this window">
-                <Toggle value={cfg.notif_quiet_hours_enabled === true} onChange={v => updateNotificationSetting({ notif_quiet_hours_enabled: v })} disabled={cfg.notifications_enabled === false} />
-              </SettingRow>
-              <div className="grid grid-cols-2 gap-3 px-1 pt-3">
-                <label className="text-xs font-medium">
-                  Start
-                  <input
-                    type="time"
-                    value={cfg.notif_quiet_start || '22:00'}
-                    disabled={cfg.notif_quiet_hours_enabled !== true}
-                    onChange={e => updateNotificationSetting({ notif_quiet_start: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                  />
-                </label>
-                <label className="text-xs font-medium">
-                  End
-                  <input
-                    type="time"
-                    value={cfg.notif_quiet_end || '07:00'}
-                    disabled={cfg.notif_quiet_hours_enabled !== true}
-                    onChange={e => updateNotificationSetting({ notif_quiet_end: e.target.value })}
-                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                  />
-                </label>
-              </div>
-              <p className="mt-2 px-1 text-xs text-muted-foreground">Safety alerts always come through unless that channel is disabled.</p>
-            </div>
-
-            <div className="rounded-2xl bg-secondary/40 p-3">
-              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">While Driving</div>
-              {[
-                { key: 'notif_safety_alerts_enabled', label: 'Safety alerts channel', sub: 'Urgent warnings while driving' },
-                { key: 'notif_phone_use_alert_enabled', label: 'Phone use warning', sub: 'Immediate warning for confirmed Android Usage Access detections' },
-                { key: 'notif_heading_drift_alert_enabled', label: 'Attention pattern warning', sub: 'Beta GPS heading patterns and long-drive break alerts' },
-                { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
-                { key: 'danger_zone_alerts_enabled', label: 'Repeated event area alerts', sub: 'Warn when approaching your own repeated driving-event locations' },
-                { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
-              ].map(({ key, label, sub }) => (
-                <SettingRow key={key} label={label} sublabel={sub}>
-                  <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_safety_alerts_enabled' && cfg.notif_safety_alerts_enabled === false)} />
-                </SettingRow>
-              ))}
-            </div>
-
-            <div className="rounded-2xl bg-secondary/40 p-3">
-              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">After Each Trip</div>
-              {[
-                { key: 'trip_start_notification', label: 'Trip started', sub: 'Notify when a trip begins' },
-                { key: 'trip_end_notification', label: 'Trip ended', sub: 'Basic summary when trip finishes' },
-                { key: 'notif_post_trip_summary_enabled', label: 'Post-trip smart summary', sub: 'One contextual notification after a notable trip' },
-                { key: 'notif_post_trip_score_change', label: 'Score improvements and declines', sub: 'Notify when a score moves meaningfully' },
-                { key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' },
-                { key: 'notif_post_trip_fuel_saving', label: 'Eco fuel savings', sub: 'Call out efficient trips with fuel savings' },
-              ].map(({ key, label, sub }) => (
-                <SettingRow key={key} label={label} sublabel={sub}>
-                  <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key.startsWith('notif_post_trip_') && cfg.notif_post_trip_summary_enabled === false && key !== 'notif_post_trip_summary_enabled')} />
-                </SettingRow>
-              ))}
-              <div className="px-1 pt-3">
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="font-medium">Only notify if score is at least</span>
-                  <span className="text-primary font-semibold">{cfg.notif_min_score_for_post_trip ?? 0}</span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={cfg.notif_min_score_for_post_trip ?? 0}
-                  onChange={e => updateNotificationSetting({ notif_min_score_for_post_trip: Number(e.target.value) })}
-                  className="w-full accent-primary"
-                />
-                <p className="mt-1 text-xs text-muted-foreground">0 means always notify when a post-trip rule matches.</p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-secondary/40 p-3">
-              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Coaching & Milestones</div>
-              {[
-                { key: 'notif_coaching_enabled', label: 'Coaching notifications', sub: 'Driving improvement tips and pattern changes' },
-                { key: 'achievement_notifications', label: 'Achievements', sub: 'Notify when an achievement unlocks' },
-                { key: 'notif_streak_enabled', label: 'Streak milestones', sub: 'Smooth-driving streak notifications' },
-                { key: 'notif_weekly_pattern_enabled', label: 'Weekly driving summary', sub: 'Monday at 8:30am' },
-                { key: 'weekly_report_notification', label: 'Classic weekly report', sub: 'Legacy Tuesday report' },
-                { key: 'notif_style_shift_enabled', label: 'Driving style shift alerts', sub: 'Notify when your style changes across recent trips' },
-                { key: 'safe_driving_reminder', label: 'Safe driving tips', sub: 'Occasional driving reminders' },
-              ].map(({ key, label, sub }) => (
-                <SettingRow key={key} label={label} sublabel={sub}>
-                  <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_coaching_enabled' && cfg.notif_coaching_enabled === false && key.startsWith('notif_'))} />
-                </SettingRow>
-              ))}
-            </div>
-
-            <div className="rounded-2xl bg-secondary/40 p-3">
-              <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Vehicle</div>
-              <SettingRow label="Maintenance reminders" sublabel="Vehicle service due and soon notifications">
-                <Toggle value={cfg.notif_maintenance_enabled !== false} onChange={v => updateNotificationSetting({ notif_maintenance_enabled: v })} disabled={cfg.notifications_enabled === false} />
-              </SettingRow>
-              <SettingRow label="No-trip nudge" sublabel="Remind after a period with no recorded trips">
-                <Toggle value={cfg.notif_inactive_nudge_enabled !== false} onChange={v => updateNotificationSetting({ notif_inactive_nudge_enabled: v })} disabled={cfg.notifications_enabled === false} />
-              </SettingRow>
-              <SettingRow label="Nudge after" sublabel="Days without a completed trip">
-                <select
-                  value={cfg.notif_inactive_nudge_days ?? 7}
-                  disabled={cfg.notif_inactive_nudge_enabled === false}
-                  onChange={e => updateNotificationSetting({ notif_inactive_nudge_days: Number(e.target.value) })}
-                  className="bg-card border border-border rounded-lg text-xs px-2 py-1 disabled:opacity-60"
-                >
-                  {[3, 5, 7, 14].map((days) => <option key={days} value={days}>{days} days</option>)}
-                </select>
-              </SettingRow>
-            </div>
-          </div>
-        </div>
-
-        {/* Driving Goals */}
-        <SectionTitle id="settings-driving-goals">Driving Goals</SectionTitle>
-        <p className="text-xs text-muted-foreground px-1 mb-3">
-          Weekly targets used by the Dashboard goals card.
-        </p>
-        <div className="space-y-4">
-          {[
-            { key: 'weekly_goal_harsh_brakes', label: 'Max harsh brakes', min: 0, max: 20, step: 1 },
-            { key: 'weekly_goal_speeding_events', label: 'Max speeding events', min: 0, max: 20, step: 1 },
-            { key: 'weekly_goal_min_avg_score', label: 'Minimum average score', min: 50, max: 100, step: 5 },
-            { key: 'weekly_goal_max_night_km', label: 'Max night km', min: 0, max: 100, step: 5 },
-            { key: 'weekly_goal_max_night_trips', label: 'Max night trips', min: 0, max: 14, step: 1 },
-            { key: 'ubi_optimal_annual_km', label: 'UBI optimal annual km', min: 3000, max: 30000, step: 500 },
-            { key: 'ubi_mileage_score_spread_km', label: 'UBI mileage spread km', min: 2000, max: 20000, step: 500 },
-          ].map(({ key, label, min, max, step }) => (
-            <div key={key} className="px-1">
-              <div className="flex justify-between text-xs mb-1.5">
-                <span className="flex items-center gap-2 font-medium">
-                  {label}
-                  {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
-                </span>
-                <span className="text-primary font-semibold">{cfg[key]}</span>
-              </div>
-              <input
-                type="range"
-                min={min}
-                max={max}
-                step={step}
-                value={cfg[key]}
-                onChange={e => updateCfg({ [key]: Number(e.target.value) })}
-                className="w-full accent-primary"
-              />
-              {key.startsWith('ubi_') && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Used only for the UBI-style mileage score assumption.
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Night Driving Window */}
-        <SectionTitle id="settings-night-window">Night Driving Window</SectionTitle>
-        <p className="text-xs text-muted-foreground px-1 mb-3">
-          Used for night-trip labels, goals, and safety scoring.
-        </p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { id: 'sunset', label: 'Sunset', sub: 'GPS-based' },
-              { id: 'custom', label: 'Custom', sub: `${cfg.night_start_time || NIGHT_START_TIME} to ${cfg.night_end_time || NIGHT_END_TIME}` },
-            ].map(opt => (
-              <button
-                key={opt.id}
-                onClick={() => updateNightMode(opt.id)}
-                className={`flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
-                  cfg.night_detection_mode === opt.id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
-                }`}
-              >
-                <div>
-                  <div className="text-sm font-medium">{opt.label}</div>
-                  <div className="text-xs">{opt.sub}</div>
-                </div>
-                {cfg.night_detection_mode === opt.id && <Check className="w-4 h-4" />}
-              </button>
-            ))}
-          </div>
-
-          <div className={`rounded-xl border p-3 ${cfg.night_detection_mode === 'custom' ? 'border-primary/30 bg-primary/5' : 'border-border bg-secondary/30'}`}>
-            <div className="flex items-center gap-2 text-sm font-medium mb-3">
-              <Clock className="w-4 h-4 text-primary" />
-              Custom night hours
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-xs font-medium">
-                Start
-                <input
-                  type="time"
-                  value={cfg.night_start_time || NIGHT_START_TIME}
-                  disabled={cfg.night_detection_mode !== 'custom'}
-                  onChange={e => updateCfg({ night_start_time: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                />
-              </label>
-              <label className="text-xs font-medium">
-                End
-                <input
-                  type="time"
-                  value={cfg.night_end_time || NIGHT_END_TIME}
-                  disabled={cfg.night_detection_mode !== 'custom'}
-                  onChange={e => updateCfg({ night_end_time: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
-                />
-              </label>
-            </div>
-          </div>
-
-          {cfg.night_detection_mode === 'sunset' && (
-            <div className="space-y-3">
-              <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
-                <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, Road Sage falls back to the custom window.
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { key: 'night_sunset_offset_minutes', label: 'Sunset offset', min: -120, max: 120 },
-                  { key: 'night_sunrise_offset_minutes', label: 'Sunrise offset', min: -120, max: 120 },
-                ].map(({ key, label, min, max }) => (
-                  <div key={key} className="rounded-xl border border-border bg-secondary/30 p-3">
-                    <div className="mb-1.5 flex justify-between text-xs">
-                      <span className="font-medium">{label}</span>
-                      <span className="font-semibold text-primary">{cfg[key] || 0} min</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={min}
-                      max={max}
-                      step={15}
-                      value={cfg[key] || 0}
-                      onChange={e => updateCfg({ [key]: Number(e.target.value) })}
-                      className="w-full accent-primary"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Detection Features */}
-        <SectionTitle id="settings-detection-thresholds">Detection Features</SectionTitle>
-        <SettingRow
-          icon={Info}
-          label="Driving Pattern Definitions"
-          sublabel="Explain aggression, defensive, jerk, focus, fuel band, and related trip metrics"
-          onClick={() => setPatternGuideOpen(true)}
-        >
-          <ChevronRight className="w-4 h-4 text-muted-foreground" />
-        </SettingRow>
-        <div className="flex items-start justify-between gap-3 px-1 mb-3">
-          <p className="text-xs text-muted-foreground">
-            Adjust sensitivity of driving event detection. Lower values = more sensitive.
-          </p>
-          <button
-            type="button"
-            onClick={() => setThresholdEditingEnabled(value => !value)}
-            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-              thresholdEditingEnabled ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : 'bg-secondary text-muted-foreground'
-            }`}
-          >
-            {thresholdEditingEnabled ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-            {thresholdEditingEnabled ? 'Editing' : 'Locked'}
-          </button>
-        </div>
-        {!thresholdEditingEnabled && (
-          <div className="mb-3 flex items-start gap-2 rounded-xl bg-secondary/70 px-3 py-2 text-xs text-muted-foreground">
-            <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            Sliders are locked to prevent accidental scoring changes.
-          </div>
-        )}
-        {thresholdEditingEnabled && (
-          <div className="mb-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            These settings directly change trip event detection, scoring, imports, and rescoring.
-          </div>
-        )}
-        <div className="mb-3 rounded-2xl bg-secondary/40 p-3">
-          <SettingRow
-            icon={Route}
-            label="Lane-change score"
-            sublabel="Highway-speed estimate only; use lane-change rate and simultaneous-braking detections in Safety scoring"
-          >
-            <Toggle
-              value={cfg.lane_change_score_enabled !== false}
-              onChange={v => updateCfg({ lane_change_score_enabled: v })}
-            />
-          </SettingRow>
-          <div className="px-1 pb-2 text-xs leading-relaxed text-muted-foreground">
-            Does not detect slow traffic below 65 km/h, curved-road lane changes, turn-signal use, or following-vehicle gaps. GPS-only detection may see 30-40% false positives in testing conditions; IMU-fused detection is closer to 10-15%. IMU calibration needs at least two GPS-confirmed harsh-brake events, so early trip segments may stay GPS-only.
-          </div>
-        </div>
-        <div className="mb-4 rounded-2xl border border-border bg-secondary/30 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold">Threshold calibration</div>
-              <div className="mt-1 text-xs text-muted-foreground">Analyse your driving and event feedback to suggest personalized detection thresholds.</div>
-            </div>
-            <button
-              type="button"
-              onClick={runCalibration}
-              disabled={calibLoading}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
-            >
-              {calibLoading ? 'Analysing...' : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
-            </button>
-          </div>
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-semibold">{PENALTY_SCALE_CALIBRATION.label}</div>
-              <div className="flex items-center gap-2">
-                {PENALTY_SCALE_CALIBRATION.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
-                <span className="font-mono">{PENALTY_SCALE_CALIBRATION.value}</span>
-              </div>
-            </div>
-            <div className="mt-1">{PENALTY_SCALE_CALIBRATION.calibration_note}</div>
-            <div className="mt-2 text-amber-800 dark:text-amber-200">
-              Status: {calibrationStatusLabel(PENALTY_SCALE_CALIBRATION.calibration_status)}
-              {PENALTY_SCALE_CALIBRATION.affected_metrics.length > 0 && (
-                <> - Affects {PENALTY_SCALE_CALIBRATION.affected_metrics.join(', ')}</>
-              )}
-            </div>
-          </div>
-          {calibProfile?.insufficient && (
-            <div className="mt-3 rounded-xl bg-card p-3 text-xs text-muted-foreground">
-              Needs {calibProfile.tripsNeeded} more trips or {calibProfile.kmNeeded} more km before calibration is reliable.
-              <div className="mt-2 h-2 rounded-full bg-secondary">
-                <div
-                  className="h-full rounded-full bg-primary"
-                  style={{ width: `${Math.min(100, ((15 - calibProfile.tripsNeeded) / 15) * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
-          {calibProfile && !calibProfile.insufficient && !calibProfile.appliedAt && (
-            <div className="mt-3 space-y-3">
-              <span className="inline-flex rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold capitalize text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
-                {calibProfile.confidence} confidence · {calibProfile.tripsAnalyzed} trips · {calibProfile.kmAnalyzed} km
-              </span>
-              {calibProfile.feedbackSummary?.total > 0 && (
-                <div className="rounded-xl bg-card p-3 text-xs text-muted-foreground">
-                  Used {calibProfile.feedbackSummary.total} event review{calibProfile.feedbackSummary.total === 1 ? '' : 's'} to nudge thresholds away from events marked wrong.
-                </div>
-              )}
-              <div className="overflow-hidden rounded-xl border border-border text-xs">
-                {Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => (
-                  <div key={key} className="grid grid-cols-4 gap-2 border-b border-border/50 p-2 last:border-0">
-                    <div className="col-span-1 truncate">{key.replace('threshold_', '').replace(/_/g, ' ')}</div>
-                    <div>{calibProfile.current[key]}</div>
-                    <div className="font-semibold text-primary">{value}</div>
-                    <div className={calibProfile.delta[key] >= 0 ? 'text-orange-500' : 'text-emerald-500'}>{calibProfile.delta[key] >= 0 ? '+' : ''}{calibProfile.delta[key]}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={applyCalibration} className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">Apply suggested thresholds</button>
-                <button type="button" onClick={dismissCalibration} className="rounded-xl border border-border px-3 py-2 text-xs font-semibold">Dismiss</button>
-              </div>
-            </div>
-          )}
-          {calibProfile?.appliedAt && (
-            <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
-              Calibrated to your driving · applied {new Date(calibProfile.appliedAt).toLocaleDateString()}
-            </div>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={rescoreTrips}
-              className="rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary"
-            >
-              {scoreMigrationSummary.mismatch_count > 0 ? 'Re-score outdated trips' : 'Re-score completed trips'}
-            </button>
-            {rescoreStatus && <span className="text-xs text-muted-foreground">{rescoreStatus}</span>}
-          </div>
-          {(rescoreProgress?.status === 'running' || autoRescoreVisible) && (
-            <div className="mt-3 rounded-xl border border-border bg-card p-3 text-xs">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold">
-                    {rescoreProgress?.status === 'running' ? 'Re-scoring trip history' : 'Automatic re-score ready'}
-                  </div>
-                  <div className="mt-1 text-muted-foreground">
-                    {rescoreProgress?.status === 'running'
-                      ? `${rescoreCompleted}/${rescoreTotal} completed`
-                      : `${scoreMigrationSummary.recent_mismatch_count} of ${scoreMigrationSummary.recent_completed_count} recent trips use older scoring inputs.`}
-                  </div>
-                </div>
-                <div className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                  {rescoreProgress?.status === 'running' ? `${rescoreProgressPct}%` : `>${Math.round((scoreMigrationSummary.auto_rescore_threshold_ratio || AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO) * 100)}%`}
-                </div>
-              </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${rescoreProgress?.status === 'running' ? rescoreProgressPct : Math.min(100, Math.round((scoreMigrationSummary.recent_mismatch_ratio || 0) * 100))}%` }}
-                />
-              </div>
-              <div className="mt-2 text-muted-foreground">
-                Older scores are recalculated with scoring version {scoreMigrationSummary.scoring_version || SCORING_VERSION} before they are mixed into recent baselines.
-              </div>
-            </div>
-          )}
-          {(scoreMigrationSummary.mismatch_count > 0 || scoreMigrationSummary.unavailable_score_count > 0) && (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
-              {scoreMigrationSummary.mismatch_count > 0 && (
-                <>
-                  <div className="font-semibold">Scoring model update available</div>
-                  <div className="mt-1">
-                    {scoreMigrationSummary.mismatch_count} completed trip{scoreMigrationSummary.mismatch_count === 1 ? '' : 's'} {scoreMigrationSummary.trips.some((item) => item.status === 'unknown_legacy_unrescored') ? 'are marked unknown legacy until re-scored for' : 'used a different scoring model than'} version {scoreMigrationSummary.scoring_version || SCORING_VERSION}. Re-score only when you want those stored scores updated.
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    {scoreMigrationSummary.trips.slice(0, 4).map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-card/70 px-2 py-1">
-                        <span className="truncate">{item.nickname || new Date(item.start_time).toLocaleDateString()}</span>
-                        <span className="shrink-0 text-amber-700 dark:text-amber-200">v{item.scoring_version || 'unknown'}</span>
-                      </div>
-                    ))}
-                    {scoreMigrationSummary.trips.length > 4 && (
-                      <div className="text-amber-700 dark:text-amber-200">+{scoreMigrationSummary.trips.length - 4} more</div>
-                    )}
-                  </div>
-                </>
-              )}
-              {scoreMigrationSummary.unavailable_score_count > 0 && (
-                <div className={scoreMigrationSummary.mismatch_count > 0 ? 'mt-3 border-t border-amber-200 pt-3 dark:border-amber-800/50' : ''}>
-                  {scoreMigrationSummary.unavailable_score_count} trip{scoreMigrationSummary.unavailable_score_count === 1 ? '' : 's'} currently have unavailable overall scores and will show a placeholder until re-scored.
-                </div>
-              )}
-            </div>
-          )}
-          <details className="mt-3 rounded-xl border border-border bg-card p-3 text-xs">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 font-semibold">
-              <span>Calibration registry</span>
-              <span className="flex items-center gap-2">
-                <CalibrationStatusTag />
-                {PROVISIONAL_SCORING_CONSTANTS.length}
-              </span>
-            </summary>
-            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
-              {PROVISIONAL_SCORING_CONSTANTS.map((entry) => (
-                <div key={entry.key} className="rounded-lg bg-secondary/60 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">{entry.label}</span>
-                    <span className="flex items-center gap-2">
-                      {entry.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
-                      <span className="font-mono text-primary">{typeof entry.value === 'object' ? 'policy' : String(entry.value)}</span>
-                    </span>
-                  </div>
-                  <div className="mt-1 text-muted-foreground">{entry.calibration_note}</div>
-                  {entry.affected_metrics.length > 0 && (
-                    <div className="mt-1 text-muted-foreground">
-                      Affects {entry.affected_metrics.join(', ')}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </details>
-        </div>
-        <div className="space-y-4">
-          {[
-            { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', min: 2, max: 8, step: 0.5 },
-            { key: 'threshold_rapid_accel_ms2', label: 'Rapid Acceleration', unit: 'm/s²', min: 1.5, max: 6, step: 0.5 },
-            { key: 'threshold_stop_start_decel_ms2', label: 'Stop-Start Decel', unit: 'm/s²', min: 1.5, max: 5, step: 0.25 },
-            { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn Low', unit: 'g', min: 0.2, max: 0.6, step: 0.05 },
-            { key: 'threshold_sharp_turn_g_medium', label: 'Sharp Turn Medium', unit: 'g', min: 0.25, max: 0.8, step: 0.05 },
-            { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', min: 0.35, max: 1.0, step: 0.05 },
-            { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 160, step: 5 },
-            { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
-            { key: 'threshold_eco_cruise_min_kmh', label: 'Eco Cruise Min', unit: 'km/h', min: 20, max: 90, step: 5 },
-            { key: 'threshold_eco_cruise_max_kmh', label: 'Eco Cruise Max', unit: 'km/h', min: 80, max: 140, step: 5 },
-            { key: 'eco_min_moving_kmh', label: 'Eco Moving Floor', unit: 'km/h', min: 0, max: 30, step: 1 },
-            { key: 'eco_cruise_score_multiplier', label: 'Eco Cruise Multiplier', unit: 'x', min: 50, max: 200, step: 5 },
-            { key: 'eco_idle_penalty_multiplier', label: 'Eco Idle Multiplier', unit: 'x', min: 0, max: 300, step: 5 },
-            { key: 'eco_idle_max_penalty', label: 'Eco Idle Cap', unit: 'pts', min: 0, max: 50, step: 1 },
-            { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },
-            { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },
-          ].map(({ key, label, unit, min, max, step }) => (
-            <div key={key} className="px-1">
-              <div className="flex justify-between text-xs mb-1.5">
-                <span className="font-medium">{label}</span>
-                <span className="flex items-center gap-2 text-primary font-semibold">
-                  {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
-                    <CalibrationStatusTag />
-                  )}
-                  {(ecoScoreWarning(key) || (thresholdEditingEnabled && sliderWarning(cfg[key], min, max))) && (
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] ${ecoScoreWarning(key) ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'}`}>
-                      {ecoScoreWarning(key) || sliderWarning(cfg[key], min, max)}
-                    </span>
-                  )}
-                  {cfg[key]} {unit}
-                </span>
-              </div>
-              <input
-                type="range" min={min} max={max} step={step} value={cfg[key]}
-                disabled={!thresholdEditingEnabled}
-                onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
-                className="w-full accent-primary disabled:opacity-45"
-              />
-            </div>
-          ))}
-          <div className="pt-3 border-t border-border/70">
-            <SettingRow
-              icon={SlidersHorizontal}
-              label="Advanced Safety Detection"
-              sublabel={cfg.advanced_safety_detection_enabled === false ? 'Heading events are still collected as diagnostic-only; score-affecting advanced safety signals are off' : 'Low-confidence GPS safety signatures can contribute to score context'}
-            >
-              <Toggle
-                value={cfg.advanced_safety_detection_enabled !== false}
-                onChange={v => updateCfg({ advanced_safety_detection_enabled: v })}
-              />
-            </SettingRow>
-            <div className="space-y-4">
-              {[
-                { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
-                { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
-                { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Heading events are visible as diagnostic-only when Advanced Safety is off; enabling it allows eligible advanced safety context to affect scoring.' },
-                { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 6, max: 8, step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
-                { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
-                { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },
-              ].map(({ key, label, unit, min, max, step, help }) => (
-                <div key={key} className={`px-1 ${cfg.advanced_safety_detection_enabled === false ? 'opacity-60' : ''}`}>
-                  <div className="flex justify-between text-xs mb-1.5">
-                    <span className="font-medium">{label}</span>
-                    <span className="flex items-center gap-2 text-primary font-semibold">
-                      {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
-                        <CalibrationStatusTag />
-                      )}
-                      {sliderWarning(cfg[key], min, max) && thresholdEditingEnabled && cfg.advanced_safety_detection_enabled !== false && (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                          {sliderWarning(cfg[key], min, max)}
-                        </span>
-                      )}
-                      {cfg[key]} {unit}
-                    </span>
-                  </div>
-                  <input
-                    type="range" min={min} max={max} step={step} value={cfg[key]}
-                    disabled={!thresholdEditingEnabled || cfg.advanced_safety_detection_enabled === false}
-                    onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
-                    className="w-full accent-primary disabled:opacity-45"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">{help}</p>
-                </div>
-              ))}
-              <p className="px-1 text-xs text-muted-foreground">
-                Commute route matching groups start/end locations within approximately {COMMUTE_MATCH_RADIUS_M} m.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Advanced Models */}
-        <SectionTitle id="settings-advanced-models">Advanced Models</SectionTitle>
-        <div className="rounded-2xl bg-secondary/40 p-3">
-          <SettingRow
-            icon={SlidersHorizontal}
-            label="Sensor fusion model"
-            sublabel={motionSupport.supported ? 'Combine GPS, device motion, gyroscope, and Android activity context' : motionSupport.note}
-          >
-            <div className="flex items-center gap-2">
-              {motionSupport.permissionRequired && permissionStatus?.motionSensors !== 'granted' && (
-                <button
-                  className="text-xs font-semibold text-primary"
-                  onClick={async e => {
-                    e.stopPropagation();
-                    await handleMotionPermission();
-                  }}
-                >
-                  Enable
-                </button>
-              )}
-              <Toggle
-                value={cfg.sensor_fusion_enabled !== false}
-                onChange={v => updateCfg({ sensor_fusion_enabled: v })}
-                disabled={!motionSupport.supported}
-              />
-            </div>
-          </SettingRow>
-          <SettingRow
-            icon={AlertTriangle}
-            label="Crash / incident detection"
-            sublabel="Detect impact-like motion followed by little movement"
-          >
-            <Toggle
-              value={cfg.crash_detection_enabled !== false}
-              onChange={v => updateCfg({ crash_detection_enabled: v })}
-              disabled={cfg.sensor_fusion_enabled === false}
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Bell}
-            label="Emergency workflow"
-            sublabel="Optional local check-in notice after a possible incident; no SMS or paid emergency service is used"
-          >
-            <Toggle
-              value={cfg.emergency_workflow_enabled === true}
-              onChange={v => updateCfg({ emergency_workflow_enabled: v })}
-              disabled={cfg.crash_detection_enabled === false}
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Route}
-            label="Snap route to roads (OSRM)"
-            sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
-          >
-            <Toggle
-              value={cfg.map_matching_enabled !== false && Boolean(cfg.osrm_map_matching_url) && cfg.osrm_data_sharing_consented === true}
-              onChange={enableOsrmMapMatching}
-            />
-          </SettingRow>
-          <div className="px-1 py-3 border-b border-border/50">
-            <div className="flex justify-between gap-3 text-xs mb-1.5">
-              <span className="font-medium">Network timeout</span>
-              <span className="text-primary font-semibold">
-                {Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)} sec
-              </span>
-            </div>
-            <input
-              type="range"
-              min={5}
-              max={30}
-              step={1}
-              value={Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)}
-              onChange={event => updateCfg({ osrm_timeout_ms: Number(event.target.value) * 1000 })}
-              className="w-full accent-primary"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>5 sec</span>
-              <span>30 sec</span>
-            </div>
-          </div>
-          <div className="px-1 py-3 border-b border-border/50">
-            <div className="mb-1 text-xs font-medium">Trusted OSRM endpoint</div>
-            <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
-              <input
-                value={osrmEndpointDraft}
-                onChange={event => setOsrmEndpointDraft(event.target.value)}
-                placeholder="https://your-osrm.example"
-                className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
-              />
-              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                <span>
-                  OSRM endpoints receive sampled GPS coordinate pairs. Save only a private or trusted server.
-                </span>
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={requestSaveOsrmEndpoint}
-                disabled={osrmHealthCheckState === 'checking'}
-                className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-              >
-                {osrmHealthCheckState === 'checking' ? 'Checking...' : 'Save endpoint'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOsrmEndpointDraft('');
-                  saveOsrmEndpoint('', true);
-                }}
-                disabled={!cfg.osrm_map_matching_url && !osrmEndpointDraft}
-                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
-              >
-                Turn off + clear
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {PUBLIC_OSRM_DEMO_URL}. The public demo is not saved or used by Road Sage because it receives route points and has no service guarantee.</p>
-            <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-              {cfg.osrm_health_status === 'connected' && cfg.osrm_last_reachable_at
-                ? `Connected. OSRM last reachable: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`
-                : cfg.osrm_health_status === 'unreachable'
-                  ? `Unreachable${cfg.osrm_last_health_error ? `: ${cfg.osrm_last_health_error}` : '.'}`
-                  : cfg.map_matching_enabled === false
-                ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
-                  : cfg.osrm_map_matching_url
-                    ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
-                      ? 'Blocked: the public OSRM demo cannot be used as a route-snapping endpoint.'
-                      : cfg.osrm_data_sharing_consented === true
-                        ? 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
-                        : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
-                  : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
-            </div>
-          </div>
-          <SettingRow
-            icon={Target}
-            label="Historical context estimate"
-            sublabel="Estimate current context from your history, repeated event areas, and time"
-          >
-            <Toggle
-              value={cfg.predictive_route_risk_enabled !== false}
-              onChange={v => updateCfg({ predictive_route_risk_enabled: v })}
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Volume2}
-            label="Live voice alerts"
-            sublabel="Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, repeated-event-area, and incident alerts"
-          >
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  runVoiceTest();
-                }}
-                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
-              >
-                Test
-              </button>
-              <Toggle
-                value={cfg.voice_alerts_enabled !== false}
-                onChange={v => updateCfg({ voice_alerts_enabled: v })}
-              />
-            </div>
-          </SettingRow>
-          {voiceTestStatus && (
-            <div className="px-1 pb-3 text-xs text-muted-foreground">
-              {voiceTestStatus}
-            </div>
-          )}
-          <SettingRow
-            icon={Bluetooth}
-            label="OBD-II Bluetooth"
-            sublabel={obdSupport.supported ? 'BLE OBD-II parsing is available for compatible adapters' : obdSupport.note}
-          >
-            <div className="flex items-center gap-2">
-              <button
-                className="text-xs font-semibold text-primary disabled:text-muted-foreground"
-                disabled={!obdSupport.supported}
-                onClick={async e => {
-                  e.stopPropagation();
-                  await handleObdPairing();
-                }}
-              >
-                Pair
-              </button>
-              <Toggle
-                value={cfg.obd_bluetooth_enabled === true}
-                onChange={v => updateCfg({ obd_bluetooth_enabled: v })}
-                disabled={!obdSupport.supported}
-              />
-            </div>
-          </SettingRow>
-          {obdPairingStatus && (
-            <div className="px-1 pb-3 text-xs text-muted-foreground">
-              {obdPairingStatus}
-            </div>
-          )}
-        </div>
-
-        {/* Phone Use Detection */}
-        <SectionTitle id="settings-phone-use">Phone Use Detection</SectionTitle>
-        <div className="rounded-2xl bg-secondary/40 p-3">
-          <SettingRow
-            icon={Smartphone}
-            label="Usage Access status"
-            sublabel={
-              permissionStatus?.phoneUsageAccess === 'granted'
-                ? 'Phone-use scoring can use confirmed Android Usage Access evidence'
-                : 'Phone-use scoring is unavailable until Android Usage Access is enabled'
-            }
-          >
-            <div className="flex items-center gap-2">
-              <PermissionBadge value={isAndroid() ? permissionStatus?.phoneUsageAccess : 'unavailable'} />
-              {isAndroid() && permissionStatus?.phoneUsageAccess !== 'granted' && (
-                <button
-                  className="text-xs font-semibold text-primary"
-                  onClick={async e => {
-                    e.stopPropagation();
-                    await openAndroidUsageAccessSettings();
-                    await refreshPermissions();
-                  }}
-                >
-                  Enable
-                </button>
-              )}
-            </div>
-          </SettingRow>
-          <SettingRow
-            icon={Focus}
-            label="Detect phone use while driving"
-            sublabel="Use Android Usage Access for scoring; retain GPS proxy counts for diagnostics only"
-          >
-            <Toggle
-              value={cfg.phone_use_detection_enabled !== false}
-              onChange={v => updateCfg({ phone_use_detection_enabled: v })}
-            />
-          </SettingRow>
-          <div className={`${cfg.phone_use_detection_enabled === false ? 'pointer-events-none opacity-50' : ''}`}>
-            <SettingRow
-              label="Phone use live alert"
-              sublabel="Send an immediate warning only for Android Usage Access detections"
-            >
-              <Toggle
-                value={cfg.phone_use_live_alert_enabled !== false}
-                onChange={v => updateCfg({ phone_use_live_alert_enabled: v, notif_phone_use_alert_enabled: v })}
-                disabled={cfg.phone_use_detection_enabled === false}
-              />
-            </SettingRow>
-            <div className="px-1 py-3 border-b border-border/50">
-              <div className="mb-2 text-sm font-medium">Detection sensitivity</div>
-              <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
-                {[
-                  { id: 'low', label: 'Low', sub: 'Fewer false positives' },
-                  { id: 'medium', label: 'Medium', sub: 'Recommended' },
-                  { id: 'high', label: 'High', sub: 'More sensitive' },
-                ].map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => updateCfg({ phone_use_sensitivity: option.id })}
-                    disabled={cfg.phone_use_detection_enabled === false}
-                    className={`min-w-0 rounded-xl border p-2 text-left transition-all disabled:opacity-50 ${
-                      (cfg.phone_use_sensitivity || 'medium') === option.id
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border text-muted-foreground hover:border-primary/40'
-                    }`}
-                  >
-                    <div className="text-xs font-semibold">{option.label}</div>
-                    <div className="mt-0.5 break-words text-[11px] leading-tight">{option.sub}</div>
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low'
-                  ? scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
-                  : (cfg.phone_use_sensitivity || 'medium') === 'high'
-                    ? scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
-                    : scoringValue('PHONE_CONFIDENCE_THRESHOLD').toFixed(2)} confidence.
-              </p>
-            </div>
-            <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">
-              <Toggle
-                value={cfg.phone_use_show_on_map !== false}
-                onChange={v => updateCfg({ phone_use_show_on_map: v })}
-                disabled={cfg.phone_use_detection_enabled === false}
-              />
-            </SettingRow>
-            <SettingRow label="Include in trip score" sublabel="Apply confirmed Android Usage Access phone-use penalties to Safety">
-              <Toggle
-                value={cfg.phone_use_affects_score !== false}
-                onChange={v => updateCfg({ phone_use_affects_score: v })}
-                disabled={cfg.phone_use_detection_enabled === false}
-              />
-            </SettingRow>
-            <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
-              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              Usage Access is needed for accurate phone detection. Without it, no phone-use score is shown; GPS proxy counts appear in diagnostics only.
-            </div>
-            <div className="mt-3 rounded-2xl border border-border bg-card p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm font-semibold">Expert phone-use tuning</div>
-                  <div className="text-xs text-muted-foreground">Backend detection knobs exposed for calibration and testing.</div>
-                </div>
-                <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${thresholdEditingEnabled ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : 'bg-secondary text-muted-foreground'}`}>
-                  {thresholdEditingEnabled ? 'Editable' : 'Locked'}
-                </span>
-              </div>
-              <div className="space-y-3">
-                {[
-                  { key: 'phone_micro_steer_count', label: 'Micro-steer count', min: 6, max: 8, step: 1, unit: 'turns' },
-                  { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },
-                  { key: 'phone_lane_drift_deg', label: 'Lane drift angle', min: 3, max: 18, step: 1, unit: 'deg' },
-                  { key: 'phone_coupling_threshold', label: 'Coupling threshold', min: 0.05, max: 0.4, step: 0.05, unit: '' },
-                  { key: 'phone_confidence_threshold', label: 'Confidence threshold', min: 0.15, max: 0.8, step: 0.05, unit: '' },
-                  { key: 'phone_min_window_s', label: 'Minimum window', min: 2, max: 12, step: 1, unit: 's' },
-                ].map(({ key, label, min, max, step, unit }) => (
-                  <div key={key}>
-                    <div className="mb-1 flex justify-between text-xs">
-                      <span className="flex items-center gap-2 font-medium">
-                        {label}
-                        {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
-                      </span>
-                      <span className="font-semibold text-primary">{cfg[key]} {unit}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={min}
-                      max={max}
-                      step={step}
-                      value={cfg[key]}
-                      disabled={!thresholdEditingEnabled || cfg.phone_use_detection_enabled === false}
-                      onChange={e => updateCfg({ [key]: Number(e.target.value) })}
-                      className="w-full accent-primary disabled:opacity-45"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Speed Warning */}
-        <SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>
-        <SettingRow
-          icon={Bell}
-          label="Live Speed Warning"
-          sublabel={cfg.speed_warning_enabled === false ? 'Dashboard speed warnings are disabled' : 'Warn during a trip when speed exceeds the fallback limit plus margin'}
-        >
-          <Toggle
-            value={cfg.speed_warning_enabled !== false}
-            onChange={v => updateCfg({ speed_warning_enabled: v })}
-          />
-        </SettingRow>
-        <SettingRow
-          icon={Gauge}
-          label="Get posted speed limits"
-          sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"
-        >
-          <Toggle
-            value={cfg.speed_limit_lookup_enabled !== false}
-            onChange={v => updateCfg({ speed_limit_lookup_enabled: v })}
-          />
-        </SettingRow>
-        <SettingRow
-          icon={Gauge}
-          label="Fallback limit country"
-          sublabel={`Used when OpenStreetMap has no maxspeed tag; Trip Detail shows the ${SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[speedLimitDefaultCountryKey(cfg)] || 'Global'} fallback profile in compliance provenance`}
-        >
-          <select
-            className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
-            value={String(cfg.country_code || cfg.configurable_country_defaults || 'global').toLowerCase()}
-            onChange={event => {
-              const value = event.target.value;
-              updateCfg({
-                country_code: value === 'global' ? '' : value.toUpperCase(),
-                configurable_country_defaults: value,
-              });
-            }}
-          >
-            <option value="global">Global</option>
-            <option value="ca">Canada</option>
-            <option value="us">United States</option>
-            <option value="gb">United Kingdom</option>
-            <option value="de">Germany</option>
-            <option value="au">Australia</option>
-            <option value="fr">France</option>
-          </select>
-        </SettingRow>
-        <SettingRow
-          icon={Droplets}
-          label="Get trip weather"
-          sublabel="When you tap Get Road Data, sends a privacy-safe route point and date to Open-Meteo"
-        >
-          <Toggle
-            value={cfg.weather_context_enabled !== false}
-            onChange={v => updateCfg({ weather_context_enabled: v })}
-          />
-        </SettingRow>
-        <SettingRow
-          icon={Info}
-          label="Automatic road-data fetching"
-          sublabel="On by default. Saved trips fetch OpenStreetMap speed limits and Open-Meteo weather when internet is available. OSRM snapping still stays manual."
-        >
-          <Toggle
-            value={cfg.external_context_auto_fetch_enabled !== false}
-            onChange={updateExternalContextAutoFetch}
-          />
-        </SettingRow>
-        <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
-          <div className="font-semibold text-foreground">What Get Road Data does</div>
-          <div className="mt-2 grid gap-2">
-            <div>
-              <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
-              {cfg.speed_limit_lookup_enabled === false
-                ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
-                : `sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
-            </div>
-            <div>
-              <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
-              {cfg.weather_context_enabled === false
-                ? 'skips Open-Meteo; scores do not get weather adjustment.'
-                : 'sends a privacy-safe route point and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
-            </div>
-            <div>
-              <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}:</span>{' '}
-              {cfg.map_matching_enabled === false
-                ? 'skips OSRM; map/playback keep the original GPS line.'
-                : cfg.osrm_map_matching_url
-                  ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
-                    ? 'blocked because the public OSRM demo is reference text only.'
-                    : cfg.osrm_data_sharing_consented === true
-                      ? 'sends sampled GPS points to your trusted OSRM endpoint and may make map/playback follow roads more cleanly.'
-                      : 'will be skipped until OSRM data-sharing consent is saved.'
-                  : 'will be skipped until an OSRM endpoint is added.'}
-            </div>
-            <div>
-              <span className="font-semibold text-foreground">Automatic road-data fetching {cfg.external_context_auto_fetch_enabled !== false ? 'ON' : 'OFF'}:</span>{' '}
-              {cfg.external_context_auto_fetch_enabled !== false
-                ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
-                : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
-            </div>
-          </div>
-        </div>
-        <div className="px-1">
-          <div className="flex justify-between text-xs mb-1.5">
-            <span className="font-medium">Warn when over limit by</span>
-            <span className="text-primary font-semibold">+{cfg.threshold_speed_over_kmh ?? 5} km/h</span>
-          </div>
-          <input
-            type="range" min={5} max={30} step={5}
-            value={cfg.threshold_speed_over_kmh ?? 5}
-            disabled={cfg.speed_warning_enabled === false}
-            onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}
-            className="w-full accent-primary disabled:opacity-45"
-          />
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
-            <span>+5 km/h (strict)</span>
-            <span>+30 km/h (lenient)</span>
-          </div>
-        </div>
-
-        {/* Privacy */}
-        <SectionTitle id="settings-privacy-data">Privacy & Data</SectionTitle>
-        <div>
-          <SettingRow
-            icon={Shield}
-            label="Privacy Policy"
-            sublabel="All data is stored locally on your device"
-            onClick={showPrivacyPolicy}
-          >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </SettingRow>
-          <SettingRow
-            icon={Target}
-            label="Share anonymized calibration labels"
-            sublabel="Uploads only summary features and survey labels. Raw GPS, addresses, trip notes, and route geometry stay local."
-          >
-            <Checkbox
-              checked={cfg.calibration_sharing_enabled === true}
-              onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
-            />
-          </SettingRow>
-          <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <MapPin className="h-4 w-4 text-primary" />
-                  Privacy Zones
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">Mask sensitive places from maps, CSV exports, and backups.</div>
-              </div>
-              <span className="rounded-full bg-card px-2 py-1 text-xs font-semibold">{privacyZones.length}</span>
-            </div>
-            <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_88px]">
-              <input
-                value={privacyDraft.label}
-                onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, label: event.target.value }))}
-                className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
-                placeholder="Home, work, school"
-              />
-              <input
-                type="number"
-                inputMode="numeric"
-                min={PRIVACY_RADIUS_MIN_M}
-                max={PRIVACY_RADIUS_MAX_M}
-                step="10"
-                value={privacyDraft.radius_m}
-                onChange={(event) => {
-                  const { value } = event.target;
-                  setPrivacyDraftRadiusError('');
-                  setPrivacyDraft((draft) => ({
-                    ...draft,
-                    radius_m: value,
-                  }));
-                }}
-                onBlur={commitPrivacyDraftRadius}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.currentTarget.blur();
-                  }
-                }}
-                className={`min-w-0 rounded-xl border bg-card px-3 py-2 text-sm ${privacyDraftRadiusError ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
-                aria-label="Privacy zone radius in meters"
-              />
-            </div>
-            <div className={`mt-1 flex justify-end text-[11px] font-medium ${privacyDraftRadiusError ? 'text-red-500' : 'text-muted-foreground'}`}>
-              Min 50 m · Max 1000 m
-            </div>
-            {privacyDraftRadiusError && (
-              <div className="mt-1 text-right text-[11px] font-medium text-red-500">
-                {privacyDraftRadiusError}
-              </div>
-            )}
-            <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
-              Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={addCurrentPrivacyZone}
-                className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
-              >
-                <LocateFixed className="h-3.5 w-3.5" />
-                Add Current
-              </button>
-              <button
-                type="button"
-                onClick={() => savePrivacyZone(parkedLocation, 'Parked location')}
-                disabled={!parkedLocation}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add Parked
-              </button>
-            </div>
-            {privacyZones.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {privacyZones.map((zone) => (
-                  <div key={zone.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-card px-3 py-2 text-xs">
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold">{zone.label}</div>
-                      <div className="text-muted-foreground">{Math.round(zone.radius_m)} m mask radius</div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min={PRIVACY_RADIUS_MIN_M}
-                        max={PRIVACY_RADIUS_MAX_M}
-                        step="10"
-                        value={privacyRadiusDrafts[zone.id] ?? String(Math.round(zone.radius_m))}
-                        onChange={(event) => {
-                          const { value } = event.target;
-                          setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: value }));
-                          setPrivacyZoneRadiusErrors((errors) => {
-                            if (!errors[zone.id]) return errors;
-                            const next = { ...errors };
-                            delete next[zone.id];
-                            return next;
-                          });
-                        }}
-                        onBlur={(event) => updatePrivacyZoneRadius(zone, event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.currentTarget.blur();
-                          }
-                        }}
-                        className={`h-8 w-20 rounded-lg border bg-background px-2 text-right text-xs font-semibold ${privacyZoneRadiusErrors[zone.id] ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
-                        aria-label={`Radius in meters for ${zone.label}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => deletePrivacyZone(zone.id)}
-                        className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-red-500"
-                        aria-label={`Delete ${zone.label} privacy zone`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    {privacyZoneRadiusErrors[zone.id] && (
-                      <div className="basis-full text-right text-[11px] font-medium text-red-500">
-                        {privacyZoneRadiusErrors[zone.id]}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <SettingRow
-            icon={Download}
-            label="Export All Trips"
-            sublabel="Download as CSV file"
-            onClick={handleExportAll}
-          >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </SettingRow>
-          <SettingRow
-            icon={Download}
-            label="Export Full Backup"
-            sublabel="JSON with trips, GPS route points, events, vehicles, and settings"
-            onClick={handleExportBackup}
-          >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </SettingRow>
-          <SettingRow
-            icon={Upload}
-            label="Import Backup"
-            sublabel="Restore a Road Sage JSON backup into local storage"
-            onClick={() => importInputRef.current?.click()}
-          >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </SettingRow>
-          <SettingRow
-            icon={Info}
-            label="Data Retention"
-            sublabel="Keep local trip history on this device"
-          >
-            <select
-              value={cfg.data_retention_days}
-              onChange={e => updateRetention(Number(e.target.value))}
-              className="bg-card border border-border rounded-lg text-xs px-2 py-1"
-            >
-              <option value={90}>90 days</option>
-              <option value={365}>1 year</option>
-              <option value={0}>Forever</option>
-            </select>
-          </SettingRow>
-          <SettingRow
-            icon={Trash2}
-            label="Delete All Trips"
-            sublabel="Permanently removes all trip data"
-            danger
-            onClick={handleDeleteAllTrips}
-          >
-            <ChevronRight className="w-4 h-4 text-red-400" />
-          </SettingRow>
-        </div>
-      </div>
-
-      <input
-        ref={importInputRef}
-        type="file"
-        accept="application/json,.json"
-        className="hidden"
-        onChange={handleImportBackup}
+      <SettingsNavigator
+        ctx={settingsContext}
+        settingsSearch={settingsSearch}
+        setSettingsSearch={setSettingsSearch}
+        settingSearchResults={settingSearchResults}
       />
+
+      <Dialog open={backupExportOpen} onOpenChange={(open) => {
+        if (backupExportBusy) return;
+        setBackupExportOpen(open);
+        if (!open) {
+          setBackupExportPassword('');
+          setBackupExportConfirm('');
+          setBackupExportError('');
+          setBackupExportPasswordVisible(false);
+        }
+      }}>
+        <DialogContent className={PASSWORD_DIALOG_CONTENT_CLASS}>
+          <DialogHeader>
+            <DialogTitle>{backupExportMode === 'csv' ? 'Export Trips' : 'Export Backup'}</DialogTitle>
+            <DialogDescription>
+              {backupExportMode === 'csv'
+                ? 'Protect your completed trip CSV with a password before saving the encrypted export file. Includes completed trips, score fields, timestamps, distances, route/event fields that export sanitizers allow, and trip metadata.'
+                : 'Protect the backup with a password before saving it. Includes trips, GPS route points after privacy masking, driving events, vehicles, safe settings, saved filters, calibration metadata, and privacy-zone metadata without private center coordinates.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <BackupPasswordSecurityPanel />
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              {backupExportMode === 'csv'
+                ? 'The export is encrypted locally before download. You will need this password to open it later.'
+                : 'Backups remove privacy-zone center coordinates and mask protected route/event data, but the file still contains sensitive trip history. Anyone with this file and password can restore it.'}
+            </div>
+            {backupExportError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                {backupExportError}
+              </div>
+            )}
+            <label className="block text-sm font-medium">
+              Export password
+              <div className="mt-1 flex rounded-lg border border-border bg-card focus-within:border-primary">
+                <input
+                  type={backupExportPasswordVisible ? 'text' : 'password'}
+                  value={backupExportPassword}
+                  onChange={(event) => {
+                    setBackupExportError('');
+                    setBackupExportPassword(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH));
+                  }}
+                  className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
+                  autoComplete="new-password"
+                  placeholder="12+ chars, mixed case, number, symbol"
+                  maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                  aria-label="Export password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupExportPasswordVisible((visible) => !visible)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-r-lg text-muted-foreground hover:bg-secondary"
+                  aria-label={backupExportPasswordVisible ? 'Hide export password' : 'Show export password'}
+                >
+                  {backupExportPasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
+            <label className="block text-sm font-medium">
+              Confirm export password
+              <div className={`mt-1 flex rounded-lg border bg-card focus-within:border-primary ${backupExportConfirm && !backupPasswordsMatch ? 'border-red-300' : 'border-border'}`}>
+                <input
+                  type={backupExportPasswordVisible ? 'text' : 'password'}
+                  value={backupExportConfirm}
+                  onChange={(event) => setBackupExportConfirm(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH))}
+                  className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none disabled:opacity-50"
+                  autoComplete="new-password"
+                  placeholder="Retype export password"
+                  maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                  aria-label="Confirm export password"
+                />
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center text-muted-foreground">
+                  <KeyRound className="h-4 w-4" />
+                </div>
+              </div>
+            </label>
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-4 gap-1" aria-hidden="true">
+                {[1, 2, 3, 4].map((level) => (
+                  <div
+                    key={level}
+                    className={`h-1.5 rounded-full ${
+                      backupPasswordStrengthScore >= level
+                        ? backupPasswordStrong
+                          ? 'bg-green-500'
+                          : 'bg-amber-500'
+                        : 'bg-secondary'
+                    }`}
+                  />
+                ))}
+              </div>
+              <div className={`text-xs font-medium ${backupPasswordStrong && backupPasswordsMatch ? 'text-green-600' : 'text-amber-600'}`}>
+                {backupPasswordStrong
+                  ? backupPasswordsMatch
+                    ? `${backupPasswordStrengthLabel} password`
+                    : 'Passwords must match'
+                  : `${backupExportValidation.message || 'Password requirements are incomplete.'} Current strength: ${backupPasswordStrengthLabel}`}
+              </div>
+            </div>
+            <BackupPasswordChecklist checks={backupExportValidation.checks} />
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setBackupExportOpen(false)}
+              disabled={backupExportBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={performExportBackup}
+              disabled={!backupExportReady || backupExportBusy}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {backupExportBusy ? 'Exporting...' : backupExportMode === 'csv' ? 'Export Trips' : 'Export Backup'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={backupImportOpen} onOpenChange={(open) => {
+        if (backupImportBusy) return;
+        setBackupImportOpen(open);
+        if (!open) {
+          setPendingBackupImportFile(null);
+          setBackupImportPassword('');
+          setBackupImportError('');
+          setBackupImportPasswordVisible(false);
+        }
+      }}>
+        <DialogContent className={PASSWORD_DIALOG_CONTENT_CLASS}>
+          <DialogHeader>
+            <DialogTitle>Import Backup</DialogTitle>
+            <DialogDescription>
+              {pendingBackupImportIsEncrypted
+                ? 'Enter the password used when this backup was created.'
+                : 'Enter the password used when this Road Sage backup was exported.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <BackupPasswordSecurityPanel mode="import" />
+            <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
+              Importing merges trips, route points, driving events, vehicles, saved filters, and safe settings into local storage. Privacy-zone coordinates are not restored; re-add private places after import if needed.
+            </div>
+            {backupImportError === 'wrong_password' && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                Wrong password. Road Sage could not decrypt this `.rsbackup`; check the password and try again.
+              </div>
+            )}
+            {backupImportError === 'password_invalid' && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                {backupImportValidation.message || 'Enter a valid backup password.'}
+              </div>
+            )}
+            {backupImportError === 'password_required' && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                This backup is encrypted. Enter the password that was used when the `.rsbackup` was created.
+              </div>
+            )}
+            <label className="block text-sm font-medium">
+              Backup password
+              <div className={`mt-1 flex rounded-lg border bg-card focus-within:border-primary ${backupImportPassword && !backupImportValidation.valid ? 'border-red-300' : 'border-border'}`}>
+                <input
+                  type={backupImportPasswordVisible ? 'text' : 'password'}
+                  value={backupImportPassword}
+                  onChange={(event) => {
+                    setBackupImportError('');
+                    setBackupImportPassword(event.target.value.slice(0, BACKUP_PASSWORD_MAX_LENGTH));
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') handleImportPasswordSubmit();
+                  }}
+                  className="min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 text-sm outline-none"
+                  autoComplete="current-password"
+                  placeholder="Password for this .rsbackup"
+                  maxLength={BACKUP_PASSWORD_MAX_LENGTH}
+                  aria-label="Backup import password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupImportPasswordVisible((visible) => !visible)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-r-lg text-muted-foreground hover:bg-secondary"
+                  aria-label={backupImportPasswordVisible ? 'Hide import password' : 'Show import password'}
+                >
+                  {backupImportPasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
+            <div className={`text-xs font-medium ${backupImportValidation.valid ? 'text-green-600' : 'text-muted-foreground'}`}>
+              Backup passwords must be {BACKUP_PASSWORD_MIN_LENGTH}-{BACKUP_PASSWORD_MAX_LENGTH} characters. Imports accept older 12+ character backup passwords even if they do not meet the current export-strength rules.
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setBackupImportOpen(false)}
+              disabled={backupImportBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleImportPasswordSubmit}
+              disabled={!backupImportValidation.valid || backupImportBusy}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {backupImportBusy ? 'Importing...' : 'Import'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={osrmConsentOpen} onOpenChange={(open) => {
         setOsrmConsentOpen(open);
@@ -2718,13 +1983,16 @@ export default function Settings() {
               Road Sage will send sampled GPS coordinate pairs from one selected trip at a time to the OSRM endpoint you save. This happens only when you tap Get Road Data; each continuous route segment sends up to 100 sampled coordinate pairs, with privacy-zone gaps excluded.
             </DialogDescription>
           </DialogHeader>
+          <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
+            The endpoint can learn route shape, timing context, and your network metadata for those samples. Road Sage saves only HTTPS endpoints that pass the OSRM health check and records the verified domain before route snapping can run.
+          </div>
           <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
             <Checkbox
               checked={osrmConsentChecked}
               onCheckedChange={(checked) => setOsrmConsentChecked(checked === true)}
               className="mt-0.5"
             />
-            <span>I understand and accept that sampled GPS coordinate pairs from selected trips will be sent to this OSRM endpoint when I tap Get Road Data.</span>
+            <span>I understand and accept that sampled GPS coordinate pairs from selected trips will be sent to this verified OSRM endpoint when I tap Get Road Data.</span>
           </label>
           <DialogFooter>
             <button
@@ -2741,6 +2009,45 @@ export default function Settings() {
               className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             >
               Confirm and check endpoint
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={privacyNoticeOpen} onOpenChange={setPrivacyNoticeOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Privacy, Data, and Consent</DialogTitle>
+            <DialogDescription>
+              Last updated {PRIVACY_NOTICE_LAST_UPDATED}. {PRIVACY_NOTICE_SUMMARY}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {PRIVACY_NOTICE_HIGHLIGHTS.map((item) => (
+              <div key={item.title} className="rounded-xl border border-border bg-secondary/40 p-3">
+                <div className="text-sm font-semibold">{item.title}</div>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</p>
+              </div>
+            ))}
+            <div className="rounded-xl border border-border bg-card p-3">
+              <div className="text-sm font-semibold">Consent checkpoints</div>
+              <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                {PRIVACY_CONSENT_POINTS.map((point) => (
+                  <li key={point}>- {point}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              {LEGAL_DISCLAIMER_SUMMARY}
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setPrivacyNoticeOpen(false)}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+            >
+              Done
             </button>
           </DialogFooter>
         </DialogContent>
@@ -2768,9 +2075,10 @@ export default function Settings() {
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
-        <div>Version 1.0.0 (Capacitor Android)</div>
+        <div>Version {__APP_VERSION__} (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
-        <div>Data: Stored locally by default · No ads · Calibration sharing is opt-in</div>
+        <div>Data: Stored locally by default - No ads - Calibration sharing is opt-in</div>
+        <div>Legal: Personal-use estimates only; not professional advice or official records.</div>
       </div>
     </div>
   );

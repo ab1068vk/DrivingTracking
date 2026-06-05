@@ -26,8 +26,15 @@ export const MAX_VISIBLE_DANGER_ZONES = 6;
 export const MAX_ROUTE_RISK_SEGMENTS_SHOWN = 3;
 
 export const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
-export const DISMISSED_TAG_SUGGESTIONS_KEY = 'drivesense_dismissed_tag_suggestions';
-export const FIRST_LAUNCH_PERMISSION_PROMPTED_KEY = 'drivesense_first_launch_permission_prompted';
+export const DISMISSED_TAG_SUGGESTIONS_KEY = 'road_sage_dismissed_tag_suggestions';
+export const FIRST_LAUNCH_PERMISSION_PROMPTED_KEY = 'road_sage_first_launch_permission_prompted';
+export const ONBOARDING_COMPLETED_KEY = 'road_sage_onboarding_completed_v1';
+
+export const BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES = 5;
+export const BIOMETRIC_LOCK_TIMEOUT_MIN_MINUTES = 0;
+export const BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES = 30;
+export const BIOMETRIC_LOCK_DEFAULT_ENABLED = false;
+export const BIOMETRIC_AUTH_TIMEOUT_MS = 30_000;
 
 export function isNightRiskHour(hour) {
   return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;

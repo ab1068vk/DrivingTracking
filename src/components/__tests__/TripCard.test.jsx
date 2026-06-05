@@ -40,4 +40,10 @@ describe('TripCard score provenance display', () => {
     expect(html).toContain('>88</span>');
     expect(html).not.toContain('~88');
   });
+
+  it('explains approximate scores for new drivers', () => {
+    const html = renderToStaticMarkup(<TripCard trip={trip('approximate')} tripCount={7} />);
+
+    expect(html).toContain('Estimate - improves after 3 more trips');
+  });
 });

@@ -12,14 +12,17 @@ import {
   titleCase,
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { formatDistance, formatDuration } from '@/lib/gps/formatting';
+import { calculateBearing, headingDiff, haversineDistance } from '@/lib/gps/math';
 import { localSettings } from '@/lib/trackingStore';
+import { getBestMapCenter, isValidLatLng } from '@/lib/mapDefaults';
 import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { mapTilesAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const TORONTO_CENTER = [43.6532, -79.3832];
+const DEFAULT_MAP_ZOOM = 13;
 const TILE_STYLES = {
   standard: {
     label: 'Standard',
@@ -101,6 +104,14 @@ const phoneUseIconHtml = (color) => `
 
 const eventMarkerHtml = (event, color) => {
   const label = EVENT_LABELS[event.type] || '!';
+  if (event.feedback_removed) {
+    return `
+      <div style="position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center">
+        <div style="position:absolute;inset:0;border-radius:999px;background:#991b1b;opacity:.12"></div>
+        <div style="width:23px;height:23px;background:#fee2e2;color:#991b1b;border:2px solid white;border-radius:999px;box-shadow:0 5px 14px rgba(127,29,29,0.22);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;line-height:1;text-decoration:line-through">${escapeHtml(label)}</div>
+      </div>
+    `;
+  }
   const border = event.severity === 'high' || event.type === 'possible_crash' || event.type === 'near_miss' || event.type === 'close_proximity'
     ? 'rgba(220,38,38,0.34)'
     : 'rgba(15,23,42,0.18)';
@@ -234,6 +245,7 @@ const eventPopupHtml = (event) => {
     ? `${Math.round(Number(speedLimitValue))} km/h${speedLimitSource === 'inferred' ? ' inferred estimate' : ''}`
     : null;
   const rows = [
+    ['Review', event.feedback_removed ? 'Marked wrong - removed from scoring' : null],
     ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
     ['Time', formatEventTime(event.timestamp)],
     ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],
@@ -259,37 +271,9 @@ const eventPopupHtml = (event) => {
   `;
 };
 
-let leafletLoaded = false;
-let loadPromise = null;
-
 function loadLeaflet() {
-  if (typeof window !== 'undefined' && !window.L) window.L = L;
-  if (leafletLoaded) return Promise.resolve();
-  if (loadPromise) return loadPromise;
-
-  loadPromise = new Promise((resolve, reject) => {
-    if (window.L) {
-      leafletLoaded = true;
-      resolve();
-      return;
-    }
-
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => {
-      leafletLoaded = true;
-      resolve();
-    };
-    script.onerror = () => reject(new Error('Leaflet could not be loaded'));
-    document.head.appendChild(script);
-  });
-
-  return loadPromise;
+  if (typeof window !== 'undefined') window.L = L;
+  return Promise.resolve();
 }
 
 export default function TripMap(props) {
@@ -316,6 +300,7 @@ function TripMapContent({
   showCurrentLocation = false,
   currentLocation = null,
   parkedLocation = null,
+  lastKnownLocation = null,
   showCorneringHeatmap = false,
   showDangerZones = false,
   dangerZones = [],
@@ -336,8 +321,10 @@ function TripMapContent({
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
   const [tileErrorCount, setTileErrorCount] = useState(0);
+  const [onlineTilesEnabled, setOnlineTilesEnabled] = useState(() => mapTilesAllowed(localSettings.get()));
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
+  const localOnlyMode = localSettings.get().external_requests_local_only === true;
 
   const selectedRoute = useMemo(() => {
     const routeSets = Array.isArray(routes)
@@ -355,6 +342,17 @@ function TripMapContent({
   ) || selectedRoutePoints.length;
   const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
   const hasRoute = telemetry.pointCount > 1;
+  const savedMapCenter = lastKnownLocation ?? localSettings.get().last_map_center;
+  const bestMapCenter = useMemo(() => getBestMapCenter({
+    trip: { route_points: selectedRoutePoints },
+    lastParked: parkedLocation,
+    lastKnownLocation: savedMapCenter,
+  }), [selectedRoutePoints, parkedLocation, savedMapCenter]);
+  const liveMapCenter = showCurrentLocation && isValidLatLng(currentLocation?.lat, currentLocation?.lng)
+    ? [Number(currentLocation.lat), Number(currentLocation.lng)]
+    : null;
+  const initialMapCenter = bestMapCenter || liveMapCenter;
+  const initialMapCenterKey = initialMapCenter ? initialMapCenter.join(',') : '';
 
   useEffect(() => {
     setSelectedSegment(null);
@@ -364,7 +362,7 @@ function TripMapContent({
     let cancelled = false;
 
     loadLeaflet().then(() => {
-      if (cancelled || !mapRef.current || leafletMapRef.current) return;
+      if (cancelled || !mapRef.current || leafletMapRef.current || !initialMapCenter) return;
 
       const map = window.L.map(mapRef.current, {
         zoomControl: true,
@@ -373,16 +371,25 @@ function TripMapContent({
 
       leafletMapRef.current = map;
 
-      const tileConfig = TILE_STYLES.standard;
-      tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
-        attribution: tileConfig.attribution,
-        maxZoom: tileConfig.maxZoom,
-      })
-        .on('tileerror', () => setTileErrorCount((count) => count + 1))
-        .addTo(map);
+      if (onlineTilesEnabled) {
+        const tileConfig = TILE_STYLES.standard;
+        tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
+          attribution: tileConfig.attribution,
+          maxZoom: tileConfig.maxZoom,
+        })
+          .on('tileerror', () => setTileErrorCount((count) => count + 1))
+          .addTo(map);
+        recordOutboundDataEvent({
+          service: 'map_tiles',
+          status: 'used',
+          screen: 'Map',
+          destination: 'OpenStreetMap tile host',
+          detail: 'Online map tiles loaded for visible map area.',
+        }).catch(() => {});
+      }
 
       layersRef.current = window.L.layerGroup().addTo(map);
-      map.setView(TORONTO_CENTER, 12);
+      map.setView(initialMapCenter, DEFAULT_MAP_ZOOM);
       setReady(true);
       setTimeout(() => map.invalidateSize(), 0);
     }).catch(() => {
@@ -399,22 +406,36 @@ function TripMapContent({
         lastBoundsRef.current = null;
       }
     };
-  }, []);
+  }, [initialMapCenterKey, onlineTilesEnabled]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
-    if (!ready || !map || !window.L || !tileLayerRef.current) return;
+    if (!ready || !map || !window.L) return;
 
     const tileConfig = TILE_STYLES[tileStyle] || TILE_STYLES.standard;
     setTileErrorCount(0);
-    map.removeLayer(tileLayerRef.current);
+    if (!onlineTilesEnabled) {
+      if (tileLayerRef.current) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
+      }
+      return;
+    }
+    if (tileLayerRef.current) map.removeLayer(tileLayerRef.current);
     tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
       attribution: tileConfig.attribution,
       maxZoom: tileConfig.maxZoom,
     })
       .on('tileerror', () => setTileErrorCount((count) => count + 1))
       .addTo(map);
-  }, [ready, tileStyle]);
+    recordOutboundDataEvent({
+      service: 'map_tiles',
+      status: 'used',
+      screen: 'Map',
+      destination: 'OpenStreetMap tile host',
+      detail: `${tileConfig.label} online map tiles loaded for visible map area.`,
+    }).catch(() => {});
+  }, [ready, tileStyle, onlineTilesEnabled]);
 
   useEffect(() => {
     if (tileErrorCount >= 4) setMapFailed(true);
@@ -675,8 +696,10 @@ function TripMapContent({
       map.fitBounds(bounds, { padding: [20, 20] });
     } else if (safeCurrentLocation) {
       map.setView([safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
+    } else if (initialMapCenter) {
+      map.setView(initialMapCenter, DEFAULT_MAP_ZOOM);
     } else {
-      map.setView(TORONTO_CENTER, 12);
+      return;
     }
 
     if (mapEvents && mapEvents.length > 0) {
@@ -754,7 +777,7 @@ function TripMapContent({
         .bindPopup(`<b>Parked here</b><br>${escapeHtml(safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`)}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, initialMapCenterKey, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
@@ -780,6 +803,12 @@ function TripMapContent({
     );
   }
 
+  if (!initialMapCenter) {
+    return (
+      <NoLocationMap height={height} className={className} />
+    );
+  }
+
   const handleFitRoute = () => {
     if (leafletMapRef.current && lastBoundsRef.current) {
       leafletMapRef.current.fitBounds(lastBoundsRef.current, { padding: [24, 24] });
@@ -790,6 +819,19 @@ function TripMapContent({
     if (leafletMapRef.current && currentLocation) {
       leafletMapRef.current.setView([currentLocation.lat, currentLocation.lng], 16);
     }
+  };
+
+  const enableOnlineTiles = () => {
+    if (localOnlyMode) return;
+    const settings = localSettings.get();
+    if (settings.map_tiles_first_prompt_seen !== true && typeof window !== 'undefined') {
+      const ok = window.confirm('Load online map tiles?\n\nThe tile host can receive your visible map area and network metadata. Your route line can still be shown on a local plain background if you cancel.');
+      localSettings.update({ map_tiles_first_prompt_seen: true, map_tiles_enabled: ok === true });
+      setOnlineTilesEnabled(ok === true);
+      return;
+    }
+    localSettings.update({ map_tiles_enabled: true, map_tiles_first_prompt_seen: true });
+    setOnlineTilesEnabled(true);
   };
 
   return (
@@ -812,10 +854,11 @@ function TripMapContent({
         </button>
         <button
           type="button"
-          onClick={() => setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
+          onClick={() => onlineTilesEnabled && setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
+          disabled={!onlineTilesEnabled}
           title={`Map style: ${TILE_STYLES[tileStyle].label}`}
           aria-label="Toggle map style"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card disabled:opacity-45"
         >
           <Layers className="h-4 w-4 text-muted-foreground" />
         </button>
@@ -831,6 +874,22 @@ function TripMapContent({
           </button>
         )}
       </div>
+      {!onlineTilesEnabled && (
+        <div className="absolute left-3 top-3 z-10 max-w-[min(360px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
+          <div className="font-semibold text-foreground">Online map tiles off</div>
+          <p className="mt-1 text-muted-foreground">
+            Routes and markers are shown on a local plain background.
+          </p>
+          <button
+            type="button"
+            onClick={enableOnlineTiles}
+            disabled={localOnlyMode}
+            className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {localOnlyMode ? 'Local-only mode on' : 'Load map tiles'}
+          </button>
+        </div>
+      )}
       {selectedSegment && (
         <div className="absolute left-3 top-3 z-10 w-[min(340px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
           <div className="mb-2 flex items-center justify-between gap-2">
@@ -913,6 +972,17 @@ function TripMapContent({
           Route diagnostics
         </button>
       )}
+    </div>
+  );
+}
+
+function NoLocationMap({ height = '350px', className = '' }) {
+  return (
+    <div
+      className={`map-container flex items-center justify-center bg-secondary/40 px-4 text-center text-sm text-muted-foreground ${className}`}
+      style={{ height, width: '100%' }}
+    >
+      No location data available for this trip.
     </div>
   );
 }

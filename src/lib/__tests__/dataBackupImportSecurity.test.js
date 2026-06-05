@@ -1,14 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKUP_INTEGRITY_ERROR,
+  buildDriveSenseBackup,
   importDriveSenseBackup,
   BACKUP_VERSION,
+  countTripsOutsideRetentionWindow,
   MAX_BACKUP_BYTES,
   MAX_IMPORTED_TRIP_DRIVING_EVENTS,
   MAX_IMPORTED_TRIP_NOTES_LENGTH,
   MAX_IMPORTED_TRIP_ROUTE_POINTS,
   migrateBackup,
   parseDriveSenseBackup,
+  sealPlaintextBackup,
+  verifyPlaintextBackupIntegrity,
 } from '@/lib/dataBackup';
+import { tripService } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
+import { encryptBackup } from '@/lib/backupEncryption';
+import { DEFAULT_SETTINGS, localSettings } from '@/lib/trackingStore';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 vi.mock('@/api/trips', () => ({
@@ -29,9 +38,14 @@ const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
   trips,
 })).trips;
 
+const VALID_BACKUP_PASSWORD = 'Road$age2026!Secure';
+const WRONG_BACKUP_PASSWORD = 'Wrong$age2026!Secure';
+
 describe('backup trip import sanitization', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+    localSettings.set(DEFAULT_SETTINGS);
   });
 
   it('rejects oversized backup files before reading them', async () => {
@@ -62,6 +76,64 @@ describe('backup trip import sanitization', () => {
     expect(file.text).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts JSON backups with a UTF-8 BOM prefix', async () => {
+    const file = {
+      size: 200,
+      text: vi.fn(async () => `\uFEFF${JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [],
+        trips: [{ id: 'trip-bom', status: 'completed' }],
+      })}`),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      trips: 1,
+      vehicles: 0,
+    });
+  });
+
+  it('keeps older restored trips visible by disabling retention during full backup import', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-06-01T12:00:00.000Z').getTime());
+    localSettings.set({ ...DEFAULT_SETTINGS, data_retention_months: 24 });
+    const file = {
+      size: 300,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        settings: { data_retention_months: 24 },
+        vehicles: [],
+        trips: [{
+          id: 'legacy-json-trip',
+          status: 'completed',
+          start_time: '2020-01-01T12:00:00.000Z',
+          end_time: '2020-01-01T12:20:00.000Z',
+        }],
+      })),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      trips: 1,
+      retentionAutoDeleteDisabled: true,
+      retentionPreservedTripCount: 1,
+    });
+    expect(tripService.upsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: 'legacy-json-trip' })]),
+      { skipRetentionPrune: true, skipRescore: true }
+    );
+    expect(localSettings.get().data_retention_months).toBe(0);
+  });
+
+  it('counts completed trips outside the active retention window', () => {
+    const now = new Date('2026-06-01T12:00:00.000Z').getTime();
+
+    expect(countTripsOutsideRetentionWindow([
+      { id: 'old-completed', status: 'completed', start_time: '2020-01-01T12:00:00.000Z' },
+      { id: 'old-discarded', status: 'discarded', start_time: '2020-01-01T12:00:00.000Z' },
+      { id: 'recent-completed', status: 'completed', start_time: '2026-05-01T12:00:00.000Z' },
+    ], 24, now)).toBe(1);
+  });
+
   it('sanitizes active trips from backup imports', () => {
     const [trip] = parseTrips([{ id: 'trip-active', status: 'active' }]);
 
@@ -76,6 +148,91 @@ describe('backup trip import sanitization', () => {
     }]);
 
     expect(trip.estimated_private_distance_km).toBe(0.42);
+  });
+
+  it('sanitizes imported vehicles before merging them', async () => {
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [{
+          id: 'vehicle-xss',
+          name: '<img src=x onerror=alert(1)>'.repeat(20),
+          make: 'Road',
+          model: 'Runner',
+          plate: 'ABC<script>',
+          injected: 'nope',
+          maintenance_items: [{
+            id: 'oil',
+            label: '<script>alert(1)</script>',
+            interval_km: 8000,
+            extra: 'nope',
+          }],
+          ['__proto__']: { polluted: true },
+        }],
+        trips: [],
+      })),
+    };
+
+    await importDriveSenseBackup(file);
+
+    const [[vehicles]] = vehicleService.upsertMany.mock.calls;
+    expect(vehicles).toHaveLength(1);
+    expect(vehicles[0].name).toHaveLength(200);
+    expect(vehicles[0].injected).toBeUndefined();
+    expect(vehicles[0].maintenance_items[0].extra).toBeUndefined();
+    expect({}.polluted).toBeUndefined();
+  });
+
+  it('exports privacy-zone metadata without coordinates and marks zones for reconfiguration', async () => {
+    const backup = buildDriveSenseBackup({
+      trips: [],
+      vehicles: [],
+      settings: {
+        ...DEFAULT_SETTINGS,
+        privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 200 }],
+      },
+    });
+
+    expect(backup.settings.privacy_zones[0]).toMatchObject({
+      id: 'home',
+      label: 'Home',
+      radius_m: 200,
+      masked_for_privacy: true,
+      _coordinate_stripped: true,
+    });
+    expect(backup.settings.privacy_zones[0].lat).toBeUndefined();
+    expect(backup.settings.privacy_zones[0].lng).toBeUndefined();
+  });
+
+  it('reports imported stripped privacy zones as needing reconfiguration', async () => {
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        settings: {
+          privacy_zones: [{
+            id: 'home',
+            label: 'Home',
+            radius_m: 200,
+            masked_for_privacy: true,
+            _coordinate_stripped: true,
+          }],
+        },
+        vehicles: [],
+        trips: [],
+      })),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      privacy_zones_need_reconfiguration: 1,
+    });
+    expect(localSettings.get().privacy_zones[0]).toMatchObject({
+      id: 'home',
+      _coordinate_stripped: true,
+    });
   });
 
   it('truncates oversized imported trip routes', () => {
@@ -265,6 +422,9 @@ describe('backup trip import sanitization', () => {
         reason: 'scoring_inputs_changed',
         changed_constants: ['PENALTY_SCALE_FACTOR'],
       },
+      score_explanation: {
+        safety: [{ factor: 'phone_use', label: 'Phone use detected while driving', impact: -10 }],
+      },
     }]);
 
     expect(trip.component_scores.safety).toEqual({
@@ -279,6 +439,10 @@ describe('backup trip import sanitization', () => {
       constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
     });
     expect(trip.score_provenance_change.changed_constants).toEqual(['PENALTY_SCALE_FACTOR']);
+    expect(trip.score_explanation.safety[0]).toMatchObject({
+      factor: 'phone_use',
+      impact: -10,
+    });
   });
 
   it('rejects imported trips without a non-empty string id', () => {
@@ -312,8 +476,82 @@ describe('backup trip import sanitization', () => {
     const pending = await importDriveSenseBackup(file);
     expect(pending).toMatchObject({ requiresAcknowledgement: true, truncatedNoteTripCount: 1 });
 
-    const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
+    const imported = await importDriveSenseBackup(null, {
+      acknowledgeTruncation: true,
+      _parsedBackup: pending._parsedBackup,
+    });
     expect(imported.trips).toBe(1);
+    expect(file.text).toHaveBeenCalledTimes(1);
+  });
+
+  it('prompts for a password before importing encrypted backups', async () => {
+    const encrypted = await encryptBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [],
+    }), VALID_BACKUP_PASSWORD);
+    const file = {
+      size: encrypted.length,
+      text: vi.fn(async () => encrypted),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: 'password_required' });
+    await expect(importDriveSenseBackup(file, { password: WRONG_BACKUP_PASSWORD })).resolves.toEqual({ error: 'wrong_password' });
+    await expect(importDriveSenseBackup(file, { password: VALID_BACKUP_PASSWORD })).resolves.toMatchObject({
+      trips: 0,
+      vehicles: 0,
+    });
+  });
+
+  it('seals plaintext backups with a device-bound HMAC', async () => {
+    const backup = {
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-sealed', status: 'completed' }],
+    };
+
+    const sealed = await sealPlaintextBackup(backup);
+    expect(sealed._integrity).toMatch(/^[0-9a-f]{64}$/);
+
+    const verified = await verifyPlaintextBackupIntegrity(JSON.stringify(sealed));
+    expect(verified).toEqual({
+      text: JSON.stringify(backup),
+      sealed: true,
+    });
+  });
+
+  it('rejects tampered sealed plaintext backup imports before merging records', async () => {
+    const sealed = await sealPlaintextBackup({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-clean', status: 'completed' }],
+    });
+    const tampered = {
+      ...sealed,
+      trips: [{ id: 'trip-tampered', status: 'completed' }],
+    };
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify(tampered)),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: BACKUP_INTEGRITY_ERROR });
+  });
+
+  it('does not treat the plaintext integrity field as backup content', async () => {
+    const sealed = await sealPlaintextBackup({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-strip-integrity', status: 'completed' }],
+    });
+
+    const parsed = parseDriveSenseBackup(JSON.stringify(sealed));
+    expect(parsed.trips).toHaveLength(1);
+    expect(parsed._integrity).toBeUndefined();
   });
 });
 
@@ -368,5 +606,13 @@ describe('backup schema migrations', () => {
     expect(parsed.sourceVersion).toBe(1);
     expect(parsed.version).toBe(BACKUP_VERSION);
     expect(parsed.trips[0].needs_rescore).toBe(true);
+  });
+
+  it('gives an actionable error for backups from newer app versions', () => {
+    expect(() => parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION + 1,
+      trips: [],
+    }))).toThrow(`backup v${BACKUP_VERSION + 1}, this app supports up to v${BACKUP_VERSION}`);
   });
 });

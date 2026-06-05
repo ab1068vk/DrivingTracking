@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { haversineDistance } from '@/lib/tripEngine';
 import {
+  getPrivacyZones,
   isInsidePrivacyZone,
   maskEventCoordinatesForPrivacy,
   maskEventsForPrivacy,
@@ -97,5 +98,15 @@ describe('privacyZones', () => {
     ];
 
     expect(privacyZonesForRoute(route, { privacy_zones: [zone] })).toEqual([zone]);
+  });
+
+  it('does not activate stripped or zero-coordinate privacy zones after restore', () => {
+    expect(getPrivacyZones({
+      privacy_zones: [
+        { id: 'stripped', label: 'Home', radius_m: 200, masked_for_privacy: true, _coordinate_stripped: true },
+        { id: 'zero', label: 'Zero', lat: 0, lng: 0, radius_m: 200 },
+        zone,
+      ],
+    })).toEqual([zone]);
   });
 });

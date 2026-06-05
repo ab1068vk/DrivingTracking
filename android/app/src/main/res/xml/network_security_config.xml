@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+
+    <!--
+        Global default: HTTPS only, trust only system public root CAs.
+        This applies to all domains not listed below.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+            <!-- Do not add user-installed CAs in release builds; they allow TLS interception. -->
+        </trust-anchors>
+    </base-config>
+
+    <!--
+        Certificate pins for every built-in third-party host Road Sage contacts.
+
+        Pin = base64(SHA-256(SubjectPublicKeyInfo DER))
+
+        Generate with:
+        openssl s_client -connect HOST:443 -servername HOST -showcerts |
+          openssl x509 -pubkey -noout |
+          openssl pkey -pubin -outform DER |
+          openssl dgst -sha256 -binary | base64
+
+        Each pin-set includes the current leaf SPKI and a backup CA intermediate
+        SPKI from the live chain. Review before expiration or certificate rotation.
+    -->
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">nominatim.openstreetmap.org</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">oZJBfE9OEiEGYsm+as/64F9KX39R5C8uOcOAmUWNO4U=</pin>
+            <pin digest="SHA-256">AlSQhgtJirc8ahLyekmtX+Iw+v46yPYRLJt9Cq1GlB0=</pin>
+        </pin-set>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">tile.openstreetmap.org</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">wpZbgMIpa8SFKTpX9je5pgZ7knTqu/bUoig6Dt/Sj14=</pin>
+            <pin digest="SHA-256">biIcgxJw7HM1TbdJxioNUtXUL4DAGP3v1bLiXlQJxHw=</pin>
+        </pin-set>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">tile.openstreetmap.fr</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">WZsOEdrZB7SfASvdoyvNp9A91KPMLyfDOwYFGwCSbUo=</pin>
+            <pin digest="SHA-256">kZwN96eHtZftBWrOZUsd6cA4es80n3NzSk/XtYz2EqQ=</pin>
+        </pin-set>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">api.open-meteo.com</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">YAFPPxCwfYpnCvumZr5iRwQxdLb9dak90Qvb33ma0Fo=</pin>
+            <pin digest="SHA-256">kZwN96eHtZftBWrOZUsd6cA4es80n3NzSk/XtYz2EqQ=</pin>
+        </pin-set>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">archive-api.open-meteo.com</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">byRvTybyzP4mAIQV7akFUITHeR7ZLsD0eezWtyYF0tI=</pin>
+            <pin digest="SHA-256">iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=</pin>
+        </pin-set>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">overpass-api.de</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">uAD+342sjrC9Pc6amj8vUGZtGKiuGOTK5FVAKN9AzMg=</pin>
+            <pin digest="SHA-256">iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=</pin>
+        </pin-set>
+    </domain-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">overpass.kumi.systems</domain>
+        <pin-set expiration="2027-06-01">
+            <pin digest="SHA-256">uTU/5bWccHmJX32N/3PwxZtZ9lIXdzMr+UrG9+dHkyA=</pin>
+            <pin digest="SHA-256">AlSQhgtJirc8ahLyekmtX+Iw+v46yPYRLJt9Cq1GlB0=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!--
+        Optional backend (VITE_API_URL) and user-configured OSRM endpoints are only
+        active when configured by the user/build. If a domain is known at build time,
+        add certificate pinning here:
+
+        <domain-config cleartextTrafficPermitted="false">
+            <domain includeSubdomains="true">api.yourdomain.com</domain>
+            <pin-set expiration="2027-01-01">
+                <pin digest="SHA-256">CURRENT_LEAF_OR_INTERMEDIATE_SPKI_HASH=</pin>
+                <pin digest="SHA-256">BACKUP_PIN_SPKI_HASH=</pin>
+            </pin-set>
+        </domain-config>
+
+        Generate the pin with:
+        openssl s_client -connect api.yourdomain.com:443 |
+          openssl x509 -pubkey -noout |
+          openssl pkey -pubin -outform DER |
+          openssl dgst -sha256 -binary | base64
+    -->
+
+    <!--
+        Development only: allow cleartext to localhost in a debug/res/xml override if needed.
+
+        <domain-config cleartextTrafficPermitted="true">
+            <domain includeSubdomains="false">localhost</domain>
+            <domain includeSubdomains="false">10.0.2.2</domain>
+        </domain-config>
+    -->
+
+</network-security-config>

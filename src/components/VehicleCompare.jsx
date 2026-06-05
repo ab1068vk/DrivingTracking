@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Gauge, Navigation, Activity } from 'lucide-react';
-import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 
 function ScoreBar({ label, value, max, color, evidence = null }) {

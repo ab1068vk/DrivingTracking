@@ -2,9 +2,13 @@ import {
   AUTO_START_GPS_FALLBACK_SECONDS,
   AUTO_START_SPEED_KMH,
 } from '@/lib/activityRecognition';
+import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
+import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
 
-const DIAGNOSTIC_EVENTS_KEY = 'drivesense_tracking_diagnostics';
+const DIAGNOSTIC_EVENTS_KEY = 'road_sage_tracking_diagnostics';
 const MAX_EVENTS = 120;
+let diagnosticEventsCache = null;
+let diagnosticStorageRef = null;
 
 const safeJsonParse = (raw, fallback) => {
   try {
@@ -20,7 +24,16 @@ export function getTrackingDiagnostics() {
   if (typeof localStorage === 'undefined') {
     return { events: [], lastAutoStart: null, lastAutoStop: null, lastTripEnd: null };
   }
-  const events = asArray(safeJsonParse(localStorage.getItem(DIAGNOSTIC_EVENTS_KEY), []));
+  if (diagnosticStorageRef !== localStorage) {
+    diagnosticEventsCache = null;
+    diagnosticStorageRef = localStorage;
+  }
+  if (!diagnosticEventsCache) {
+    const raw = localStorage.getItem(resolveStorageKey(DIAGNOSTIC_EVENTS_KEY)) ||
+      legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).map((key) => localStorage.getItem(key)).find((value) => value != null);
+    diagnosticEventsCache = asArray(safeJsonParse(raw, []));
+  }
+  const events = diagnosticEventsCache;
   const lastAutoStart = [...events].reverse().find((event) => event.type === 'auto_start' || event.type === 'trip_started') || null;
   const lastAutoStop = [...events].reverse().find((event) => event.type === 'auto_stop' || event.type === 'trip_ended') || null;
   const lastTripEnd = [...events].reverse().find((event) => event.type === 'trip_ended' || event.type === 'trip_discarded') || null;
@@ -28,6 +41,7 @@ export function getTrackingDiagnostics() {
 }
 
 export function recordTrackingDiagnostic(event = {}) {
+  if (isEphemeralModeActive()) return null;
   if (typeof localStorage === 'undefined') return null;
   const nextEvent = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -36,18 +50,29 @@ export function recordTrackingDiagnostic(event = {}) {
     type: 'info',
     ...event,
   };
+  if (diagnosticStorageRef !== localStorage) {
+    diagnosticEventsCache = null;
+    diagnosticStorageRef = localStorage;
+  }
   const current = getTrackingDiagnostics().events;
   const next = [nextEvent, ...current].slice(0, MAX_EVENTS);
+  diagnosticEventsCache = next;
   try {
     localStorage.setItem(DIAGNOSTIC_EVENTS_KEY, JSON.stringify(next));
-  } catch {}
+  } catch {
+    // Intentionally silent - diagnostic persistence must never create recursive diagnostics.
+  }
   return nextEvent;
 }
 
 export function clearTrackingDiagnostics() {
   try {
+    diagnosticEventsCache = [];
     localStorage.removeItem(DIAGNOSTIC_EVENTS_KEY);
-  } catch {}
+    legacyStorageKeysFor(DIAGNOSTIC_EVENTS_KEY).forEach((key) => localStorage.removeItem(key));
+  } catch {
+    // Intentionally silent - clearing local diagnostics is best-effort only.
+  }
 }
 
 export function normalizeNativeDiagnosticEvents(nativePayload = {}) {
