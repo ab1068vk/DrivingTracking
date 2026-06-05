@@ -47,7 +47,7 @@ describe('TrackingHealthChip', () => {
     expect(html).toContain('service not running');
   });
 
-  it('reports permission degradation before battery degradation', () => {
+  it('reports every degraded background auto problem', () => {
     const html = renderToStaticMarkup(
       <TrackingHealthChip
         nativeStatus={{ running: true }}
@@ -61,6 +61,6 @@ describe('TrackingHealthChip', () => {
     );
 
     expect(html).toContain('activity permission missing');
-    expect(html).not.toContain('battery restricted');
+    expect(html).toContain('battery restricted');
   });
 });

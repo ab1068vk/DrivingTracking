@@ -34,7 +34,7 @@ export const BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES = 5;
 export const BIOMETRIC_LOCK_TIMEOUT_MIN_MINUTES = 0;
 export const BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES = 30;
 export const BIOMETRIC_LOCK_DEFAULT_ENABLED = false;
-export const BIOMETRIC_AUTH_TIMEOUT_MS = 6000;
+export const BIOMETRIC_AUTH_TIMEOUT_MS = 30_000;
 
 export function isNightRiskHour(hour) {
   return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;

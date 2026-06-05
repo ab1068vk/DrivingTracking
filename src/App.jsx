@@ -23,7 +23,7 @@ import {
   BIOMETRIC_LOCK_STATE_CHANGE_EVENT,
   isBiometricLockEnabled,
   isLocked,
-  lock,
+  lockWhenBiometricEnabled,
   markUserActivity,
   markUnlocked,
   msUntilAutoLock,
@@ -75,10 +75,11 @@ const primaryPreloadRoutes = [
   Settings,
 ];
 const LAUNCH_NATIVE_SETTINGS_TIMEOUT_MS = 1_500;
-const LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS = 500;
+const LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS = 2_000;
 const DEFERRED_NATIVE_SETTINGS_DELAY_MS = 2_500;
 const DEFERRED_NATIVE_SETTINGS_TIMEOUT_MS = 10_000;
 const NATIVE_SETTINGS_APP_POLL_MS = 2_000;
+const TILE_BACKGROUND_AUTO_ACTION_KEY = 'road_sage_tile_action_request_background_auto';
 const IMPORT_STAGE_LABELS = {
   retention: 'retention protection',
   trips: 'trip import',
@@ -166,6 +167,46 @@ const withLaunchTimeout = (promise, fallback, context, timeoutMs = 2500, { logTi
   });
 };
 
+const routeAppDeepLink = (rawUrl, navigate) => {
+  if (!rawUrl) return false;
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname || '';
+    const path = host === 'app'
+      ? (url.pathname || '/')
+      : `/${host}${url.pathname || ''}`.replace(/\/{2,}/g, '/');
+    const normalizedPath = path === '/dashboard' ? '/' : path;
+
+    if (url.searchParams.get('action') === 'request_background_auto') {
+      try {
+        sessionStorage.setItem(TILE_BACKGROUND_AUTO_ACTION_KEY, '1');
+      } catch {
+        // Best-effort handoff to Settings.
+      }
+    }
+
+    if (normalizedPath === '/settings') {
+      navigate('/settings');
+      return true;
+    }
+    if (normalizedPath === '/') {
+      navigate('/');
+      return true;
+    }
+    if (normalizedPath.startsWith('/trips/')) {
+      navigate(normalizedPath);
+      return true;
+    }
+    if (normalizedPath.startsWith('/survey/')) {
+      navigate(normalizedPath);
+      return true;
+    }
+  } catch (err) {
+    logError('app_deeplink_parse', err, { rawUrl });
+  }
+  return false;
+};
+
 const ensureNativeAutoTrackingStarted = async (settings, context) => {
   if (!isAndroid() || settings?.tracking_mode !== 'background_auto' || settings?.tracking_paused) return;
   try {
@@ -185,7 +226,8 @@ const hasCompletedOnboarding = async (
 
   let browserMarker = false;
   try {
-    browserMarker = JSON.parse(localStorage.getItem(ONBOARDING_COMPLETED_KEY) || 'false') === true;
+    const rawBrowserMarker = localStorage.getItem(ONBOARDING_COMPLETED_KEY);
+    browserMarker = rawBrowserMarker === 'true' || JSON.parse(rawBrowserMarker || 'false') === true;
   } catch {
     browserMarker = false;
   }
@@ -239,6 +281,11 @@ function LazyRoute({ children }) {
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const [_lockSettingsReady] = useState(() => {
+    const launchSettings = localSettings.get();
+    setBiometricLockEnabled(launchSettings?.biometric_lock_enabled === true);
+    return true;
+  });
   const [onboardingDone, setOnboardingDone] = useState(null);
   const navigate = useNavigate();
 
@@ -253,7 +300,6 @@ const AuthenticatedApp = () => {
         });
       });
       const launchSettings = localSettings.get();
-      setBiometricLockEnabled(launchSettings?.biometric_lock_enabled === true);
       setOnboardingDone(await hasCompletedOnboarding(launchSettings, {
         persistMarker: !isAndroid(),
         markerTimeoutMs: isAndroid() ? LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS : 0,
@@ -343,6 +389,25 @@ const AuthenticatedApp = () => {
   }, [onboardingDone]);
 
   useEffect(() => {
+    let appUrlOpenListener;
+    CapacitorApp.getLaunchUrl?.().then((launch) => {
+      routeAppDeepLink(launch?.url, navigate);
+    }).catch((err) => {
+      logError('app_launch_url_read', err);
+    });
+    CapacitorApp.addListener('appUrlOpen', (event) => {
+      routeAppDeepLink(event?.url, navigate);
+    }).then((handle) => {
+      appUrlOpenListener = handle;
+    }).catch((err) => {
+      logError('app_url_open_listener_register', err);
+    });
+    return () => {
+      appUrlOpenListener?.remove?.();
+    };
+  }, [navigate]);
+
+  useEffect(() => {
     if (!isAndroid() || onboardingDone !== true) return undefined;
 
     const pollNativeSettings = async () => {
@@ -358,17 +423,15 @@ const AuthenticatedApp = () => {
   }, [onboardingDone]);
 
   useEffect(() => {
-    const lockIfIdle = () => {
-      if (isBiometricLockEnabled() && isLocked(localSettings.get())) lock();
-    };
+    const lockWhenEnabled = () => lockWhenBiometricEnabled();
     const lockOnHidden = () => {
-      if (document.visibilityState === 'hidden') lockIfIdle();
+      if (document.visibilityState === 'hidden') lockWhenEnabled();
     };
     document.addEventListener('visibilitychange', lockOnHidden);
 
     let appStateListener;
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive) lockIfIdle();
+      if (!isActive) lockWhenEnabled();
     }).then((handle) => {
       appStateListener = handle;
     }).catch((err) => {
@@ -523,7 +586,12 @@ function BiometricRouteGuard({ children }) {
         scheduleAutoLockTimer();
       } catch (err) {
         if (cancelled) return;
-        if (err?.message === 'auth_timeout' || err?.message === 'unavailable') {
+        if (err?.message === 'auth_timeout') {
+          setAuthState('locked');
+          console.warn('[biometricLock] auth timed out, unlock retry required:', err.message);
+          return;
+        }
+        if (err?.message === 'unavailable') {
           clearAutoLockTimer();
           setBiometricLockEnabled(false);
           markUnlocked();

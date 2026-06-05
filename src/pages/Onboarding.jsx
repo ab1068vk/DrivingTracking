@@ -128,6 +128,40 @@ const DATA_LEAVING_OPTIONS = [
 
 const SETUP_REQUEST_TIMEOUT_MS = 25_000;
 const SETUP_PROMPT_SETTLE_MS = 650;
+const ONBOARDING_DRAFT_KEY = 'road_sage_onboarding_draft_v1';
+
+function readOnboardingDraft() {
+  for (const storage of [sessionStorage, localStorage]) {
+    try {
+      const draft = JSON.parse(storage.getItem(ONBOARDING_DRAFT_KEY) || 'null');
+      if (draft && typeof draft === 'object') return draft;
+    } catch {
+      // Try the other storage.
+    }
+  }
+  return null;
+}
+
+function writeOnboardingDraft(draft) {
+  const serialized = JSON.stringify(draft);
+  for (const storage of [sessionStorage, localStorage]) {
+    try {
+      storage.setItem(ONBOARDING_DRAFT_KEY, serialized);
+    } catch {
+      // The other storage may still be available.
+    }
+  }
+}
+
+function clearOnboardingDraft() {
+  for (const storage of [sessionStorage, localStorage]) {
+    try {
+      storage.removeItem(ONBOARDING_DRAFT_KEY);
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
 
 function setupTimeoutError(label) {
   const error = new Error(`${label} did not finish. You can retry the row or continue and finish it later in Settings.`);
@@ -148,6 +182,10 @@ function withSetupTimeout(taskFactory, label, timeoutMs = SETUP_REQUEST_TIMEOUT_
   return Promise.race([taskFactory(), timeout]).finally(() => {
     if (timeoutId) window.clearTimeout(timeoutId);
   });
+}
+
+function permissionRequestGranted(result) {
+  return result === true || result?.granted === true;
 }
 
 function SetupChecklistRow({ label, detail, ready, onAction, actionLabel = 'Set up', disabled = false }) {
@@ -193,6 +231,7 @@ export default function Onboarding({ onComplete }) {
   });
   const [roadDataAutoFetch, setRoadDataAutoFetch] = useState(() => localSettings.get().external_context_auto_fetch_enabled === true);
   const [requesting, setRequesting] = useState(false);
+  const [completionPending, setCompletionPending] = useState(false);
   const [setupStatus, setSetupStatus] = useState('');
   const mountedRef = useRef(false);
   const permissionRequestInFlightRef = useRef(false);
@@ -252,7 +291,8 @@ export default function Onboarding({ onComplete }) {
   };
 
   const persistOnboardingComplete = async () => {
-    localSettings.update({
+    await localSettings.setAsync({
+      ...localSettings.get(),
       onboarding_completed: true,
       tracking_mode: trackingMode,
       auto_tracking_enabled: trackingMode !== 'manual',
@@ -272,13 +312,12 @@ export default function Onboarding({ onComplete }) {
       logError('onboarding_completion_local_marker_save', error);
     }
 
+    let markerSaveError = null;
     try {
       await setJson(ONBOARDING_COMPLETED_KEY, true);
     } catch (error) {
-      notifyUserError('onboarding_completion_marker', error, {
-        title: 'Setup saved locally',
-        description: 'Road Sage saved setup in app settings, but could not write the extra startup marker.',
-      });
+      markerSaveError = error;
+      logError('onboarding_completion_marker_save', error);
     }
 
     try {
@@ -289,6 +328,8 @@ export default function Onboarding({ onComplete }) {
     } catch (error) {
       logError('onboarding_completion_native_marker_save', error);
     }
+
+    if (markerSaveError) throw markerSaveError;
   };
 
   const handleLocationRequest = async () => {
@@ -296,7 +337,7 @@ export default function Onboarding({ onComplete }) {
     try {
       const granted = await runPermissionRequest('Location permission', requestForegroundLocationPermission);
       setLocationGranted(granted);
-      localSettings.update({ location_permission_granted: granted });
+      if (granted) localSettings.update({ location_permission_granted: true });
       await refreshSetupStatus().catch((err) => {
         notifyUserError('onboarding_refresh_after_location_permission', err, {
           title: 'Setup status not refreshed',
@@ -329,7 +370,7 @@ export default function Onboarding({ onComplete }) {
         : true;
       setMotionGranted(motionOk);
       setActivityGranted(activityOk);
-      localSettings.update({ activity_permission_granted: activityOk });
+      if (activityOk) localSettings.update({ activity_permission_granted: true });
       await refreshSetupStatus().catch((err) => {
         notifyUserError('onboarding_refresh_after_motion_activity_permission', err, {
           title: 'Setup status not refreshed',
@@ -358,7 +399,7 @@ export default function Onboarding({ onComplete }) {
     try {
       const granted = await runPermissionRequest('Notification permission', requestNotificationPermission);
       setNotificationsGranted(granted);
-      localSettings.update({ notification_permission_granted: granted });
+      if (granted) localSettings.update({ notification_permission_granted: true });
       await refreshSetupStatus().catch((err) => {
         notifyUserError('onboarding_refresh_after_notification_permission', err, {
           title: 'Setup status not refreshed',
@@ -403,10 +444,11 @@ export default function Onboarding({ onComplete }) {
         return;
       }
 
-      const granted = await runPermissionRequest('Background location permission', requestBackgroundLocationPermission, {
+      const result = await runPermissionRequest('Background location permission', requestBackgroundLocationPermission, {
         busyMessage: 'Opening background location setup...',
         timeoutMessage: 'Background location setup is still in Android. Return here after updating Location to "Allow all the time".',
       });
+      const granted = permissionRequestGranted(result);
       setBackgroundGranted(granted);
       await refreshSetupStatus().catch((err) => {
         notifyUserError('onboarding_refresh_after_background_location_permission', err, {
@@ -414,6 +456,11 @@ export default function Onboarding({ onComplete }) {
           description: 'Background location setup was handled, but Road Sage could not refresh the setup checklist yet.',
         });
       });
+      if (result?.reason === 'partial_grant') {
+        setSetupStatus('Tap Enable again and choose "Allow all the time" to enable background tracking.');
+      } else if (result?.reason === 'denied') {
+        setSetupStatus('Background location was not granted. Retry this row to finish background tracking setup.');
+      }
       (granted ? notifyUserSuccess : notifyUserMessage)('onboarding_background_location_permission', {
         title: granted ? 'Background tracking ready' : 'Background tracking still off',
         description: granted
@@ -434,7 +481,10 @@ export default function Onboarding({ onComplete }) {
   const handleBatterySetup = async () => {
     setRequesting(true);
     try {
-      await openAndroidBatteryOptimizationSettings();
+      await runPermissionRequest('Battery optimization settings', openAndroidBatteryOptimizationSettings, {
+        busyMessage: 'Opening battery settings...',
+        timeoutMessage: 'Battery settings are still opening. Return here after allowing unrestricted background activity.',
+      });
       await refreshSetupStatus().catch((err) => {
         notifyUserError('onboarding_refresh_after_battery_settings', err, {
           title: 'Setup status not refreshed',
@@ -458,8 +508,16 @@ export default function Onboarding({ onComplete }) {
   const handleUsageAccessSetup = async () => {
     setRequesting(true);
     try {
-      await openAndroidUsageAccessSettings();
-      await refreshSetupStatus();
+      await runPermissionRequest('Phone Usage Access settings', openAndroidUsageAccessSettings, {
+        busyMessage: 'Opening Phone Usage Access settings...',
+        timeoutMessage: 'Phone Usage Access settings are still opening. Return here after allowing Road Sage.',
+      });
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_usage_access_settings', err, {
+          title: 'Setup status not refreshed',
+          description: 'Usage access settings opened, but Road Sage could not refresh the setup checklist yet.',
+        });
+      });
       notifyUserSuccess('onboarding_usage_access_settings', {
         title: 'Usage access settings opened',
         description: 'Return to Road Sage after allowing phone-use evidence access.',
@@ -549,7 +607,11 @@ export default function Onboarding({ onComplete }) {
       }
 
       setSetupStatus(`Step ${Object.keys(results).length + 1} of ${recommendedItems.length}: ${item.label}`);
-      results[item.key] = await runPermissionRequest(item.label, item.request);
+      const result = await runPermissionRequest(item.label, item.request);
+      results[item.key] = permissionRequestGranted(result);
+      if (item.key === 'backgroundLocation' && result?.reason === 'partial_grant') {
+        setSetupStatus('Tap background location again and choose "Allow all the time" to enable background tracking.');
+      }
       if (!results[item.key] && !item.optional) break;
     }
 
@@ -620,15 +682,61 @@ export default function Onboarding({ onComplete }) {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const draft = readOnboardingDraft();
+      if (!draft || typeof draft !== 'object') return;
+      if (TRACKING_OPTIONS.some((option) => option.id === draft.trackingMode)) {
+        setTrackingMode(draft.trackingMode);
+      }
+      if (draft.dataLeavingChoices && typeof draft.dataLeavingChoices === 'object') {
+        setDataLeavingChoices((current) => ({
+          ...current,
+          maps: draft.dataLeavingChoices.maps === true,
+          road_weather: draft.dataLeavingChoices.road_weather === true,
+          route_snapping: draft.dataLeavingChoices.route_snapping === true,
+        }));
+      }
+      const nextStep = Number(draft.step);
+      if (Number.isInteger(nextStep)) setStep(Math.min(Math.max(0, nextStep), STEPS.length - 1));
+    } catch {
+      // Draft recovery is best-effort.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      writeOnboardingDraft({
+        trackingMode,
+        dataLeavingChoices,
+        step,
+      });
+    } catch {
+      // Draft persistence is best-effort.
+    }
+  }, [trackingMode, dataLeavingChoices, step]);
+
   const handleNext = async () => {
     if (requesting) return;
 
     if (isLast) {
       setRequesting(true);
+      setCompletionPending(true);
       setSetupStatus('Finalizing setup...');
       try {
         const latest = await refreshSetupStatus().catch(() => null);
-        await persistOnboardingComplete();
+        let persistFailed = false;
+        try {
+          await persistOnboardingComplete();
+          clearOnboardingDraft();
+        } catch (error) {
+          persistFailed = true;
+          logError('onboarding_complete_persist', error);
+          notifyUserError('onboarding_complete_persist', error, {
+            title: 'Setup saved with a warning',
+            description: 'Road Sage could not confirm every startup marker. You can keep using the app, and setup will be checked again on next launch.',
+          });
+        }
         if (trackingMode === 'background_auto' && latest?.backgroundLocation === 'granted') {
           await startNativeAutoTracking().catch((err) => {
             logError('native_auto_tracking_start_onboarding_complete', err, { mode: trackingMode });
@@ -636,7 +744,9 @@ export default function Onboarding({ onComplete }) {
         }
         notifyUserSuccess('onboarding_complete', {
           title: 'Road Sage is ready',
-          description: trackingMode === 'background_auto' && latest?.backgroundLocation !== 'granted'
+          description: persistFailed
+            ? 'Setup can continue now. Road Sage logged a startup marker warning for the next launch.'
+            : trackingMode === 'background_auto' && latest?.backgroundLocation !== 'granted'
             ? 'Your preferences were saved. Finish background location from Settings when you are ready.'
             : 'Your tracking preferences were saved.',
         });
@@ -648,6 +758,7 @@ export default function Onboarding({ onComplete }) {
           description: 'Road Sage could not save onboarding completion. Please try Get Started again.',
         });
       } finally {
+        if (mountedRef.current) setCompletionPending(false);
         finishRequesting();
       }
       return;
@@ -942,7 +1053,7 @@ export default function Onboarding({ onComplete }) {
           disabled={requesting}
           className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold rounded-2xl shadow-lg hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
         >
-          {requesting ? 'Finishing...' : isLast ? 'Get Started' : 'Continue'}
+          {completionPending ? 'Setting up...' : requesting ? 'Finishing...' : isLast ? 'Get Started' : 'Continue'}
           <ChevronRight className="w-4 h-4" />
         </button>
 

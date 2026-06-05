@@ -31,6 +31,8 @@ public class MainActivity extends BridgeActivity {
     private static final String LEGACY_APP_SCHEME = "drivesense";
     private static final String APP_HOST = "app";
     private static final String EXTRA_DEEPLINK = "deeplink";
+    private static final String EXTRA_TILE_ACTION = "tile_action";
+    private static final String TILE_ACTION_REQUEST_BACKGROUND_AUTO = "request_background_auto";
     private static final Pattern SAFE_QUERY_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,50}");
     private static final Pattern SAFE_ID_VALUE = Pattern.compile("[a-zA-Z0-9_-]{1,80}");
     private static final List<Class<? extends Plugin>> ROAD_SAGE_PLUGIN_ALLOWLIST = Arrays.asList(
@@ -144,6 +146,18 @@ public class MainActivity extends BridgeActivity {
                 return launchIntent;
             }
             intent.putExtra(EXTRA_DEEPLINK, sanitizedExtra);
+        }
+
+        if (intent.hasExtra(EXTRA_TILE_ACTION)) {
+            String action = intent.getStringExtra(EXTRA_TILE_ACTION);
+            if (TILE_ACTION_REQUEST_BACKGROUND_AUTO.equals(action)) {
+                Uri tileUri = Uri.parse("roadsage://app/settings?action=request_background_auto&tab=tracking");
+                intent.setAction(Intent.ACTION_VIEW);
+                intent.setData(tileUri);
+                intent.putExtra(EXTRA_DEEPLINK, tileUri.toString());
+            } else {
+                intent.removeExtra(EXTRA_TILE_ACTION);
+            }
         }
 
         return true;

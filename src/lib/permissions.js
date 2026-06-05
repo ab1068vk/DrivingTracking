@@ -28,6 +28,13 @@ export function invalidatePermissionCache() {
   statusCacheGeneration += 1;
 }
 
+function savePermissionSettingsAsync(patch, context) {
+  localSettings.setAsync({
+    ...localSettings.get(),
+    ...patch,
+  }).catch((err) => logError(context, err));
+}
+
 async function safeNativeRead(key, fallback = null) {
   try {
     const { encryptedCapacitorStorage } = await import('@/lib/encryptedCapacitorStorage');
@@ -317,7 +324,10 @@ async function currentPermissionState(permissionType) {
 export async function requestForegroundLocationPermission() {
   invalidatePermissionCache();
   if (await currentPermissionState('foregroundLocation') === PERMISSION_STATES.GRANTED) {
-    localSettings.update({ location_permission_granted: true, _location_denial_count: 0 });
+    savePermissionSettingsAsync({
+      location_permission_granted: true,
+      _location_denial_count: 0,
+    }, 'foreground_location_denial_count_save');
     return true;
   }
   if (isNativePlatform()) {
@@ -327,7 +337,10 @@ export async function requestForegroundLocationPermission() {
       const result = await Geolocation.requestPermissions({ permissions: ['location'] });
       const granted = result.location === PERMISSION_STATES.GRANTED;
       if (granted) {
-        localSettings.update({ location_permission_granted: true, _location_denial_count: 0 });
+        savePermissionSettingsAsync({
+          location_permission_granted: true,
+          _location_denial_count: 0,
+        }, 'foreground_location_denial_count_save');
         invalidatePermissionCache();
         return true;
       }
@@ -336,10 +349,10 @@ export async function requestForegroundLocationPermission() {
       const state = isAndroid() && denialCount >= 2
         ? PERMISSION_STATES.NEEDS_SETTINGS
         : PERMISSION_STATES.DENIED;
-      localSettings.update({
+      savePermissionSettingsAsync({
         location_permission_granted: state,
         _location_denial_count: denialCount,
-      });
+      }, 'foreground_location_denial_count_save');
       invalidatePermissionCache();
       return false;
     } catch (err) {
@@ -355,14 +368,26 @@ export async function requestForegroundLocationPermission() {
       resolve(false);
       return;
     }
+    const settings = localSettings.get();
+    const priorDenials = Number(settings._location_denial_count || 0);
     navigator.geolocation.getCurrentPosition(
       () => {
-        localSettings.update({ location_permission_granted: true, _location_denial_count: 0 });
+        savePermissionSettingsAsync({
+          location_permission_granted: true,
+          _location_denial_count: 0,
+        }, 'foreground_location_denial_count_save');
         invalidatePermissionCache();
         resolve(true);
       },
-      () => {
-        localSettings.update({ location_permission_granted: PERMISSION_STATES.DENIED });
+      (err) => {
+        if (err?.code === err?.PERMISSION_DENIED) {
+          savePermissionSettingsAsync({
+            location_permission_granted: PERMISSION_STATES.DENIED,
+            _location_denial_count: priorDenials + 1,
+          }, 'foreground_location_denial_count_save');
+        } else {
+          localSettings.update({ location_permission_granted: PERMISSION_STATES.UNKNOWN });
+        }
         invalidatePermissionCache();
         resolve(false);
       },
@@ -374,7 +399,10 @@ export async function requestForegroundLocationPermission() {
 export async function requestNotificationPermission() {
   invalidatePermissionCache();
   if (await currentPermissionState('notifications') === PERMISSION_STATES.GRANTED) {
-    localSettings.update({ notification_permission_granted: true, _notification_denial_count: 0 });
+    savePermissionSettingsAsync({
+      notification_permission_granted: true,
+      _notification_denial_count: 0,
+    }, 'notification_denial_count_save');
     return true;
   }
   if (isNativePlatform()) {
@@ -384,7 +412,10 @@ export async function requestNotificationPermission() {
       const result = await LocalNotifications.requestPermissions();
       const granted = result.display === PERMISSION_STATES.GRANTED;
       if (granted) {
-        localSettings.update({ notification_permission_granted: true, _notification_denial_count: 0 });
+        savePermissionSettingsAsync({
+          notification_permission_granted: true,
+          _notification_denial_count: 0,
+        }, 'notification_denial_count_save');
         invalidatePermissionCache();
         return true;
       }
@@ -392,10 +423,10 @@ export async function requestNotificationPermission() {
       const state = isAndroid() && denialCount >= 2
         ? PERMISSION_STATES.NEEDS_SETTINGS
         : PERMISSION_STATES.DENIED;
-      localSettings.update({
+      savePermissionSettingsAsync({
         notification_permission_granted: state,
         _notification_denial_count: denialCount,
-      });
+      }, 'notification_denial_count_save');
       invalidatePermissionCache();
       return false;
     } catch (err) {
@@ -407,9 +438,21 @@ export async function requestNotificationPermission() {
   }
 
   if (!('Notification' in window)) return false;
+  const settings = localSettings.get();
+  const priorDenials = Number(settings._notification_denial_count || 0);
   const result = await Notification.requestPermission();
   const granted = result === PERMISSION_STATES.GRANTED;
-  localSettings.update({ notification_permission_granted: granted ? true : PERMISSION_STATES.DENIED });
+  if (granted) {
+    savePermissionSettingsAsync({
+      notification_permission_granted: true,
+      _notification_denial_count: 0,
+    }, 'notification_denial_count_save');
+  } else {
+    savePermissionSettingsAsync({
+      notification_permission_granted: PERMISSION_STATES.DENIED,
+      _notification_denial_count: priorDenials + 1,
+    }, 'notification_denial_count_save');
+  }
   invalidatePermissionCache();
   return granted;
 }
@@ -418,7 +461,10 @@ export async function requestActivityRecognitionPermission() {
   if (!isAndroid()) return false;
   invalidatePermissionCache();
   if (await currentPermissionState('activityRecognition') === PERMISSION_STATES.GRANTED) {
-    localSettings.update({ activity_permission_granted: true, _activity_denial_count: 0 });
+    savePermissionSettingsAsync({
+      activity_permission_granted: true,
+      _activity_denial_count: 0,
+    }, 'activity_recognition_denial_count_save');
     return true;
   }
   const settings = localSettings.get();
@@ -427,16 +473,19 @@ export async function requestActivityRecognitionPermission() {
     const result = await ActivityRecognition.requestPermissions();
     const granted = result.activityRecognition === PERMISSION_STATES.GRANTED;
     if (granted) {
-      localSettings.update({ activity_permission_granted: true, _activity_denial_count: 0 });
+      savePermissionSettingsAsync({
+        activity_permission_granted: true,
+        _activity_denial_count: 0,
+      }, 'activity_recognition_denial_count_save');
       invalidatePermissionCache();
       return true;
     }
     const denialCount = priorDenials + 1;
     const state = denialCount >= 2 ? PERMISSION_STATES.NEEDS_SETTINGS : PERMISSION_STATES.DENIED;
-    localSettings.update({
+    savePermissionSettingsAsync({
       activity_permission_granted: state,
       _activity_denial_count: denialCount,
-    });
+    }, 'activity_recognition_denial_count_save');
     invalidatePermissionCache();
     return granted;
   } catch (err) {
@@ -450,34 +499,59 @@ export async function requestActivityRecognitionPermission() {
 export async function requestBackgroundLocationPermission() {
   invalidatePermissionCache();
   if (await currentPermissionState('backgroundLocation') === PERMISSION_STATES.GRANTED) {
-    localSettings.update({ background_location_granted: true });
+    localSettings.update({
+      background_location_granted: true,
+      _background_location_denial_count: 0,
+    });
     return true;
   }
-  const foregroundGranted = await requestForegroundLocationPermission();
-  if (!foregroundGranted) return false;
-
-  const notificationsGranted = await requestNotificationPermission();
-  if (!notificationsGranted) return false;
+  const [foreground, notifications] = await Promise.all([
+    getPermissionStatus('foregroundLocation', { force: true }),
+    getPermissionStatus('notifications', { force: true }),
+  ]);
+  if (foreground?.status !== PERMISSION_STATES.GRANTED) return false;
+  if (notifications?.status !== PERMISSION_STATES.GRANTED) return false;
 
   if (isAndroid()) {
     try {
       let status = await ActivityRecognition.checkPermissions();
       if (status.backgroundLocation === PERMISSION_STATES.GRANTED) {
-        localSettings.update({ background_location_granted: true });
+        localSettings.update({
+          background_location_granted: true,
+          _background_location_denial_count: 0,
+        });
         invalidatePermissionCache();
         return true;
       }
 
       const result = await ActivityRecognition.requestBackgroundLocation();
       const granted = result.backgroundLocation === PERMISSION_STATES.GRANTED;
-      localSettings.update({
-        background_location_granted: granted ? true : PERMISSION_STATES.NEEDS_SETTINGS,
-      });
-      if (!granted) {
-        await ActivityRecognition.openAppLocationSettings();
+      if (granted) {
+        localSettings.update({
+          background_location_granted: true,
+          _background_location_denial_count: 0,
+        });
+        invalidatePermissionCache();
+        return true;
       }
+
+      const currentSettings = localSettings.get();
+      const denialCount = Number(currentSettings._background_location_denial_count || 0) + 1;
+      const partialGrant = result.foregroundLocation === PERMISSION_STATES.GRANTED &&
+        result.backgroundLocation !== PERMISSION_STATES.GRANTED;
+      const shouldEscalate = !partialGrant && denialCount >= 2;
+
+      localSettings.update({
+        background_location_granted: shouldEscalate ? PERMISSION_STATES.NEEDS_SETTINGS : PERMISSION_STATES.DENIED,
+        _background_location_denial_count: denialCount,
+      });
+
+      if (shouldEscalate) await ActivityRecognition.openAppLocationSettings();
       invalidatePermissionCache();
-      return granted;
+      return {
+        granted: false,
+        reason: shouldEscalate ? 'needs_settings' : (partialGrant ? 'partial_grant' : 'denied'),
+      };
     } catch (err) {
       logError('background_location_permission_request', err);
       try {
@@ -491,6 +565,9 @@ export async function requestBackgroundLocationPermission() {
     }
   }
 
+  // NOTE: iOS "Always Allow" background location requires a separate native
+  // CLLocationManager requestAlwaysAuthorization flow. This web/non-Android
+  // path assumes that any native iOS layer has already obtained that grant.
   localSettings.update({ background_location_granted: true });
   invalidatePermissionCache();
   return true;

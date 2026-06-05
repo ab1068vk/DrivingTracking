@@ -1,7 +1,9 @@
 package com.roadsage.app;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
@@ -32,6 +34,7 @@ public class DriveSenseAutoTrackingTileService extends TileService {
 
         if (!hasNativeAutoTrackingPermissions()) {
             updateTile("Setup needed", Tile.STATE_INACTIVE);
+            openAppForBackgroundAutoSetup();
             return;
         }
 
@@ -99,5 +102,14 @@ public class DriveSenseAutoTrackingTileService extends TileService {
 
     private boolean hasPermission(String permission) {
         return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void openAppForBackgroundAutoSetup() {
+        Uri setupUri = Uri.parse("roadsage://app/settings?action=request_background_auto&tab=tracking");
+        Intent intent = new Intent(Intent.ACTION_VIEW, setupUri, this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.putExtra("tile_action", "request_background_auto");
+        intent.putExtra("deeplink", setupUri.toString());
+        startActivityAndCollapse(intent);
     }
 }

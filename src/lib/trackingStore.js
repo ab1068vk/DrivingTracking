@@ -63,6 +63,7 @@ let liveRoutePoints = [];
 const activeTripListeners = new Set();
 let activeTripSnapshot = { trip: null, version: 0 };
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 12;
+const PROTOTYPE_POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const settingsStorage = () => {
   if (isNativePlatform()) return null;
@@ -727,6 +728,7 @@ export const DEFAULT_SETTINGS = {
   onboarding_completed: false,
   location_permission_granted: false,
   background_location_granted: false,
+  _background_location_denial_count: 0,
   tracking_paused: false,
   live_coaching_enabled: true,
   voice_alerts_enabled: true,
@@ -809,13 +811,20 @@ const sanitizeSettingsForMigration = (input = {}) => {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const allowed = migrationAllowedKeys();
   return Object.fromEntries(
-    Object.entries(input).filter(([key]) => allowed.has(key))
+    Object.entries(input).filter(([key]) => allowed.has(key) && !PROTOTYPE_POISON_KEYS.has(key))
   );
 };
 
 export function migrateDefaultSettings(parsed = {}) {
   parsed = sanitizeSettingsForMigration(parsed);
-  const merged = { ...DEFAULT_SETTINGS, ...parsed };
+  const merged = Object.assign(Object.create(null), DEFAULT_SETTINGS);
+  Object.keys(parsed).forEach((key) => {
+    if (PROTOTYPE_POISON_KEYS.has(key)) return;
+    if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key) ||
+      MIGRATION_LEGACY_KEYS.includes(key)) {
+      merged[key] = parsed[key];
+    }
+  });
   const version = Number(parsed.settings_defaults_version) || 1;
   const legacyProxyKeys = MIGRATION_LEGACY_KEYS.filter((key) => key !== 'data_retention_days');
 
@@ -885,6 +894,7 @@ export function migrateDefaultSettings(parsed = {}) {
   delete merged.data_retention_days;
   legacyProxyKeys.forEach((key) => delete merged[key]);
   const ecoSettingsRepaired = repairEcoScoringSettings(merged, 'default_settings_migration');
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete merged[key]; });
 
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
@@ -1040,7 +1050,8 @@ const finiteSettingsNumber = (value) => {
 export function sanitizeImportedSettings(raw = {}, currentSettings = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
 
-  const normalizedRaw = { ...raw };
+  const normalizedRaw = Object.assign(Object.create(null), raw);
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete normalizedRaw[key]; });
   if (normalizedRaw.threshold_stop_start_decel_ms2 == null) {
     normalizedRaw.threshold_stop_start_decel_ms2 = raw.threshold_tailgate_decel_ms2;
   }
@@ -1065,6 +1076,7 @@ export function sanitizeImportedSettings(raw = {}, currentSettings = {}) {
 
   const sanitized = Object.create(null);
   Object.entries(DEFAULT_SETTINGS).forEach(([key, defaultValue]) => {
+    if (PROTOTYPE_POISON_KEYS.has(key)) return;
     if (!Object.prototype.hasOwnProperty.call(normalizedRaw, key) || normalizedRaw[key] == null) return;
     if (IMPORT_STRIPPED_KEYS.has(key)) return;
     const value = normalizedRaw[key];
@@ -1107,10 +1119,14 @@ export function sanitizeImportedSettings(raw = {}, currentSettings = {}) {
       if (typeof value === 'string') sanitized[key] = value.slice(0, 500);
     }
   });
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete sanitized[key]; });
   repairEcoScoringSettings(sanitized, 'backup_settings_import', normalizedRaw);
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete sanitized[key]; });
 
   if (currentSettings.external_requests_local_only === true || raw.external_requests_local_only === true) {
-    return enforceLocalOnlyPatch({ ...sanitized, external_requests_local_only: true });
+    const localOnly = enforceLocalOnlyPatch({ ...sanitized, external_requests_local_only: true });
+    PROTOTYPE_POISON_KEYS.forEach((key) => { delete localOnly[key]; });
+    return localOnly;
   }
 
   return sanitized;

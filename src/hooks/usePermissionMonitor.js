@@ -102,7 +102,7 @@ export function usePermissionMonitor(trackingMode) {
   const [isChecking, setIsChecking] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState(null);
 
-  const check = useCallback(async () => {
+  const check = useCallback(async ({ force = true } = {}) => {
     if (trackingMode === 'manual' || trackingMode === 'paused') {
       setIssues([]);
       setLastCheckedAt(new Date().toISOString());
@@ -119,8 +119,8 @@ export function usePermissionMonitor(trackingMode) {
 
       try {
         permissionStatus = refreshPermissionStatus
-          ? await refreshPermissionStatus({ force: true })
-          : await getPermissionStatus(null, { force: true });
+          ? await refreshPermissionStatus({ force })
+          : await getPermissionStatus(null, { force });
       } catch {
         permissionCheckFailed = true;
       }
@@ -154,15 +154,15 @@ export function usePermissionMonitor(trackingMode) {
 
   useEffect(() => {
     let cancelled = false;
-    const run = async () => {
-      if (!cancelled) await check();
+    const run = async (options = { force: true }) => {
+      if (!cancelled) await check(options);
     };
 
-    run();
+    run({ force: true });
     const id = window.setInterval(run, POLL_INTERVAL_MS);
-    const onFocus = () => run();
+    const onFocus = () => run({ force: true });
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') run();
+      if (document.visibilityState === 'visible') run({ force: true });
     };
 
     window.addEventListener('focus', onFocus);

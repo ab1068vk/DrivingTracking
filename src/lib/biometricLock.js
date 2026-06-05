@@ -31,12 +31,21 @@ export function getLockTimeoutMs(settings = {}) {
   if (!isBiometricLockEnabled()) return Number.POSITIVE_INFINITY;
 
   const rawMinutes = settings.lock_timeout_minutes;
-  const minutes = rawMinutes == null || (typeof rawMinutes === 'string' && rawMinutes.trim() === '')
-    ? NaN
-    : Number(rawMinutes);
-  if (!Number.isFinite(minutes) || minutes < 0) return BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES * 60 * 1000;
-  if (minutes === 0) return Number.POSITIVE_INFINITY;
-  return minutes * 60 * 1000;
+  let minutes;
+  if (rawMinutes === 0 || rawMinutes === '0') {
+    minutes = 0;
+  } else if (rawMinutes == null || (typeof rawMinutes === 'string' && rawMinutes.trim() === '')) {
+    minutes = BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES;
+  } else {
+    const parsed = Number(rawMinutes);
+    minutes = Number.isFinite(parsed) && parsed >= 0
+      ? parsed
+      : BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES;
+  }
+
+  const clamped = Math.min(Math.max(0, minutes), 30);
+  if (clamped === 0) return Number.POSITIVE_INFINITY;
+  return clamped * 60 * 1000;
 }
 
 export function markUnlocked(now = Date.now()) {
@@ -52,12 +61,21 @@ export function lock() {
   lastActivityAt = null;
 }
 
+export function lockWhenBiometricEnabled() {
+  if (!isBiometricLockEnabled()) return false;
+  lock();
+  return true;
+}
+
 export function isLocked(settings = {}, now = Date.now()) {
   if (!isBiometricLockEnabled()) return false;
   if (!lastActivityAt) return true;
 
   const timeoutMs = getLockTimeoutMs(settings);
-  if (!Number.isFinite(timeoutMs)) return false;
+  if (timeoutMs === Number.POSITIVE_INFINITY) return false;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    return Number(now) - lastActivityAt > BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES * 60 * 1000;
+  }
 
   return Number(now) - lastActivityAt > timeoutMs;
 }

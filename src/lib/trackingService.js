@@ -101,9 +101,10 @@ export function createDrivingTrackingService({ background = false } = {}) {
   return {
     async start(onPoint, onError) {
       try {
-        const allowed = background
+        const permissionResult = background
           ? await requestBackgroundLocationPermission()
           : await requestForegroundLocationPermission();
+        const allowed = permissionResult === true || permissionResult?.granted === true;
 
         if (!allowed) {
           onError?.({

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
 import { getPermissionStatus, invalidatePermissionCache } from '@/lib/permissions';
+import { localSettings } from '@/lib/trackingStore';
 import {
   PERMISSION_STATES,
   normalizePermissionState,
@@ -18,8 +19,34 @@ export const PERMISSION_KEYS = Object.freeze([
 
 const PermissionContext = createContext(null);
 
+function storedMarkerStatus(value) {
+  if (value === true) return PERMISSION_STATES.GRANTED;
+  if (value === PERMISSION_STATES.NEEDS_SETTINGS) return PERMISSION_STATES.NEEDS_SETTINGS;
+  if (value === PERMISSION_STATES.DENIED) return PERMISSION_STATES.DENIED;
+  return PERMISSION_STATES.UNKNOWN;
+}
+
+function initialPermissionsFromStore() {
+  try {
+    const stored = localSettings.get();
+    return {
+      foregroundLocation: storedMarkerStatus(stored.location_permission_granted),
+      backgroundLocation: storedMarkerStatus(stored.background_location_granted),
+      notifications: storedMarkerStatus(stored.notification_permission_granted),
+      activityRecognition: storedMarkerStatus(stored.activity_permission_granted),
+      phoneUsageAccess: stored.phone_usage_access_granted === true
+        ? PERMISSION_STATES.GRANTED
+        : PERMISSION_STATES.UNKNOWN,
+      bluetooth: PERMISSION_STATES.UNKNOWN,
+      motionSensors: PERMISSION_STATES.UNKNOWN,
+    };
+  } catch {
+    return Object.fromEntries(PERMISSION_KEYS.map((key) => [key, PERMISSION_STATES.UNKNOWN]));
+  }
+}
+
 const initialState = Object.freeze({
-  ...Object.fromEntries(PERMISSION_KEYS.map((key) => [key, PERMISSION_STATES.UNKNOWN])),
+  ...initialPermissionsFromStore(),
   _loading: false,
   _lastCheckedAt: null,
 });

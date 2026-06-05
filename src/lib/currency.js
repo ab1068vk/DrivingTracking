@@ -1,11 +1,11 @@
 export const CURRENCY_SYMBOL_OPTIONS = [
   { value: '$', label: '$' },
-  { value: '€', label: '€' },
-  { value: '£', label: '£' },
+  { value: '\u20ac', label: '\u20ac' },
+  { value: '\u00a3', label: '\u00a3' },
   { value: 'kr', label: 'kr' },
-  { value: '¥', label: '¥' },
-  { value: '₹', label: '₹' },
-  { value: '₺', label: '₺' },
+  { value: '\u00a5', label: '\u00a5' },
+  { value: '\u20b9', label: '\u20b9' },
+  { value: '\u20ba', label: '\u20ba' },
 ];
 
 const DEFAULT_CURRENCY_SYMBOL = '$';

@@ -40,7 +40,55 @@ test('post-onboarding launch renders the dashboard shell', async ({ page }) => {
 
   await expect(page.getByRole('banner')).toContainText('Road Sage');
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-  await expect(page.getByText(/Ready to drive|Recent Trips|Driving Score/i).first()).toBeVisible();
+  await expect(page.getByText(/Ready to drive\?|Tracking is paused|setup item.*need attention|Recent Trips|Driving Score/i).first()).toBeVisible();
+});
+
+test('dashboard shows ready label only when readiness checks pass', async ({ page }) => {
+  await page.context().grantPermissions(['geolocation'], {
+    origin: 'http://127.0.0.1:4173',
+  });
+  await resetAndSeed(page, {
+    settings: {
+      tracking_mode: 'manual',
+      tracking_paused: false,
+      location_permission_granted: true,
+    },
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByText('Ready to drive?', { exact: true })).toBeVisible();
+  await expect(page.getByText(/setup item.*need attention/i)).not.toBeVisible();
+});
+
+test('dashboard shows paused label when tracking is paused', async ({ page }) => {
+  await resetAndSeed(page, {
+    settings: {
+      tracking_mode: 'manual',
+      tracking_paused: true,
+      location_permission_granted: true,
+    },
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByText('Tracking is paused', { exact: true })).toBeVisible();
+  await expect(page.getByText('Ready to drive?', { exact: true })).not.toBeVisible();
+});
+
+test('dashboard shows blocked label when location permission is denied', async ({ page }) => {
+  await resetAndSeed(page, {
+    settings: {
+      tracking_mode: 'manual',
+      tracking_paused: false,
+      location_permission_granted: false,
+    },
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByText('1 setup item needs attention', { exact: true })).toBeVisible();
+  await expect(page.getByText('Ready to drive?', { exact: true })).not.toBeVisible();
 });
 
 test('desktop navigation reaches every primary route', async ({ page }) => {

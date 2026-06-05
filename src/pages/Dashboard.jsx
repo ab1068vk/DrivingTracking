@@ -1,12 +1,13 @@
 import { memo, useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
-  ParkingSquare, CheckCircle2, Info, PhoneCall, Shield
+  ParkingSquare, CheckCircle2, Info, PhoneCall, Shield, Settings
 } from 'lucide-react';
 import {
   formatDistance, formatDuration, formatSpeed,
@@ -146,6 +147,7 @@ import { getPrivacyZones, isInsidePrivacyZone, maskEventsForPrivacy } from '@/li
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 const AUTO_START_TRIGGER_SECONDS = 2;
+const GPS_ERROR_AUTO_STOP_THRESHOLD = 5;
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
 const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
@@ -233,6 +235,7 @@ const ActiveTripPanel = memo(function ActiveTripPanel({
   stealthTripActive,
   units,
 }) {
+  const [ending, setEnding] = useState(false);
   const activeTripSnapshot = useActiveTripSnapshot();
   const subscribedTrip = activeTripSnapshot.trip;
   const liveVersion = activeTripSnapshot.version;
@@ -263,6 +266,17 @@ const ActiveTripPanel = memo(function ActiveTripPanel({
     const firstScore = calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstPhoneUse).component_scores.overall.value;
     return lastScore != null && firstScore != null && lastScore < firstScore - 15;
   }, [activeTrip?.start_time, liveVersion, routePoints]);
+  const handleEnd = useCallback(async () => {
+    if (ending) return;
+    setEnding(true);
+    try {
+      await onEndTrip?.();
+    } catch (error) {
+      console.error('[ActiveTripPanel] onEndTrip threw:', error);
+    } finally {
+      setEnding(false);
+    }
+  }, [ending, onEndTrip]);
 
   return (
     <motion.div
@@ -302,7 +316,10 @@ const ActiveTripPanel = memo(function ActiveTripPanel({
 
       {currentLocation && (() => {
         const spd = currentLocation.speed_kmh || 0;
-        const overLimit = settings.threshold_speeding_kmh || 100;
+        const resolvedLimitKmh = Number(currentLocation.effective_speed_limit_kmh ?? currentLocation.speed_limit_kmh);
+        const overLimit = Number.isFinite(resolvedLimitKmh) && resolvedLimitKmh > 0
+          ? resolvedLimitKmh
+          : settings.threshold_speeding_kmh || 100;
         const warnOffset = settings.threshold_speed_over_kmh ?? 5;
         const speedWarningsEnabled = settings.speed_warning_enabled !== false;
         const isOverWarn = speedWarningsEnabled && spd > overLimit + warnOffset;
@@ -337,7 +354,7 @@ const ActiveTripPanel = memo(function ActiveTripPanel({
         </div>
       )}
 
-      {hazardMessage && (hazardMessage.persistent || Date.now() - hazardMessage.at < 2 * 60 * 1000) && (
+      {hazardMessage && (hazardMessage.persistent || Date.now() - hazardMessage.at < 30_000) && (
         <div className="mb-4 rounded-xl bg-red-500/25 px-3 py-2 text-sm font-medium text-red-50">
           {hazardMessage.body}
         </div>
@@ -376,11 +393,22 @@ const ActiveTripPanel = memo(function ActiveTripPanel({
       )}
 
       <button
-        onClick={onEndTrip}
-        className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
+        type="button"
+        onClick={handleEnd}
+        disabled={ending}
+        className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <Square className="w-4 h-4" />
-        End Trip
+        {ending ? (
+          <>
+            <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+            Ending trip...
+          </>
+        ) : (
+          <>
+            <Square className="w-4 h-4" />
+            End Trip
+          </>
+        )}
       </button>
     </motion.div>
   );
@@ -400,10 +428,12 @@ const LiveCoachOverlaySubscriber = memo(function LiveCoachOverlaySubscriber({ en
 
 export default function Dashboard() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [activeTrip, setActiveTrip] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [locationError, setLocationError] = useState(null);
+  const [endingTrip, setEndingTrip] = useState(false);
   const locationService = useRef(null);
   const autoLocationService = useRef(null);
   const activityStopRef = useRef(null);
@@ -421,10 +451,13 @@ export default function Dashboard() {
   const metaPersistTimerRef = useRef(null);
   const sensorFusionRef = useRef(null);
   const incidentAlertRef = useRef(0);
+  const gpsErrorCountRef = useRef(0);
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
   const lastProximityAlertRef = useRef(0);
   const inferredSpeedZonesRef = useRef([]);
+  const lastSettingsRefForThresholds = useRef(null);
+  const cachedThresholdsRef = useRef(null);
   const [settings, setSettings] = useState(() => localSettings.get());
   const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
   const [pendingStartOptions, setPendingStartOptions] = useState(null);
@@ -446,7 +479,10 @@ export default function Dashboard() {
     batteryStatus: null,
     diagnostics: getTrackingDiagnostics(),
   });
-  const effectiveTrackingMode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+  const effectiveTrackingMode = useMemo(
+    () => (settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual')),
+    [settings.tracking_mode, settings.tracking_paused]
+  );
   const {
     issues: permissionMonitorIssues,
     recheck: recheckPermissions,
@@ -471,7 +507,7 @@ export default function Dashboard() {
     const latestSettings = await localSettings.hydrateFromNative();
     const diagnostics = getTrackingDiagnostics();
     const [permissionStatus, nativeStatus, batteryStatus] = await Promise.all([
-      getPermissionStatus().catch(() => null),
+      getPermissionStatus(null, { force: true }).catch(() => null),
       isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
       isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
     ]);
@@ -528,6 +564,15 @@ export default function Dashboard() {
       sensorFusionRef.current?.stop();
     }
   }, [tracking]);
+
+  const resetTripRuntimeRefs = useCallback(() => {
+    stillSinceRef.current = null;
+    stoppedAnchorRef.current = null;
+    lastMovingSpeedRef.current = 0;
+    incidentAlertRef.current = 0;
+    lastProximityAlertRef.current = 0;
+    gpsErrorCountRef.current = 0;
+  }, []);
 
   useEffect(() => {
     if (!tracking || Date.now() - lastStayAlertAtRef.current < 10 * 60 * 1000) return;
@@ -694,7 +739,9 @@ export default function Dashboard() {
   const startTimer = (startTime) => {
     stopTimer();
     metaPersistTimerRef.current = setInterval(() => {
-      persistActiveTripMeta(activeTripRef.current);
+      if (activeTripRef.current) {
+        persistActiveTripMeta(activeTripRef.current);
+      }
     }, 30000);
   };
 
@@ -775,6 +822,7 @@ export default function Dashboard() {
     autoEndingTripRef.current = false;
     setActiveTrip(null);
     setTracking(false);
+    setHazardMessage(null);
     currentLocationRef.current = null;
     if (isAndroid() && !cfg.tracking_paused && (trip?.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
       await startNativeAutoTracking().catch((err) => {
@@ -812,10 +860,23 @@ export default function Dashboard() {
 
   const handleLocationTrackingError = useCallback(async (err) => {
     if (err?.type !== 'permission_denied') {
-      setLocationError(err?.message || 'Location tracking failed.');
+      gpsErrorCountRef.current += 1;
+      setLocationError(err?.message || 'Location tracking failed. Retrying...');
+
+      if (gpsErrorCountRef.current >= GPS_ERROR_AUTO_STOP_THRESHOLD && trackingRef.current) {
+        recordTrackingDiagnostic({
+          type: 'gps_error_auto_stop',
+          title: 'Trip ended: repeated GPS failure',
+          reason: err?.message || 'gps_service_error',
+          error_count: gpsErrorCountRef.current,
+        });
+        locationPermissionEndingRef.current = true;
+        await endTripRef.current?.();
+      }
       return;
     }
 
+    gpsErrorCountRef.current = 0;
     setLocationError(err.message || 'Location permission was denied.');
     if (!trackingRef.current || !activeTripRef.current || locationPermissionEndingRef.current) return;
 
@@ -871,14 +932,20 @@ export default function Dashboard() {
   const startGPS = useCallback(() => {
     const cfg = localSettings.get();
     const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
-    if (!locationService.current) {
-      locationService.current = createDrivingTrackingService({ background: useBackground });
-    }
+    locationService.current?.stop?.();
+    locationService.current = createDrivingTrackingService({ background: useBackground });
     locationService.current.start(
       async (point) => {
+        try {
+        gpsErrorCountRef.current = 0;
         currentLocationRef.current = point;
         setLocationError(null);
         const latestSettings = localSettings.get();
+        if (latestSettings !== lastSettingsRefForThresholds.current) {
+          cachedThresholdsRef.current = buildDrivingThresholds(latestSettings);
+          lastSettingsRefForThresholds.current = latestSettings;
+        }
+        const thresholds = cachedThresholdsRef.current;
         if (!isEphemeralModeActive() && !isStealthNextTripEnabled()) {
           saveLastMapCenter({
             ...point,
@@ -919,7 +986,6 @@ export default function Dashboard() {
         const routePointsWithLatest = updatedTripWithPoint?.route_points ||
           (tripBeforePoint ? [...(tripBeforePoint.route_points || []), point] : [point]);
         const speed = Number(point.speed_kmh) || 0;
-        const thresholds = buildDrivingThresholds(latestSettings);
         inferredSpeedZonesRef.current = inferSpeedZones(routePointsWithLatest, thresholds);
         const postedLimitKmh = Number(point.speed_limit_kmh);
         const currentPointLimitKmh = Number.isFinite(postedLimitKmh) && postedLimitKmh > 0 ? postedLimitKmh : null;
@@ -938,6 +1004,17 @@ export default function Dashboard() {
           : currentInferredLimit != null
             ? 'inferred'
             : speedLimitContext.limitSource;
+        const routePointsForTrip = routePointsWithLatest.length > 0
+          ? routePointsWithLatest.map((routePoint, index) => (
+              index === routePointsWithLatest.length - 1
+                ? {
+                    ...routePoint,
+                    effective_speed_limit_kmh: speedLimitKmh,
+                    effective_speed_limit_source: speedLimitSource,
+                  }
+                : routePoint
+            ))
+          : routePointsWithLatest;
         const speedLimitLabel = speedLimitSource === 'inferred' ? 'estimated limit' : 'limit';
         const speedMarginKmh = Number(latestSettings.threshold_speed_over_kmh ?? 5);
         const shouldWarnForSpeed = (
@@ -967,7 +1044,8 @@ export default function Dashboard() {
           recordImprovement('speeding');
         }
         if (tripBeforePoint) {
-          const updated = { ...(updatedTripWithPoint || tripBeforePoint), route_points: routePointsWithLatest };
+          const updated = { ...(updatedTripWithPoint || tripBeforePoint), route_points: routePointsForTrip };
+          activeTripStore.set(updated);
           activeTripRef.current = updated;
         }
         const trip = activeTripRef.current;
@@ -979,7 +1057,7 @@ export default function Dashboard() {
             now: point.timestamp || new Date().toISOString(),
             activity: latestActivityRef.current,
             nearParkedLocation: trip.candidate_near_parked === true,
-            thresholds: buildDrivingThresholds(latestSettings),
+            thresholds,
           });
           if (decision.confirmed) {
             promoteCandidateTrip(trip, decision);
@@ -1048,9 +1126,15 @@ export default function Dashboard() {
         stillSinceRef.current ??= nowMs;
         stoppedAnchorRef.current ??= { lat: point.lat, lng: point.lng };
         const stillSeconds = (nowMs - stillSinceRef.current) / 1000;
-        const recentPoints = (trip.route_points || []).filter((routePoint) => (
-          new Date(routePoint.timestamp).getTime() >= stillSinceRef.current - 5000
-        ));
+        const allPoints = trip.route_points || [];
+        const scanFrom = Math.max(0, allPoints.length - 60);
+        const recentPoints = [];
+        const cutoff = stillSinceRef.current - 5000;
+        for (let i = allPoints.length - 1; i >= scanFrom; i -= 1) {
+          const timestampMs = new Date(allPoints[i].timestamp).getTime();
+          if (timestampMs < cutoff) break;
+          recentPoints.push(allPoints[i]);
+        }
         const gpsPositionDriftM = computeGpsPositionDrift(
           stoppedAnchorRef.current.lat,
           stoppedAnchorRef.current.lng,
@@ -1094,6 +1178,16 @@ export default function Dashboard() {
           });
           autoEndingTripRef.current = true;
           endTripRef.current?.();
+        }
+      } catch (err) {
+          if (err?.type === 'permission_denied') {
+            await handleLocationTrackingError(err);
+          } else {
+            logError('gps_callback_unhandled', err, {
+              trip_state: activeTripRef.current?.trip_state || null,
+            });
+            setLocationError('GPS processing error. Tracking continues.');
+          }
         }
       },
       handleLocationTrackingError
@@ -1219,9 +1313,10 @@ export default function Dashboard() {
       }
     }
 
-    const granted = useBackground
+    const permissionResult = useBackground
       ? await requestBackgroundLocationPermission()
       : await requestForegroundLocationPermission();
+    const granted = permissionResult === true || permissionResult?.granted === true;
 
     if (!granted) {
       if (pausedNativeAuto && !stealthRequested) await startNativeAutoTracking().catch((err) => {
@@ -1337,6 +1432,7 @@ export default function Dashboard() {
         (err) => setLocationError(err.message)
       );
     }
+    resetTripRuntimeRefs();
     startTimer(new Date(startTime));
     startGPS();
     if (!candidate && !ephemeralTrip) {
@@ -1349,7 +1445,7 @@ export default function Dashboard() {
       });
       scheduleLongTripReminder(tripData.start_time);
     }
-  }, [buildPreTripReadinessContext, dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
+  }, [buildPreTripReadinessContext, dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, resetTripRuntimeRefs, startGPS]);
 
   const acknowledgeEmergencyWorkflow = (action = 'ok') => {
     const current = activeTripRef.current || activeTrip;
@@ -1431,6 +1527,7 @@ export default function Dashboard() {
         locationPermissionEndingRef.current = false;
         setActiveTrip(null);
         setTracking(false);
+        setHazardMessage(null);
         currentLocationRef.current = null;
         if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
           await startNativeAutoTracking().catch((err) => {
@@ -1528,6 +1625,7 @@ export default function Dashboard() {
       locationPermissionEndingRef.current = false;
       setActiveTrip(null);
       setTracking(false);
+      setHazardMessage(null);
       currentLocationRef.current = null;
       if (!stealthTripEnding && isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
         await startNativeAutoTracking().catch((err) => {
@@ -1821,6 +1919,7 @@ export default function Dashboard() {
     locationPermissionEndingRef.current = false;
     setActiveTrip(null);
     setTracking(false);
+    setHazardMessage(null);
     currentLocationRef.current = null;
     if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
       await startNativeAutoTracking().catch((err) => {
@@ -1837,7 +1936,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     endTripRef.current = handleEndTrip;
-  });
+  }, [handleEndTrip]);
 
   useEffect(() => {
     const cfg = localSettings.get();
@@ -1933,9 +2032,10 @@ export default function Dashboard() {
         );
       }
 
-      const locationGranted = useBackground
+      const locationResult = useBackground
         ? await requestBackgroundLocationPermission()
         : await requestForegroundLocationPermission();
+      const locationGranted = locationResult === true || locationResult?.granted === true;
       if (cancelled) return;
 
       if (!locationGranted) {
@@ -2157,7 +2257,7 @@ export default function Dashboard() {
       await refreshTrackingStatusContext();
     }
   };
-  const trackingReadiness = (() => {
+  const trackingReadiness = useMemo(() => {
     const mode = effectiveTrackingMode;
     const checks = [
       {
@@ -2232,12 +2332,22 @@ export default function Dashboard() {
       mode,
       checks,
       ready: blockers.length === 0,
-      headline: blockers.length === 0 ? 'Tracking is ready' : `${blockers.length} tracking setup item${blockers.length === 1 ? '' : 's'} need attention`,
+      headline: blockers.length === 0
+        ? 'Tracking is ready'
+        : `${blockers.length} tracking setup item${blockers.length === 1 ? '' : 's'} ${blockers.length === 1 ? 'needs' : 'need'} attention`,
       detail: blockers.length === 0
         ? mode === 'manual' ? 'Manual trips can start with GPS recording.' : 'Auto tracking has the recorded permissions it needs.'
         : blockers[0].detail,
     };
-  })();
+  }, [
+    effectiveTrackingMode,
+    settings.activity_permission_granted,
+    settings.background_location_granted,
+    settings.location_permission_granted,
+    settings.notification_permission_granted,
+    trackingStatusContext.batteryStatus?.batteryOptimizationIgnored,
+    trackingStatusContext.nativeStatus?.enabled,
+  ]);
   const trackingExplanationKey = useMemo(() => JSON.stringify({
     mode: effectiveTrackingMode,
     tracking,
@@ -2540,53 +2650,108 @@ export default function Dashboard() {
             fallbackTrip={activeTrip}
             hazardMessage={hazardMessage}
             onAcknowledgeEmergency={acknowledgeEmergencyWorkflow}
-            onEndTrip={() => handleEndTrip().catch((error) => {
-              const message = 'Road Sage could not finish saving this trip. Keep the app open and try ending again.';
-              setLocationError(message);
-              notifyUserError('dashboard_end_trip', error, {
-                title: 'Trip not saved yet',
-                description: message,
-              });
-            })}
+            onEndTrip={async () => {
+              if (endingTrip) return;
+              setEndingTrip(true);
+              try {
+                await handleEndTrip();
+              } catch (error) {
+                const message = 'Road Sage could not finish saving this trip. Keep the app open and try ending again.';
+                setLocationError(message);
+                notifyUserError('dashboard_end_trip', error, {
+                  title: 'Trip not saved yet',
+                  description: message,
+                });
+              } finally {
+                setEndingTrip(false);
+              }
+            }}
             parkedLocation={parkedLocation}
             settings={settings}
             stealthTripActive={stealthTripActive}
             units={units}
           />
         ) : (
-          <motion.div
-            key="idle"
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            className="bg-card border border-border rounded-3xl p-6 shadow-sm"
-          >
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <div className="text-muted-foreground text-sm mb-1">Ready to drive?</div>
-                <div className="font-grotesk font-bold text-xl">Start a new trip</div>
-                <div className="text-muted-foreground text-xs mt-1">Tap to begin tracking your route</div>
-                <TrackingHealthChip
-                  nativeStatus={trackingStatusContext.nativeStatus}
-                  permissions={trackingHealthPermissions}
-                  trackingMode={effectiveTrackingMode}
-                />
-              </div>
-              <button
-                onClick={() => handleStartTrip().catch((error) => {
-                  const message = 'Road Sage could not start this trip. Check permissions and try again.';
-                  setLocationError(message);
-                  notifyUserError('dashboard_start_trip', error, {
-                    title: 'Trip did not start',
-                    description: message,
-                  });
-                })}
-                className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
+          (() => {
+            const paused = effectiveTrackingMode === 'paused';
+            const blocked = !trackingReadiness.ready;
+            const needsSetup = paused || blocked;
+            const blockerCount = trackingReadiness.checks.filter((check) => !check.ready).length;
+            const idleLabel = paused
+              ? 'Tracking is paused'
+              : blocked
+                ? `${blockerCount} setup item${blockerCount === 1 ? '' : 's'} ${blockerCount === 1 ? 'needs' : 'need'} attention`
+                : 'Ready to drive?';
+            const idleTitle = paused
+              ? 'Unpause to start'
+              : blocked
+                ? 'Check tracking setup'
+                : 'Start a new trip';
+            const idleDetail = needsSetup
+              ? trackingReadiness.detail
+              : 'Tap to begin tracking your route';
+            const handleIdleButton = () => {
+              if (needsSetup) {
+                navigate('/settings');
+                return;
+              }
+              handleStartTrip().catch((error) => {
+                const message = 'Road Sage could not start this trip. Check permissions and try again.';
+                setLocationError(message);
+                notifyUserError('dashboard_start_trip', error, {
+                  title: 'Trip did not start',
+                  description: message,
+                });
+              });
+            };
+
+            return (
+              <motion.div
+                key="idle"
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="bg-card border border-border rounded-3xl p-6 shadow-sm"
               >
-                <Play className="w-7 h-7 text-white ml-0.5" />
-              </button>
-            </div>
-          </motion.div>
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <div
+                      className={`text-sm mb-1 font-medium ${
+                        needsSetup
+                          ? 'text-amber-500 dark:text-amber-400'
+                          : 'text-muted-foreground'
+                      }`}
+                    >
+                      {idleLabel}
+                    </div>
+                    <div className="font-grotesk font-bold text-xl">{idleTitle}</div>
+                    <div className="text-muted-foreground text-xs mt-1 leading-relaxed">{idleDetail}</div>
+                    <TrackingHealthChip
+                      nativeStatus={trackingStatusContext.nativeStatus}
+                      permissions={trackingHealthPermissions}
+                      trackingMode={effectiveTrackingMode}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleIdleButton}
+                    aria-label={needsSetup ? 'Open Settings to fix tracking setup' : 'Start trip'}
+                    className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity ${
+                      needsSetup
+                        ? 'bg-gradient-to-br from-amber-400 to-orange-500'
+                        : 'bg-gradient-to-br from-blue-500 to-indigo-600'
+                    }`}
+                  >
+                    {needsSetup ? (
+                      <Settings className="w-7 h-7 text-white" />
+                    ) : (
+                      <Play className="w-7 h-7 text-white ml-0.5" />
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })()
         )}
       </AnimatePresence>
 

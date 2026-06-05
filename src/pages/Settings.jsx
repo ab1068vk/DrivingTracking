@@ -115,6 +115,8 @@ import {
 } from '@/lib/backupEncryption';
 import { recordOutboundDataEvent } from '@/lib/privacyControls';
 
+const TILE_BACKGROUND_AUTO_ACTION_KEY = 'road_sage_tile_action_request_background_auto';
+
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
 }
@@ -391,7 +393,9 @@ export default function Settings() {
   const importInputRef = useRef(null);
   const backupImportStatusTimeoutRef = useRef(null);
   const refreshPermissionsInFlightRef = useRef(null);
+  const trackingModeRequestInFlightRef = useRef(false);
   const settingsSaveGenerationRef = useRef(0);
+  const [trackingModeRequestInFlight, setTrackingModeRequestInFlight] = useState(false);
   const qc = useQueryClient();
   const permissionContext = useOptionalPermissions();
 
@@ -955,84 +959,139 @@ export default function Settings() {
   };
 
   const enableTrackingMode = async (mode) => {
-    if (cfg.tracking_paused && mode !== 'manual') {
-      await updateCfg({ tracking_paused: false });
-    }
+    if (trackingModeRequestInFlightRef.current) return;
+    trackingModeRequestInFlightRef.current = true;
+    setTrackingModeRequestInFlight(true);
+    try {
+      if (cfg.tracking_paused && mode !== 'manual') {
+        await updateCfg({ tracking_paused: false });
+      }
 
-    if (mode === 'manual') {
-      const stopped = await stopNativeAutoTrackingSafely('Manual mode could not stop background tracking');
-      if (!stopped) return;
-      await updateCfg({
-        tracking_mode: 'manual',
-        auto_tracking_enabled: false,
-        background_tracking_enabled: false,
-        tracking_paused: false,
-      });
-      return;
-    }
+      if (mode === 'manual') {
+        const stopped = await stopNativeAutoTrackingSafely('Manual mode could not stop background tracking');
+        if (!stopped) return;
+        await updateCfg({
+          tracking_mode: 'manual',
+          auto_tracking_enabled: false,
+          background_tracking_enabled: false,
+          tracking_paused: false,
+        });
+        return;
+      }
 
-    const locationGranted = await requestForegroundLocationPermission();
-    if (!locationGranted) {
-      toast({
-        title: 'Location permission needed',
-        description: getPermissionExplanation('foregroundLocation'),
-        variant: 'destructive',
-      });
-      await refreshPermissions();
-      return;
-    }
-
-    const activityGranted = !isAndroid() || await requestActivityRecognitionPermission();
-    if (!activityGranted) {
-      toast({
-        title: 'Activity permission needed',
-        description: getPermissionExplanation('activityRecognition'),
-        variant: 'destructive',
-      });
-      await refreshPermissions();
-      return;
-    }
-
-    if (mode === 'background_auto') {
-      const backgroundGranted = await requestBackgroundLocationPermission();
-      if (!backgroundGranted) {
+      const locationStatus = await getPermissionStatus('foregroundLocation', { force: true });
+      let locationGranted = locationStatus?.status === 'granted';
+      if (!locationGranted) {
+        locationGranted = await requestForegroundLocationPermission();
+      }
+      if (!locationGranted) {
         toast({
-          title: 'Background location needed',
-          description: 'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.',
+          title: 'Location permission needed',
+          description: getPermissionExplanation('foregroundLocation'),
           variant: 'destructive',
-          duration: 9000,
         });
         await refreshPermissions();
         return;
       }
 
-      if (isAndroid()) {
-        try {
-          await startNativeAutoTracking();
-        } catch (error) {
+      const activityGranted = !isAndroid() || await requestActivityRecognitionPermission();
+      if (!activityGranted) {
+        toast({
+          title: 'Activity permission needed',
+          description: getPermissionExplanation('activityRecognition'),
+          variant: 'destructive',
+        });
+        await refreshPermissions();
+        return;
+      }
+
+      if (mode === 'background_auto') {
+        const liveStatus = await getPermissionStatus(null, { force: true });
+        if (liveStatus?.foregroundLocation !== 'granted') {
           toast({
-            title: 'Background tracking could not start',
-            description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
+            title: 'Location permission needed',
+            description: getPermissionExplanation('foregroundLocation'),
             variant: 'destructive',
           });
           await refreshPermissions();
           return;
         }
-      }
-    }
+        if (liveStatus?.notifications !== 'granted') {
+          const notificationsGranted = await requestNotificationPermission();
+          if (!notificationsGranted) {
+            toast({
+              title: 'Notifications needed',
+              description: getPermissionExplanation('notifications'),
+              variant: 'destructive',
+            });
+            await refreshPermissions();
+            return;
+          }
+        }
 
-    if (mode !== 'background_auto') {
-      const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
-      if (!stopped) return;
+        const backgroundResult = await requestBackgroundLocationPermission();
+        const backgroundGranted = backgroundResult === true || backgroundResult?.granted === true;
+        if (!backgroundGranted) {
+          toast({
+            title: 'Background location needed',
+            description: backgroundResult?.reason === 'partial_grant'
+              ? 'Tap Background Auto again and choose "Allow all the time" for background auto tracking.'
+              : 'Android requires Location permission set to "Allow all the time" for background auto tracking. Open app permissions, update Location, then return to Road Sage.',
+            variant: 'destructive',
+            duration: 9000,
+          });
+          await refreshPermissions();
+          return;
+        }
+
+        if (isAndroid()) {
+          try {
+            await startNativeAutoTracking();
+          } catch (error) {
+            toast({
+              title: 'Background tracking could not start',
+              description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
+              variant: 'destructive',
+            });
+            await refreshPermissions();
+            return;
+          }
+        }
+      }
+
+      if (mode !== 'background_auto') {
+        const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
+        if (!stopped) return;
+      }
+      await updateCfg({
+        tracking_mode: mode,
+        auto_tracking_enabled: mode !== 'manual',
+        background_tracking_enabled: mode === 'background_auto',
+        tracking_paused: false,
+      });
+      await refreshPermissions();
+    } finally {
+      trackingModeRequestInFlightRef.current = false;
+      setTrackingModeRequestInFlight(false);
     }
-    await updateCfg({
-      tracking_mode: mode,
-      auto_tracking_enabled: mode !== 'manual',
-      background_tracking_enabled: mode === 'background_auto',
-      tracking_paused: false,
-    });
-    await refreshPermissions();
   };
+
+  useEffect(() => {
+    let timeoutId;
+    try {
+      if (sessionStorage.getItem(TILE_BACKGROUND_AUTO_ACTION_KEY) !== '1') return undefined;
+      sessionStorage.removeItem(TILE_BACKGROUND_AUTO_ACTION_KEY);
+      timeoutId = window.setTimeout(() => {
+        enableTrackingMode('background_auto');
+      }, 250);
+    } catch {
+      return undefined;
+    }
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tile handoff should be consumed once on Settings mount.
+  }, []);
 
   const refreshPermissions = async () => {
     if (refreshPermissionsInFlightRef.current) return refreshPermissionsInFlightRef.current;
@@ -1634,7 +1693,7 @@ export default function Settings() {
   const settingsContext = {
     AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
     AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
-    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, backupImportPickerBusy, backupImportStage, backupImportStatusLabel, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected: handleImportBackup, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleImportBackup: handleOpenImportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, backupImportPickerBusy, backupImportStage, backupImportStatusLabel, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected: handleImportBackup, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleImportBackup: handleOpenImportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, trackingModeRequestInFlight, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
   };
 
   return (

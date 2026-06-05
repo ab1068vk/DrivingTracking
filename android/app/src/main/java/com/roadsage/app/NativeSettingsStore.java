@@ -16,6 +16,7 @@ final class NativeSettingsStore {
     private static final String TAG = "NativeSettingsStore";
     private static final String SETTINGS_PREFS_ENCRYPTED = "road_sage_native_settings_v2";
     private static final String SETTINGS_KEY = "road_sage_settings";
+    private static final Object SETTINGS_WRITE_LOCK = new Object();
 
     private NativeSettingsStore() {}
 
@@ -25,17 +26,21 @@ final class NativeSettingsStore {
 
     static boolean saveSettingsJson(Context context, String settingsJson) {
         if (settingsJson == null || settingsJson.trim().isEmpty()) return false;
-        return prefs(context).edit().putString(SETTINGS_KEY, settingsJson).commit();
+        synchronized (SETTINGS_WRITE_LOCK) {
+            return prefs(context).edit().putString(SETTINGS_KEY, settingsJson).commit();
+        }
     }
 
     static boolean updateSettingsFields(Context context, Map<String, Object> updates) {
         if (updates == null || updates.isEmpty()) return false;
-        String current = getSettingsJson(context);
-        try {
-            return saveSettingsJson(context, stampedSettingsJson(current, updates));
-        } catch (JSONException error) {
-            Log.e(TAG, "updateSettingsFields: failed to stamp settings", error);
-            return false;
+        synchronized (SETTINGS_WRITE_LOCK) {
+            String current = getSettingsJson(context);
+            try {
+                return saveSettingsJson(context, stampedSettingsJson(current, updates));
+            } catch (JSONException error) {
+                Log.e(TAG, "updateSettingsFields: failed to stamp settings", error);
+                return false;
+            }
         }
     }
 

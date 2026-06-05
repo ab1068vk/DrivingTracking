@@ -4,6 +4,7 @@ import {
   isBiometricLockEnabled,
   isLocked,
   lock,
+  lockWhenBiometricEnabled,
   markUserActivity,
   markUnlocked,
   setBiometricLockEnabled,
@@ -74,5 +75,26 @@ describe('biometric lock session timeout', () => {
 
     lock();
     expect(isLocked({ lock_timeout_minutes: 0 }, 10 * 60 * 1000)).toBe(true);
+  });
+
+  it('lock() clears the session even when timeout has not elapsed', () => {
+    setBiometricLockEnabled(true);
+    markUnlocked(Date.now());
+
+    expect(isLocked({ lock_timeout_minutes: 30 }, Date.now())).toBe(false);
+    lock();
+    expect(isLocked({ lock_timeout_minutes: 30 }, Date.now())).toBe(true);
+  });
+
+  it('background lock helper locks immediately whenever biometrics are enabled', () => {
+    setBiometricLockEnabled(false);
+    markUnlocked(1_000);
+    expect(lockWhenBiometricEnabled()).toBe(false);
+    expect(isLocked({ lock_timeout_minutes: 5 }, 10 * 60 * 1000)).toBe(false);
+
+    setBiometricLockEnabled(true);
+    markUnlocked(1_000);
+    expect(lockWhenBiometricEnabled()).toBe(true);
+    expect(isLocked({ lock_timeout_minutes: 5 }, 1_001)).toBe(true);
   });
 });
