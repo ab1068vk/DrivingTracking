@@ -5,13 +5,15 @@ import { tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDate, formatDistance, getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
+import { reverseGeocodeIfPermitted } from '@/lib/geocoding';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
-import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { ensureRouteRiskIndexMigration, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
   buildOpenSourceTripContextPatch,
@@ -222,11 +224,9 @@ export default function MapScreen() {
 
       const zones = buildRiskHotspots(allCompleted);
       await saveDangerZones(zones);
-      let index = await loadRouteRiskIndex(privacyZones);
-      if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted, privacyZones);
-        await saveRouteRiskIndex(index);
-      } else if (privacyZones.length) {
+      const migration = await ensureRouteRiskIndexMigration({ trips: allCompleted, privacyZones });
+      const index = migration.index || await loadRouteRiskIndex(privacyZones);
+      if (privacyZones.length) {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {
@@ -250,15 +250,15 @@ export default function MapScreen() {
 
     let next = stored;
     if (!stored.address) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const data = await response.json();
-          next = { ...stored, address: data.display_name || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-          await saveLastParkedLocation(next);
-        }
-      } catch {
+      const inPrivacyZone = isPointInPrivacyZone(stored, privacyZones);
+      if (inPrivacyZone) {
+        next = { ...stored, address: 'Private location' };
+      } else {
+        const address = await reverseGeocodeIfPermitted(stored.lat, stored.lng, { privacyZones });
+        next = { ...stored, address: address || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+        if (address) await saveLastParkedLocation(next);
+      }
+      if (!next.address) {
         next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
       }
     }

@@ -1,6 +1,6 @@
 import { isAndroid } from '@/lib/nativePlatform';
 import { requestActivityRecognitionPermission } from '@/lib/permissions';
-import { haversineDistance } from '@/lib/tripEngine';
+import { haversineDistance } from '@/lib/gps/math';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 
 const UNKNOWN_GPS_STABLE_M = 8;

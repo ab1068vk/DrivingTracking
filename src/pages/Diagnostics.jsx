@@ -35,12 +35,14 @@ import {
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
-import { formatDateTime } from '@/lib/tripEngine';
+import { formatDateTime } from '@/lib/gps/formatting';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
+import { logError } from '@/lib/errorReporting';
+import PageNotFound from '@/lib/PageNotFound';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -141,7 +143,7 @@ function motionEvidenceLabel(status) {
   return labels[status] || labels.none;
 }
 
-export default function Diagnostics() {
+function DiagnosticsContent() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
@@ -213,6 +215,12 @@ export default function Diagnostics() {
   }, [nativeDiagnostics, webDiagnostics]);
 
   const parkingTimeline = useMemo(() => buildParkingTimeline(latestTrip), [latestTrip]);
+  const latestOvertakeDiagnostics = useMemo(() => ({
+    eventCount: Number(latestTrip?.overtake_event_count ?? 0),
+    qualityScore: latestTrip?.overtake_quality_score ?? null,
+    unsafeReentryCount: Number(latestTrip?.unsafe_reentry_count ?? 0),
+    status: latestTrip?.overtake_quality_status || 'development_diagnostic_only',
+  }), [latestTrip]);
   const settings = localSettings.get();
   const backgroundAutoEnabled = settings.tracking_mode === 'background_auto' && !settings.tracking_paused;
   const osrmLastReachable = settings.osrm_last_reachable_at ? relativeAge(settings.osrm_last_reachable_at) : 'never';
@@ -225,7 +233,9 @@ export default function Diagnostics() {
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
-    if (isAndroid()) await clearNativeDiagnostics().catch(() => {});
+    if (isAndroid()) await clearNativeDiagnostics().catch((err) => {
+      logError('native_diagnostics_clear', err);
+    });
     await refresh();
   };
 
@@ -241,7 +251,9 @@ export default function Diagnostics() {
 
   const armNative = async () => {
     if (!isAndroid()) return;
-    await startNativeAutoTracking().catch(() => {});
+    await startNativeAutoTracking().catch((err) => {
+      logError('native_auto_tracking_start_diagnostics', err);
+    });
     await refresh();
   };
 
@@ -329,6 +341,34 @@ export default function Diagnostics() {
           </div>
         </section>
       )}
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">Development Diagnostics</h2>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Overtake pattern detection is hidden from Trip Detail and excluded from scores, coaching, route risk, and achievements.
+            </div>
+          </div>
+          <span className="w-fit rounded-full border border-border bg-secondary px-2.5 py-1 text-xs font-bold uppercase text-muted-foreground">
+            {latestOvertakeDiagnostics.status.replace(/_/g, ' ')}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Overtake patterns</div>
+            <div className="mt-1 text-sm font-semibold">{latestOvertakeDiagnostics.eventCount}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Quality score</div>
+            <div className="mt-1 text-sm font-semibold">{latestOvertakeDiagnostics.qualityScore ?? 'unavailable'}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Unsafe re-entry alerts</div>
+            <div className="mt-1 text-sm font-semibold">{latestOvertakeDiagnostics.unsafeReentryCount}</div>
+          </div>
+        </div>
+      </section>
 
       <section>
         <div className="mb-3 flex items-center justify-between">
@@ -491,4 +531,12 @@ export default function Diagnostics() {
       </section>
     </div>
   );
+}
+
+export default function Diagnostics() {
+  if (!import.meta.env.DEV) {
+    return <PageNotFound />;
+  }
+
+  return <DiagnosticsContent />;
 }
