@@ -141,6 +141,25 @@ function motionEvidenceLabel(status) {
   return labels[status] || labels.none;
 }
 
+export function buildRecoveryCompatibilitySnapshot(settings = {}, isAndroidPlatform = false) {
+  const mode = settings.tracking_paused
+    ? 'paused'
+    : settings.tracking_mode === 'background_auto'
+      ? 'background auto'
+      : settings.tracking_mode === 'auto_detect'
+        ? 'auto detect'
+        : 'manual';
+
+  return [
+    { label: 'Android package', value: 'com.drivesense.app', detail: 'In-place upgrades keep the same app data sandbox.' },
+    { label: 'Settings key', value: 'drivesense_settings', detail: 'Existing settings continue to hydrate from the established key.' },
+    { label: 'Trip database', value: 'drivesense_mobile', detail: 'Trip history stays on the recovered IndexedDB name.' },
+    { label: 'Backup format', value: 'Road Sage JSON v6', detail: 'Current imports/exports remain on the existing backup contract.' },
+    { label: 'Permission model', value: isAndroidPlatform ? 'Android runtime permissions' : 'Current platform permissions', detail: 'Diagnostics are read-only unless you press an explicit permission or service button.' },
+    { label: 'Tracking mode', value: mode, detail: 'Shown from current settings; this panel does not change it.' },
+  ];
+}
+
 export default function Diagnostics() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
@@ -222,6 +241,10 @@ export default function Diagnostics() {
     currentTrip: activeTrip,
     latestTrip,
   }), [permissionStatus?.motionSensors, settings, activeTrip, latestTrip]);
+  const compatibilitySnapshot = useMemo(
+    () => buildRecoveryCompatibilitySnapshot(settings, isAndroid()),
+    [settings]
+  );
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
@@ -297,6 +320,29 @@ export default function Diagnostics() {
           </button>
         </div>
       </div>
+
+      <section aria-label="Recovery compatibility snapshot" className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">Recovery Compatibility</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Read-only identity and storage facts for safe upgrades from the May 30 recovery base.
+            </p>
+          </div>
+          <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold uppercase text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
+            No writes
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {compatibilitySnapshot.map((item) => (
+            <div key={item.label} className="rounded-xl border border-border bg-secondary/30 p-3">
+              <div className="text-[11px] font-bold uppercase text-muted-foreground">{item.label}</div>
+              <div className="mt-1 break-words text-sm font-semibold">{item.value}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{item.detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {import.meta.env.DEV && (
         <section className="rounded-xl border border-border bg-card p-4">

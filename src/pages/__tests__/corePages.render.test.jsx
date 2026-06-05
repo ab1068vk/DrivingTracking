@@ -204,10 +204,12 @@ vi.mock('@/lib/activityRecognition', () => ({
   AUTO_START_IN_VEHICLE_SECONDS: 2,
   AUTO_START_SPEED_KMH: 5,
   computeGpsPositionDrift: vi.fn(() => null),
+  clearNativeDiagnostics: vi.fn(async () => {}),
   getAndroidBatteryOptimizationStatus: vi.fn(async () => ({ batteryOptimizationIgnored: true })),
   getAndroidPhoneUsageSummary: vi.fn(async () => ({})),
   getAndroidUsageAccessStatus: vi.fn(async () => ({ usageAccessGranted: false })),
   getNativeAutoTrackingStatus: vi.fn(async () => ({ enabled: false })),
+  getNativeDiagnostics: vi.fn(async () => ({ enabled: false, events: [] })),
   openAndroidBatteryOptimizationSettings: vi.fn(),
   openAndroidUsageAccessSettings: vi.fn(),
   shouldAutoStartTracking: vi.fn(() => false),
@@ -236,6 +238,25 @@ vi.mock('@/lib/permissions', () => ({
   requestBackgroundLocationPermission: vi.fn(async () => 'granted'),
   requestForegroundLocationPermission: vi.fn(async () => 'granted'),
   requestNotificationPermission: vi.fn(async () => 'granted'),
+}));
+
+vi.mock('@/lib/sensorFusionModel', () => ({
+  buildMotionSensorDiagnostics: vi.fn(() => ({
+    crashDetectionActive: false,
+    evidenceSource: 'none',
+    inactiveReasons: ['motion permission unknown'],
+    permissionState: 'not_requested',
+    quality: 'none',
+    sampleCount: 0,
+    sensorAvailable: true,
+    supportNote: 'Motion diagnostics unavailable in this render test.',
+  })),
+  getMotionSensorSupport: vi.fn(() => ({
+    available: true,
+    secureContext: true,
+    status: 'not_requested',
+  })),
+  requestMotionSensorPermission: vi.fn(async () => 'granted'),
 }));
 
 describe('core page component renders', () => {
@@ -441,6 +462,25 @@ describe('core page component renders', () => {
     expect(html).toContain('Affects score_overall, score_safety');
     expect(html).toContain('approximate');
     expect(html).toContain('Personal-use estimates only');
+  });
+
+  it('renders Diagnostics recovery compatibility as read-only identity facts', async () => {
+    queryData.set(JSON.stringify(['diagnostics-trips']), [sampleTrip]);
+    const { buildRecoveryCompatibilitySnapshot, default: Diagnostics } = await import('@/pages/Diagnostics');
+    const html = renderToStaticMarkup(<Diagnostics />);
+
+    expect(buildRecoveryCompatibilitySnapshot({ tracking_mode: 'background_auto' }, true)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Android package', value: 'com.drivesense.app' }),
+        expect.objectContaining({ label: 'Settings key', value: 'drivesense_settings' }),
+        expect.objectContaining({ label: 'Trip database', value: 'drivesense_mobile' }),
+      ])
+    );
+    expect(html).toContain('Recovery Compatibility');
+    expect(html).toContain('com.drivesense.app');
+    expect(html).toContain('drivesense_settings');
+    expect(html).toContain('drivesense_mobile');
+    expect(html).toContain('No writes');
   });
 
   it('shows tire-life estimate calibration warning on Vehicles', async () => {
