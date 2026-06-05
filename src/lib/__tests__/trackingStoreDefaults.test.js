@@ -51,6 +51,9 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({
       last_map_center: { lat: 91, lng: -181 },
     }).last_map_center).toBeUndefined();
+    expect(sanitizeImportedSettings({
+      last_map_center: { lat: 0, lng: 0 },
+    }).last_map_center).toBeUndefined();
   });
 
   it('keeps inferred speed-limit country defaults configurable', () => {
@@ -106,8 +109,26 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(7);
+    expect(legacySunset.settings_defaults_version).toBe(8);
     expect(legacyCustom.night_end_time).toBe('06:00');
+  });
+
+  it('defaults local trip retention to 24 months and migrates legacy day values', () => {
+    expect(DEFAULT_SETTINGS.data_retention_months).toBe(24);
+    expect(DEFAULT_SETTINGS.data_retention_days).toBeUndefined();
+
+    const migrated = migrateDefaultSettings({
+      settings_defaults_version: 7,
+      data_retention_days: 365,
+    });
+
+    expect(migrated.settings.data_retention_months).toBe(12);
+    expect(migrated.settings.data_retention_days).toBeUndefined();
+    expect(migrated.changed).toBe(true);
+    expect(sanitizeImportedSettings({ data_retention_days: 730 }).data_retention_months).toBe(24);
+    expect(sanitizeImportedSettings({ data_retention_months: 36 }).data_retention_months).toBe(36);
+    expect(validateSettingsPatch({ data_retention_months: 0 })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ data_retention_months: -1 })).toMatchObject({ valid: false });
   });
 
   it('migrates unsupported proxy setting names to neutral metric names', () => {

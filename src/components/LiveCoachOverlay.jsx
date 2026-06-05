@@ -3,11 +3,11 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
 import {
   buildDrivingThresholds,
-  calculateTripStats,
-  detectDrivingEvents,
   EVENT_TYPES,
-  resolveEffectiveSpeedLimitForIndex,
-} from '@/lib/tripEngine';
+} from '@/lib/scoring/componentScores';
+import { calculateTripStats } from '@/lib/gps/routeSummary';
+import { detectDrivingEvents } from '@/lib/detection/harshEvents';
+import { resolveEffectiveSpeedLimitForIndex } from '@/lib/scoring/intersectionScore';
 import { localSettings } from '@/lib/trackingStore';
 import {
   notifyHeadingDriftBetaWarning,
@@ -19,6 +19,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import { logError } from '@/lib/errorReporting';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
@@ -69,8 +70,12 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const settings = localSettings.get();
     const voiceText = plainText(normalized.text);
     const speak = normalized.voiceKey
-      ? speakSafetyAlertOnce(normalized.voiceKey, voiceText, settings, normalized.voiceCooldownMs).catch(() => {})
-      : speakSafetyAlert(voiceText, settings).catch(() => {});
+      ? speakSafetyAlertOnce(normalized.voiceKey, voiceText, settings, normalized.voiceCooldownMs).catch((err) => {
+          logError('live_coach_voice_alert_once', err, { voiceKey: normalized.voiceKey });
+        })
+      : speakSafetyAlert(voiceText, settings).catch((err) => {
+          logError('live_coach_voice_alert', err);
+        });
     void speak;
     if (!dismissed) setMessage(normalized);
     setTimeout(() => {
@@ -115,7 +120,12 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         : mergePhoneUseSignals(gpsPhoneUse, {}, stats.duration_seconds);
       const tripStartMs = new Date(tripStartTime).getTime();
       if (settings.phone_use_detection_enabled !== false && isAndroid() && Number.isFinite(tripStartMs)) {
-        const usageSummary = await getAndroidPhoneUsageSummary(tripStartMs, now).catch(() => null);
+        const usageSummary = await getAndroidPhoneUsageSummary(tripStartMs, now).catch((err) => {
+          logError('live_coach_phone_usage_summary', err, {
+            duration_seconds: Math.round((now - tripStartMs) / 1000),
+          });
+          return null;
+        });
         const usagePhoneUse = buildPhoneUseFromAndroidUsage(usageSummary || {}, currentRoutePoints, stats.duration_seconds);
         phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
       }
@@ -161,7 +171,11 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           notifyPhoneUseDetected({
             confidence: highestConfidence.confidence_level,
             speedKmh: highestConfidence.speed_kmh,
-          }, settings).catch(() => {});
+          }, settings).catch((err) => {
+            logError('live_coach_phone_use_notification', err, {
+              confidence: highestConfidence.confidence_level,
+            });
+          });
         }
       } else if (recentCloseProximity) {
         nextMessage = {
@@ -218,7 +232,12 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           currentSpeedKmh: latestSpeeding.speed_kmh,
           limitKmh: latestSpeeding.speed_limit_kmh ?? latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
           durationS: latestSpeeding.duration_seconds ?? 0,
-        }, settings).catch(() => {});
+        }, settings).catch((err) => {
+          logError('live_coach_speeding_notification', err, {
+            speed_kmh: latestSpeeding.speed_kmh,
+            duration_seconds: latestSpeeding.duration_seconds ?? 0,
+          });
+        });
         if (!nextMessage && settings.voice_alerts_enabled !== false) {
           nextMessage = {
             text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`,
@@ -231,14 +250,23 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         notifyHeadingDriftBetaWarning({
           headingDriftBetaLevel: 'high',
           tripDurationMinutes: (stats.duration_seconds || 0) / 60,
-        }, settings).catch(() => {});
+        }, settings).catch((err) => {
+          logError('live_coach_heading_drift_notification', err, {
+            duration_seconds: stats.duration_seconds || 0,
+          });
+        });
       }
       if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
         notifyFatigueBreakReminder({
           tripDurationMinutes: durationMins,
           thresholdMinutes: settings.threshold_long_drive_minutes ?? 120,
           tripId: tripStartTime,
-        }, settings).catch(() => {});
+        }, settings).catch((err) => {
+          logError('live_coach_fatigue_notification', err, {
+            trip_start_time: tripStartTime,
+            duration_minutes: Math.round(durationMins),
+          });
+        });
       }
 
       previousCountsRef.current = {
