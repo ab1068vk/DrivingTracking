@@ -526,7 +526,7 @@ describe('core page component renders', () => {
   });
 
   it('gates trip-history score deltas until three prior trips exist', async () => {
-    const { scoreDeltaForTrip, SCORE_DELTA_MIN_PREVIOUS_TRIPS } = await import('@/pages/TripHistory');
+    const { buildTripHistorySummary, scoreDeltaForTrip, SCORE_DELTA_MIN_PREVIOUS_TRIPS } = await import('@/pages/TripHistory');
     const ordered = [
       { id: 'newest', score_overall: 90 },
       { id: 'prior-1', score_overall: 70 },
@@ -546,5 +546,43 @@ describe('core page component renders', () => {
       insufficientBaseline: false,
       sampleCount: 3,
     });
+
+    expect(buildTripHistorySummary([
+      { distance_km: 10, duration_seconds: 600, score_overall: 80, is_favorite: true },
+      { distance_km: 5, duration_seconds: 300, score_overall: 90, night_driving: true },
+    ], 'metric')).toMatchObject({
+      count: 2,
+      totalDistanceKm: 15,
+      totalDurationSeconds: 900,
+      averageScore: 85,
+      totalDistanceLabel: '15.0 km',
+      totalDurationLabel: '15m 0s',
+      averageScoreLabel: '85',
+      favoriteCount: 1,
+      nightCount: 1,
+    });
+  });
+
+  it('renders a read-only trip-history snapshot for the current filters', async () => {
+    queryData.set(JSON.stringify(['all-trips']), [
+      sampleTrip,
+      {
+        ...sampleTrip,
+        id: 'trip-2',
+        distance_km: 5,
+        duration_seconds: 300,
+        score_overall: 72,
+        is_favorite: true,
+        start_time: '2026-01-02T12:00:00.000Z',
+      },
+    ]);
+    const { default: TripHistory } = await import('@/pages/TripHistory');
+    const html = renderToStaticMarkup(<TripHistory />);
+
+    expect(html).toContain('Filtered snapshot');
+    expect(html).toContain('2 matching trips');
+    expect(html).toContain('13.4 km');
+    expect(html).toContain('17m');
+    expect(html).toContain('Avg score');
   });
 });

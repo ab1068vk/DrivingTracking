@@ -6,7 +6,7 @@ import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import { localSettings } from '@/lib/trackingStore';
-import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDistance, formatDuration, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
@@ -80,6 +80,28 @@ export function scoreDeltaForTrip(trip, tripsByRecentOrder = []) {
     direction: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
     insufficientBaseline: false,
     sampleCount: previousFive.length,
+  };
+}
+
+export function buildTripHistorySummary(trips = [], units = 'metric') {
+  const safeTrips = Array.isArray(trips) ? trips : [];
+  const totalDistanceKm = safeTrips.reduce((sum, trip) => sum + (Number(trip?.distance_km) || 0), 0);
+  const totalDurationSeconds = safeTrips.reduce((sum, trip) => sum + (Number(trip?.duration_seconds) || 0), 0);
+  const scores = safeTrips.map((trip) => scoreValue(trip)).filter(Number.isFinite);
+  const averageScore = scores.length
+    ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+    : null;
+
+  return {
+    count: safeTrips.length,
+    totalDistanceKm,
+    totalDurationSeconds,
+    averageScore,
+    totalDistanceLabel: formatDistance(totalDistanceKm, units),
+    totalDurationLabel: formatDuration(totalDurationSeconds),
+    averageScoreLabel: averageScore == null ? 'No score yet' : `${averageScore}`,
+    favoriteCount: safeTrips.filter((trip) => trip?.is_favorite === true).length,
+    nightCount: safeTrips.filter((trip) => trip?.night_driving || normalizeTripTags(trip).includes('night')).length,
   };
 }
 
@@ -179,6 +201,11 @@ export default function TripHistory() {
       default: return 0;
     }
   });
+  const historySummary = buildTripHistorySummary(sorted, units);
+  const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
+  const activeTagLabel = selectedTag === 'all'
+    ? 'All tags'
+    : TRIP_TAG_OPTIONS.find((option) => option.id === selectedTag)?.label || 'Selected tag';
 
   const clearFilters = () => {
     setSearch('');
@@ -254,6 +281,39 @@ export default function TripHistory() {
           <TrendingUp className="h-4 w-4" />
           <span className="font-semibold">{improvement.message}</span>
         </div>
+      )}
+
+      {completed.length > 0 && (
+        <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filtered snapshot</div>
+              <div className="text-sm font-semibold">{historySummary.count} matching trips</div>
+            </div>
+            <div className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground">
+              {activeFilterLabel} / {activeTagLabel}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl bg-secondary/50 px-2 py-3">
+              <div className="text-xs text-muted-foreground">Distance</div>
+              <div className="font-grotesk text-lg font-bold">{historySummary.totalDistanceLabel}</div>
+            </div>
+            <div className="rounded-xl bg-secondary/50 px-2 py-3">
+              <div className="text-xs text-muted-foreground">Duration</div>
+              <div className="font-grotesk text-lg font-bold">{historySummary.totalDurationLabel}</div>
+            </div>
+            <div className="rounded-xl bg-secondary/50 px-2 py-3">
+              <div className="text-xs text-muted-foreground">Avg score</div>
+              <div className="font-grotesk text-lg font-bold">{historySummary.averageScoreLabel}</div>
+            </div>
+          </div>
+          {(historySummary.favoriteCount > 0 || historySummary.nightCount > 0) && (
+            <div className="mt-3 text-xs text-muted-foreground">
+              Includes {historySummary.favoriteCount} favorites and {historySummary.nightCount} night drives in the current view.
+            </div>
+          )}
+        </section>
       )}
 
       {sparklineData.length > 1 && (
