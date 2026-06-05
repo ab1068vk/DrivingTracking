@@ -7,6 +7,7 @@ import { vehicleService } from '@/api/vehicles';
 import { localSettings } from '@/lib/trackingStore';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 import { syncAchievementNotifications } from '@/lib/notificationService';
+import { logError } from '@/lib/errorReporting';
 
 const progressLabel = (badge) => {
   if (badge.earned) return 'Unlocked';
@@ -52,7 +53,9 @@ export default function Achievements() {
   const earned = badges.filter((badge) => badge.earned);
 
   useEffect(() => {
-    syncAchievementNotifications(badges, { requestPermission: false }).catch(() => {});
+    syncAchievementNotifications(badges, { requestPermission: false }).catch((err) => {
+      logError('achievement_notification_sync', err, { badge_count: badges.length });
+    });
   }, [badges]);
 
   return (

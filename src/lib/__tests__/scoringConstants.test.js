@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, test } from 'vitest';
 import {
   CALIBRATION_STATUSES,
   DEFAULT_HOURLY_RISK_PROFILE,
@@ -35,6 +36,24 @@ describe('scoring constants registry', () => {
     });
   });
 
+  test('every constant with @promotionBlocker has a calibrationRequirement comment', () => {
+    const source = readFileSync(new URL('../scoringConstants.js', import.meta.url), 'utf8');
+    const promotionBlockerBlocks = source.match(/\/\*\*[\s\S]*?@promotionBlocker true[\s\S]*?\*\//g) ?? [];
+
+    expect(promotionBlockerBlocks.length).toBeGreaterThan(0);
+    for (const block of promotionBlockerBlocks) {
+      expect(block).toContain('@calibrationRequirement');
+    }
+  });
+
+  test('fatigue promotion blockers keep their literature anchor explicit', () => {
+    const source = readFileSync(new URL('../scoringConstants.js', import.meta.url), 'utf8');
+
+    expect(source).toContain('@literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655)');
+    expect(source).toContain('18-hour wakefulness → impairment equivalent to BAC 0.05%');
+    expect(source).toContain('Recalibration against fatigue self-reports may update this anchor.');
+  });
+
   it('drives existing scoring exports from the central values', () => {
     expect(PENALTY_SCALE_FACTOR).toBe(scoringValue('PENALTY_SCALE_FACTOR'));
     expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(scoringValue('FATIGUE_SAFETY_PENALTY_SCALE'));
@@ -43,6 +62,30 @@ describe('scoring constants registry', () => {
     expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM).toBe(scoringValue('HILL_INFRACTION_PENALTY_POINTS_PER_KM'));
     expect(PHONE_USE_PENALTY_POINTS.high).toBe(scoringValue('PHONE_PENALTY_HIGH'));
     expect(TIME_OF_DAY_NIGHT_MULTIPLIER).toBe(scoringValue('UBI_NIGHT_MULTIPLIER'));
+  });
+
+  it('keeps blend weights normalized and non-negative', () => {
+    const blendConfigs = [
+      ['OVERALL_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.OVERALL_SCORE_BLEND_WEIGHTS.value],
+      ['SAFETY_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.SAFETY_SCORE_BLEND_WEIGHTS.value],
+      ['SMOOTHNESS_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.SMOOTHNESS_SCORE_BLEND_WEIGHTS.value],
+      ['ECO_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.ECO_SCORE_BLEND_WEIGHTS.value],
+      ['DEFENSIVE_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.DEFENSIVE_SCORE_BLEND_WEIGHTS.value],
+      ['UBI_CATEGORY_WEIGHTS', SCORING_CONSTANTS.UBI_CATEGORY_WEIGHTS.value],
+      ['PRE_TRIP_RISK_WEIGHTS', SCORING_CONSTANTS.PRE_TRIP_RISK_WEIGHTS.value],
+    ];
+
+    for (const [key, weights] of blendConfigs) {
+      const values = Object.values(weights);
+      const sum = values.reduce((total, weight) => total + weight, 0);
+
+      expect(sum, key).toBeCloseTo(1.0, 6);
+      for (const weight of values) {
+        expect(Number.isFinite(weight), key).toBe(true);
+        expect(weight, key).toBeGreaterThanOrEqual(0);
+      }
+    }
+    expect(SCORING_CONSTANTS.SAFETY_SCORE_BLEND_WEIGHTS.value.phoneUse).toBe(scoringValue('PHONE_USE_SAFETY_WEIGHT'));
   });
 
   it('registers the default hourly fallback risk profile with calibration metadata', () => {
@@ -99,6 +142,7 @@ describe('scoring constants registry', () => {
     });
     expect(hasProvisionalCalibration(['score_overall'])).toBe(true);
     expect(hasProvisionalCalibration(['ubi_score'])).toBe(true);
+    expect(hasProvisionalCalibration()).toBe(true);
     expect(calibrationStatusForMetrics(['score_overall'])).toBe(SCORE_OUTPUT_CALIBRATION_STATUSES.APPROXIMATE);
   });
 

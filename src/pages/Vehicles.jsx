@@ -11,7 +11,7 @@ import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
-import { getTripComponentScore } from '@/lib/tripEngine';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 

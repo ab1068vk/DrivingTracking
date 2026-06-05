@@ -1,4 +1,8 @@
-export const SCORE_ESTIMATE_NOTICE = 'Scores are estimates - not validated against real-world crash data';
+export const SCORE_ESTIMATE_NOTICE =
+  'Scores are personal driving estimates based on GPS patterns. ' +
+  'They are not validated against crash outcomes and should not be ' +
+  'used for insurance, legal, or safety-critical decisions.';
+export const SCORE_BASELINE_TRIP_TARGET = 10;
 export const UBI_INSURANCE_NOTICE = 'NOT AN INSURANCE RATING';
 export const UBI_INSURANCE_NOTICE_DETAIL = 'This score card is an internal coaching estimate only. It is not insurer-validated and must not be used for insurance eligibility, underwriting, or pricing.';
 
@@ -22,6 +26,13 @@ export function formatScoreWithProvenance(value, scoreProvenance = null, options
     ...options,
     approximate: isApproximateScoreOutput(scoreProvenance),
   });
+}
+
+export function scoreEstimateProgressText(tripCount, target = SCORE_BASELINE_TRIP_TARGET) {
+  const count = Number(tripCount);
+  if (!Number.isFinite(count) || count < 0 || count >= target) return null;
+  const remaining = target - Math.floor(count);
+  return `Estimate - improves after ${remaining} more trip${remaining !== 1 ? 's' : ''}`;
 }
 
 export function isEstimatedScoreMetric(metricKey) {

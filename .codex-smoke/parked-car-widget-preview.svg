@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+    <clipPath id="mapClip">
+      <rect x="92" y="124" width="316" height="166" rx="8"/>
+    </clipPath>
+    <clipPath id="emptyClip">
+      <rect x="552" y="124" width="316" height="166" rx="8"/>
+    </clipPath>
+  </defs>
+
+  <rect width="960" height="520" fill="#eef2f7"/>
+  <text x="80" y="62" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#101828">Parked Car Locator widget preview</text>
+  <text x="80" y="92" font-family="Arial, sans-serif" font-size="15" fill="#667085">Populated state and empty state, based on the Android widget layout.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="68" y="104" width="364" height="316" rx="24" fill="#101828" opacity="0.96"/>
+    <circle cx="102" cy="132" r="10" fill="#3B82F6"/>
+    <text x="102" y="136" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff">P</text>
+    <text x="119" y="137" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#ffffff">Car parked here</text>
+
+    <rect x="92" y="124" width="316" height="166" rx="8" fill="#d8e7dc"/>
+    <g clip-path="url(#mapClip)">
+      <rect x="92" y="124" width="316" height="166" fill="#d8e7dc"/>
+      <path d="M80 270 C132 246, 156 238, 202 251 C254 266, 286 245, 332 216 C365 195, 397 192, 430 202" fill="none" stroke="#9cc7a9" stroke-width="25" opacity="0.9"/>
+      <path d="M84 170 C128 188, 175 190, 226 170 C282 148, 336 149, 421 160" fill="none" stroke="#bed7c3" stroke-width="18"/>
+      <path d="M70 235 L205 180 L430 250" fill="none" stroke="#ffffff" stroke-width="10" opacity="0.95"/>
+      <path d="M125 118 L145 292" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.85"/>
+      <path d="M262 115 L248 292" fill="none" stroke="#ffffff" stroke-width="7" opacity="0.82"/>
+      <path d="M358 110 L340 300" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.78"/>
+      <path d="M84 270 L432 132" fill="none" stroke="#f7fafc" stroke-width="6" opacity="0.75"/>
+      <path d="M182 108 L214 310" fill="none" stroke="#cbd5e1" stroke-width="5" opacity="0.7"/>
+      <path d="M50 202 L430 190" fill="none" stroke="#cbd5e1" stroke-width="5" opacity="0.7"/>
+    </g>
+
+    <circle cx="250" cy="207" r="24" fill="#ffffff"/>
+    <circle cx="250" cy="207" r="17" fill="#3B82F6"/>
+    <text x="250" y="214" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#ffffff">P</text>
+
+    <text x="92" y="319" font-family="Arial, sans-serif" font-size="13" fill="#AABBD0">Parked just now</text>
+    <rect x="92" y="338" width="316" height="42" rx="9" fill="#3B82F6"/>
+    <text x="250" y="365" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#ffffff">Navigate to car</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="528" y="104" width="364" height="316" rx="24" fill="#101828" opacity="0.96"/>
+    <circle cx="562" cy="132" r="10" fill="#3B82F6"/>
+    <text x="562" y="136" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#ffffff">P</text>
+    <text x="579" y="137" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#ffffff">Car parked here</text>
+
+    <rect x="552" y="124" width="316" height="166" rx="8" fill="#1A2A4A"/>
+    <g clip-path="url(#emptyClip)">
+      <rect x="552" y="124" width="316" height="166" fill="#1A2A4A"/>
+      <rect x="607" y="156" width="206" height="102" rx="6" fill="#22334A" stroke="#334466" stroke-width="1"/>
+      <path d="M562 174 H858 M562 216 H858 M562 258 H858 M592 124 V290 M664 124 V290 M736 124 V290 M808 124 V290" stroke="#2b3c5a" stroke-width="2" opacity="0.75"/>
+      <text x="710" y="196" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#78AACC">Complete a drive to</text>
+      <text x="710" y="218" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#78AACC">save your parking spot</text>
+    </g>
+
+    <text x="552" y="319" font-family="Arial, sans-serif" font-size="13" fill="#AABBD0">No parked location saved yet</text>
+  </g>
+
+  <text x="68" y="458" font-family="Arial, sans-serif" font-size="14" fill="#475467">Actual launcher rendering may vary a little by device and home-screen grid size.</text>
+</svg>
