@@ -3,9 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
@@ -39,6 +42,22 @@
             android:name=".DriveSenseActivityReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".ParkedCarWidgetProvider"
+            android:exported="true"
+            android:label="Parked Car Locator">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="com.roadsage.app.ACTION_CLEAR_PARKING" />
+                <action android:name="com.roadsage.app.ACTION_AGE_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_parked_car_info" />
+        </receiver>
+
         <service
             android:name="com.equimaps.capacitor_background_geolocation.BackgroundGeolocationService"
             android:exported="false"
@@ -46,7 +65,7 @@
             tools:replace="android:exported,android:foregroundServiceType" />
 
         <service
-            android:name=".DriveSenseAutoTrackingService"
+            android:name=".RoadSageAutoTrackingService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location" />
@@ -84,7 +103,9 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />

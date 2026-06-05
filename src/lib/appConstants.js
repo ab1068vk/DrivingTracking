@@ -26,8 +26,8 @@ export const MAX_VISIBLE_DANGER_ZONES = 6;
 export const MAX_ROUTE_RISK_SEGMENTS_SHOWN = 3;
 
 export const SAVED_FILTERS_KEY = 'road_sage_trip_filter_presets';
-export const DISMISSED_TAG_SUGGESTIONS_KEY = 'drivesense_dismissed_tag_suggestions';
-export const FIRST_LAUNCH_PERMISSION_PROMPTED_KEY = 'drivesense_first_launch_permission_prompted';
+export const DISMISSED_TAG_SUGGESTIONS_KEY = 'road_sage_dismissed_tag_suggestions';
+export const FIRST_LAUNCH_PERMISSION_PROMPTED_KEY = 'road_sage_first_launch_permission_prompted';
 
 export function isNightRiskHour(hour) {
   return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;

@@ -1,4 +1,4 @@
-// Inspired by react-hot-toast library
+// Lightweight local toast state inspired by common toast patterns.
 import { useState, useEffect } from "react";
 
 const TOAST_LIMIT = 20;

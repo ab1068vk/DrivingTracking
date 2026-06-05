@@ -12,14 +12,16 @@ import {
   titleCase,
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { formatDistance, formatDuration } from '@/lib/gps/formatting';
+import { calculateBearing, headingDiff, haversineDistance } from '@/lib/gps/math';
 import { localSettings } from '@/lib/trackingStore';
+import { getBestMapCenter, isValidLatLng } from '@/lib/mapDefaults';
 import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const TORONTO_CENTER = [43.6532, -79.3832];
+const DEFAULT_MAP_ZOOM = 13;
 const TILE_STYLES = {
   standard: {
     label: 'Standard',
@@ -316,6 +318,7 @@ function TripMapContent({
   showCurrentLocation = false,
   currentLocation = null,
   parkedLocation = null,
+  lastKnownLocation = null,
   showCorneringHeatmap = false,
   showDangerZones = false,
   dangerZones = [],
@@ -355,6 +358,17 @@ function TripMapContent({
   ) || selectedRoutePoints.length;
   const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
   const hasRoute = telemetry.pointCount > 1;
+  const savedMapCenter = lastKnownLocation ?? localSettings.get().last_map_center;
+  const bestMapCenter = useMemo(() => getBestMapCenter({
+    trip: { route_points: selectedRoutePoints },
+    lastParked: parkedLocation,
+    lastKnownLocation: savedMapCenter,
+  }), [selectedRoutePoints, parkedLocation, savedMapCenter]);
+  const liveMapCenter = showCurrentLocation && isValidLatLng(currentLocation?.lat, currentLocation?.lng)
+    ? [Number(currentLocation.lat), Number(currentLocation.lng)]
+    : null;
+  const initialMapCenter = bestMapCenter || liveMapCenter;
+  const initialMapCenterKey = initialMapCenter ? initialMapCenter.join(',') : '';
 
   useEffect(() => {
     setSelectedSegment(null);
@@ -364,7 +378,7 @@ function TripMapContent({
     let cancelled = false;
 
     loadLeaflet().then(() => {
-      if (cancelled || !mapRef.current || leafletMapRef.current) return;
+      if (cancelled || !mapRef.current || leafletMapRef.current || !initialMapCenter) return;
 
       const map = window.L.map(mapRef.current, {
         zoomControl: true,
@@ -382,7 +396,7 @@ function TripMapContent({
         .addTo(map);
 
       layersRef.current = window.L.layerGroup().addTo(map);
-      map.setView(TORONTO_CENTER, 12);
+      map.setView(initialMapCenter, DEFAULT_MAP_ZOOM);
       setReady(true);
       setTimeout(() => map.invalidateSize(), 0);
     }).catch(() => {
@@ -399,7 +413,7 @@ function TripMapContent({
         lastBoundsRef.current = null;
       }
     };
-  }, []);
+  }, [initialMapCenterKey]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -675,8 +689,10 @@ function TripMapContent({
       map.fitBounds(bounds, { padding: [20, 20] });
     } else if (safeCurrentLocation) {
       map.setView([safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
+    } else if (initialMapCenter) {
+      map.setView(initialMapCenter, DEFAULT_MAP_ZOOM);
     } else {
-      map.setView(TORONTO_CENTER, 12);
+      return;
     }
 
     if (mapEvents && mapEvents.length > 0) {
@@ -754,7 +770,7 @@ function TripMapContent({
         .bindPopup(`<b>Parked here</b><br>${escapeHtml(safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`)}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, initialMapCenterKey, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
@@ -777,6 +793,12 @@ function TripMapContent({
         height={height}
         className={className}
       />
+    );
+  }
+
+  if (!initialMapCenter) {
+    return (
+      <NoLocationMap height={height} className={className} />
     );
   }
 
@@ -913,6 +935,17 @@ function TripMapContent({
           Route diagnostics
         </button>
       )}
+    </div>
+  );
+}
+
+function NoLocationMap({ height = '350px', className = '' }) {
+  return (
+    <div
+      className={`map-container flex items-center justify-center bg-secondary/40 px-4 text-center text-sm text-muted-foreground ${className}`}
+      style={{ height, width: '100%' }}
+    >
+      No location data available for this trip.
     </div>
   );
 }

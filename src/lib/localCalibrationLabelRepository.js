@@ -43,6 +43,11 @@ export const localCalibrationLabelRepository = {
     return markers?.[String(tripId)] || null;
   },
 
+  async listSurveyMarkers() {
+    const markers = await getJson(CALIBRATION_SURVEY_MARKERS_KEY, {});
+    return markers && typeof markers === 'object' && !Array.isArray(markers) ? markers : {};
+  },
+
   async markTripSubmitted(tripId, marker) {
     if (tripId == null) return null;
     const markers = await getJson(CALIBRATION_SURVEY_MARKERS_KEY, {});

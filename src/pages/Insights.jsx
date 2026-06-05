@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Award, CalendarDays, CheckCircle2, Clock, Flag, MapPinned, Route, ShieldAlert, Target, TrendingUp } from 'lucide-react';
 import { tripService } from '@/api/trips';
 import { localSettings } from '@/lib/trackingStore';
-import { formatDistance, getScoreColor } from '@/lib/tripEngine';
+import { formatDistance, getScoreColor } from '@/lib/gps/formatting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import {
   buildCommuteDetections,
