@@ -1,14 +1,14 @@
 import { clamp } from '@/lib/mathUtils';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
-import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
+import { weightedBlend } from '@/lib/scoring/componentScores';
 import { scoringValue } from '@/lib/scoringConstants';
-import { getPrivacyZones } from '@/lib/privacyZones';
+import { getPrivacyZones, isPointInPrivacyZone, ZONE_EVENT_GUARD_M } from '@/lib/privacyZones';
 
-const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
+const WEATHER_CACHE_KEY = 'road_sage_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const HISTORICAL_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const ZONE_BUFFER_M = 100;
+export const WEATHER_PRIVACY_GUARD_M = ZONE_EVENT_GUARD_M + 1000;
 export const WEATHER_SKIPPED_ALL_POINTS_PRIVATE = 'all_points_within_privacy_zones';
 
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
@@ -150,13 +150,7 @@ const gpsWeatherContextFromScores = (scores = {}) => {
 };
 
 function insidePrivacyWeatherBuffer(point, zones = []) {
-  return zones.some((zone) => {
-    const lat = Number(zone?.lat);
-    const lng = Number(zone?.lng);
-    const radiusM = Number(zone?.radius_m);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM) || radiusM <= 0) return false;
-    return haversineDistance(point.lat, point.lng, lat, lng) * 1000 <= radiusM + ZONE_BUFFER_M;
-  });
+  return Boolean(isPointInPrivacyZone(point, zones, WEATHER_PRIVACY_GUARD_M));
 }
 
 function safeWeatherPoint(routePoints = [], privacyZones = []) {
@@ -167,6 +161,17 @@ function safeWeatherPoint(routePoints = [], privacyZones = []) {
     : valid;
   if (!safePoints.length) return null;
   return safePoints[Math.floor(safePoints.length / 2)];
+}
+
+function weatherRequestTouchesPrivacyBuffer(routePoints = [], privacyZones = []) {
+  if (!privacyZones.length) return false;
+  const valid = (routePoints || []).filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
+  if (!valid.length) return false;
+
+  const first = valid[0];
+  const mid = valid[Math.floor(valid.length / 2)];
+  const last = valid[valid.length - 1];
+  return [first, mid, last].some((point) => insidePrivacyWeatherBuffer(point, privacyZones));
 }
 
 function parseOpenMeteoHourlyTime(time, utcOffsetSeconds) {
@@ -264,11 +269,13 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
     return unavailableWeatherContext('disabled');
   }
   const privacyZones = getPrivacyZones(settings);
+  const privacyBlocked = weatherRequestTouchesPrivacyBuffer(routePoints, privacyZones);
   const center = privacyZones.length ? safeWeatherPoint(routePoints, privacyZones) : midpoint(routePoints);
-  if (!center) {
+  if (privacyBlocked || !center) {
     const hasRoutePoints = Array.isArray(routePoints) && routePoints.length > 0;
-    return unavailableWeatherContext(privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route', {
-      ...(privacyZones.length && hasRoutePoints
+    const skippedForPrivacy = privacyBlocked || (privacyZones.length && hasRoutePoints);
+    return unavailableWeatherContext(skippedForPrivacy ? 'skipped_privacy' : 'empty_route', {
+      ...(skippedForPrivacy
         ? { weather_context: null, weather_skipped_reason: WEATHER_SKIPPED_ALL_POINTS_PRIVATE }
         : {}),
     });

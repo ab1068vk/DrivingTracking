@@ -1,31 +1,43 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { memo, useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
-  ParkingSquare, CheckCircle2, PhoneCall
+  ParkingSquare, CheckCircle2, Info, PhoneCall, Shield
 } from 'lucide-react';
 import {
-  DEFAULT_THRESHOLDS,
-  TRIP_STATES,
-  buildDrivingThresholds,
-  calculateAngularStdDev,
-  cleanRoutePoints,
-  calculateTripStats, detectDrivingEvents, calculateTripScores,
-  getInferredLimitForPoint,
-  inferSpeedZones,
-  resolveEffectiveSpeedLimitForIndex,
-  getTripComponentScore,
-  getScoreProvenanceStatus,
   formatDistance, formatDuration, formatSpeed,
+} from '@/lib/gps/formatting';
+import {
+  cleanRoutePoints,
+} from '@/lib/gps/math';
+import {
+  TRIP_STATES,
   isNearRecentParkedLocation,
   trimParkedTail,
-  validateCandidateTrip
-} from '@/lib/tripEngine';
-import { activeTripStore, getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+  validateCandidateTrip,
+  calculateTripStats,
+} from '@/lib/gps/routeSummary';
+import {
+  DEFAULT_THRESHOLDS,
+  buildDrivingThresholds,
+  calculateTripScores,
+  getScoreProvenanceStatus,
+  getTripComponentScore,
+} from '@/lib/scoring/componentScores';
+import {
+  calculateAngularStdDev,
+  detectDrivingEvents,
+} from '@/lib/detection/harshEvents';
+import {
+  getInferredLimitForPoint,
+  resolveEffectiveSpeedLimitForIndex,
+} from '@/lib/scoring/intersectionScore';
+import { inferSpeedZones } from '@/lib/gps/speedLimits';
+import { activeTripStore, getLastParkedLocation, localSettings, persistActiveTripMeta, saveLastMapCenter, saveLastParkedLocation } from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import {
   scheduleLongTripReminder,
@@ -65,14 +77,19 @@ import TripCard from '@/components/TripCard';
 import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
+import { PermissionWarningBanner } from '@/components/PermissionWarningBanner';
+import { RoadDataPrompt } from '@/components/RoadDataPrompt';
+import { RescoringBanner } from '@/components/RescoringBanner';
+import { TrackingHealthChip } from '@/components/TrackingHealthChip';
+import { usePermissionMonitor } from '@/hooks/usePermissionMonitor';
+import { useRouteRiskIndexMigration } from '@/hooks/useRouteRiskIndexMigration';
+import { useTripAggregates } from '@/hooks/useTripAggregates';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import {
   buildScoreTips,
   calculateAchievementBadges,
   calculateFatigueRisk,
   calculateNoHarshBrakeStreak,
-  computePersonalBaseline,
-  calculatePeakHourStress,
   estimateTripEconomics,
   calculateWeeklyDrivingGoals,
   buildDriverSignature,
@@ -81,17 +98,38 @@ import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } 
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
 import { computePreTripRisk } from '@/lib/preTripRisk';
-import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { calibrationSnapshot, loadCalibrationState } from '@/lib/readinessCalibration';
+import {
+  computeSignalCorrelations,
+  computePairwiseSignalCorrelation,
+  recordReadinessSnapshot,
+} from '@/lib/calibration/readinessSignalCorrelation';
+import { loadReadinessThresholdFit } from '@/lib/calibration/readinessThresholdFit';
+import { buildRouteRiskCellsForTrip } from '@/lib/routeRiskIndex';
 import {
   buildDashboardTrackingExplanation,
   getTrackingDiagnostics,
   recordTrackingDiagnostic,
 } from '@/lib/trackingDiagnostics';
 import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
-import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import { canSpeakSafetyAlert, markSafetyAlertSpoken } from '@/lib/voiceAlerts';
+import { enqueueVoiceAlert, silenceAllAlerts } from '@/lib/voiceAlertQueue';
+import { buildAlertMessage, buildTtsParams } from '@/lib/voiceAlertMessages';
+import { recordImprovement, recordOffenseAndGetLevel, resetAllEscalation } from '@/lib/voiceEscalation';
+import { isAlertAllowedByProfile } from '@/lib/voiceProfileGate';
+import {
+  consumeStealthNextTrip,
+  endEphemeralTrip,
+  getEphemeralTripModeState,
+  isEphemeralModeActive,
+  isStealthNextTripEnabled,
+  subscribeEphemeralTripMode,
+  wipeTripObject,
+} from '@/lib/ephemeralTripMode';
 import {
   buildSensorFusionSummary,
   createMotionSensorFusion,
@@ -100,9 +138,9 @@ import {
 } from '@/lib/sensorFusionModel';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
-import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
+import { isExternalContextAutoFetchEnabled, isOsrmMapMatchingConfigured } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
-import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { SCORE_BASELINE_TRIP_TARGET, formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, isInsidePrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
 
@@ -111,17 +149,266 @@ const AUTO_START_TRIGGER_SECONDS = 2;
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
 const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
+const ROUTE_RISK_DISCLAIMER_TEXT = 'Route risk shows where you\'ve had driving events on this route. It does not reflect road danger, traffic volume, or collision history.';
+
+const queueVoiceAlertForKey = ({
+  key,
+  ctx = {},
+  escalation = 0,
+  settings,
+  cooldownMs = 30000,
+}) => {
+  if (!isAlertAllowedByProfile(key, settings)) return false;
+  if (key && !canSpeakSafetyAlert(key, cooldownMs)) return false;
+
+  const effectiveEscalation = key ? recordOffenseAndGetLevel(key) : escalation;
+  const text = buildAlertMessage(key, ctx, effectiveEscalation);
+  if (!text) return false;
+
+  if (key) markSafetyAlertSpoken(key);
+  const params = buildTtsParams(key, settings);
+  return enqueueVoiceAlert({ key, text, ...params });
+};
+
+const logNativeAutoStartFailure = (err, settings = {}, extra = {}) => {
+  logError('native_auto_tracking_start', err, {
+    mode: settings?.tracking_mode,
+    tracking_paused: settings?.tracking_paused === true,
+    ...extra,
+  });
+};
+
+const logNativeAutoStopFailure = (err, settings = {}, extra = {}) => {
+  logError('native_auto_tracking_stop', err, {
+    mode: settings?.tracking_mode,
+    tracking_paused: settings?.tracking_paused === true,
+    ...extra,
+  });
+};
+
+function useActiveTripSnapshot() {
+  const subscribe = activeTripStore.subscribe || (() => () => {});
+  const getSnapshot = activeTripStore.getSnapshot || (() => ({
+    trip: activeTripStore.get?.() || null,
+    version: 0,
+  }));
+  return useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getSnapshot
+  );
+}
+
+const ElapsedClock = memo(function ElapsedClock({ startTime }) {
+  const elapsedRef = useRef(null);
+
+  useEffect(() => {
+    const startMs = new Date(startTime).getTime();
+    if (!Number.isFinite(startMs)) {
+      if (elapsedRef.current) elapsedRef.current.textContent = formatDuration(0);
+      return undefined;
+    }
+
+    const update = () => {
+      if (!elapsedRef.current) return;
+      const seconds = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      elapsedRef.current.textContent = formatDuration(seconds);
+    };
+
+    update();
+    const interval = window.setInterval(update, 1000);
+    return () => window.clearInterval(interval);
+  }, [startTime]);
+
+  return <span ref={elapsedRef}>{formatDuration(0)}</span>;
+});
+
+const ActiveTripPanel = memo(function ActiveTripPanel({
+  fallbackTrip,
+  hazardMessage,
+  onAcknowledgeEmergency,
+  onEndTrip,
+  parkedLocation,
+  settings,
+  stealthTripActive,
+  units,
+}) {
+  const activeTripSnapshot = useActiveTripSnapshot();
+  const subscribedTrip = activeTripSnapshot.trip;
+  const liveVersion = activeTripSnapshot.version;
+  const activeTrip = subscribedTrip || fallbackTrip;
+  const routePoints = activeTrip?.route_points || [];
+  const currentLocation = routePoints.at(-1) || null;
+  const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;
+  const thresholds = useMemo(() => buildDrivingThresholds(settings), [settings]);
+  const tripStats = useMemo(() => (
+    routePoints.length
+      ? calculateTripStats(routePoints, activeTrip.start_time, new Date().toISOString(), thresholds)
+      : null
+  ), [activeTrip?.start_time, liveVersion, routePoints, thresholds]);
+  const activeFatigueAlert = useMemo(() => {
+    const startMs = new Date(activeTrip?.start_time).getTime();
+    if (!Number.isFinite(startMs) || Date.now() - startMs <= 90 * 60 * 1000) return false;
+    if (routePoints.length < 12) return false;
+    const firstWindowEnd = startMs + 10 * 60 * 1000;
+    const lastWindowStart = Date.now() - 10 * 60 * 1000;
+    const firstPoints = routePoints.filter((point) => new Date(point.timestamp).getTime() <= firstWindowEnd);
+    const lastPoints = routePoints.filter((point) => new Date(point.timestamp).getTime() >= lastWindowStart);
+    if (firstPoints.length < 3 || lastPoints.length < 3) return false;
+    const { events: firstEvents, phoneUse: firstPhoneUse } = detectDrivingEvents(firstPoints);
+    const { events: lastEvents, phoneUse: lastPhoneUse } = detectDrivingEvents(lastPoints);
+    const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
+    const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
+    const lastScore = calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, lastPhoneUse).component_scores.overall.value;
+    const firstScore = calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstPhoneUse).component_scores.overall.value;
+    return lastScore != null && firstScore != null && lastScore < firstScore - 15;
+  }, [activeTrip?.start_time, liveVersion, routePoints]);
+
+  return (
+    <motion.div
+      key="active"
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-2xl"
+    >
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse" />
+            <span className="text-white/80 text-sm font-medium">
+              {stealthTripActive ? 'Stealth Trip Active' : activeTripIsCandidate ? 'Checking Movement' : 'Trip Active'}
+            </span>
+          </div>
+          <div className="font-grotesk font-bold text-4xl">
+            <ElapsedClock startTime={activeTrip?.start_time} />
+          </div>
+          <div className="text-white/70 text-sm mt-1">
+            {stealthTripActive ? (
+              'RAM-only recording. It will be erased if the app closes or backgrounds.'
+            ) : activeTripIsCandidate ? (
+              activeTrip?.candidate_near_parked
+                ? 'Hidden candidate near parked car'
+                : 'Hidden candidate validating movement'
+            ) : tripStats ? (
+              `${formatDistance(tripStats.distance_km, units)} - ${formatSpeed(tripStats.avg_speed_kmh, units)} avg`
+            ) : 'Getting GPS signal...'}
+          </div>
+        </div>
+        <div className="p-3 bg-white/10 rounded-2xl">
+          <Car className="w-8 h-8" />
+        </div>
+      </div>
+
+      {currentLocation && (() => {
+        const spd = currentLocation.speed_kmh || 0;
+        const overLimit = settings.threshold_speeding_kmh || 100;
+        const warnOffset = settings.threshold_speed_over_kmh ?? 5;
+        const speedWarningsEnabled = settings.speed_warning_enabled !== false;
+        const isOverWarn = speedWarningsEnabled && spd > overLimit + warnOffset;
+        return (
+          <div className="flex items-center gap-2 text-sm mb-4">
+            <MapPin className="w-3.5 h-3.5 text-white/70" />
+            <span className={`font-semibold ${isOverWarn ? 'text-red-300 animate-pulse' : 'text-white/70'}`}>
+              {formatSpeed(spd, units)}{isOverWarn ? ' Over limit!' : ''}
+            </span>
+            <span className="opacity-50 text-white/70">-</span>
+            <span className="text-white/70">Acc: {Math.round(currentLocation.accuracy || 0)}m</span>
+          </div>
+        );
+      })()}
+
+      {(routePoints.length > 0 || currentLocation) && (
+        <div className="mb-4 overflow-hidden rounded-2xl border border-white/15 bg-white/10">
+          <TripMap
+            routePoints={routePoints}
+            currentLocation={currentLocation}
+            showCurrentLocation
+            parkedLocation={activeTripIsCandidate ? parkedLocation : null}
+            smoothRoute={false}
+            height="220px"
+          />
+        </div>
+      )}
+
+      {activeFatigueAlert && (
+        <div className="mb-4 rounded-xl bg-white/15 px-3 py-2 text-sm font-medium text-red-100">
+          Driving quality has dipped during this long trip. Take a break soon.
+        </div>
+      )}
+
+      {hazardMessage && (hazardMessage.persistent || Date.now() - hazardMessage.at < 2 * 60 * 1000) && (
+        <div className="mb-4 rounded-xl bg-red-500/25 px-3 py-2 text-sm font-medium text-red-50">
+          {hazardMessage.body}
+        </div>
+      )}
+
+      {activeTrip?.emergency_workflow_pending && (
+        <div className="mb-4 rounded-2xl border border-red-200/30 bg-red-600/30 p-3 text-red-50 shadow-sm">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold">Emergency check-in</div>
+              <div className="mt-1 text-xs text-red-50/85">
+                Possible incident detected. Confirm you are OK or call emergency services.
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => onAcknowledgeEmergency('ok')}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/90 px-3 py-2 text-xs font-bold text-red-700"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              I'm OK
+            </button>
+            <button
+              type="button"
+              onClick={() => onAcknowledgeEmergency('call')}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-900 px-3 py-2 text-xs font-bold text-white"
+            >
+              <PhoneCall className="h-3.5 w-3.5" />
+              Call 911
+            </button>
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={onEndTrip}
+        className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
+      >
+        <Square className="w-4 h-4" />
+        End Trip
+      </button>
+    </motion.div>
+  );
+});
+
+const LiveCoachOverlaySubscriber = memo(function LiveCoachOverlaySubscriber({ enabled }) {
+  const activeTrip = useActiveTripSnapshot().trip;
+  if (!enabled || !activeTrip) return null;
+  return (
+    <LiveCoachOverlay
+      currentRoutePoints={activeTrip.route_points || []}
+      currentEvents={activeTrip.driving_events || []}
+      tripStartTime={activeTrip.start_time}
+    />
+  );
+});
 
 export default function Dashboard() {
+  const qc = useQueryClient();
   const [activeTrip, setActiveTrip] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
-  const [elapsed, setElapsed] = useState(0);
   const [locationError, setLocationError] = useState(null);
   const locationService = useRef(null);
   const autoLocationService = useRef(null);
   const activityStopRef = useRef(null);
   const activeTripRef = useRef(null);
+  const currentLocationRef = useRef(null);
   const trackingRef = useRef(false);
   const latestActivityRef = useRef(null);
   const recentMovingSinceRef = useRef(null);
@@ -131,7 +418,7 @@ export default function Dashboard() {
   const autoEndingTripRef = useRef(false);
   const locationPermissionEndingRef = useRef(false);
   const endTripRef = useRef(null);
-  const timerRef = useRef(null);
+  const metaPersistTimerRef = useRef(null);
   const sensorFusionRef = useRef(null);
   const incidentAlertRef = useRef(0);
   const stayAlertSentRef = useRef(false);
@@ -145,17 +432,40 @@ export default function Dashboard() {
   const [readinessDismissed, setReadinessDismissed] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [dangerZones, setDangerZones] = useState([]);
+  const [rescoreBannerDismissed, setRescoreBannerDismissed] = useState(false);
+  const [rescoreBannerBusy, setRescoreBannerBusy] = useState(false);
+  const [ephemeralModeState, setEphemeralModeState] = useState(() => getEphemeralTripModeState());
+  const [ephemeralTripResult, setEphemeralTripResult] = useState(null);
+  const [readinessCalibrationState, setReadinessCalibrationState] = useState(null);
+  const [readinessSignalCorrelations, setReadinessSignalCorrelations] = useState({});
+  const [readinessPairwiseSignalCorrelations, setReadinessPairwiseSignalCorrelations] = useState({});
+  const [readinessThresholdFit, setReadinessThresholdFit] = useState(null);
   const [trackingStatusContext, setTrackingStatusContext] = useState({
     permissionStatus: null,
     nativeStatus: null,
     batteryStatus: null,
     diagnostics: getTrackingDiagnostics(),
   });
+  const effectiveTrackingMode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+  const {
+    issues: permissionMonitorIssues,
+    recheck: recheckPermissions,
+    isChecking: permissionMonitorChecking,
+  } = usePermissionMonitor(effectiveTrackingMode);
   const privacyZones = getPrivacyZones(settings);
   const currentLocationInPrivacyZone = currentLocation
     ? isInsidePrivacyZone(currentLocation.lat, currentLocation.lng, privacyZones)
     : false;
   const dangerZoneCurrentLocation = currentLocationInPrivacyZone ? null : currentLocation;
+  const riskLocationKey = dangerZoneCurrentLocation
+    ? `${Math.round(Number(dangerZoneCurrentLocation.lat) * 1000) / 1000}:${Math.round(Number(dangerZoneCurrentLocation.lng) * 1000) / 1000}`
+    : 'no-location';
+  const riskPanelLocation = useMemo(() => {
+    if (riskLocationKey === 'no-location') return null;
+    const [lat, lng] = riskLocationKey.split(':').map(Number);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  }, [riskLocationKey]);
 
   const refreshTrackingStatusContext = useCallback(async () => {
     const latestSettings = await localSettings.hydrateFromNative();
@@ -175,6 +485,8 @@ export default function Dashboard() {
       diagnostics,
     });
   }, []);
+
+  useEffect(() => subscribeEphemeralTripMode(setEphemeralModeState), []);
 
   useEffect(() => {
     activeTripRef.current = activeTrip;
@@ -210,6 +522,8 @@ export default function Dashboard() {
       autoEndingTripRef.current = false;
       incidentAlertRef.current = 0;
       inferredSpeedZonesRef.current = [];
+      resetAllEscalation();
+      silenceAllAlerts();
       setHazardMessage(null);
       sensorFusionRef.current?.stop();
     }
@@ -231,8 +545,14 @@ export default function Dashboard() {
     if (lastFiveMinutes.length >= 8 && headings.length >= 5 && highwayShare >= 0.8 && calculateAngularStdDev(headings) > headingDriftBetaThreshold) {
       stayAlertSentRef.current = true;
       lastStayAlertAtRef.current = Date.now();
-      notifyStayAlert().catch(() => {});
-      speakSafetyAlert('GPS heading variation pattern recorded. Take a break when it is safe if you feel tired.', cfg).catch(() => {});
+      notifyStayAlert().catch((err) => {
+        logError('stay_alert_notification', err, { reason: 'heading_drift_pattern' });
+      });
+      queueVoiceAlertForKey({
+        key: 'heading_drift_beta',
+        settings: cfg,
+        cooldownMs: 10 * 60 * 1000,
+      });
     }
   }, [activeTrip, tracking]);
 
@@ -240,14 +560,37 @@ export default function Dashboard() {
   const { data: recentTrips = [], refetch } = useQuery({
     queryKey: ['recent-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Dashboard trips unavailable',
+      errorDescription: 'Road Sage could not load recent trips. Start/end tracking still works, but dashboard stats may be stale.',
+    },
   });
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
+    meta: {
+      errorTitle: 'Dashboard vehicle data unavailable',
+      errorDescription: 'Vehicle-linked stats may be incomplete until vehicle profiles load.',
+    },
   });
 
-  const completedTrips = recentTrips.filter(t => t.status === 'completed');
+  const { data: scoreMigrationSummary = {
+    recent_mismatch_count: 0,
+    auto_rescore_recommended: false,
+  } } = useQuery({
+    queryKey: ['score-migration-summary'],
+    queryFn: () => tripService.getScoreMigrationSummary(),
+    meta: {
+      errorTitle: 'Score refresh status unavailable',
+      errorDescription: 'Road Sage could not check whether recent trips need score updates.',
+    },
+  });
+
+  const completedTrips = useMemo(
+    () => recentTrips.filter(t => t.status === 'completed'),
+    [recentTrips]
+  );
   const scoreModelMismatchTrips = useMemo(() => {
     const thresholds = buildDrivingThresholds(settings);
     return completedTrips.filter((trip) => getScoreProvenanceStatus(trip, thresholds).needsRescore);
@@ -260,25 +603,78 @@ export default function Dashboard() {
     () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
     [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
   );
-  const todayTrips = getTodayTrips(completedTrips);
-  const dailyFatigue = computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
+  const todayTrips = useMemo(() => getTodayTrips(completedTrips), [completedTrips]);
+  const dailyFatigue = useMemo(
+    () => computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes),
+    [habitProfile?.fatigueOnsetMinutes, settings, todayTrips]
+  );
+  const {
+    baseline: aggregateBaseline,
+    peakHourStress: aggregatePeakStress,
+  } = useTripAggregates(completedTrips, settings, vehicles);
+  const { routeRiskIndex, routeRiskIndexBuildStatus } = useRouteRiskIndexMigration(completedTrips, privacyZones);
+  const readinessCalibration = useMemo(
+    () => calibrationSnapshot(readinessCalibrationState),
+    [readinessCalibrationState]
+  );
 
   useEffect(() => {
-    getLastParkedLocation().then(setParkedLocation).catch(() => {});
+    let cancelled = false;
+    Promise.all([
+      loadCalibrationState(),
+      computeSignalCorrelations(),
+      computePairwiseSignalCorrelation(),
+      loadReadinessThresholdFit(),
+    ])
+      .then(([state, correlations, pairwiseCorrelations, thresholdFit]) => {
+        if (cancelled) return;
+        setReadinessCalibrationState(state);
+        setReadinessSignalCorrelations(correlations);
+        setReadinessPairwiseSignalCorrelations(pairwiseCorrelations);
+        setReadinessThresholdFit(thresholdFit);
+      })
+      .catch((err) => {
+        notifyUserError('readiness_calibration_context_load', err, {
+          title: 'Readiness estimate limited',
+          description: 'Road Sage could not load readiness calibration data. Trip tracking still works.',
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [completedTrips[0]?.id]);
 
   useEffect(() => {
-    loadDangerZones().then(setDangerZones).catch(() => {});
+    getLastParkedLocation().then(setParkedLocation).catch((err) => {
+      notifyUserError('parked_location_load', err, {
+        title: 'Parked location unavailable',
+        description: 'Road Sage could not load the last parked location for the dashboard map.',
+      });
+    });
+  }, [completedTrips[0]?.id]);
+
+  useEffect(() => {
+    loadDangerZones().then(setDangerZones).catch((err) => {
+      notifyUserError('danger_zones_load', err, {
+        title: 'Repeated-event areas unavailable',
+        description: 'Road Sage could not load repeated-event areas. Tracking and trip history still work.',
+      });
+    });
   }, [completedTrips[0]?.id]);
 
   useEffect(() => {
     setReadinessDismissed(false);
   }, [completedTrips[0]?.id]);
 
+  useEffect(() => {
+    setRescoreBannerDismissed(false);
+  }, [scoreMigrationSummary.recent_mismatch_count, scoreMigrationSummary.auto_rescore_recommended]);
+
   // Resume active trip from session (crash recovery)
   useEffect(() => {
-    const recovered = activeTripStore.get();
-    if (recovered) {
+    let cancelled = false;
+    activeTripStore.getAsync().then((recovered) => {
+      if (cancelled || !recovered) return;
       activeTripRef.current = recovered;
       trackingRef.current = true;
       setActiveTrip(recovered);
@@ -286,8 +682,9 @@ export default function Dashboard() {
       startTimer(new Date(recovered.start_time));
       // Re-attach GPS
       startGPS();
-    }
+    });
     return () => {
+      cancelled = true;
       stopTimer();
       locationService.current?.stop();
       activityStopRef.current?.();
@@ -296,17 +693,60 @@ export default function Dashboard() {
 
   const startTimer = (startTime) => {
     stopTimer();
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime.getTime()) / 1000));
-    }, 1000);
+    metaPersistTimerRef.current = setInterval(() => {
+      persistActiveTripMeta(activeTripRef.current);
+    }, 30000);
   };
 
   const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+    if (metaPersistTimerRef.current) {
+      clearInterval(metaPersistTimerRef.current);
+      metaPersistTimerRef.current = null;
     }
   };
+
+  const wipeEphemeralSession = useCallback(async (message = 'Stealth trip erased because the app went to the background.') => {
+    if (!isEphemeralModeActive() && activeTripRef.current?.ephemeral_trip !== true) return;
+
+    locationService.current?.stop();
+    locationService.current = null;
+    await autoLocationService.current?.stop();
+    autoLocationService.current = null;
+    sensorFusionRef.current?.stop();
+    await activityStopRef.current?.();
+    activityStopRef.current = null;
+    latestActivityRef.current = null;
+    stopTimer();
+    await cancelLongTripReminder();
+    activeTripStore.clear();
+    await endEphemeralTrip(activeTripRef);
+    trackingRef.current = false;
+    autoEndingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
+    setActiveTrip(null);
+    setTracking(false);
+    currentLocationRef.current = null;
+    setCurrentLocation(null);
+    setHazardMessage(null);
+    setEphemeralTripResult(null);
+    setLocationError(message);
+  }, []);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      wipeEphemeralSession();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') wipeEphemeralSession();
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [wipeEphemeralSession]);
 
   const discardCandidateTrip = useCallback(async (trip, decision) => {
     const cfg = localSettings.get();
@@ -335,9 +775,11 @@ export default function Dashboard() {
     autoEndingTripRef.current = false;
     setActiveTrip(null);
     setTracking(false);
-    setElapsed(0);
+    currentLocationRef.current = null;
     if (isAndroid() && !cfg.tracking_paused && (trip?.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
-      await startNativeAutoTracking().catch(() => {});
+      await startNativeAutoTracking().catch((err) => {
+        logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_candidate_discard' });
+      });
     }
     refreshTrackingStatusContext();
     setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
@@ -383,11 +825,11 @@ export default function Dashboard() {
       title: 'Location permission lost during trip',
       reason: 'web_geolocation_permission_denied',
       trip_state: updated?.trip_state || null,
-      speed_kmh: Math.round(currentLocation?.speed_kmh || 0),
+      speed_kmh: Math.round(currentLocationRef.current?.speed_kmh || 0),
     });
     locationPermissionEndingRef.current = true;
     await endTripRef.current?.();
-  }, [currentLocation?.speed_kmh, markActiveTripLocationPermissionLoss]);
+  }, [markActiveTripLocationPermissionLoss]);
 
   const promoteCandidateTrip = useCallback((trip, decision) => {
     const promoted = {
@@ -418,8 +860,12 @@ export default function Dashboard() {
       speed_kmh: Math.round(decision?.metrics?.max_speed_kmh || 0),
     });
     refreshTrackingStatusContext();
-    notifyTripStarted(promoted).catch(() => {});
-    scheduleLongTripReminder(promoted.start_time);
+    if (!promoted.ephemeral_trip) {
+      notifyTripStarted(promoted).catch((err) => {
+        logError('trip_started_notification', err, { trip_state: promoted.trip_state });
+      });
+      scheduleLongTripReminder(promoted.start_time);
+    }
   }, [refreshTrackingStatusContext]);
 
   const startGPS = useCallback(() => {
@@ -430,14 +876,21 @@ export default function Dashboard() {
     }
     locationService.current.start(
       async (point) => {
-        setCurrentLocation(point);
+        currentLocationRef.current = point;
         setLocationError(null);
         const latestSettings = localSettings.get();
+        if (!isEphemeralModeActive() && !isStealthNextTripEnabled()) {
+          saveLastMapCenter({
+            ...point,
+            tripId: activeTripRef.current?.id ?? null,
+            source: 'tracking',
+          });
+        }
         const tripBeforePoint = activeTripRef.current;
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
         const latestPrivacyZones = getPrivacyZones(latestSettings);
         const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
-        if (!isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
+        if (!isEphemeralModeActive() && !isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
           const zones = await loadDangerZones();
           const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
           if (nearby.length > 0 && Date.now() - lastProximityAlertRef.current > 60 * 1000) {
@@ -451,11 +904,20 @@ export default function Dashboard() {
               title: 'Repeated event area ahead',
               body,
               extra: { type: 'repeated_event_area', zoneId: zone.id },
-            }).catch(() => {});
-            speakSafetyAlert(`Repeated event area ahead. ${typeLabel} was recorded nearby in your history.`, latestSettings).catch(() => {});
+            }).catch((err) => {
+              logError('repeated_event_area_notification', err, { zoneId: zone.id, dominantType: zone.dominantType });
+            });
+            queueVoiceAlertForKey({
+              key: 'repeated_event_area',
+              ctx: { typeLabel },
+              settings: latestSettings,
+              cooldownMs: 60 * 1000,
+            });
           }
         }
-        const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), point];
+        const updatedTripWithPoint = tripBeforePoint ? activeTripStore.addPoint(point) : null;
+        const routePointsWithLatest = updatedTripWithPoint?.route_points ||
+          (tripBeforePoint ? [...(tripBeforePoint.route_points || []), point] : [point]);
         const speed = Number(point.speed_kmh) || 0;
         const thresholds = buildDrivingThresholds(latestSettings);
         inferredSpeedZonesRef.current = inferSpeedZones(routePointsWithLatest, thresholds);
@@ -478,28 +940,35 @@ export default function Dashboard() {
             : speedLimitContext.limitSource;
         const speedLimitLabel = speedLimitSource === 'inferred' ? 'estimated limit' : 'limit';
         const speedMarginKmh = Number(latestSettings.threshold_speed_over_kmh ?? 5);
-        if (
+        const shouldWarnForSpeed = (
           !isCandidateTrip &&
+          !isEphemeralModeActive() &&
           latestSettings.speed_warning_enabled !== false &&
-          latestSettings.voice_alerts_enabled !== false &&
+          isAlertAllowedByProfile('speeding', latestSettings) &&
           speed > speedLimitKmh + speedMarginKmh
-        ) {
+        );
+        if (shouldWarnForSpeed) {
+          const overKmh = speed - speedLimitKmh;
           setHazardMessage({
             body: `Speed warning: ${Math.round(speed)} km/h over ${speedLimitLabel} ${Math.round(speedLimitKmh)} km/h`,
             at: Date.now(),
           });
-          speakSafetyAlertOnce(
-            'speeding',
-            `Speed warning. ${Math.round(speed)} kilometers per hour. ${speedLimitLabel} ${Math.round(speedLimitKmh)}.`,
-            latestSettings,
-            60 * 1000
-          ).catch(() => {});
+          queueVoiceAlertForKey({
+            key: 'speeding',
+            ctx: {
+              speedKmh: speed,
+              limitKmh: speedLimitKmh,
+              overKmh,
+            },
+            settings: latestSettings,
+            cooldownMs: 60 * 1000,
+          });
+        } else if (latestSettings.speed_warning_enabled !== false && speed <= speedLimitKmh + speedMarginKmh) {
+          recordImprovement('speeding');
         }
         if (tripBeforePoint) {
-          const updated = { ...tripBeforePoint, route_points: routePointsWithLatest };
-          activeTripStore.set(updated);
+          const updated = { ...(updatedTripWithPoint || tripBeforePoint), route_points: routePointsWithLatest };
           activeTripRef.current = updated;
-          setActiveTrip(updated);
         }
         const trip = activeTripRef.current;
         if (!trip || !trackingRef.current || autoEndingTripRef.current) return;
@@ -525,7 +994,7 @@ export default function Dashboard() {
           activity: latestActivityRef.current,
           settings: latestSettings,
         });
-        if (incident && Date.now() - incidentAlertRef.current > 5 * 60 * 1000) {
+        if (!isEphemeralModeActive() && incident && Date.now() - incidentAlertRef.current > 5 * 60 * 1000) {
           incidentAlertRef.current = Date.now();
           const emergencyWorkflow = latestSettings.emergency_workflow_enabled === true;
           const workflowBody = emergencyWorkflow
@@ -543,8 +1012,15 @@ export default function Dashboard() {
               ? 'Impact-like motion and little movement were recorded. Open Road Sage to check in.'
               : 'Road Sage recorded impact-like motion followed by little movement.',
             extra: { type: 'possible_crash', severity: incident.severity, emergencyWorkflow },
-          }).catch(() => {});
-          speakSafetyAlert(workflowBody, latestSettings).catch(() => {});
+          }).catch((err) => {
+            logError('possible_incident_notification', err, { emergencyWorkflow });
+          });
+          queueVoiceAlertForKey({
+            key: 'possible_incident',
+            ctx: { emergencyWorkflow },
+            settings: latestSettings,
+            cooldownMs: 5 * 60 * 1000,
+          });
           setActiveTrip(prev => {
             if (!prev) return prev;
             const updated = {
@@ -624,6 +1100,51 @@ export default function Dashboard() {
     );
   }, [discardCandidateTrip, handleLocationTrackingError, promoteCandidateTrip]);
 
+  const buildPreTripReadinessContext = useCallback((capturedAt = new Date()) => {
+    const predictiveRouteRisk = estimatePredictiveRouteRisk({
+      trips: completedTrips,
+      dangerZones,
+      weatherRiskScore: null,
+      currentLocation: riskPanelLocation,
+      habitProfile,
+      routeRiskIndex,
+    });
+    const preTripRisk = computePreTripRisk(completedTrips, settings, dailyFatigue, {
+      nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
+      predictiveRouteRisk,
+      now: capturedAt,
+      fittedThresholds: readinessThresholdFit,
+    }, habitProfile, readinessCalibration.offsets, readinessSignalCorrelations, readinessPairwiseSignalCorrelations);
+
+    return {
+      readinessScore: preTripRisk.readinessScore,
+      compositeRisk: preTripRisk.compositeRisk,
+      bootstrapReadinessScore: preTripRisk.bootstrapReadinessScore,
+      bootstrapRisk: preTripRisk.bootstrapRisk,
+      signals: preTripRisk.signals,
+      weights: preTripRisk.weights,
+      evidenceTier: preTripRisk.evidenceTier,
+      dataQuality: preTripRisk.dataQuality,
+      calibration: readinessCalibration,
+      signalCorrelations: readinessSignalCorrelations,
+      pairwiseSignalCorrelations: readinessPairwiseSignalCorrelations,
+      fittedThresholds: readinessThresholdFit,
+      capturedAt: capturedAt.toISOString(),
+    };
+  }, [
+    completedTrips,
+    dangerZones,
+    dailyFatigue,
+    habitProfile,
+    readinessCalibration,
+    readinessPairwiseSignalCorrelations,
+    readinessSignalCorrelations,
+    readinessThresholdFit,
+    riskPanelLocation,
+    routeRiskIndex,
+    settings,
+  ]);
+
   const handleStartTrip = useCallback(async ({
     autoStarted = false,
     bypassFatigueWarning = false,
@@ -637,8 +1158,10 @@ export default function Dashboard() {
     locationPermissionEndingRef.current = false;
 
     const cfg = localSettings.get();
+    const stealthRequested = isStealthNextTripEnabled();
+    if (stealthRequested) setEphemeralTripResult(null);
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
-      setPendingStartOptions({ autoStarted });
+      setPendingStartOptions({ autoStarted, candidate, initialPoint, nearParkedLocation, triggerReason });
       setFatigueDialogOpen(true);
       return;
     }
@@ -653,17 +1176,26 @@ export default function Dashboard() {
       return;
     }
 
-    const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    const useBackground = stealthRequested ? false : (cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto');
     let pausedNativeAuto = false;
-    if (!autoStarted && useBackground && isAndroid()) {
-      await stopNativeAutoTracking().catch(() => {});
+    if (stealthRequested && isAndroid()) {
+      await stopNativeAutoTracking().catch((err) => {
+        logNativeAutoStopFailure(err, cfg, { reason: 'stealth_trip_start_pause_native_auto' });
+      });
+      pausedNativeAuto = true;
+    } else if (!autoStarted && useBackground && isAndroid()) {
+      await stopNativeAutoTracking().catch((err) => {
+        logNativeAutoStopFailure(err, cfg, { reason: 'manual_trip_start_pause_native_auto' });
+      });
       pausedNativeAuto = true;
     }
 
     if ((autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual') && isAndroid()) {
       const activityGranted = await requestActivityRecognitionPermission();
       if (!activityGranted) {
-        if (pausedNativeAuto) await startNativeAutoTracking().catch(() => {});
+        if (pausedNativeAuto && !stealthRequested) await startNativeAutoTracking().catch((err) => {
+          logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_activity_permission_denied' });
+        });
         recordTrackingDiagnostic({
           type: 'auto_blocked',
           title: autoStarted ? 'Auto tracking blocked' : 'Trip start blocked',
@@ -680,7 +1212,9 @@ export default function Dashboard() {
       : await requestForegroundLocationPermission();
 
     if (!granted) {
-      if (pausedNativeAuto) await startNativeAutoTracking().catch(() => {});
+      if (pausedNativeAuto && !stealthRequested) await startNativeAutoTracking().catch((err) => {
+        logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_location_permission_denied' });
+      });
       recordTrackingDiagnostic({
         type: 'auto_blocked',
         title: autoStarted ? 'Auto tracking blocked' : 'Trip start blocked',
@@ -693,7 +1227,27 @@ export default function Dashboard() {
       return;
     }
 
+    const ephemeralTrip = stealthRequested ? await consumeStealthNextTrip() : false;
+    if (ephemeralTrip) {
+      activeTripStore.clear();
+    }
+
     const startTime = initialPoint?.timestamp || new Date().toISOString();
+    const startDate = new Date(startTime);
+    const preTripReadinessContext = buildPreTripReadinessContext(
+      Number.isFinite(startDate.getTime()) ? startDate : new Date()
+    );
+    const readinessSignalRecordId = await recordReadinessSnapshot(
+      preTripReadinessContext.signals,
+      preTripReadinessContext.compositeRisk ?? preTripReadinessContext.bootstrapRisk,
+      preTripReadinessContext.weights
+    ).catch((err) => {
+      logError('readiness_signal_snapshot_record', err);
+      return null;
+    });
+    if (readinessSignalRecordId) {
+      preTripReadinessContext.signalHistoryRecordId = readinessSignalRecordId;
+    }
     const phoneUsageAccessStatus = isAndroid()
       ? await getAndroidUsageAccessStatus().catch(() => null)
       : null;
@@ -704,15 +1258,18 @@ export default function Dashboard() {
       trip_state: candidate ? TRIP_STATES.CANDIDATE : TRIP_STATES.CONFIRMED,
       route_points: initialPoint ? [initialPoint] : [],
       driving_events: [],
-      background_tracking: useBackground,
+      ephemeral_trip: ephemeralTrip,
+      background_tracking: ephemeralTrip ? false : useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
-      resume_native_auto: !autoStarted && useBackground && isAndroid(),
+      resume_native_auto: !ephemeralTrip && !autoStarted && useBackground && isAndroid(),
       candidate_started_at: candidate ? startTime : null,
       candidate_first_point: candidate && initialPoint ? initialPoint : null,
       candidate_near_parked: candidate ? nearParkedLocation === true : false,
       candidate_trigger_reason: triggerReason,
       native_phone_usage_access_granted: phoneUsageAccessGrantedAtStart,
       native_phone_usage_access_checked_at: phoneUsageAccessStatus ? new Date().toISOString() : null,
+      pre_trip_readiness_context: preTripReadinessContext,
+      readiness_signal_record_id: readinessSignalRecordId,
     };
 
     activeTripStore.set(tripData);
@@ -750,7 +1307,9 @@ export default function Dashboard() {
     setTracking(true);
     if (cfg.sensor_fusion_enabled !== false) {
       sensorFusionRef.current = createMotionSensorFusion();
-      sensorFusionRef.current.start().catch(() => {});
+      sensorFusionRef.current.start().catch((err) => {
+        logError('sensor_fusion_start', err, { mode: cfg.tracking_mode });
+      });
     }
     if (isAndroid() && !activityStopRef.current && (candidate || autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual')) {
       activityStopRef.current = await startActivityRecognition(
@@ -762,11 +1321,13 @@ export default function Dashboard() {
     }
     startTimer(new Date(startTime));
     startGPS();
-    if (!candidate) {
-      notifyTripStarted(tripData);
+    if (!candidate && !ephemeralTrip) {
+      notifyTripStarted(tripData).catch((err) => {
+        logError('trip_started_notification', err, { start_source: tripData.start_source });
+      });
       scheduleLongTripReminder(tripData.start_time);
     }
-  }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
+  }, [buildPreTripReadinessContext, dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
 
   const acknowledgeEmergencyWorkflow = (action = 'ok') => {
     const current = activeTripRef.current || activeTrip;
@@ -790,7 +1351,7 @@ export default function Dashboard() {
       type: 'emergency_check_in',
       title: action === 'call' ? 'Emergency call opened' : 'Driver checked in OK',
       reason: action,
-      speed_kmh: Math.round(currentLocation?.speed_kmh || 0),
+      speed_kmh: Math.round(currentLocationRef.current?.speed_kmh || 0),
       stopped_seconds: 0,
       drift_m: 0,
     });
@@ -848,9 +1409,11 @@ export default function Dashboard() {
         locationPermissionEndingRef.current = false;
         setActiveTrip(null);
         setTracking(false);
-        setElapsed(0);
+        currentLocationRef.current = null;
         if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
-          await startNativeAutoTracking().catch(() => {});
+          await startNativeAutoTracking().catch((err) => {
+            logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_candidate_end_discard' });
+          });
         }
         refreshTrackingStatusContext();
         setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
@@ -905,6 +1468,7 @@ export default function Dashboard() {
 
     let pts = cleanedPoints;
     const preliminaryStats = calculateTripStats(cleanedPoints, tripToEnd.start_time, endTime, thresholds);
+    const stealthTripEnding = tripToEnd.ephemeral_trip === true || isEphemeralModeActive();
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
     const shouldDiscard = isManualTrip
@@ -926,33 +1490,47 @@ export default function Dashboard() {
       activityStopRef.current = null;
       latestActivityRef.current = null;
       activeTripStore.clear();
-      activeTripRef.current = null;
+      if (stealthTripEnding) {
+        wipeTripObject(tripToEnd);
+        await endEphemeralTrip(activeTripRef);
+      } else {
+        activeTripRef.current = null;
+      }
       trackingRef.current = false;
       autoEndingTripRef.current = false;
       locationPermissionEndingRef.current = false;
       setActiveTrip(null);
       setTracking(false);
-      setElapsed(0);
-      if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
-        await startNativeAutoTracking().catch(() => {});
+      currentLocationRef.current = null;
+      if (!stealthTripEnding && isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+        await startNativeAutoTracking().catch((err) => {
+          logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_short_trip_discard' });
+        });
       }
       refreshTrackingStatusContext();
-      setLocationError(isManualTrip
+      setLocationError(stealthTripEnding
+        ? 'Stealth trip was erased because Road Sage did not detect enough movement to score it.'
+        : isManualTrip
         ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
       return;
     }
 
-    const shouldAutoFetchExternalContext = isExternalContextAutoFetchEnabled(cfg);
+    const shouldAutoFetchExternalContext = !stealthTripEnding && isExternalContextAutoFetchEnabled(cfg);
     const mapMatchingContext = {
       provider: 'osrm',
-      status: cfg.map_matching_enabled !== false && cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'manual_required' : 'disabled',
+      status: isOsrmMapMatchingConfigured(cfg) ? 'manual_required' : 'disabled',
       confidence: null,
       snapped_coverage: 0,
       isOsrmDemoUrl: isPublicOsrmDemoUrl(cfg.osrm_map_matching_url),
     };
     const speedLimitContext = shouldAutoFetchExternalContext
-      ? await annotateRouteSpeedLimits(pts, cfg).catch((error) => ({
+      ? await annotateRouteSpeedLimits(pts, cfg).catch((error) => {
+        logError('auto_road_data_speed_limit_lookup', error, {
+          point_count: pts.length,
+          trip_start_time: tripToEnd.start_time,
+        });
+        return {
           routePoints: pts,
           coverage: 0,
           status: 'unavailable',
@@ -960,7 +1538,8 @@ export default function Dashboard() {
           query_count: 0,
           fallback_country: speedLimitDefaultCountryKey(cfg),
           error: error?.message || 'Speed limit lookup unavailable',
-        }))
+        };
+      })
       : {
           routePoints: pts,
           coverage: 0,
@@ -976,14 +1555,20 @@ export default function Dashboard() {
       raw_route_points: cleanedPoints,
     });
     const weatherContext = shouldAutoFetchExternalContext
-      ? await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
+      ? await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => {
+        logError('auto_road_data_weather_lookup', error, {
+          point_count: pts.length,
+          trip_start_time: tripToEnd.start_time,
+        });
+        return {
           provider: 'open-meteo',
           status: 'unavailable',
           riskLevel: null,
           riskScore: null,
           riskMultiplier: 1,
           error: error?.message || 'Weather lookup unavailable',
-        }))
+        };
+      })
       : {
           provider: 'open-meteo',
           status: 'manual_required',
@@ -999,8 +1584,14 @@ export default function Dashboard() {
     const startMs = new Date(tripToEnd.start_time).getTime();
     const endMs = new Date(endTime).getTime();
     let nativePhoneUsageSummary = null;
-    if (isAndroid() && Number.isFinite(startMs) && Number.isFinite(endMs)) {
-      nativePhoneUsageSummary = await getAndroidPhoneUsageSummary(startMs, endMs).catch(() => null);
+    if (!stealthTripEnding && isAndroid() && Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      nativePhoneUsageSummary = await getAndroidPhoneUsageSummary(startMs, endMs).catch((err) => {
+        logError('native_phone_usage_summary', err, {
+          trip_start_time: tripToEnd.start_time,
+          duration_seconds: Math.round((endMs - startMs) / 1000),
+        });
+        return null;
+      });
     }
     const nativePhoneUsageAccessGranted = nativePhoneUsageSummary?.usage_access_granted === true ||
       tripToEnd.native_phone_usage_access_granted === true;
@@ -1028,7 +1619,7 @@ export default function Dashboard() {
       stats.score_confidence_flag ||
       (dataQualityFlags.includes('location_permission_loss') ? 'data_gap_detected' : null);
 
-    const completedTrip = {
+    const completedTripDraft = {
       ...stats,
       start_time: tripToEnd.start_time,
       end_time: endTime,
@@ -1037,6 +1628,10 @@ export default function Dashboard() {
       route_points_raw_count: rawPoints.length,
       route_points_map_count: pts.length,
       ...scores,
+      score_provenance: {
+        ...scores.score_provenance,
+        readiness_calibration: tripToEnd.pre_trip_readiness_context?.calibration ?? null,
+      },
       driving_events: tripEvents,
       speed_limit_context: {
         provider: 'openstreetmap_overpass',
@@ -1087,7 +1682,42 @@ export default function Dashboard() {
       data_quality_flags: dataQualityFlags,
       score_confidence_flag: scoreConfidenceFlag,
       tracking_timeline: Array.isArray(tripToEnd.timeline) ? tripToEnd.timeline : [],
+      pre_trip_readiness_context: tripToEnd.pre_trip_readiness_context ?? null,
     };
+    const completedTrip = {
+      ...completedTripDraft,
+      route_risk_cells: buildRouteRiskCellsForTrip(completedTripDraft, privacyZones),
+    };
+
+    if (stealthTripEnding) {
+      setEphemeralTripResult({
+        ended_at: endTime,
+        duration_seconds: Math.round(completedTrip.duration_seconds || 0),
+        distance_km: completedTrip.distance_km || 0,
+        score_overall: completedTrip.score_overall,
+        score_safety: completedTrip.score_safety,
+        score_smoothness: completedTrip.score_smoothness,
+        score_eco: completedTrip.score_eco,
+      });
+      wipeTripObject(completedTrip);
+      wipeTripObject(completedTripDraft);
+      wipeTripObject(tripToEnd);
+      await activityStopRef.current?.();
+      activityStopRef.current = null;
+      latestActivityRef.current = null;
+      activeTripStore.clear();
+      await endEphemeralTrip(activeTripRef);
+      trackingRef.current = false;
+      autoEndingTripRef.current = false;
+      locationPermissionEndingRef.current = false;
+      setActiveTrip(null);
+      setTracking(false);
+      currentLocationRef.current = null;
+      setCurrentLocation(null);
+      setHazardMessage(null);
+      refreshTrackingStatusContext();
+      return;
+    }
 
     const savedTrip = await tripService.create(completedTrip);
     recordTrackingDiagnostic({
@@ -1100,7 +1730,6 @@ export default function Dashboard() {
       parking_stop_duration_seconds: completedTrip.parking_stop_duration_seconds || 0,
     });
     await invalidateDangerZoneCache();
-    await invalidateRouteRiskIndex();
     const parkedPoint = pts[pts.length - 1];
     const endedStopped = completedTrip.parking_stop_detected ||
       Number(completedTrip.parking_stop_duration_seconds || 0) > 0 ||
@@ -1156,9 +1785,11 @@ export default function Dashboard() {
     locationPermissionEndingRef.current = false;
     setActiveTrip(null);
     setTracking(false);
-    setElapsed(0);
+    currentLocationRef.current = null;
     if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
-      await startNativeAutoTracking().catch(() => {});
+      await startNativeAutoTracking().catch((err) => {
+        logNativeAutoStartFailure(err, cfg, { reason: 'resume_after_trip_saved' });
+      });
     }
     refreshTrackingStatusContext();
     refetch();
@@ -1283,8 +1914,16 @@ export default function Dashboard() {
       autoLocationService.current = createDrivingTrackingService({ background: useBackground });
       await autoLocationService.current.start(
         (point) => {
+          currentLocationRef.current = point;
           setCurrentLocation(point);
           setLocationError(null);
+          if (!isEphemeralModeActive() && !isStealthNextTripEnabled()) {
+            saveLastMapCenter({
+              ...point,
+              tripId: activeTripRef.current?.id ?? null,
+              source: 'auto_tracking',
+            });
+          }
           maybeAutoStart(point);
         },
         (err) => {
@@ -1311,74 +1950,143 @@ export default function Dashboard() {
   }, [tracking, handleStartTrip, refreshTrackingStatusContext]);
 
   // Stats
-  const totalTrips = completedTrips.length;
-  const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-  const weekTrips = completedTrips.filter(t => new Date(t.start_time) >= weekAgo);
-  const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
-  const scoredTrips = completedTrips.slice(0, 10)
-    .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
-    .filter(({ component }) => component.value != null);
-  const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
-  const avgScore = scoredTrips.length && totalScoredKm > 0
-    ? Math.round(scoredTrips.reduce((sum, { trip, component }) => sum + component.value * (Number(trip.distance_km) || 0), 0) / totalScoredKm)
-    : null;
-  const avgScoreEvidence = scoredTrips.length === 0
-    ? 'unavailable'
-    : scoredTrips.some(({ component }) => component.evidence === 'low')
-      ? 'low'
-      : scoredTrips.some(({ component }) => component.evidence === 'developing')
-        ? 'developing'
-        : 'high';
-  const latestTrip = completedTrips[0];
-  const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value }));
-  const tips = buildScoreTips(completedTrips);
-  const weeklyGoals = calculateWeeklyDrivingGoals(completedTrips, settings);
-  const brakingImprovement = calculateRecentBrakingImprovement(completedTrips);
-  const parkingReminder = formatParkingReminder(parkedLocation);
-  const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
-  const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
-  const baseline = computePersonalBaseline(completedTrips);
-  const baselineRangeLabel = baseline.baseline_includes_older_scores
-    ? baseline.baseline_label
-    : baseline.baseline_confidence_interval_label;
-  const baselineText = baseline.baseline_avg == null
-    ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
-    : baseline.baseline_includes_older_scores
-      ? `Approximate baseline: ${baseline.baseline_avg}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
-      : baseline.delta == null
-        ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
-        : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
-  const peakStress = calculatePeakHourStress(completedTrips);
-  const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
-    const points = activeTrip?.route_points || [];
-    if (points.length < 12) return false;
-    const firstWindowEnd = new Date(activeTrip.start_time).getTime() + 10 * 60 * 1000;
-    const lastWindowStart = Date.now() - 10 * 60 * 1000;
-    const firstPoints = points.filter((point) => new Date(point.timestamp).getTime() <= firstWindowEnd);
-    const lastPoints = points.filter((point) => new Date(point.timestamp).getTime() >= lastWindowStart);
-    if (firstPoints.length < 3 || lastPoints.length < 3) return false;
-    const { events: firstEvents, phoneUse: firstPhoneUse } = detectDrivingEvents(firstPoints);
-    const { events: lastEvents, phoneUse: lastPhoneUse } = detectDrivingEvents(lastPoints);
-    const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
-    const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
-    const lastScore = calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, lastPhoneUse).component_scores.overall.value;
-    const firstScore = calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstPhoneUse).component_scores.overall.value;
-    return lastScore != null && firstScore != null && lastScore < firstScore - 15;
-  })();
-
+  const dashboardStats = useMemo(() => {
+    const totalTrips = completedTrips.length;
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const weekTrips = completedTrips.filter(t => new Date(t.start_time) >= weekAgo);
+    const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
+    const scoredTrips = completedTrips.slice(0, 10)
+      .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
+      .filter(({ component }) => component.value != null);
+    const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
+    const avgScore = scoredTrips.length && totalScoredKm > 0
+      ? Math.round(scoredTrips.reduce((sum, { trip, component }) => sum + component.value * (Number(trip.distance_km) || 0), 0) / totalScoredKm)
+      : null;
+    const avgScoreEvidence = scoredTrips.length === 0
+      ? 'unavailable'
+      : scoredTrips.some(({ component }) => component.evidence === 'low')
+        ? 'low'
+        : scoredTrips.some(({ component }) => component.evidence === 'developing')
+          ? 'developing'
+          : 'high';
+    const baseline = aggregateBaseline || {
+      baseline_avg: null,
+      baseline_confidence_interval_label: 'not enough history',
+      baseline_includes_older_scores: false,
+      baseline_label: 'not enough history',
+      baseline_trip_count: completedTrips.length,
+      delta: null,
+      percentile: null,
+      percentile_min_weeks: 4,
+      this_week_avg: null,
+      trend: 'unknown',
+    };
+    const peakStress = aggregatePeakStress || {
+      insufficient_data: true,
+      peak_stress_label: 'insufficient off-peak data',
+    };
+    const baselineRangeLabel = baseline.baseline_includes_older_scores
+      ? baseline.baseline_label
+      : baseline.baseline_confidence_interval_label;
+    const baselineText = baseline.baseline_avg == null
+      ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
+      : baseline.baseline_includes_older_scores
+        ? `Approximate baseline: ${baseline.baseline_avg}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
+        : baseline.delta == null
+          ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
+          : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
+    return {
+      totalTrips,
+      weekDistance,
+      latestTrip: completedTrips[0],
+      avgScore,
+      avgScoreEvidence,
+      scoreTrend: completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value })),
+      tips: buildScoreTips(completedTrips),
+      weeklyGoals: calculateWeeklyDrivingGoals(completedTrips, settings),
+      brakingImprovement: calculateRecentBrakingImprovement(completedTrips),
+      parkingReminder: formatParkingReminder(parkedLocation),
+      noHarshBrakeStreak: calculateNoHarshBrakeStreak(completedTrips),
+      fatigueRisk: calculateFatigueRisk(weekTrips, settings),
+      baseline,
+      baselineRangeLabel,
+      baselineText,
+      peakStress,
+      eventTotals: completedTrips.reduce((totals, trip) => ({
+        harshBrakes: totals.harshBrakes + (trip.harsh_brakes_count || 0),
+        rapidAccel: totals.rapidAccel + (trip.rapid_accel_count || 0),
+        sharpTurns: totals.sharpTurns + (trip.sharp_turns_count || 0),
+        speeding: totals.speeding + (trip.speeding_events_count || 0),
+      }), { harshBrakes: 0, rapidAccel: 0, sharpTurns: 0, speeding: 0 }),
+    };
+  }, [aggregateBaseline, aggregatePeakStress, completedTrips, parkedLocation, settings]);
+  const {
+    totalTrips,
+    weekDistance,
+    latestTrip,
+    avgScore,
+    avgScoreEvidence,
+    scoreTrend,
+    tips,
+    weeklyGoals,
+    brakingImprovement,
+    parkingReminder,
+    noHarshBrakeStreak,
+    fatigueRisk,
+    baseline,
+    baselineRangeLabel,
+    baselineText,
+    peakStress,
+    eventTotals,
+  } = dashboardStats;
   const units = settings.units || 'metric';
   const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;
+  const stealthTripActive = activeTrip?.ephemeral_trip === true || ephemeralModeState.ephemeralActive;
+  const dashboardRescoreMismatchCount = scoreMigrationSummary.auto_rescore_recommended
+    ? Number(scoreMigrationSummary.recent_mismatch_count) || 0
+    : 0;
+  const handlePermissionMonitorRecheck = async () => {
+    await recheckPermissions();
+    await refreshTrackingStatusContext();
+  };
+  const trackingHealthPermissions = {
+    ...(trackingStatusContext.permissionStatus || {}),
+    batteryOptimizationIgnored: trackingStatusContext.batteryStatus?.batteryOptimizationIgnored,
+  };
+  const enableAutomaticRoadData = () => {
+    const updated = localSettings.update({ external_context_auto_fetch_enabled: true });
+    setSettings(updated);
+  };
+  const dismissReadinessPanel = useCallback(() => {
+    setReadinessDismissed(true);
+  }, []);
+  const handleDashboardRescore = async () => {
+    setRescoreBannerBusy(true);
+    try {
+      await tripService.markCompletedForRescore({ onlyProvenanceMismatch: true });
+      await Promise.all([
+        refetch(),
+        qc.invalidateQueries({ queryKey: ['score-migration-summary'] }),
+        qc.invalidateQueries({ queryKey: ['recent-trips'] }),
+      ]);
+      setRescoreBannerDismissed(true);
+    } finally {
+      setRescoreBannerBusy(false);
+    }
+  };
   const handleTrackingSetupAction = async (action) => {
     if (action === 'location') await requestForegroundLocationPermission();
     if (action === 'activity') await requestActivityRecognitionPermission();
     if (action === 'background') await requestBackgroundLocationPermission();
     if (action === 'notifications') await requestNotificationPermission();
     if (action === 'battery') await openAndroidBatteryOptimizationSettings();
-    if (action === 'native') await startNativeAutoTracking().catch(() => {});
+    if (action === 'native') await startNativeAutoTracking().catch((err) => {
+      logNativeAutoStartFailure(err, settings, { reason: 'dashboard_setup_action' });
+    });
     await refreshTrackingStatusContext();
   };
   const trackingReadiness = (() => {
-    const mode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+    const mode = effectiveTrackingMode;
     const checks = [
       {
         label: 'Tracking mode',
@@ -1458,7 +2166,44 @@ export default function Dashboard() {
         : blockers[0].detail,
     };
   })();
-  const trackingExplanation = buildDashboardTrackingExplanation({
+  const trackingExplanationKey = useMemo(() => JSON.stringify({
+    mode: effectiveTrackingMode,
+    tracking,
+    speed: tracking ? null : Math.round(Number(currentLocation?.speed_kmh) || 0),
+    latestTripId: latestTrip?.id || null,
+    permission: trackingStatusContext.permissionStatus || null,
+    native: trackingStatusContext.nativeStatus || null,
+    battery: trackingStatusContext.batteryStatus || null,
+    diagnosticsVersion: trackingStatusContext.diagnostics?.length || 0,
+    settings: {
+      paused: settings.tracking_paused === true,
+      mode: settings.tracking_mode,
+      auto: settings.auto_tracking_enabled === true,
+      background: settings.background_tracking_enabled === true,
+      backgroundLocation: settings.background_location_granted === true,
+      location: settings.location_permission_granted === true,
+      activity: settings.activity_permission_granted === true,
+      notifications: settings.notification_permission_granted === true,
+    },
+  }), [
+    currentLocation?.speed_kmh,
+    effectiveTrackingMode,
+    latestTrip?.id,
+    settings.activity_permission_granted,
+    settings.auto_tracking_enabled,
+    settings.background_tracking_enabled,
+    settings.background_location_granted,
+    settings.location_permission_granted,
+    settings.notification_permission_granted,
+    settings.tracking_mode,
+    settings.tracking_paused,
+    tracking,
+    trackingStatusContext.batteryStatus,
+    trackingStatusContext.diagnostics,
+    trackingStatusContext.nativeStatus,
+    trackingStatusContext.permissionStatus,
+  ]);
+  const trackingExplanation = useMemo(() => buildDashboardTrackingExplanation({
     settings,
     permissionStatus: trackingStatusContext.permissionStatus,
     nativeStatus: trackingStatusContext.nativeStatus,
@@ -1466,10 +2211,10 @@ export default function Dashboard() {
     diagnostics: trackingStatusContext.diagnostics,
     latestTrip,
     tracking,
-    currentSpeedKmh: currentLocation?.speed_kmh,
+    currentSpeedKmh: tracking ? null : currentLocation?.speed_kmh,
     currentActivity: latestActivityRef.current,
     isAndroidPlatform: isAndroid(),
-  });
+  }), [trackingExplanationKey]);
   const explanationTone = {
     good: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20',
     warn: 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20',
@@ -1572,6 +2317,38 @@ export default function Dashboard() {
         </p>
       </motion.div>
 
+      <PermissionWarningBanner
+        issues={permissionMonitorIssues}
+        onRecheck={handlePermissionMonitorRecheck}
+        isChecking={permissionMonitorChecking}
+      />
+
+      {routeRiskIndexBuildStatus.status === 'running' && (
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-primary" />
+          Building route history...
+          {routeRiskIndexBuildStatus.total > 0 && (
+            <span>{routeRiskIndexBuildStatus.completed}/{routeRiskIndexBuildStatus.total}</span>
+          )}
+        </div>
+      )}
+
+      {!rescoreBannerDismissed && (
+        <RescoringBanner
+          mismatchCount={dashboardRescoreMismatchCount}
+          onRescore={handleDashboardRescore}
+          onDismiss={() => setRescoreBannerDismissed(true)}
+          isRescoring={rescoreBannerBusy}
+        />
+      )}
+
+      {completedTrips.length > 0 && (
+        <RoadDataPrompt
+          settings={settings}
+          onEnable={enableAutomaticRoadData}
+        />
+      )}
+
       {/* Location Error */}
       <AnimatePresence>
         {locationError && (
@@ -1665,7 +2442,14 @@ export default function Dashboard() {
                     const nextOptions = pendingStartOptions || {};
                     setFatigueDialogOpen(false);
                     setPendingStartOptions(null);
-                    handleStartTrip({ ...nextOptions, bypassFatigueWarning: true });
+                    handleStartTrip({ ...nextOptions, bypassFatigueWarning: true }).catch((error) => {
+                      const message = 'Road Sage could not start this trip. Check permissions and try again.';
+                      setLocationError(message);
+                      notifyUserError('dashboard_start_trip', error, {
+                        title: 'Trip did not start',
+                        description: message,
+                      });
+                    });
                   }}
                   className="rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
                 >
@@ -1680,128 +2464,23 @@ export default function Dashboard() {
       {/* Active Trip Card */}
       <AnimatePresence mode="wait">
         {tracking ? (
-          <motion.div
-            key="active"
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-2xl"
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse" />
-                  <span className="text-white/80 text-sm font-medium">
-                    {activeTripIsCandidate ? 'Checking Movement' : 'Trip Active'}
-                  </span>
-                </div>
-                <div className="font-grotesk font-bold text-4xl">{formatDuration(elapsed)}</div>
-                <div className="text-white/70 text-sm mt-1">
-                  {activeTripIsCandidate ? (
-                    activeTrip?.candidate_near_parked
-                      ? 'Hidden candidate near parked car'
-                      : 'Hidden candidate validating movement'
-                  ) : activeTrip?.route_points?.length ? (
-                    (() => {
-                      const stats = calculateTripStats(
-                        activeTrip.route_points,
-                        activeTrip.start_time,
-                        new Date().toISOString(),
-                        buildDrivingThresholds(localSettings.get())
-                      );
-                      return `${formatDistance(stats.distance_km, units)} · ${formatSpeed(stats.avg_speed_kmh, units)} avg`;
-                    })()
-                  ) : 'Getting GPS signal...'}
-                </div>
-              </div>
-              <div className="p-3 bg-white/10 rounded-2xl">
-                <Car className="w-8 h-8" />
-              </div>
-            </div>
-
-            {currentLocation && (() => {
-              const spd = currentLocation.speed_kmh || 0;
-              const overLimit = settings.threshold_speeding_kmh || 100;
-              const warnOffset = settings.threshold_speed_over_kmh ?? 5;
-              const speedWarningsEnabled = settings.speed_warning_enabled !== false;
-              const isOverWarn = speedWarningsEnabled && spd > overLimit + warnOffset;
-              return (
-                <div className="flex items-center gap-2 text-sm mb-4">
-                  <MapPin className="w-3.5 h-3.5 text-white/70" />
-                  <span className={`font-semibold ${isOverWarn ? 'text-red-300 animate-pulse' : 'text-white/70'}`}>
-                    {formatSpeed(spd, units)}{isOverWarn ? ' ⚠️ Over limit!' : ''}
-                  </span>
-                  <span className="opacity-50 text-white/70">·</span>
-                  <span className="text-white/70">Acc: {Math.round(currentLocation.accuracy || 0)}m</span>
-                </div>
-              );
-            })()}
-
-            {(activeTrip?.route_points?.length > 0 || currentLocation) && (
-              <div className="mb-4 overflow-hidden rounded-2xl border border-white/15 bg-white/10">
-                <TripMap
-                  routePoints={activeTrip?.route_points || []}
-                  currentLocation={currentLocation}
-                  showCurrentLocation
-                  parkedLocation={activeTripIsCandidate ? parkedLocation : null}
-                  smoothRoute={false}
-                  height="220px"
-                />
-              </div>
-            )}
-
-            {activeFatigueAlert && (
-              <div className="mb-4 rounded-xl bg-white/15 px-3 py-2 text-sm font-medium text-red-100">
-                Driving quality has dipped during this long trip. Take a break soon.
-              </div>
-            )}
-
-            {hazardMessage && (hazardMessage.persistent || Date.now() - hazardMessage.at < 2 * 60 * 1000) && (
-              <div className="mb-4 rounded-xl bg-red-500/25 px-3 py-2 text-sm font-medium text-red-50">
-                {hazardMessage.body}
-              </div>
-            )}
-
-            {activeTrip?.emergency_workflow_pending && (
-              <div className="mb-4 rounded-2xl border border-red-200/30 bg-red-600/30 p-3 text-red-50 shadow-sm">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold">Emergency check-in</div>
-                    <div className="mt-1 text-xs text-red-50/85">
-                      Possible incident detected. Confirm you are OK or call emergency services.
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => acknowledgeEmergencyWorkflow('ok')}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/90 px-3 py-2 text-xs font-bold text-red-700"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    I'm OK
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => acknowledgeEmergencyWorkflow('call')}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-900 px-3 py-2 text-xs font-bold text-white"
-                  >
-                    <PhoneCall className="h-3.5 w-3.5" />
-                    Call 911
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={handleEndTrip}
-              className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
-            >
-              <Square className="w-4 h-4" />
-              End Trip
-            </button>
-          </motion.div>
+          <ActiveTripPanel
+            fallbackTrip={activeTrip}
+            hazardMessage={hazardMessage}
+            onAcknowledgeEmergency={acknowledgeEmergencyWorkflow}
+            onEndTrip={() => handleEndTrip().catch((error) => {
+              const message = 'Road Sage could not finish saving this trip. Keep the app open and try ending again.';
+              setLocationError(message);
+              notifyUserError('dashboard_end_trip', error, {
+                title: 'Trip not saved yet',
+                description: message,
+              });
+            })}
+            parkedLocation={parkedLocation}
+            settings={settings}
+            stealthTripActive={stealthTripActive}
+            units={units}
+          />
         ) : (
           <motion.div
             key="idle"
@@ -1815,9 +2494,21 @@ export default function Dashboard() {
                 <div className="text-muted-foreground text-sm mb-1">Ready to drive?</div>
                 <div className="font-grotesk font-bold text-xl">Start a new trip</div>
                 <div className="text-muted-foreground text-xs mt-1">Tap to begin tracking your route</div>
+                <TrackingHealthChip
+                  nativeStatus={trackingStatusContext.nativeStatus}
+                  permissions={trackingHealthPermissions}
+                  trackingMode={effectiveTrackingMode}
+                />
               </div>
               <button
-                onClick={() => handleStartTrip()}
+                onClick={() => handleStartTrip().catch((error) => {
+                  const message = 'Road Sage could not start this trip. Check permissions and try again.';
+                  setLocationError(message);
+                  notifyUserError('dashboard_start_trip', error, {
+                    title: 'Trip did not start',
+                    description: message,
+                  });
+                })}
                 className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
               >
                 <Play className="w-7 h-7 text-white ml-0.5" />
@@ -1827,20 +2518,67 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
+      {!tracking && ephemeralTripResult && (
+        <div className="rounded-3xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-bold">
+                <Shield className="h-4 w-4" />
+                Stealth trip erased
+              </div>
+              <p className="mt-1 text-xs leading-relaxed opacity-80">
+                Raw route points and events were wiped from memory. This score summary exists only until you dismiss it or leave the session.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEphemeralTripResult(null)}
+              className="rounded-lg p-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              aria-label="Dismiss stealth trip summary"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 min-[520px]:grid-cols-4">
+            <div>
+              <div className="text-xs opacity-70">Overall</div>
+              <div className="text-lg font-bold">{formatEstimatedScore(ephemeralTripResult.score_overall)}</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-70">Safety</div>
+              <div className="text-lg font-bold">{formatEstimatedScore(ephemeralTripResult.score_safety)}</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-70">Distance</div>
+              <div className="text-lg font-bold">{formatDistance(ephemeralTripResult.distance_km, units)}</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-70">Duration</div>
+              <div className="text-lg font-bold">{formatDuration(ephemeralTripResult.duration_seconds)}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!tracking && completedTrips.length >= 5 && !readinessDismissed && (
         <SectionErrorBoundary
           context="dashboard_risk_panel"
           title="Trip readiness unavailable"
           message="Something went wrong while preparing the readiness score. Reload to try again."
-          resetKey={`${completedTrips[0]?.id || 'none'}:${dangerZones.length}:${currentLocation?.timestamp || 'no-location'}`}
+          resetKey={`${completedTrips[0]?.id || 'none'}:${dangerZones.length}:${riskLocationKey}`}
         >
           <DashboardRiskPanel
             completedTrips={completedTrips}
-            currentLocation={dangerZoneCurrentLocation}
+            currentLocation={riskPanelLocation}
             dailyFatigue={dailyFatigue}
             dangerZones={dangerZones}
             habitProfile={habitProfile}
-            onDismiss={() => setReadinessDismissed(true)}
+            onDismiss={dismissReadinessPanel}
+            routeRiskIndex={routeRiskIndex}
+            calibrationOffsets={readinessCalibration.offsets}
+            signalCorrelations={readinessSignalCorrelations}
+            pairwiseSignalCorrelations={readinessPairwiseSignalCorrelations}
+            fittedThresholds={readinessThresholdFit}
             settings={settings}
           />
         </SectionErrorBoundary>
@@ -2007,7 +2745,7 @@ export default function Dashboard() {
             <p className="text-muted-foreground text-xs mt-0.5">Last {Math.min(10, completedTrips.length)} trips</p>
           </div>
           {completedTrips.length > 0 && (
-            <ScoreRing score={avgScore} evidence={avgScoreEvidence} size={72} strokeWidth={6} sublabel="avg" />
+            <ScoreRing score={avgScore} evidence={avgScoreEvidence} size={72} strokeWidth={6} sublabel="avg" tripCount={completedTrips.length} />
           )}
         </div>
 
@@ -2049,31 +2787,25 @@ export default function Dashboard() {
       )}
 
       {/* Quick event stats */}
-      {completedTrips.length > 0 && (() => {
-        const hb = completedTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
-        const ra = completedTrips.reduce((s, t) => s + (t.rapid_accel_count || 0), 0);
-        const st = completedTrips.reduce((s, t) => s + (t.sharp_turns_count || 0), 0);
-        const sp = completedTrips.reduce((s, t) => s + (t.speeding_events_count || 0), 0);
-        return (
-          <div>
-            <h2 className="font-semibold text-base mb-3">Event Summary</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: 'Harsh Brakes', value: hb, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-                { label: 'Rapid Accel', value: ra, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
-                { label: 'Sharp Turns', value: st, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-                { label: 'Speeding', value: sp, icon: Gauge, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ].map(({ label, value, icon: Icon, color, bg }) => (
-                <div key={label} className={`${bg} rounded-2xl p-4 border border-border/50`}>
-                  <Icon className={`w-5 h-5 ${color} mb-2`} />
-                  <div className={`font-grotesk font-bold text-2xl ${color}`}>{value}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-                </div>
-              ))}
-            </div>
+      {completedTrips.length > 0 && (
+        <div>
+          <h2 className="font-semibold text-base mb-3">Event Summary</h2>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: 'Harsh Brakes', value: eventTotals.harshBrakes, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
+              { label: 'Rapid Accel', value: eventTotals.rapidAccel, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
+              { label: 'Sharp Turns', value: eventTotals.sharpTurns, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
+              { label: 'Speeding', value: eventTotals.speeding, icon: Gauge, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+            ].map(({ label, value, icon: Icon, color, bg }) => (
+              <div key={label} className={`${bg} rounded-2xl p-4 border border-border/50`}>
+                <Icon className={`w-5 h-5 ${color} mb-2`} />
+                <div className={`font-grotesk font-bold text-2xl ${color}`}>{value}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
+              </div>
+            ))}
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* Recent Trips */}
       <div>
@@ -2095,7 +2827,7 @@ export default function Dashboard() {
         ) : (
           <div className="space-y-3">
             {completedTrips.slice(0, 5).map((trip, i) => (
-              <TripCard key={trip.id} trip={trip} units={units} index={i} />
+              <TripCard key={trip.id} trip={trip} units={units} index={i} tripCount={completedTrips.length} />
             ))}
           </div>
         )}
@@ -2104,45 +2836,86 @@ export default function Dashboard() {
         {trackingExplanationPanel}
         {trackingReadinessPanel}
       </div>
-      {tracking && !activeTripIsCandidate && settings.live_coaching_enabled !== false && (
-        <LiveCoachOverlay
-          currentRoutePoints={activeTrip?.route_points || []}
-          currentEvents={activeTrip?.driving_events || []}
-          tripStartTime={activeTrip?.start_time}
-        />
-      )}
+      <LiveCoachOverlaySubscriber
+        enabled={tracking && !activeTripIsCandidate && settings.live_coaching_enabled !== false}
+      />
     </div>
   );
 }
 
-function DashboardRiskPanel({
+const DashboardRiskPanel = memo(function DashboardRiskPanel({
+  calibrationOffsets,
   completedTrips,
   currentLocation,
   dailyFatigue,
   dangerZones,
+  fittedThresholds,
   habitProfile,
   onDismiss,
+  pairwiseSignalCorrelations,
+  routeRiskIndex,
+  signalCorrelations,
   settings,
 }) {
+  const initialRouteRiskDisclaimerSeenCount = useRef(Math.max(0, Number(settings.route_risk_disclaimer_seen_count) || 0));
+  const showFullRouteRiskDisclaimer = initialRouteRiskDisclaimerSeenCount.current < 3;
+
+  useEffect(() => {
+    const current = Math.max(0, Number(localSettings.get().route_risk_disclaimer_seen_count) || 0);
+    if (current < 3) {
+      localSettings.update({ route_risk_disclaimer_seen_count: current + 1 });
+    }
+  }, []);
+
   const predictiveRouteRisk = useMemo(() => estimatePredictiveRouteRisk({
     trips: completedTrips,
     dangerZones,
     weatherRiskScore: null,
     currentLocation,
     habitProfile,
-  }), [completedTrips, currentLocation, dangerZones, habitProfile]);
+    routeRiskIndex,
+  }), [completedTrips, currentLocation, dangerZones, habitProfile, routeRiskIndex]);
 
   const preTripRisk = useMemo(() => computePreTripRisk(completedTrips, settings, dailyFatigue, {
     nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
     predictiveRouteRisk,
-  }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
+    fittedThresholds,
+  }, habitProfile, calibrationOffsets, signalCorrelations, pairwiseSignalCorrelations), [calibrationOffsets, completedTrips, dailyFatigue, fittedThresholds, habitProfile, pairwiseSignalCorrelations, predictiveRouteRisk, settings, signalCorrelations]);
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
-  const showReadinessNumber = readinessEvidence === 'high' && preTripRisk.readinessScore != null;
-  const readinessSummary = preTripRisk.readinessScore == null
+  const evidenceTier = preTripRisk.evidenceTier || preTripRisk.dataQuality?.evidenceTier || 'bootstrapping';
+  const displayReadinessScore = evidenceTier === 'bootstrapping'
+    ? preTripRisk.bootstrapReadinessScore
+    : preTripRisk.readinessScore;
+  const displayRisk = evidenceTier === 'bootstrapping'
+    ? preTripRisk.bootstrapRisk
+    : preTripRisk.compositeRisk;
+  const displayRiskLevel = displayRisk == null
+    ? 'unavailable'
+    : displayRisk >= 65
+      ? 'high'
+      : displayRisk >= 40
+        ? 'moderate'
+        : 'low';
+  const showReadinessNumber = displayReadinessScore != null;
+  const availableSignalCount = preTripRisk.dataQuality?.availableSignalCount ?? 0;
+  const roundedReadinessScore = Number.isFinite(Number(preTripRisk.readinessScore))
+    ? Math.round(Number(preTripRisk.readinessScore))
+    : null;
+  const tripsUntilTrendBaseline = Math.max(0, SCORE_BASELINE_TRIP_TARGET - completedTrips.length);
+  const showReadinessRange = Boolean(preTripRisk.readinessInterval) &&
+    (evidenceTier !== 'calibrated' || Number(preTripRisk.compositeStdDev ?? 0) >= 10);
+  const readinessDisplayText = showReadinessRange
+    ? `${formatEstimatedScore(preTripRisk.readinessInterval.low)}-${formatEstimatedScore(preTripRisk.readinessInterval.high)}/100`
+    : `${formatEstimatedScore(preTripRisk.readinessScore)}/100`;
+  const readinessSummary = evidenceTier === 'bootstrapping'
+    ? displayReadinessScore == null
+      ? 'Early estimate unavailable'
+      : `Early estimate ${formatEstimatedScore(displayReadinessScore)}/100`
+    : preTripRisk.readinessScore == null
     ? 'Not enough data yet'
-    : showReadinessNumber
-      ? `Estimated ${formatEstimatedScore(preTripRisk.readinessScore)}/100 - ${preTripRisk.riskLevel} risk`
-      : 'Limited-data readiness estimate';
+    : evidenceTier === 'calibrated'
+      ? `Estimated ${readinessDisplayText} - ${preTripRisk.riskLevel} risk`
+      : `Developing estimate ${readinessDisplayText} - ${preTripRisk.riskLevel} risk`;
 
   return (
     <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
@@ -2150,16 +2923,18 @@ function DashboardRiskPanel({
         <div
           className="grid h-14 w-14 flex-shrink-0 place-items-center rounded-full text-sm font-bold text-white"
           style={{
-            background: preTripRisk.riskLevel === 'low'
+            background: evidenceTier === 'bootstrapping'
+              ? '#64748b'
+              : displayRiskLevel === 'low'
               ? '#22c55e'
-              : preTripRisk.riskLevel === 'moderate'
+              : displayRiskLevel === 'moderate'
                 ? '#eab308'
-                : preTripRisk.riskLevel === 'high'
+                : displayRiskLevel === 'high'
                   ? '#ef4444'
                   : 'hsl(var(--muted-foreground))',
           }}
         >
-          {showReadinessNumber ? formatEstimatedScore(preTripRisk.readinessScore) : '-'}
+          {showReadinessNumber ? formatEstimatedScore(displayReadinessScore) : '-'}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -2181,9 +2956,42 @@ function DashboardRiskPanel({
           <div className="mt-0.5 break-words text-xs capitalize text-muted-foreground">
             {readinessEvidence} evidence
           </div>
+          {evidenceTier === 'bootstrapping' && (
+            <div className="mt-2 space-y-2 text-xs">
+              <div className="inline-flex items-center rounded-full border border-border bg-secondary px-2 py-0.5 font-medium text-muted-foreground">
+                Limited data
+              </div>
+              <div className="break-words text-muted-foreground">
+                Early estimate based on today&apos;s fatigue and rest only.
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${Math.min(100, (completedTrips.length / SCORE_BASELINE_TRIP_TARGET) * 100)}%` }}
+                />
+              </div>
+              <div className="break-words text-muted-foreground">
+                {tripsUntilTrendBaseline > 0
+                  ? `${tripsUntilTrendBaseline} more trip${tripsUntilTrendBaseline === 1 ? '' : 's'} needed for full trend readiness.`
+                  : 'Trend readiness is ready to unlock as signal quality improves.'}
+              </div>
+            </div>
+          )}
+          {evidenceTier === 'developing' && (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              <div className="inline-flex items-center rounded-full border border-border bg-secondary px-2 py-0.5 font-medium">
+                Developing - {availableSignalCount} of 9 signals available
+              </div>
+              {roundedReadinessScore != null && (
+                <div>
+                  Confidence band approximately {Math.max(0, roundedReadinessScore - 8)}-{Math.min(100, roundedReadinessScore + 8)}
+                </div>
+              )}
+            </div>
+          )}
           {preTripRisk.dataQuality?.personalised === false && (
             <div className="mt-1 break-words text-xs text-muted-foreground">
-              Learning your habits - a precise readiness number stays hidden until enough signals are available.
+              Learning your habits - personal time, day, and trend signals unlock as trips are recorded.
             </div>
           )}
           {preTripRisk.dataQuality?.personalised && preTripRisk.dataQuality.confidence < 1 && (
@@ -2191,7 +2999,7 @@ function DashboardRiskPanel({
               Readiness is personalising ({completedTrips.length} trips recorded).
             </div>
           )}
-          {preTripRisk.riskLevel !== 'low' && (
+          {displayRiskLevel !== 'low' && (
             <>
               <div className="mt-1 break-words text-xs text-muted-foreground">{preTripRisk.primaryConcern}</div>
               <div className="mt-1 break-words text-xs italic text-muted-foreground">{preTripRisk.tipText}</div>
@@ -2200,7 +3008,7 @@ function DashboardRiskPanel({
           <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-3 text-xs">
             <div className="font-semibold">Recommended before starting</div>
             <div className="mt-1 text-muted-foreground">
-              {preTripRisk.riskLevel === 'low'
+              {displayRiskLevel === 'low'
                 ? 'Conditions look steady. Start when your phone is mounted and GPS has a clear signal.'
                 : preTripRisk.tipText || 'Take a short reset before driving, then start when you feel focused.'}
             </div>
@@ -2231,6 +3039,13 @@ function DashboardRiskPanel({
                   <span className="flex min-w-0 flex-wrap items-center gap-2 break-words font-semibold">
                     Estimated historical context
                     {ROUTE_RISK_IS_APPROXIMATE && <CalibrationStatusTag />}
+                    {!showFullRouteRiskDisclaimer && (
+                      <Info
+                        className="h-3.5 w-3.5 text-muted-foreground"
+                        aria-label={ROUTE_RISK_DISCLAIMER_TEXT}
+                        title={ROUTE_RISK_DISCLAIMER_TEXT}
+                      />
+                    )}
                   </span>
                   <span className={`flex-shrink-0 font-bold capitalize ${
                     predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
@@ -2239,6 +3054,11 @@ function DashboardRiskPanel({
                   </span>
                 </div>
                 <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
+                {showFullRouteRiskDisclaimer && (
+                  <p className="mt-2 rounded-lg border border-border bg-background/60 p-2 text-muted-foreground">
+                    {ROUTE_RISK_DISCLAIMER_TEXT}
+                  </p>
+                )}
                 <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
                 {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
                   <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
@@ -2267,4 +3087,18 @@ function DashboardRiskPanel({
       </div>
     </div>
   );
-}
+}, (prev, next) => (
+  prev.completedTrips === next.completedTrips &&
+  prev.currentLocation === next.currentLocation &&
+  prev.dailyFatigue === next.dailyFatigue &&
+  prev.dangerZones === next.dangerZones &&
+  prev.habitProfile === next.habitProfile &&
+  prev.routeRiskIndex === next.routeRiskIndex &&
+  prev.calibrationOffsets === next.calibrationOffsets &&
+  prev.signalCorrelations === next.signalCorrelations &&
+  prev.pairwiseSignalCorrelations === next.pairwiseSignalCorrelations &&
+  prev.fittedThresholds === next.fittedThresholds &&
+  prev.settings.predictive_route_risk_enabled === next.settings.predictive_route_risk_enabled &&
+  prev.settings.route_risk_disclaimer_seen_count === next.settings.route_risk_disclaimer_seen_count &&
+  prev.onDismiss === next.onDismiss
+));

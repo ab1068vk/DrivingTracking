@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { tripService } from '@/api/trips';
-import { formatDistance, formatSpeed } from '@/lib/tripEngine';
+import { formatDistance, formatSpeed } from '@/lib/gps/formatting';
 import { localSettings } from '@/lib/trackingStore';
 import {
   analyzeDayOfWeek,
@@ -17,6 +17,7 @@ import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { notifyUserError } from '@/lib/userFeedback';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -34,7 +35,7 @@ const focusLabels = {
   consistency: 'Consistency',
 };
 
-const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
+const DRIVER_SIGNATURE_KEY = 'road_sage_driver_signature';
 
 export default function DrivingCoach() {
   const settings = localSettings.get();
@@ -42,6 +43,10 @@ export default function DrivingCoach() {
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['coach-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Coach data unavailable',
+      errorDescription: 'Road Sage could not load trips for coaching insights.',
+    },
   });
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');
@@ -74,6 +79,11 @@ export default function DrivingCoach() {
         logError('driver_signature_save', err, {
           trip_count: completed.length,
           style_shift_count: driverSignature.style_shifts?.length || 0,
+        });
+        notifyUserError('driver_signature_save', err, {
+          title: 'Coach profile not saved',
+          description: 'Driving insights are still shown, but Road Sage could not save this driver profile for later.',
+          log: false,
         });
       });
     }

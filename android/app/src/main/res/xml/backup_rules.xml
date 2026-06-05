@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Android 11 and below backup exclusions for Road Sage sensitive storage. -->
+    <exclude domain="sharedpref" path="road_sage_native_tracking.xml"/>
+    <exclude domain="sharedpref" path="road_sage_native_tracking_v2.xml"/>
+    <exclude domain="sharedpref" path="drivesense_native_tracking.xml"/>
+    <exclude domain="sharedpref" path="road_sage_privacy_zones.xml"/>
+    <exclude domain="sharedpref" path="road_sage_privacy_zones_v2.xml"/>
+    <exclude domain="sharedpref" path="road_sage_parked.xml"/>
+    <exclude domain="sharedpref" path="CapacitorStorage.xml"/>
+    <exclude domain="sharedpref" path="road_sage_settings.xml"/>
+    <exclude domain="database" path="."/>
+    <exclude domain="file" path="app_webview/"/>
+    <exclude domain="file" path="."/>
+</full-backup-content>

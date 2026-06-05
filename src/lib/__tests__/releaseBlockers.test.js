@@ -1,11 +1,12 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
 import { importDriveSenseBackup, MAX_BACKUP_BYTES, parseDriveSenseBackup } from '@/lib/dataBackup';
 import { scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
 import { localTripRepository } from '@/lib/localTripRepository';
+import { getBestMapCenter } from '@/lib/mapDefaults';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { formatDataSourceLabel, METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
@@ -51,6 +52,21 @@ const expectNullGuardedTripScores = (value) => {
   });
 };
 
+const readNonTestSourceFiles = (dirUrl) => {
+  const files = [];
+  for (const entry of readdirSync(dirUrl, { withFileTypes: true })) {
+    if (entry.name === '__tests__') continue;
+    const childUrl = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, dirUrl);
+    if (entry.isDirectory()) {
+      files.push(...readNonTestSourceFiles(childUrl));
+      continue;
+    }
+    if (!/\.(js|jsx)$/.test(entry.name)) continue;
+    if (statSync(childUrl).isFile()) files.push(childUrl);
+  }
+  return files;
+};
+
 describe('release blocker regressions', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -58,7 +74,6 @@ describe('release blocker regressions', () => {
   });
 
   it('does not read auth tokens from localStorage', () => {
-    vi.stubGlobal('sessionStorage', { getItem: vi.fn(() => null) });
     vi.stubGlobal('localStorage', { getItem: vi.fn(() => 'local-token') });
 
     expect(getAuthToken()).toBeNull();
@@ -66,36 +81,26 @@ describe('release blocker regressions', () => {
   });
 
   it('removes auth tokens from all browser storage on logout', () => {
-    vi.stubGlobal('sessionStorage', { removeItem: vi.fn() });
     vi.stubGlobal('localStorage', { removeItem: vi.fn() });
 
     authService.logout();
 
-    expect(sessionStorage.removeItem).toHaveBeenCalledWith('token');
-    expect(sessionStorage.removeItem).toHaveBeenCalledWith('access_token');
     expect(localStorage.removeItem).toHaveBeenCalledWith('token');
     expect(localStorage.removeItem).toHaveBeenCalledWith('access_token');
   });
 
-  it('migrates legacy localStorage auth tokens into sessionStorage and deletes them', () => {
+  it('clears legacy localStorage auth tokens instead of migrating them into readable storage', () => {
     const legacyTokens = new Map([
       ['token', 'legacy-token'],
       ['access_token', 'legacy-access-token'],
     ]);
-    const sessionTokens = new Map();
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
       removeItem: vi.fn((key) => legacyTokens.delete(key)),
     });
-    vi.stubGlobal('sessionStorage', {
-      getItem: vi.fn((key) => sessionTokens.get(key) ?? null),
-      setItem: vi.fn((key, value) => sessionTokens.set(key, value)),
-    });
 
     migrateLegacyAuthTokens();
 
-    expect(sessionStorage.setItem).toHaveBeenCalledWith('token', 'legacy-token');
-    expect(sessionStorage.setItem).toHaveBeenCalledWith('access_token', 'legacy-access-token');
     expect(localStorage.getItem('token')).toBeNull();
     expect(localStorage.getItem('access_token')).toBeNull();
   });
@@ -106,10 +111,6 @@ describe('release blocker regressions', () => {
       getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
       removeItem: vi.fn((key) => legacyTokens.delete(key)),
     });
-    vi.stubGlobal('sessionStorage', {
-      getItem: vi.fn(() => null),
-      setItem: vi.fn(),
-    });
 
     migrateLegacyAuthTokens();
 
@@ -117,11 +118,213 @@ describe('release blocker regressions', () => {
     expect(xssReadableToken).toBeNull();
   });
 
+  it('does not keep a legacy auth token when browser storage is writable', () => {
+    const legacyTokens = new Map([['token', 'legacy-token']]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => legacyTokens.get(key) ?? null),
+      removeItem: vi.fn((key) => legacyTokens.delete(key)),
+    });
+
+    migrateLegacyAuthTokens();
+
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.removeItem).toHaveBeenCalledWith('token');
+  });
+
   it('fails API calls clearly when no backend is configured', async () => {
     vi.stubGlobal('fetch', vi.fn());
 
     await expect(apiClient.get('/trips')).rejects.toThrow('No backend API configured');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('contains no frontend bearer-token storage or authorization header logic', () => {
+    const authSource = readFileSync(new URL('../../api/auth.js', import.meta.url), 'utf8');
+    const clientSource = readFileSync(new URL('../../api/client.js', import.meta.url), 'utf8');
+
+    expect(`${authSource}\n${clientSource}`).not.toMatch(/sessionStorage\.(getItem|setItem)/);
+    expect(clientSource).toContain('credentials: "include"');
+    expect(clientSource).not.toContain('Authorization');
+    expect(clientSource).not.toContain('Bearer');
+  });
+
+  it('keeps diagnostics routes development-only without an environment escape hatch', () => {
+    const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
+    const layoutSource = readFileSync(new URL('../../components/Layout.jsx', import.meta.url), 'utf8');
+    const diagnosticsSource = readFileSync(new URL('../../pages/Diagnostics.jsx', import.meta.url), 'utf8');
+    const workflowSource = readFileSync(new URL('../../../.github/workflows/security-ci.yml', import.meta.url), 'utf8');
+
+    expect(`${appSource}\n${layoutSource}`).not.toContain('VITE_SHOW_DEBUG_ROUTES');
+    expect(appSource).toContain('const showDebugRoutes = import.meta.env.DEV;');
+    expect(appSource).toContain('{showDebugRoutes && Diagnostics && <Route path="/diagnostics"');
+    expect(layoutSource).toContain('const debugNavItems = import.meta.env.DEV');
+    expect(diagnosticsSource).toContain('if (!import.meta.env.DEV)');
+    expect(diagnosticsSource).toContain('return <PageNotFound />');
+    expect(workflowSource).toContain('Verify debug routes are absent from production bundle');
+  });
+
+  it('clears parked-widget map caches when privacy zones change', () => {
+    const privacyZoneStoreSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/PrivacyZoneStore.java', import.meta.url),
+      'utf8'
+    );
+    const mapWorkerSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/MapTileFetchWorker.java', import.meta.url),
+      'utf8'
+    );
+    const widgetSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/ParkedCarWidgetProvider.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(privacyZoneStoreSource).toContain('MapTileFetchWorker.clearWidgetMapCache(context);');
+    expect(privacyZoneStoreSource).toContain('ParkedCarWidgetProvider.refreshAll(context);');
+    expect(mapWorkerSource).toContain('private static final String MAP_CACHE_PREFIX = "widget_map_"');
+    expect(mapWorkerSource).toContain('private static final String LEGACY_MAP_CACHE_PREFIX = "parked_map_widget_"');
+    expect(mapWorkerSource).toContain('static void clearWidgetMapCache(Context context)');
+    expect(mapWorkerSource).toContain('deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
+    expect(widgetSource).toContain('MapTileFetchWorker.deleteCacheForWidgetAndLocation(context, widgetId, lat, lng);');
+  });
+
+  it('hardens the Android Capacitor WebView against file, content, geolocation, form, cache, and cookie leakage', () => {
+    const mainActivitySource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/MainActivity.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(mainActivitySource).toContain('settings.setAllowFileAccess(false);');
+    expect(mainActivitySource).toContain('settings.setAllowContentAccess(false);');
+    expect(mainActivitySource).toContain('settings.setAllowFileAccessFromFileURLs(false);');
+    expect(mainActivitySource).toContain('settings.setAllowUniversalAccessFromFileURLs(false);');
+    expect(mainActivitySource).toContain('settings.setGeolocationEnabled(false);');
+    expect(mainActivitySource).toContain('settings.setSaveFormData(false);');
+    expect(mainActivitySource).toContain('settings.setSavePassword(false);');
+    expect(mainActivitySource).toContain('settings.setCacheMode(WebSettings.LOAD_NO_CACHE);');
+    expect(mainActivitySource).toContain('settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);');
+    expect(mainActivitySource).toContain('CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);');
+    expect(mainActivitySource).toContain('webView.clearCache(true);');
+    expect(mainActivitySource).toContain('webView.clearHistory();');
+    expect(mainActivitySource).toContain('webView.clearFormData();');
+    expect(mainActivitySource).toContain('public void onStop()');
+    expect(mainActivitySource).toContain('clearWebViewCache();');
+  });
+
+  it('bundles Leaflet and keeps Capacitor plugins/navigation allowlisted', () => {
+    const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
+    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
+    const capacitorConfigSource = readFileSync(new URL('../../../capacitor.config.ts', import.meta.url), 'utf8');
+    const mapSources = `${tripMapSource}\n${tripPlaybackSource}`;
+
+    expect(mapSources).toContain("import L from 'leaflet';");
+    expect(mapSources).toContain("import 'leaflet/dist/leaflet.css';");
+    expect(mapSources).not.toContain("document.createElement('script')");
+    expect(mapSources).not.toContain('document.createElement("script")');
+    expect(mapSources).not.toContain('unpkg.com/leaflet');
+    expect(mapSources).not.toContain('leaflet@1.9.4/dist/leaflet.js');
+
+    expect(capacitorConfigSource).toContain("loggingBehavior: 'none'");
+    expect(capacitorConfigSource).toContain('includePlugins: [');
+    expect(capacitorConfigSource).toContain("'@capacitor/app'");
+    expect(capacitorConfigSource).toContain("'@capacitor-community/background-geolocation'");
+    expect(capacitorConfigSource).not.toContain("'@capacitor/preferences'");
+    expect(capacitorConfigSource).toContain('allowNavigation: []');
+    expect(capacitorConfigSource).toContain('CapacitorHttp:');
+    expect(capacitorConfigSource).toContain('enabled: false');
+    expect(capacitorConfigSource).toContain('SecureClipboard: {}');
+    expect(capacitorConfigSource).toContain('DriveSenseActivityRecognition: {}');
+  });
+
+  it('zeros native IMU motion samples before every trip discard or handoff', () => {
+    const serviceSource = readFileSync(
+      new URL('../../../android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(serviceSource).toContain('zeroMotionSamples(activeMotionSamples);');
+    expect(serviceSource).toContain('zeroMotionSamples(motionSamples);');
+    expect(serviceSource.indexOf('zeroMotionSamples(activeMotionSamples);')).toBeLessThan(
+      serviceSource.indexOf('activeMotionSamples = null;')
+    );
+    expect(serviceSource.indexOf('zeroMotionSamples(motionSamples);')).toBeLessThan(
+      serviceSource.indexOf('DriveSenseNativeTripStore.addCompletedTrip(this, trip);')
+    );
+  });
+
+  it('keeps stealth trip mode RAM-only and wipes active trip artifacts', () => {
+    const ephemeralModeSource = readFileSync(new URL('../ephemeralTripMode.js', import.meta.url), 'utf8');
+    const trackingStoreSource = readFileSync(new URL('../trackingStore.js', import.meta.url), 'utf8');
+    const diagnosticsSource = readFileSync(new URL('../trackingDiagnostics.js', import.meta.url), 'utf8');
+    const repositorySource = readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8');
+    const tripsApiSource = readFileSync(new URL('../../api/trips.js', import.meta.url), 'utf8');
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+
+    expect(ephemeralModeSource).toContain('export async function consumeStealthNextTrip()');
+    expect(ephemeralModeSource).toContain('await clearEphemeralStorageArtifacts();');
+    expect(ephemeralModeSource).toContain("point.lat = 0;");
+    expect(ephemeralModeSource).toContain("event.lng = 0;");
+    expect(trackingStoreSource).toContain('if (isEphemeralModeActive()) return;');
+    expect(trackingStoreSource).toContain('if (isEphemeralModeActive()) return null;');
+    expect(diagnosticsSource).toContain('if (isEphemeralModeActive()) return null;');
+    expect(repositorySource).toContain('if (isEphemeralModeActive())');
+    expect(tripsApiSource).toContain('if (isEphemeralModeActive())');
+    expect(dashboardSource).toContain('const shouldAutoFetchExternalContext = !stealthTripEnding && isExternalContextAutoFetchEnabled(cfg);');
+    expect(dashboardSource).toContain('await endEphemeralTrip(activeTripRef);');
+  });
+
+  it('stores route-risk history as coarse hashes instead of GPS coordinates', () => {
+    const constantsSource = readFileSync(new URL('../routeRisk/constants.js', import.meta.url), 'utf8');
+    const segmentKeySource = readFileSync(new URL('../routeRisk/segmentKey.js', import.meta.url), 'utf8');
+    const aggregateSource = readFileSync(new URL('../routeRisk/aggregate.js', import.meta.url), 'utf8');
+    const storageSource = readFileSync(new URL('../routeRisk/storage.js', import.meta.url), 'utf8');
+    const tripCellsSource = readFileSync(new URL('../routeRisk/tripCells.js', import.meta.url), 'utf8');
+    const repositorySource = readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8');
+
+    expect(constantsSource).toContain('ROUTE_RISK_GEOHASH_PRECISION = 5');
+    expect(constantsSource).toContain('ROUTE_RISK_INDEX_SCHEMA_VERSION = 3');
+    expect(segmentKeySource).toContain('geohashEncode');
+    expect(segmentKeySource).toContain('not exact endpoint coordinates');
+    expect(aggregateSource).toContain('sanitizeRouteRiskCellForStorage');
+    expect(aggregateSource).toContain('lat,');
+    expect(aggregateSource).toContain('lng,');
+    expect(aggregateSource).toContain('segmentKeys,');
+    expect(storageSource).toContain('sanitizeRouteRiskCellForStorage(value, key)');
+    expect(tripCellsSource).not.toContain('cell.segmentKeys');
+    expect(repositorySource).toContain('sanitizeTripRouteRiskCells');
+    expect(repositorySource).toContain('route_risk_cells: trip.route_risk_cells');
+  });
+
+  it('keeps html2canvas out of direct PDF export capture paths without sanitizer coverage', () => {
+    const exportPdfSource = readFileSync(new URL('../../engine/export/pdf.js', import.meta.url), 'utf8');
+    const pdfExportSource = readFileSync(new URL('../pdfExport.js', import.meta.url), 'utf8');
+    const sanitizerSource = readFileSync(new URL('../pdfSanitize.js', import.meta.url), 'utf8');
+
+    expect(`${exportPdfSource}\n${pdfExportSource}`).not.toMatch(/import\s+html2canvas\s+from\s+['"]html2canvas['"]/);
+    expect(`${exportPdfSource}\n${pdfExportSource}`).not.toContain('html2canvas(');
+    expect(exportPdfSource).toContain('SECURITY-HOLD: html2canvas is pinned');
+    expect(sanitizerSource).toContain('foreignObject');
+    expect(sanitizerSource).toContain('cloneForCapture');
+    expect(sanitizerSource).toContain('javascript:');
+  });
+
+  it('blocks raw HTML markdown plugins from trip-note rendering paths', () => {
+    const eslintSource = readFileSync(new URL('../../../eslint.config.js', import.meta.url), 'utf8');
+    const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
+    const sourceFiles = [
+      tripDetailSource,
+      readFileSync(new URL('../../components/TripCard.jsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../pages/DrivingCoach.jsx', import.meta.url), 'utf8'),
+    ].join('\n');
+
+    expect(eslintSource).toContain('"no-restricted-imports"');
+    expect(eslintSource).toContain('name: "rehype-raw"');
+    expect(eslintSource).toContain('rehype-raw is banned');
+    expect(sourceFiles).not.toContain('rehypeRaw');
+    expect(sourceFiles).not.toContain('remarkHtml');
+    expect(sourceFiles).not.toContain('dangerouslySetInnerHTML');
+    expect(tripDetailSource).toContain('trip.notes is user-controlled');
+    expect(tripDetailSource).toContain('Do not render it through raw HTML or rehype-raw');
+    expect(tripDetailSource).toContain('<div>{trip.notes}</div>');
   });
 
   it('reports malformed backup JSON with a clear parse error', () => {
@@ -261,8 +464,7 @@ describe('release blocker regressions', () => {
 
     const result = await mapMatchRoute(route, { map_matching_enabled: true, osrm_map_matching_url: '' });
 
-    expect(result.status).toBe('needs_endpoint');
-    expect(result.routePoints).toBe(route);
+    expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -438,7 +640,7 @@ describe('release blocker regressions', () => {
     });
 
     const diagnostic = logError('post_trip_completed_notification', new Error('notification failed'), { tripId: 'trip-1' });
-    const events = JSON.parse(values.get('drivesense_tracking_diagnostics'));
+    const events = JSON.parse(values.get('road_sage_tracking_diagnostics'));
 
     expect(diagnostic).toMatchObject({
       type: 'operation_error',
@@ -447,6 +649,28 @@ describe('release blocker regressions', () => {
       tripId: 'trip-1',
     });
     expect(events[0]).toMatchObject(diagnostic);
+  });
+
+  it('keeps logError extra objects free of raw location-bearing keys', () => {
+    const forbiddenKeys = /\b(lat|lng|lon|latitude|longitude|coordinates|coords|route_points|routePoints|raw_route_points|address|geocode|reverse_geocode|reverseGeocode)\s*:/;
+    const offenders = [];
+
+    for (const fileUrl of readNonTestSourceFiles(new URL('../../', import.meta.url))) {
+      const source = readFileSync(fileUrl, 'utf8');
+      let searchFrom = 0;
+      while (true) {
+        const start = source.indexOf('logError(', searchFrom);
+        if (start === -1) break;
+        const end = source.indexOf(');', start);
+        const call = source.slice(start, end === -1 ? start + 600 : end);
+        if (/logError\s*\([\s\S]*?,[\s\S]*?,\s*\{/.test(call) && forbiddenKeys.test(call)) {
+          offenders.push(`${fileUrl.pathname}: ${call.slice(0, 180)}`);
+        }
+        searchFrom = start + 'logError('.length;
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 
   it('keeps critical post-trip, odometer, and coach persistence failures diagnostically logged', () => {
@@ -480,7 +704,9 @@ describe('release blocker regressions', () => {
 
     expect(appSource).toContain('context="trip_detail_page"');
     expect(tripDetailSource).toContain('context="trip_detail_score_overview"');
-    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} />');
+    expect(tripDetailSource).toContain(
+      '<TripScoreOverview trip={trip} completedTripCount={completedTripCountForBaseline} />',
+    );
     expect(dashboardSource).toContain('context="dashboard_risk_panel"');
     expect(dashboardSource).toContain('<DashboardRiskPanel');
     expect(tripMapSource).toContain('context="trip_map"');
@@ -489,16 +715,17 @@ describe('release blocker regressions', () => {
     expect(tripPlaybackSource).toContain('function TripPlaybackContent');
   });
 
-  it('does not hard-code London as the Trip Playback default map center', () => {
-    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
-    const legacyLondonLat = ['51', '505'].join('.');
-    const legacyLondonLng = ['-0', '09'].join('.');
+  it('returns null map center when no trip, parked location, or known location exists', () => {
+    expect(getBestMapCenter({ trip: null, lastParked: null, lastKnownLocation: null })).toBeNull();
+  });
 
-    expect(tripPlaybackSource).not.toContain(legacyLondonLat);
-    expect(tripPlaybackSource).not.toContain(legacyLondonLng);
-    expect(tripPlaybackSource).toContain('resolveFallbackMapCenter');
-    expect(tripPlaybackSource).toContain('last_map_center');
-    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LAT');
-    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LNG');
+  it('prefers trip route midpoint over parked location', () => {
+    const center = getBestMapCenter({
+      trip: { route_points: [{ lat: 51.5, lng: -0.1 }, { lat: 52.0, lng: -0.5 }] },
+      lastParked: { lat: 43.6, lng: -79.4 },
+      lastKnownLocation: null,
+    });
+
+    expect(center[0]).toBeCloseTo(51.75, 1);
   });
 });

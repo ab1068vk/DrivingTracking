@@ -2,16 +2,30 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
-import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
+import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/vehicleEconomyConstants';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { legacyStorageKeysFor } from '@/lib/storageKeyMigration';
+import { logError } from '@/lib/errorReporting';
 
-export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
-export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
-export const ACHIEVEMENT_CHANNEL_ID = 'drivesense_achievements';
-export const SAFETY_ALERTS_CHANNEL_ID = 'drivesense_safety_alerts';
-export const COACHING_CHANNEL_ID = 'drivesense_coaching';
-export const VEHICLE_CHANNEL_ID = 'drivesense_vehicle';
+export const TRACKING_CHANNEL_ID = 'road_sage_tracking';
+export const SUMMARY_CHANNEL_ID = 'road_sage_summary';
+export const ACHIEVEMENT_CHANNEL_ID = 'road_sage_achievements';
+export const SAFETY_ALERTS_CHANNEL_ID = 'road_sage_safety_alerts';
+export const COACHING_CHANNEL_ID = 'road_sage_coaching';
+export const VEHICLE_CHANNEL_ID = 'road_sage_vehicle';
+export const ANDROID_NOTIFICATION_VISIBILITY = Object.freeze({
+  SECRET: -1,
+  PRIVATE: 0,
+});
+const LEGACY_NOTIFICATION_CHANNEL_IDS = [
+  'drivesense_tracking',
+  'drivesense_summary',
+  'drivesense_achievements',
+  'drivesense_safety_alerts',
+  'drivesense_coaching',
+  'drivesense_vehicle',
+];
 export const NOTIFICATION_IDS = {
   LONG_TRIP_REMINDER: 2001,
   TRIP_STARTED: 2003,
@@ -44,6 +58,7 @@ export const NOTIFICATION_IDS = {
   COACH_FOCUS_CHANGED: 4025,
   PERSONAL_BEST_WEEK: 4026,
   NIGHT_DRIVING_WARNING: 4027,
+  POST_TRIP_SURVEY_REMINDER: 4028,
   MAINTENANCE_DUE: 4030,
   MAINTENANCE_SOON: 4031,
   ODOMETER_MILESTONE: 4032,
@@ -66,13 +81,13 @@ const STAY_ALERT_ID = NOTIFICATION_IDS.STAY_ALERT;
 const ACHIEVEMENT_BASE_ID = 3000;
 export const MAX_ACHIEVEMENT_NOTIF_IDS = 999;
 const ACHIEVEMENT_GROUP_ID = ACHIEVEMENT_BASE_ID + MAX_ACHIEVEMENT_NOTIF_IDS;
-const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
-const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'drivesense_achievement_notification_ids_v1';
-const NOTIFICATION_DEDUPE_KEY = 'drivesense_notification_dedupe_v1';
-const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
-const HEADING_DRIFT_NOTIF_LAST_KEY = 'drivesense_heading_drift_notif_last_ms';
-const SPEEDING_NOTIF_LAST_KEY = 'drivesense_speeding_notif_last_ms';
-const FATIGUE_NOTIF_TRIP_KEY = 'drivesense_fatigue_notif_trip_id';
+const NOTIFIED_ACHIEVEMENTS_KEY = 'road_sage_notified_achievements';
+const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'road_sage_achievement_notification_ids_v1';
+const NOTIFICATION_DEDUPE_KEY = 'road_sage_notification_dedupe_v1';
+const PHONE_NOTIF_LAST_KEY = 'road_sage_phone_notif_last_ms';
+const HEADING_DRIFT_NOTIF_LAST_KEY = 'road_sage_heading_drift_notif_last_ms';
+const SPEEDING_NOTIF_LAST_KEY = 'road_sage_speeding_notif_last_ms';
+const FATIGUE_NOTIF_TRIP_KEY = 'road_sage_fatigue_notif_trip_id';
 const DEDUPE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const TRIP_NOTIFICATION_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 const SAFE_DRIVING_TIPS = [
@@ -90,6 +105,29 @@ const notificationsEnabled = (key) => {
   return settings.notifications_enabled !== false && settings[key] !== false;
 };
 
+const lockScreenVisibilityForChannel = (channelId) => (
+  channelId === TRACKING_CHANNEL_ID
+    ? ANDROID_NOTIFICATION_VISIBILITY.SECRET
+    : ANDROID_NOTIFICATION_VISIBILITY.PRIVATE
+);
+
+const withLockScreenVisibility = (notification) => (
+  notification
+    ? {
+      ...notification,
+      visibility: notification.visibility ?? lockScreenVisibilityForChannel(notification.channelId),
+    }
+    : notification
+);
+
+const withLockScreenVisibilityAll = (notifications = []) => notifications.map(withLockScreenVisibility);
+
+const readLocalString = (key) => {
+  const current = localStorage.getItem(key);
+  if (current !== null) return current;
+  return legacyStorageKeysFor(key).map((legacyKey) => localStorage.getItem(legacyKey)).find((value) => value !== null) ?? null;
+};
+
 const todaysSafeDrivingTip = () => {
   const dayIndex = Math.floor(Date.now() / 86400000);
   return SAFE_DRIVING_TIPS[dayIndex % SAFE_DRIVING_TIPS.length];
@@ -97,10 +135,11 @@ const todaysSafeDrivingTip = () => {
 
 const readNotifiedAchievementIds = () => {
   try {
-    const raw = localStorage.getItem(NOTIFIED_ACHIEVEMENTS_KEY);
+    const raw = readLocalString(NOTIFIED_ACHIEVEMENTS_KEY);
     const ids = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(ids) ? ids : []);
   } catch {
+    // Intentionally silent - corrupt local notification de-dupe state can be rebuilt.
     return new Set();
   }
 };
@@ -108,14 +147,17 @@ const readNotifiedAchievementIds = () => {
 const writeNotifiedAchievementIds = (ids) => {
   try {
     localStorage.setItem(NOTIFIED_ACHIEVEMENTS_KEY, JSON.stringify([...ids]));
-  } catch {}
+  } catch {
+    // Intentionally silent - notification de-dupe state is a local optimization.
+  }
 };
 
 const readNumber = (key, fallback = 0) => {
   try {
-    const value = Number(localStorage.getItem(key));
+    const value = Number(readLocalString(key));
     return Number.isFinite(value) ? value : fallback;
   } catch {
+    // Intentionally silent - local throttle state is allowed to reset.
     return fallback;
   }
 };
@@ -123,12 +165,14 @@ const readNumber = (key, fallback = 0) => {
 const writeNumber = (key, value) => {
   try {
     localStorage.setItem(key, String(value));
-  } catch {}
+  } catch {
+    // Intentionally silent - notification throttle state is a local optimization.
+  }
 };
 
 const readDedupeState = () => {
   try {
-    const raw = localStorage.getItem(NOTIFICATION_DEDUPE_KEY);
+    const raw = readLocalString(NOTIFICATION_DEDUPE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     const now = Date.now();
     return Object.fromEntries(Object.entries(parsed).filter(([, value]) => (
@@ -142,7 +186,9 @@ const readDedupeState = () => {
 const writeDedupeState = (state) => {
   try {
     localStorage.setItem(NOTIFICATION_DEDUPE_KEY, JSON.stringify(state));
-  } catch {}
+  } catch {
+    // Intentionally silent - notification de-dupe state is a local optimization.
+  }
 };
 
 const wasRecentlySent = (key, cooldownMs) => {
@@ -165,7 +211,9 @@ const cancelNotificationIds = async (ids = []) => {
     .filter((id) => Number.isFinite(Number(id)))
     .map((id) => ({ id: Number(id) }));
   if (!notifications.length) return;
-  await LocalNotifications.cancel({ notifications }).catch(() => {});
+  await LocalNotifications.cancel({ notifications }).catch((err) => {
+    logError('notification_cancel', err, { notification_ids: notifications.map((item) => item.id).join(',') });
+  });
 };
 
 const scheduleNotification = async (
@@ -174,19 +222,65 @@ const scheduleNotification = async (
 ) => {
   if (!notification) return null;
   if (wasRecentlySent(dedupeKey, cooldownMs)) return null;
-  if (isNativePlatform()) await cancelNotificationIds([notification.id, ...replaceIds]);
-  if (!isNativePlatform()) return notification;
+  const securedNotification = withLockScreenVisibility(notification);
+  if (isNativePlatform()) await cancelNotificationIds([securedNotification.id, ...replaceIds]);
+  if (!isNativePlatform()) return securedNotification;
 
   const permission = await LocalNotifications.checkPermissions();
   const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
   if (!granted) return null;
-  await LocalNotifications.schedule({ notifications: [notification] });
+  await LocalNotifications.schedule({ notifications: [securedNotification] });
   markSent(dedupeKey);
-  return notification;
+  return securedNotification;
 };
 
 function scoreOf(trip = {}) {
   return Number(trip.score_overall ?? trip.overall_score ?? 0);
+}
+
+const notificationIdForTripSurvey = (trip = {}) => {
+  const key = String(trip?.id || trip?.end_time || trip?.start_time || '');
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = ((hash * 31) + key.charCodeAt(index)) % 900000;
+  }
+  return 5000 + hash;
+};
+
+const formatTripDuration = (trip = {}) => {
+  const seconds = Math.max(0, Number(trip.duration_seconds) || 0);
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
+};
+
+const tripDestinationLabel = (trip = {}) => {
+  const raw = trip.end_address || trip.destination || trip.nickname || 'Destination';
+  return String(raw).split(',')[0].trim() || 'Destination';
+};
+
+async function schedulePostTripSurveyNotification(trip, settings = localSettings.get()) {
+  if (!trip?.id) return null;
+  if (settings.notifications_enabled === false || settings.notif_post_trip_summary_enabled === false) return null;
+  const destination = tripDestinationLabel(trip);
+  return scheduleNotification({
+    id: notificationIdForTripSurvey(trip),
+    title: 'How was that drive?',
+    body: `${destination} trip · ${formatTripDuration(trip)}`.slice(0, 160),
+    channelId: SUMMARY_CHANNEL_ID,
+    schedule: { at: new Date(Date.now() + 5 * 60 * 1000), allowWhileIdle: true },
+    extra: {
+      type: 'trip_survey',
+      tripId: trip.id,
+      deeplink: `/survey/${trip.id}`,
+    },
+  }, {
+    requestPermission: false,
+    dedupeKey: `trip_survey:${trip.id}`,
+    cooldownMs: TRIP_NOTIFICATION_DEDUPE_MS,
+  });
 }
 
 let fallbackAchievementNotificationIds = {};
@@ -199,7 +293,7 @@ const isAchievementNotificationId = (id) => (
 
 const readAchievementNotificationIds = () => {
   try {
-    const raw = localStorage.getItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY);
+    const raw = readLocalString(ACHIEVEMENT_NOTIFICATION_IDS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch {
@@ -211,7 +305,9 @@ const writeAchievementNotificationIds = (ids) => {
   fallbackAchievementNotificationIds = { ...ids };
   try {
     localStorage.setItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY, JSON.stringify(ids));
-  } catch {}
+  } catch {
+    // Intentionally silent - achievement notification IDs have an in-memory fallback.
+  }
 };
 
 const nextAchievementNotificationId = (assignedIds) => {
@@ -286,7 +382,7 @@ export async function configureNotificationChannels() {
     name: 'Trip Tracking',
     description: 'Shown while Road Sage is actively tracking a trip.',
     importance: 2,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.SECRET,
     vibration: false,
   });
 
@@ -295,7 +391,7 @@ export async function configureNotificationChannels() {
     name: 'Trip Summaries',
     description: 'Trip completion and driving summary notifications.',
     importance: 3,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
   });
 
   await LocalNotifications.createChannel({
@@ -303,7 +399,7 @@ export async function configureNotificationChannels() {
     name: 'Achievements',
     description: 'Achievement unlock notifications.',
     importance: 3,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
   });
 
   await LocalNotifications.createChannel({
@@ -311,7 +407,7 @@ export async function configureNotificationChannels() {
     name: 'Safety Alerts',
     description: 'Urgent warnings while driving',
     importance: 5,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
     sound: 'default',
     vibration: true,
     lights: true,
@@ -323,7 +419,7 @@ export async function configureNotificationChannels() {
     name: 'Coaching & Milestones',
     description: 'Driving improvement tips and personal milestones',
     importance: 3,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
     sound: 'default',
     vibration: false,
   });
@@ -333,10 +429,18 @@ export async function configureNotificationChannels() {
     name: 'Vehicle & Maintenance',
     description: 'Maintenance reminders and vehicle updates',
     importance: 2,
-    visibility: 1,
+    visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE,
     sound: null,
     vibration: false,
   });
+
+  if (typeof LocalNotifications.deleteChannel === 'function') {
+    await Promise.all(LEGACY_NOTIFICATION_CHANNEL_IDS.map((id) => (
+      LocalNotifications.deleteChannel({ id }).catch(() => {
+        // Intentionally silent - best-effort cleanup of legacy notification channels only.
+      })
+    )));
+  }
 }
 
 export async function scheduleLongTripReminder(startTime) {
@@ -350,13 +454,13 @@ export async function scheduleLongTripReminder(startTime) {
     : Date.now() + 2 * 60 * 60 * 1000;
 
   await LocalNotifications.schedule({
-    notifications: [{
+    notifications: withLockScreenVisibilityAll([{
       id: LONG_TRIP_REMINDER_ID,
       title: 'Road Sage is still tracking',
       body: 'Your trip has been active for a while. Stop tracking when you are done driving.',
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { at: new Date(reminderAt), allowWhileIdle: true },
-    }],
+    }]),
   });
 }
 
@@ -428,7 +532,9 @@ export async function notifyExportSaved(/** @type {any} */ { filename, uri, mime
       mimeType,
     },
   };
-  return scheduleNotification(notification);
+  const scheduled = await scheduleNotification(notification);
+  if (scheduled) await schedulePostTripSurveyNotification(trip, settings);
+  return scheduled;
 }
 
 export async function notifyStayAlert(opts = {}) {
@@ -515,20 +621,36 @@ export const notifyDrowsyWarning = notifyHeadingDriftBetaWarning;
 export async function notifySpeedingAlert(opts = {}, settings = localSettings.get()) {
   if (settings.notifications_enabled === false || settings.notif_safety_alerts_enabled === false || settings.notif_speeding_alert_enabled === false) return null;
   if (isQuietHours(settings, true)) return null;
-  const now = Date.now();
-  if (now - readNumber(SPEEDING_NOTIF_LAST_KEY) < 60000) return null;
 
   const durationS = Number(opts.durationS) || 0;
-  const currentSpeed = Number(opts.currentSpeedKmh) || 0;
-  const limit = Number(opts.limitKmh) || Number(settings.threshold_speeding_kmh) || 100;
+  const currentSpeed = Number(opts.currentSpeedKmh ?? opts.currentSpeed);
+  const limit = Number(opts.limitKmh ?? opts.limit);
+
+  if (!Number.isFinite(currentSpeed) || currentSpeed <= 0) return null;
+  if (!Number.isFinite(limit) || limit <= 0) return null;
+
+  const overKmh = currentSpeed - limit;
+  if (overKmh <= 1) return null;
+
+  const speedingNotifCooldownMs = durationS >= 60 ? 60_000 : 30_000;
+  const now = Date.now();
+  if (now - readNumber(SPEEDING_NOTIF_LAST_KEY) < speedingNotifCooldownMs) return null;
+
   const id = durationS < 60 ? NOTIFICATION_IDS.SPEEDING_WARNING : NOTIFICATION_IDS.SPEEDING_ESCALATION;
+  const sourceNote = (opts.limitSource ?? 'inferred') === 'inferred' ? ' estimated' : '';
   const notification = {
     id,
     title: durationS >= 60 ? 'Continued Speeding' : 'Speed Warning',
-    body: `${Math.round(currentSpeed)} km/h - ${Math.max(0, Math.round(currentSpeed - limit))} km/h over the estimated limit.`,
+    body: `${Math.round(currentSpeed)} km/h - ${Math.max(0, Math.round(overKmh))} km/h over the${sourceNote} limit.`,
     channelId: SAFETY_ALERTS_CHANNEL_ID,
     schedule: { at: new Date() },
-    extra: { type: 'speeding', currentSpeedKmh: currentSpeed, limitKmh: limit, durationS },
+    extra: {
+      type: 'speeding',
+      currentSpeedKmh: currentSpeed,
+      limitKmh: limit,
+      durationS,
+      limitSource: opts.limitSource ?? 'inferred',
+    },
   };
   const scheduled = await scheduleNotification(notification);
   if (scheduled) writeNumber(SPEEDING_NOTIF_LAST_KEY, now);
@@ -540,8 +662,10 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
   if (isQuietHours(settings, true)) return null;
   const tripId = opts.tripId || 'active';
   try {
-    if (localStorage.getItem(FATIGUE_NOTIF_TRIP_KEY) === String(tripId)) return null;
-  } catch {}
+    if (readLocalString(FATIGUE_NOTIF_TRIP_KEY) === String(tripId)) return null;
+  } catch {
+    // Intentionally silent - missing local throttle state should not block reminders.
+  }
 
   const minutes = Math.round(Number(opts.tripDurationMinutes) || 0);
   const notification = {
@@ -555,7 +679,9 @@ export async function notifyFatigueBreakReminder(opts = {}, settings = localSett
   const scheduled = await scheduleNotification(notification);
   try {
     if (scheduled) localStorage.setItem(FATIGUE_NOTIF_TRIP_KEY, String(tripId));
-  } catch {}
+  } catch {
+    // Intentionally silent - reminder throttle state is a local optimization.
+  }
   return scheduled;
 }
 
@@ -754,7 +880,7 @@ export async function checkAndNotifyPhoneUsePattern(recentTrips = [], settings =
     (trip.phone_use_risk === 'medium' || trip.phone_use_risk === 'high')
   )).length;
   if (affected < 3) return null;
-  const key = 'drivesense_phone_pattern_last_ms';
+  const key = 'road_sage_phone_pattern_last_ms';
   const now = Date.now();
   if (now - readNumber(key) < 48 * 60 * 60 * 1000) return null;
   const notification = {
@@ -859,7 +985,7 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
     });
   }
 
-  if (notifications.length) await LocalNotifications.schedule({ notifications });
+  if (notifications.length) await LocalNotifications.schedule({ notifications: withLockScreenVisibilityAll(notifications) });
 
   if (settings.notif_inactive_nudge_enabled && lastTripTimestamp) {
     const daysSince = (Date.now() - new Date(lastTripTimestamp).getTime()) / 86400000;
@@ -909,7 +1035,7 @@ export async function syncAchievementNotifications(achievements = [], { requestP
       extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },
     }];
 
-  await LocalNotifications.schedule({ notifications });
+  await LocalNotifications.schedule({ notifications: withLockScreenVisibilityAll(notifications) });
 
   newAchievements.forEach((achievement) => notifiedIds.add(achievement.id));
   writeNotifiedAchievementIds(notifiedIds);

@@ -77,7 +77,7 @@ describe('Android auto-tracking stats parity', () => {
   });
 
   it('stores native completed trips as unscored until JavaScript rescoring runs', () => {
-    const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java', import.meta.url), 'utf8');
 
     for (const key of ['score_overall', 'score_safety', 'score_smoothness', 'score_eco']) {
       expect(source).toContain(`trip.put("${key}", JSONObject.NULL);`);
@@ -88,7 +88,7 @@ describe('Android auto-tracking stats parity', () => {
   });
 
   it('records native location permission loss as a trip data quality flag', () => {
-    const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java', import.meta.url), 'utf8');
 
     expect(source).toContain('catch (SecurityException exception)');
     expect(source).toContain('recordTimeline("location_permission_lost"');
@@ -97,7 +97,7 @@ describe('Android auto-tracking stats parity', () => {
   });
 
   it('treats stale native activity state as missing for GPS-only parked fallback', () => {
-    const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java', import.meta.url), 'utf8');
 
     expect(source).toContain('ACTIVITY_STATE_MAX_AGE_MS');
     expect(source).toContain('lastActivityUpdateMs');

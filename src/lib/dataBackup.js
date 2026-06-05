@@ -1,10 +1,12 @@
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
+import { Capacitor } from '@capacitor/core';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, getOrCreateInstallHash, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
+import { decryptBackup, encryptBackup, isEncryptedBackup } from '@/lib/backupEncryption';
 
 /*
  * Backup schema history:
@@ -25,11 +27,13 @@ export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 export const MAX_IMPORTED_STRING_LENGTH = 5000;
 export const MAX_IMPORTED_TRIP_NOTES_LENGTH = 10000;
+export const BACKUP_INTEGRITY_ERROR = 'integrity_check_failed';
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 const filterString = (value, fallback = '') => (
   typeof value === 'string' ? value.slice(0, 120) : fallback
 );
+const INTEGRITY_FIELD = '_integrity';
 
 const IMPORTED_TRIP_STATUS = new Set(['completed', 'discarded']);
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -97,6 +101,7 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'score_eco_confidence',
   'component_scores',
   'score_provenance',
+  'score_explanation',
   'score_provenance_change',
   'harsh_brakes_count',
   'rapid_accel_count',
@@ -253,6 +258,15 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'fatigue_risk_score_confidence',
   'speed_creep_score',
   'speed_creep_score_confidence',
+  'lane_changing_score',
+  'lane_changing_score_confidence',
+  'lane_changing_safety_weight',
+  'lane_change_count',
+  'unsafe_lane_changes',
+  'lane_changing_confidence',
+  'lane_change_detection_confidence',
+  'lane_change_detection_method',
+  'lane_change_events',
   'segment_scores',
   'hill_route',
   'map_matching_status',
@@ -375,6 +389,82 @@ const sanitizeWhitelistedObject = (value, allowedFields, warnings = null) => {
   return sanitized;
 };
 
+const bytesToHex = (bytes) => (
+  Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+);
+
+const canonicalStringify = (value) => {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalStringify(item) ?? 'null').join(',')}]`;
+  if (isPlainObject(value)) {
+    const entries = Object.keys(value).sort().map((key) => {
+      const serialized = canonicalStringify(value[key]);
+      return serialized === undefined ? null : `${JSON.stringify(key)}:${serialized}`;
+    }).filter(Boolean);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const hmacCrypto = () => {
+  if (typeof globalThis === 'undefined' || !globalThis.crypto?.subtle || typeof TextEncoder === 'undefined') {
+    throw new Error('Backup integrity sealing requires Web Crypto support.');
+  }
+  return globalThis.crypto;
+};
+
+async function hmacSeal(message) {
+  const enc = new TextEncoder();
+  const seed = await getOrCreateInstallHash();
+  const keyMaterial = await hmacCrypto().subtle.importKey(
+    'raw',
+    enc.encode(seed),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await hmacCrypto().subtle.sign('HMAC', keyMaterial, enc.encode(message));
+  return bytesToHex(new Uint8Array(signature));
+}
+
+async function hmacVerify(message, expectedHex) {
+  if (typeof expectedHex !== 'string' || !/^[0-9a-f]{64}$/i.test(expectedHex)) return false;
+  const actual = await hmacSeal(message);
+  const normalizedExpected = expectedHex.toLowerCase();
+  if (actual.length !== normalizedExpected.length) return false;
+  let diff = 0;
+  for (let index = 0; index < actual.length; index += 1) {
+    diff |= actual.charCodeAt(index) ^ normalizedExpected.charCodeAt(index);
+  }
+  return diff === 0;
+}
+
+const stripIntegrityField = (backup) => {
+  if (!isPlainObject(backup)) return { data: backup, integrity: null };
+  const { [INTEGRITY_FIELD]: integrity, ...data } = backup;
+  return { data, integrity: typeof integrity === 'string' ? integrity : null };
+};
+
+export async function sealPlaintextBackup(backup) {
+  const payload = canonicalStringify(backup);
+  const integrity = await hmacSeal(payload);
+  return { ...backup, [INTEGRITY_FIELD]: integrity };
+}
+
+export async function verifyPlaintextBackupIntegrity(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { text, sealed: false };
+  }
+
+  const { data, integrity } = stripIntegrityField(parsed);
+  if (!integrity) return { text, sealed: false };
+  const valid = await hmacVerify(canonicalStringify(data), integrity);
+  if (!valid) return { error: BACKUP_INTEGRITY_ERROR };
+  return { text: JSON.stringify(data), sealed: true };
+}
+
 export function sanitizeImportedTrip(trip, warnings = null) {
   if (!isPlainObject(trip)) {
     throw new Error('Backup contains an invalid trip record.');
@@ -483,31 +573,35 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
 }
 
 /**
- * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string}} options
+ * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,password?:string|null}} options
  */
-export async function exportDriveSenseBackup({ trips, vehicles, settings, filename } = {}) {
+export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, password = null } = {}) {
   const savedFilters = await getJson(SAVED_FILTERS_KEY, []);
   const backup = buildDriveSenseBackup({ trips, vehicles, settings, savedFilters });
-  const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
-  const content = JSON.stringify(backup, null, 2);
+  const baseName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
+  const encrypted = true;
+  const outputName = baseName.replace(/\.json$/i, '') + '.rsbackup';
+  const exportBackup = backup;
+  const json = JSON.stringify(exportBackup, null, 2);
+  const content = await encryptBackup(json, password);
+  const mimeType = 'application/octet-stream';
   let nativeFallbackError = null;
 
   try {
-    const { Capacitor } = await import('@capacitor/core');
     if (Capacitor.isNativePlatform()) {
       const result = await saveExportToDownloads({
         filename: outputName,
         data: content,
-        mimeType: 'application/json',
+        mimeType,
       });
-      return { native: true, filename: outputName, uri: result.uri, backup };
+      return { native: true, filename: outputName, uri: result.uri, backup, encrypted };
     }
   } catch (error) {
     nativeFallbackError = error?.message || 'Native export failed.';
     console.warn('Native JSON export failed, falling back to browser download.', error);
   }
 
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8;' });
+  const blob = new Blob([content], { type: encrypted ? 'application/octet-stream' : 'application/json;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -517,57 +611,136 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  return { native: false, filename: outputName, backup, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+  return { native: false, filename: outputName, backup, encrypted, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
 }
 
-export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
-  const sourceVersion = Number.isInteger(Number(fromVersion)) && Number(fromVersion) > 0 ? Number(fromVersion) : 1;
-  if (sourceVersion > BACKUP_VERSION) {
-    throw new Error(`Backup version ${sourceVersion} is newer than this app supports.`);
-  }
-
-  let version = sourceVersion;
-  let migrated = { ...data };
-  while (version < BACKUP_VERSION) {
-    if (version === 1) {
-      migrated = {
-        ...migrated,
-        vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
-        ui: isPlainObject(migrated.ui) ? migrated.ui : { saved_trip_filters: [] },
+export const BACKUP_MIGRATIONS = Object.freeze([
+  /*
+   * Migration backup v1 -> v2
+   *
+   * Adds: vehicles array and ui.saved_trip_filters container.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: no.
+   *
+   * After writing a backup migration, update:
+   * - src/lib/schema/tripSchema.js when trip fields change
+   * - BACKUP_VERSION and this migration registry
+   * - backup migration tests and golden fixtures if affected
+   */
+  Object.freeze({
+    from: 1,
+    to: 2,
+    migrate(data) {
+      return {
+        ...data,
+        vehicles: Array.isArray(data.vehicles) ? data.vehicles : [],
+        ui: isPlainObject(data.ui) ? data.ui : { saved_trip_filters: [] },
       };
-    } else if (version === 2) {
-      migrated = {
-        ...migrated,
+    },
+  }),
+  /*
+   * Migration backup v2 -> v3
+   *
+   * Adds: trip route_points, driving_events, event_feedback defaults.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: no.
+   */
+  Object.freeze({
+    from: 2,
+    to: 3,
+    migrate(data) {
+      return {
+        ...data,
         ui: {
-          ...(isPlainObject(migrated.ui) ? migrated.ui : {}),
-          saved_trip_filters: Array.isArray(migrated.ui?.saved_trip_filters) ? migrated.ui.saved_trip_filters : [],
+          ...(isPlainObject(data.ui) ? data.ui : {}),
+          saved_trip_filters: Array.isArray(data.ui?.saved_trip_filters) ? data.ui.saved_trip_filters : [],
         },
-        trips: (migrated.trips || []).map((trip) => ({
+        trips: (data.trips || []).map((trip) => ({
           ...trip,
           route_points: Array.isArray(trip?.route_points) ? trip.route_points : [],
           driving_events: Array.isArray(trip?.driving_events) ? trip.driving_events : [],
           event_feedback: isPlainObject(trip?.event_feedback) ? trip.event_feedback : {},
         })),
       };
-    } else if (version === 3) {
-      migrated = {
-        ...migrated,
-        trips: (migrated.trips || []).map((trip) => (
+    },
+  }),
+  /*
+   * Migration backup v3 -> v4
+   *
+   * Adds: needs_rescore on completed trips so modern scoring fields refresh.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: yes.
+   */
+  Object.freeze({
+    from: 3,
+    to: 4,
+    migrate(data) {
+      return {
+        ...data,
+        trips: (data.trips || []).map((trip) => (
           trip?.status === 'discarded' ? trip : { ...trip, needs_rescore: true }
         )),
       };
-    } else if (version === 4) {
-      migrated = {
-        ...migrated,
-        ui: isPlainObject(migrated.ui) ? migrated.ui : { saved_trip_filters: [] },
+    },
+  }),
+  /*
+   * Migration backup v4 -> v5
+   *
+   * Adds: ui fallback container for hardened imports.
+   * Removes: nothing.
+   * Renames: nothing.
+   * Requires rescore: no.
+   */
+  Object.freeze({
+    from: 4,
+    to: 5,
+    migrate(data) {
+      return {
+        ...data,
+        ui: isPlainObject(data.ui) ? data.ui : { saved_trip_filters: [] },
       };
-    } else if (version === 5) {
-      migrated = {
-        ...migrated,
-        trips: (migrated.trips || []).map(migrateLegacyLaneChangeTrip),
+    },
+  }),
+  /*
+   * Migration backup v5 -> v6
+   *
+   * Adds: heading_deviation_legacy counts for retired lane-change records.
+   * Removes: lane_changes_count, lane_changes_per_10km.
+   * Renames: driving_events[].type lane_change -> heading_deviation_legacy.
+   * Requires rescore: no; the migrated event is diagnostic only.
+   */
+  Object.freeze({
+    from: 5,
+    to: 6,
+    migrate(data) {
+      return {
+        ...data,
+        trips: (data.trips || []).map(migrateLegacyLaneChangeTrip),
       };
-    }
-    version += 1;
+    },
+  }),
+]);
+
+export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
+  const sourceVersion = Number.isInteger(Number(fromVersion)) && Number(fromVersion) > 0 ? Number(fromVersion) : 1;
+  if (sourceVersion > BACKUP_VERSION) {
+    throw new Error(
+      `This backup was made with a newer version of Road Sage (backup v${sourceVersion}, ` +
+      `this app supports up to v${BACKUP_VERSION}). ` +
+      'Update Road Sage to the latest version and try again.'
+    );
+  }
+
+  let version = sourceVersion;
+  let migrated = { ...data };
+  while (version < BACKUP_VERSION) {
+    const migration = BACKUP_MIGRATIONS.find((step) => step.from === version);
+    if (!migration) throw new Error(`Missing backup migration from v${version}.`);
+    migrated = migration.migrate(migrated);
+    version = migration.to;
   }
 
   return { ...migrated, version: BACKUP_VERSION };
@@ -585,6 +758,7 @@ export function parseDriveSenseBackup(text) {
     throw new Error('This is not a valid Road Sage backup file.');
   }
 
+  parsed = stripIntegrityField(parsed).data;
   const sourceVersion = Number(parsed.version) || 1;
   const migrated = migrateBackup(parsed, sourceVersion);
   const warnings = [];
@@ -604,11 +778,39 @@ export function parseDriveSenseBackup(text) {
   };
 }
 
-export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false } = {}) {
+export function countTripsOutsideRetentionWindow(trips = [], retentionMonths = 0, nowMs = Date.now()) {
+  const months = Number(retentionMonths);
+  if (!Number.isFinite(months) || months <= 0) return 0;
+
+  const cutoff = nowMs - months * 30.44 * 24 * 60 * 60 * 1000;
+  return (Array.isArray(trips) ? trips : []).filter((trip) => {
+    if (trip?.status !== 'completed') return false;
+    const startedAt = new Date(trip.start_time || trip.end_time || trip.created_at || 0).getTime();
+    return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;
+  }).length;
+}
+
+export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false, password = null } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
-  const text = await file.text();
+  let text = (await file.text()).replace(/^\uFEFF/, '');
+  const encryptedBackup = isEncryptedBackup(text);
+  if (encryptedBackup) {
+    if (!password) return { error: 'password_required' };
+    try {
+      text = await decryptBackup(text, password);
+    } catch (error) {
+      if (error?.name === 'OperationError') {
+        return { error: 'wrong_password' };
+      }
+      throw error;
+    }
+  } else {
+    const integrity = await verifyPlaintextBackupIntegrity(text);
+    if (integrity.error) return { error: integrity.error };
+    text = integrity.text;
+  }
   const backup = parseDriveSenseBackup(text);
   if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {
     return {
@@ -619,8 +821,30 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     };
   }
 
+  const currentSettings = localSettings.get();
+  let sanitizedSettings = includeSettings && backup.settings
+    ? sanitizeImportedSettings(backup.settings)
+    : null;
+  const effectiveSettings = sanitizedSettings
+    ? { ...currentSettings, ...sanitizedSettings }
+    : currentSettings;
+  const retentionPreservedTripCount = countTripsOutsideRetentionWindow(
+    backup.trips,
+    effectiveSettings.data_retention_months
+  );
+  if (retentionPreservedTripCount > 0 && includeSettings) {
+    sanitizedSettings = {
+      ...(sanitizedSettings || {}),
+      data_retention_months: 0,
+    };
+    localSettings.set({ ...localSettings.get(), data_retention_months: 0 });
+  }
+
+  const importedTrips = await tripService.upsertMany(backup.trips, {
+    skipRetentionPrune: true,
+    skipRescore: true,
+  });
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
-  const importedTrips = await tripService.upsertMany(backup.trips);
 
   const privacyZonesNeedReconfiguration = includeSettings && Array.isArray(backup.settings?.privacy_zones)
     ? backup.settings.privacy_zones.filter((zone) => (
@@ -630,8 +854,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     : 0;
 
   let importedSettings = false;
-  if (includeSettings && backup.settings) {
-    const sanitizedSettings = sanitizeImportedSettings(backup.settings);
+  if (includeSettings && sanitizedSettings) {
     localSettings.set({ ...localSettings.get(), ...sanitizedSettings });
     importedSettings = Object.keys(sanitizedSettings).length > 0;
   }
@@ -657,5 +880,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
+    retentionAutoDeleteDisabled: retentionPreservedTripCount > 0 && includeSettings,
+    retentionPreservedTripCount,
   };
 }

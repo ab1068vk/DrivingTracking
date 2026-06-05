@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clamp, pearsonCorrelation } from '@/lib/mathUtils';
+import { clamp, decayWeight, pearsonCorrelation } from '@/lib/mathUtils';
 
 describe('mathUtils clamp', () => {
   it('returns the minimum for NaN input', () => {
@@ -21,5 +21,13 @@ describe('mathUtils pearsonCorrelation', () => {
   it('returns zero for insufficient or flat samples', () => {
     expect(pearsonCorrelation([1], [2])).toBe(0);
     expect(pearsonCorrelation([1, 1, 1], [2, 3, 4])).toBe(0);
+  });
+});
+
+describe('mathUtils decayWeight', () => {
+  it('returns 1.0 for age 0 and halves at each half-life interval', () => {
+    expect(decayWeight(0)).toBeCloseTo(1.0);
+    expect(decayWeight(21)).toBeCloseTo(0.5);
+    expect(decayWeight(42)).toBeCloseTo(0.25);
   });
 });

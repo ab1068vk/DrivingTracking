@@ -1,20 +1,30 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/rescoreEvents';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
+import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
 import { isAndroid } from '@/lib/nativePlatform';
+import { decryptTripFields, encryptTripFields } from '@/lib/tripFieldEncryption';
+import { truncateTripCoordinates } from '@/lib/gps/sanitize';
 import {
   buildDrivingThresholds,
   calculateTripScores,
-  calculateTripStats,
-  detectDrivingEvents,
   getScoreProvenanceStatus,
   SCORING_VERSION,
-} from '@/lib/tripEngine';
+} from '@/lib/scoring/componentScores';
+import { calculateTripStats } from '@/lib/gps/routeSummary';
+import { detectDrivingEvents } from '@/lib/detection/harshEvents';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
-import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import {
+  buildRouteRiskCellsForTrip,
+  invalidateRouteRiskIndex,
+  mergeRouteRiskTripIntoIndex,
+  rebuildRouteRiskIndex,
+  sanitizeRouteRiskCellForStorage,
+} from '@/lib/routeRiskIndex';
 import {
   buildPhoneUsageAccessProvenance,
   buildPhoneUseFromTripEvidence,
@@ -22,18 +32,35 @@ import {
 } from '@/lib/phoneUsageAccess';
 import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } from '@/lib/mapPlaybackInsights';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
+import { logError } from '@/lib/errorReporting';
+import {
+  CALIBRATION_STORAGE_KEY,
+  updateCalibration,
+} from '@/lib/readinessCalibration';
+import {
+  pairOutcome,
+  READINESS_HISTORY_KEY,
+} from '@/lib/calibration/readinessSignalCorrelation';
+import {
+  computeAndStoreReadinessThresholdFit,
+  THRESHOLD_FIT_KEY,
+} from '@/lib/calibration/readinessThresholdFit';
+import {
+  DB_NAME,
+  DB_NAME_META_KEY,
+  DB_VERSION,
+  LOCAL_DB_LEGACY_DEFAULT_NAME,
+  ROUTE_RISK_STORE,
+  TRIP_STORE,
+} from '@/lib/localDbConfig';
 
-const TRIPS_KEY = 'drivesense_trips';
-const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
-const DEFAULT_DB_NAME = 'drivesense_mobile';
-export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
-export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
-const TRIP_STORE = 'trips';
+const TRIPS_KEY = 'road_sage_trips';
+const DRIVER_SIGNATURE_KEY = 'road_sage_driver_signature';
 export const TRIP_SCHEMA_VERSION = 23;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
-export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
-export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
-export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
+export const TRIP_EVENT_MIGRATION_KEY = 'road_sage_trip_event_migration_version';
+export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'road_sage_heading_event_migration_note_dismissed';
+export { RESCORE_PROGRESS_EVENT };
 export const AUTO_RESCORE_RECENT_WINDOW_DAYS = 28;
 export const AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO = 0.2;
 /*
@@ -152,9 +179,17 @@ const tripDbMigrationRunner = createIndexedDbMigrationRunner([
       ensureTripIndex(store, 'status', 'status');
     },
   },
+  {
+    version: DB_VERSION,
+    migrate({ db }) {
+      if (!hasStore(db, ROUTE_RISK_STORE)) {
+        db.createObjectStore(ROUTE_RISK_STORE, { keyPath: 'id' });
+      }
+    },
+  },
 ]);
 
-export const DB_VERSION = tripDbMigrationRunner.version;
+export { DB_NAME, DB_NAME_META_KEY, DB_VERSION };
 
 const localStorageMeta = () => {
   try {
@@ -195,11 +230,42 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
   tx.onabort = () => reject(tx.error);
 });
 
+const sanitizeTripRouteRiskCells = (trip) => {
+  const next = truncateTripCoordinates(trip);
+  if (!Array.isArray(next?.route_risk_cells)) return next;
+  return {
+    ...next,
+    motion_samples: undefined,
+    route_risk_cells: trip.route_risk_cells
+      .map((cell) => sanitizeRouteRiskCellForStorage(cell))
+      .filter((cell) => cell.key),
+  };
+};
+
+const sanitizeTripForStorage = (trip) => {
+  const next = sanitizeTripRouteRiskCells(truncateTripCoordinates(trip));
+  if (!next || typeof next !== 'object') return next;
+  const { motion_samples: _motionSamples, ...withoutMotionSamples } = next;
+  return withoutMotionSamples;
+};
+
+const decryptStoredTrip = async (trip) => sanitizeTripForStorage(await decryptTripFields(trip));
+
+const storageSanitizationChanged = (before, after) => (
+  JSON.stringify(before?.route_points || null) !== JSON.stringify(after?.route_points || null) ||
+  JSON.stringify(before?.raw_route_points || null) !== JSON.stringify(after?.raw_route_points || null) ||
+  JSON.stringify(before?.route_risk_cells || null) !== JSON.stringify(after?.route_risk_cells || null) ||
+  Boolean(before && Object.prototype.hasOwnProperty.call(before, 'motion_samples')) !== Boolean(after && Object.prototype.hasOwnProperty.call(after, 'motion_samples'))
+);
+
+const withoutSecureDeleteTombstones = (trips) => trips.filter((trip) => !trip?.secure_delete_tombstone);
+
 const readTripsFromDb = async (dbName) => {
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readonly');
-    return await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    return withoutSecureDeleteTombstones(await Promise.all(trips.map(decryptStoredTrip)));
   } finally {
     db.close();
   }
@@ -207,11 +273,12 @@ const readTripsFromDb = async (dbName) => {
 
 const writeTripsToDb = async (dbName, trips) => {
   if (!trips.length) return;
+  const encryptedTrips = await Promise.all(trips.map(sanitizeTripForStorage).map(encryptTripFields));
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
-    trips.forEach((trip) => store.put(trip));
+    encryptedTrips.forEach((trip) => store.put(trip));
     await idbTransactionDone(tx);
   } finally {
     db.close();
@@ -230,6 +297,67 @@ const deleteDbByName = (dbName) => new Promise((resolve, reject) => {
   request.onblocked = () => reject(new Error(`IndexedDB delete blocked for ${dbName}`));
 });
 
+const buildSecureDeleteTombstone = (id) => sanitizeTripForStorage({
+  id,
+  status: 'deleted',
+  schema_version: TRIP_SCHEMA_VERSION,
+  secure_delete_tombstone: true,
+  start_time: null,
+  end_time: null,
+  updated_at: new Date(0).toISOString(),
+  route_points: [],
+  raw_route_points: [],
+  route_points_raw_count: 0,
+  route_points_map_count: 0,
+  route_risk_cells: [],
+  driving_events: [],
+  notes: '',
+});
+
+const overwriteTripRecordBeforeDelete = (store, id) => (
+  store.put(buildSecureDeleteTombstone(id))
+);
+
+const overwriteLocalTripsBeforeDelete = async (shouldWipeTrip) => {
+  const trips = await getJson(TRIPS_KEY, []);
+  if (!Array.isArray(trips) || trips.length === 0) return [];
+  let changed = false;
+  const wiped = trips.map((trip) => {
+    if (!shouldWipeTrip(trip)) return trip;
+    changed = true;
+    return buildSecureDeleteTombstone(trip?.id);
+  });
+  if (changed) await setJson(TRIPS_KEY, wiped);
+  return wiped;
+};
+
+const overwriteAllTripsInDbBeforeDelete = async (dbName) => {
+  if (!canUseIndexedDb()) return;
+
+  const readDb = await openDbByName(dbName);
+  let tripIds = [];
+  try {
+    if (!hasStore(readDb, TRIP_STORE)) return;
+    const tx = readDb.transaction(TRIP_STORE, 'readonly');
+    const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    tripIds = trips.map((trip) => trip?.id).filter((id) => id != null);
+  } finally {
+    readDb.close();
+  }
+
+  if (tripIds.length === 0) return;
+
+  const writeDb = await openDbByName(dbName);
+  try {
+    const tx = writeDb.transaction(TRIP_STORE, 'readwrite');
+    const store = tx.objectStore(TRIP_STORE);
+    tripIds.forEach((id) => store.put(buildSecureDeleteTombstone(id)));
+    await idbTransactionDone(tx);
+  } finally {
+    writeDb.close();
+  }
+};
+
 let dbNameMigrationPromise = null;
 
 export const migrateIndexedDbName = async ({
@@ -240,7 +368,7 @@ export const migrateIndexedDbName = async ({
   if (!canUseIndexedDb() || !storage) return false;
 
   const storedPreviousName = previousName ?? storage.getItem(DB_NAME_META_KEY);
-  const legacyPreviousName = storedPreviousName || (currentName !== DEFAULT_DB_NAME ? DEFAULT_DB_NAME : currentName);
+  const legacyPreviousName = storedPreviousName || (currentName !== LOCAL_DB_LEGACY_DEFAULT_NAME ? LOCAL_DB_LEGACY_DEFAULT_NAME : currentName);
   if (!legacyPreviousName || legacyPreviousName === currentName) {
     storage.setItem(DB_NAME_META_KEY, currentName);
     return false;
@@ -265,6 +393,7 @@ export const migrateIndexedDbName = async ({
     await openDbByName(currentName).then((db) => db.close());
   }
 
+  await overwriteAllTripsInDbBeforeDelete(legacyPreviousName).catch(() => {});
   await deleteDbByName(legacyPreviousName);
   storage.setItem(DB_NAME_META_KEY, currentName);
   return true;
@@ -286,39 +415,50 @@ const getAllTrips = async () => {
     const tx = db.transaction(TRIP_STORE, 'readonly');
     const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
     db.close();
-    return trips;
+    const decrypted = await Promise.all(trips.map(decryptTripFields));
+    const sanitized = decrypted.map(sanitizeTripForStorage);
+    const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
+    if (changed.length) await putTrips(changed).catch(() => {});
+    return withoutSecureDeleteTombstones(sanitized);
   } catch {
-    return getJson(TRIPS_KEY, []);
+    const trips = await getJson(TRIPS_KEY, []);
+    const decrypted = await Promise.all(trips.map(decryptTripFields));
+    const sanitized = decrypted.map(sanitizeTripForStorage);
+    const changed = sanitized.filter((trip, index) => storageSanitizationChanged(decrypted[index], trip));
+    if (changed.length) await putTrips(changed).catch(() => {});
+    return withoutSecureDeleteTombstones(sanitized);
   }
 };
 
 const putTrip = async (trip) => {
+  const encryptedTrip = await encryptTripFields(sanitizeTripForStorage(trip));
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).put(trip));
+    await idbRequest(tx.objectStore(TRIP_STORE).put(encryptedTrip));
     db.close();
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
-    const next = [trip, ...trips.filter((item) => String(item.id) !== String(trip.id))];
+    const next = [encryptedTrip, ...trips.filter((item) => String(item.id) !== String(trip.id))];
     await setJson(TRIPS_KEY, next);
   }
 };
 
 const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
+  const encryptedIncomingTrips = await Promise.all(incomingTrips.map(sanitizeTripForStorage).map(encryptTripFields));
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
-    incomingTrips.forEach((trip) => store.put(trip));
+    encryptedIncomingTrips.forEach((trip) => store.put(trip));
     await idbTransactionDone(tx);
     db.close();
   } catch {
     const trips = await getJson(TRIPS_KEY, []);
-    const incomingIds = new Set(incomingTrips.map((trip) => String(trip.id)));
+    const incomingIds = new Set(encryptedIncomingTrips.map((trip) => String(trip.id)));
     const next = [
-      ...incomingTrips,
+      ...encryptedIncomingTrips,
       ...trips.filter((item) => !incomingIds.has(String(item.id))),
     ];
     await setJson(TRIPS_KEY, next);
@@ -376,6 +516,19 @@ const vehicleForTrip = (trip, vehicles = []) => (
     ? vehicles.find((vehicle) => String(vehicle.id) === String(trip?.vehicle_id)) || null
     : null
 );
+
+const withRouteRiskCells = (trip, privacyZones = getPrivacyZones(localSettings.get())) => (
+  trip?.status === 'completed'
+    ? { ...trip, route_risk_cells: buildRouteRiskCellsForTrip(trip, privacyZones, { preferExisting: false }) }
+    : trip
+);
+
+const mergeCompletedTripRouteRisk = async (trip) => {
+  if (trip?.status !== 'completed') return;
+  await mergeRouteRiskTripIntoIndex(trip, getPrivacyZones(localSettings.get())).catch(() => {
+    // Route risk can be rebuilt later; trip persistence should not fail because an overlay cache failed.
+  });
+};
 
 const tagExistingTripsWithCurrentScoringVersion = async (trips = []) => {
   const next = trips.map((trip) => tagLegacyScoreProvenance(trip));
@@ -559,7 +712,7 @@ const rescoreTrip = (trip, vehicles = []) => {
       rescored_at: scores.score_provenance.computed_at,
     }
     : trip.score_provenance_change;
-  return {
+  const rescored = {
     ...trip,
     ...stats,
     ...scores,
@@ -568,12 +721,14 @@ const rescoreTrip = (trip, vehicles = []) => {
     ...(sensorFusionSummary ? { sensor_fusion_summary: sensorFusionSummary } : {}),
     driving_events: drivingEvents,
     phone_usage_access_provenance: phoneUsageAccessProvenance.changed ? phoneUsageAccessProvenance : null,
+    scored_with_settings_version: scores.score_provenance.settings_version,
     ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
     feedback_adjusted_events_count: feedbackAdjusted.removed,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),
   };
+  return withRouteRiskCells(rescored, privacyZones);
 };
 
 const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.get()), options = {}) => (
@@ -614,22 +769,33 @@ const rescoreTripsIfNeeded = async (trips = []) => {
   });
   for (const trip of trips) {
     if (needsRescore(trip, thresholds, rescoreOptions)) {
-      const rescored = rescoreTrip(trip, vehicles);
-      rescoredTrips.push(rescored);
-      next.push(rescored);
-      completed += 1;
-      emitRescoreProgress({
-        status: 'running',
-        completed,
-        total,
-        reason: autoProvenanceTripIds.has(trip.id) ? 'auto_provenance' : 'schema_refresh',
-      });
+      try {
+        const rescored = rescoreTrip(trip, vehicles);
+        rescoredTrips.push(rescored);
+        next.push(rescored);
+      } catch (error) {
+        logError('trip_rescore_failed', error, { tripId: trip.id });
+        next.push({
+          ...trip,
+          needs_rescore: true,
+          score_confidence_flag: trip.score_confidence_flag || 'rescore_failed',
+        });
+      } finally {
+        completed += 1;
+        emitRescoreProgress({
+          status: 'running',
+          completed,
+          total,
+          reason: autoProvenanceTripIds.has(trip.id) ? 'auto_provenance' : 'schema_refresh',
+        });
+      }
     } else {
       next.push(trip);
     }
   }
   if (rescoredTrips.length) {
     await putTrips(rescoredTrips);
+    await rebuildRouteRiskIndex(next.filter((trip) => trip.status === 'completed'), getPrivacyZones(localSettings.get())).catch(() => {});
     emitRescoreProgress({
       status: 'complete',
       completed,
@@ -644,6 +810,7 @@ const importNativeCompletedTrips = async () => {
   if (!isAndroid() || importingNativeTrips) return;
 
   importingNativeTrips = true;
+  let importedCount = 0;
   try {
     const nativeTrips = await getNativeCompletedTrips();
     if (!nativeTrips.length) return;
@@ -676,7 +843,7 @@ const importNativeCompletedTrips = async () => {
         { privacy_zones: privacyZones }
       );
 
-      const importedTrip = {
+      const importedTrip = withRouteRiskCells({
         ...trip,
         ...stats,
         ...scores,
@@ -689,21 +856,25 @@ const importNativeCompletedTrips = async () => {
         imported_from_native: true,
         schema_version: TRIP_SCHEMA_VERSION,
         updated_at: trip.updated_at || new Date().toISOString(),
-      };
+      }, privacyZones);
 
       await putTrip(importedTrip);
+      const calibratedImportedTrip = await maybeUpdateReadinessCalibration(importedTrip);
+      if (calibratedImportedTrip !== importedTrip) await putTrip(calibratedImportedTrip);
+      await mergeCompletedTripRouteRisk(calibratedImportedTrip);
+      importedCount += 1;
 
       const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
-      const endedStopped = importedTrip.parking_stop_detected ||
-        Number(importedTrip.parking_stop_duration_seconds || 0) > 0 ||
+      const endedStopped = calibratedImportedTrip.parking_stop_detected ||
+        Number(calibratedImportedTrip.parking_stop_duration_seconds || 0) > 0 ||
         Number(finalPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? 5);
       if (finalPoint && endedStopped) {
         await saveLastParkedLocation({
           lat: finalPoint.lat,
           lng: finalPoint.lng,
-          timestamp: importedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
-          tripId: importedTrip.id,
-          source: importedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_stopped_trip_end',
+          timestamp: calibratedImportedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
+          tripId: calibratedImportedTrip.id,
+          source: calibratedImportedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_stopped_trip_end',
         });
         // Native background trips update the shared parked location only when they ended stopped.
       }
@@ -711,8 +882,8 @@ const importNativeCompletedTrips = async () => {
 
     await clearNativeCompletedTrips();
     await invalidateTripDerivedCaches();
-  } catch {
-    // The existing JS store remains usable if the native bridge is unavailable.
+  } catch (error) {
+    logError('native_completed_trip_import_failed', error, { importedCount });
   } finally {
     importingNativeTrips = false;
   }
@@ -721,30 +892,66 @@ const importNativeCompletedTrips = async () => {
 const deleteTrip = async (id) => {
   try {
     const db = await openDb();
-    const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).delete(id));
-    db.close();
+    try {
+      try {
+        const wipeTx = db.transaction(TRIP_STORE, 'readwrite');
+        overwriteTripRecordBeforeDelete(wipeTx.objectStore(TRIP_STORE), id);
+        await idbTransactionDone(wipeTx);
+      } catch {
+        // Deletion should still proceed if the best-effort wipe cannot complete.
+      }
+      const deleteTx = db.transaction(TRIP_STORE, 'readwrite');
+      deleteTx.objectStore(TRIP_STORE).delete(id);
+      await idbTransactionDone(deleteTx);
+    } finally {
+      db.close();
+    }
   } catch {
-    const trips = await getJson(TRIPS_KEY, []);
-    await setJson(TRIPS_KEY, trips.filter((trip) => String(trip.id) !== String(id)));
+    const wiped = await overwriteLocalTripsBeforeDelete((trip) => String(trip?.id) === String(id));
+    await setJson(TRIPS_KEY, wiped.filter((trip) => String(trip?.id) !== String(id)));
   }
 };
 
-const pruneExpiredTrips = async () => {
-  const retentionDays = Number(localSettings.get().data_retention_days || 0);
-  if (!retentionDays) return;
+const deleteAllTripsFromStorage = async () => {
+  await overwriteAllTripsInDbBeforeDelete(DB_NAME).catch(() => {});
+  await overwriteAllTripsInDbBeforeDelete(LOCAL_DB_LEGACY_DEFAULT_NAME).catch(() => {});
+  await deleteDbByName(DB_NAME).catch(() => {});
+  await deleteDbByName(LOCAL_DB_LEGACY_DEFAULT_NAME).catch(() => {});
+  await overwriteLocalTripsBeforeDelete(() => true).catch(() => {});
+  await Promise.all([
+    removeJson(TRIPS_KEY),
+    removeJson(DRIVER_SIGNATURE_KEY),
+    removeJson(CALIBRATION_STORAGE_KEY),
+    removeJson(READINESS_HISTORY_KEY),
+    removeJson(THRESHOLD_FIT_KEY),
+    removeJson(TRIP_EVENT_MIGRATION_KEY),
+    removeJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY),
+    clearNativeCompletedTrips().catch(() => {}),
+    invalidateDangerZoneCache().catch(() => {}),
+    invalidateRouteRiskIndex().catch(() => {}),
+  ]);
+};
 
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+export async function enforceDataRetention(retentionMonths = localSettings.get().data_retention_months) {
+  const months = Number(retentionMonths);
+  if (!Number.isFinite(months) || months <= 0) return 0;
+
+  const cutoff = Date.now() - months * 30.44 * 24 * 60 * 60 * 1000;
   const trips = await getAllTrips();
   const expired = trips.filter((trip) => {
-    const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
-    return Number.isFinite(when) && when > 0 && when < cutoff;
+    if (trip?.status !== 'completed') return false;
+    const startedAt = new Date(trip.start_time || 0).getTime();
+    return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;
   });
 
   for (const trip of expired) {
     await deleteTrip(trip.id);
   }
-};
+  if (expired.length) await invalidateTripDerivedCaches();
+  return expired.length;
+}
+
+const pruneExpiredTrips = async () => enforceDataRetention(localSettings.get().data_retention_months);
 
 const sortTrips = (trips, sort) => {
   const field = sort?.replace('-', '') || 'start_time';
@@ -764,6 +971,75 @@ const withId = (trip) => ({
     updated_at: new Date().toISOString(),
   }),
 });
+
+const maybeUpdateReadinessCalibration = async (trip) => {
+  if (
+    trip?.status !== 'completed' ||
+    trip.score_overall == null
+  ) {
+    return trip;
+  }
+
+  let updated = trip;
+
+  try {
+    if (
+      updated.pre_trip_readiness_context &&
+      updated.readiness_calibration_update?.storageKey !== CALIBRATION_STORAGE_KEY
+    ) {
+      const state = await updateCalibration(updated.pre_trip_readiness_context, updated.score_overall);
+      if (state) {
+        updated = {
+          ...updated,
+          readiness_calibration_update: {
+            storageKey: CALIBRATION_STORAGE_KEY,
+            version: state.version,
+            tripCount: state.tripCount,
+            updatedAt: state.updatedAt,
+          },
+        };
+      }
+    }
+  } catch (err) {
+    logError('readiness_calibration_update', err, { tripId: trip.id });
+  }
+
+  const signalRecordId = updated.readiness_signal_record_id ||
+    updated.pre_trip_readiness_context?.signalHistoryRecordId;
+  if (signalRecordId && updated.readiness_signal_outcome_paired?.storageKey !== READINESS_HISTORY_KEY) {
+    try {
+      const paired = await pairOutcome(signalRecordId, updated.score_overall);
+      if (paired) {
+        const thresholdFit = await computeAndStoreReadinessThresholdFit().catch((err) => {
+          logError('readiness_threshold_fit', err, { tripId: trip.id });
+          return null;
+        });
+        updated = {
+          ...updated,
+          readiness_signal_outcome_paired: {
+            storageKey: READINESS_HISTORY_KEY,
+            recordId: signalRecordId,
+            pairedAt: new Date().toISOString(),
+          },
+          ...(thresholdFit ? {
+            readiness_threshold_fit: {
+              storageKey: THRESHOLD_FIT_KEY,
+              highRiskFloor: thresholdFit.highRiskFloor,
+              moderateRiskFloor: thresholdFit.moderateRiskFloor,
+              f1: thresholdFit.f1,
+              n: thresholdFit.n,
+              fittedAt: thresholdFit.fittedAt,
+            },
+          } : {}),
+        };
+      }
+    } catch (err) {
+      logError('readiness_signal_outcome_pair', err, { tripId: trip.id });
+    }
+  }
+
+  return updated;
+};
 
 export const localTripRepository = {
   async list({ sort = '-start_time', limit = 100 } = {}) {
@@ -796,19 +1072,73 @@ export const localTripRepository = {
   },
 
   async create(trip) {
-    const saved = withId({ ...trip, created_at: new Date().toISOString() });
+    if (isEphemeralModeActive()) {
+      return {
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}`,
+        ephemeral_trip: true,
+      };
+    }
+    let saved = withRouteRiskCells(withId({ ...trip, created_at: new Date().toISOString() }));
     await putTrip(saved);
-    if (saved.status === 'completed') await invalidateTripDerivedCaches();
+    const calibratedSaved = await maybeUpdateReadinessCalibration(saved);
+    if (calibratedSaved !== saved) {
+      saved = calibratedSaved;
+      await putTrip(saved);
+    }
+    if (saved.status === 'completed') {
+      await invalidateDangerZoneCache();
+      await mergeCompletedTripRouteRisk(saved);
+    }
     await pruneExpiredTrips();
     return saved;
   },
 
   async update(id, patch) {
+    if (isEphemeralModeActive()) return { id, ...patch, ephemeral_trip: true };
     const current = await this.getById(id);
-    const updated = withId({ ...current, ...patch, id: current.id });
+    let updated = withRouteRiskCells(withId({ ...current, ...patch, id: current.id }));
     await putTrip(updated);
+    const calibratedUpdated = await maybeUpdateReadinessCalibration(updated);
+    if (calibratedUpdated !== updated) {
+      updated = calibratedUpdated;
+      await putTrip(updated);
+    }
     if (updated.status === 'completed') await invalidateTripDerivedCaches();
     return updated;
+  },
+
+  async markEventFeedback(id, feedback) {
+    if (isEphemeralModeActive()) {
+      return {
+        id,
+        event_feedback: {
+          [feedback.eventKey]: feedback.record,
+        },
+        needs_rescore: true,
+        ephemeral_trip: true,
+      };
+    }
+
+    const current = await this.getById(id);
+    const reviewedAt = feedback.reviewedAt || new Date().toISOString();
+    const updated = withRouteRiskCells(withId({
+      ...current,
+      event_feedback: {
+        ...(current.event_feedback || {}),
+        [feedback.eventKey]: {
+          ...feedback.record,
+          reviewed_at: reviewedAt,
+        },
+      },
+      needs_rescore: true,
+      feedback_reviewed_at: reviewedAt,
+      id: current.id,
+    }));
+
+    await putTrip(updated);
+    if (updated.status === 'completed') await invalidateTripDerivedCaches();
+    return this.getById(id);
   },
 
   async delete(id) {
@@ -816,7 +1146,19 @@ export const localTripRepository = {
     return { success: true };
   },
 
-  async upsertMany(trips = []) {
+  async deleteAll() {
+    await deleteAllTripsFromStorage();
+    return { success: true };
+  },
+
+  async upsertMany(trips = [], { skipRetentionPrune = false, skipRescore = false } = {}) {
+    if (isEphemeralModeActive()) {
+      return trips.map((trip, index) => ({
+        ...trip,
+        id: trip?.id || `ephemeral_${Date.now()}_${index}`,
+        ephemeral_trip: true,
+      }));
+    }
     const thresholds = buildDrivingThresholds(localSettings.get());
     const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     const normalized = trips.map((trip) => {
@@ -824,12 +1166,29 @@ export const localTripRepository = {
         ...trip,
         created_at: trip.created_at || trip.start_time || new Date().toISOString(),
       });
-      return needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next;
+      if (skipRescore) return next;
+      try {
+        return withRouteRiskCells(needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next);
+      } catch (error) {
+        logError('trip_import_rescore_failed', error, { tripId: next.id });
+        return {
+          ...next,
+          needs_rescore: true,
+          score_confidence_flag: next.score_confidence_flag || 'rescore_failed',
+        };
+      }
     });
     await putTrips(normalized);
-    if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
-    await pruneExpiredTrips();
-    return normalized;
+    const calibrated = await Promise.all(normalized.map(maybeUpdateReadinessCalibration));
+    const changedCalibrationTrips = calibrated.filter((trip, index) => trip !== normalized[index]);
+    if (changedCalibrationTrips.length) await putTrips(changedCalibrationTrips);
+    const completed = calibrated.filter((trip) => trip.status === 'completed');
+    if (completed.length) {
+      await invalidateDangerZoneCache();
+      for (const trip of completed) await mergeCompletedTripRouteRisk(trip);
+    }
+    if (!skipRetentionPrune) await pruneExpiredTrips();
+    return calibrated;
   },
 
   async markCompletedForRescore({ onlyProvenanceMismatch = false } = {}) {

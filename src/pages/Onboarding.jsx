@@ -15,6 +15,8 @@ import { getAndroidBatteryOptimizationStatus, openAndroidBatteryOptimizationSett
 import { useNavigate } from 'react-router-dom';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { FIRST_LAUNCH_PERMISSION_PROMPTED_KEY } from '@/lib/appConstants';
+import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 
 const STEPS = [
   {
@@ -127,6 +129,7 @@ export default function Onboarding({ onComplete }) {
   const [backgroundGranted, setBackgroundGranted] = useState(false);
   const [batteryReady, setBatteryReady] = useState(!isAndroid());
   const [usageAccessGranted, setUsageAccessGranted] = useState(false);
+  const [roadDataAutoFetch, setRoadDataAutoFetch] = useState(() => localSettings.get().external_context_auto_fetch_enabled !== false);
   const [requesting, setRequesting] = useState(false);
   const [setupStatus, setSetupStatus] = useState('');
   const navigate = useNavigate();
@@ -149,44 +152,113 @@ export default function Onboarding({ onComplete }) {
 
   const handleLocationRequest = async () => {
     setRequesting(true);
-    const granted = await requestForegroundLocationPermission();
-    setLocationGranted(granted);
-    localSettings.update({ location_permission_granted: granted });
-    await refreshSetupStatus().catch(() => {});
-    setRequesting(false);
+    try {
+      const granted = await requestForegroundLocationPermission();
+      setLocationGranted(granted);
+      localSettings.update({ location_permission_granted: granted });
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_location_permission', err, {
+          title: 'Setup status not refreshed',
+          description: 'Location permission was handled, but Road Sage could not refresh the setup checklist yet.',
+        });
+      });
+    } catch (error) {
+      notifyUserError('onboarding_location_permission', error, {
+        title: 'Location setup failed',
+        description: 'Road Sage could not request location permission. Open device settings and try again.',
+      });
+    } finally {
+      setRequesting(false);
+    }
   };
 
   const handleMotionActivityRequest = async () => {
     setRequesting(true);
-    const motionOk = await requestMotionSensorPermission();
-    const activityOk = isAndroid() ? await requestActivityRecognitionPermission() : true;
-    setMotionGranted(motionOk);
-    setActivityGranted(activityOk);
-    localSettings.update({ activity_permission_granted: activityOk });
-    await refreshSetupStatus().catch(() => {});
-    setRequesting(false);
+    try {
+      const motionOk = await requestMotionSensorPermission();
+      const activityOk = isAndroid() ? await requestActivityRecognitionPermission() : true;
+      setMotionGranted(motionOk);
+      setActivityGranted(activityOk);
+      localSettings.update({ activity_permission_granted: activityOk });
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_motion_activity_permission', err, {
+          title: 'Setup status not refreshed',
+          description: 'Motion setup was handled, but Road Sage could not refresh the setup checklist yet.',
+        });
+      });
+    } catch (error) {
+      notifyUserError('onboarding_motion_activity_permission', error, {
+        title: 'Motion setup failed',
+        description: 'Road Sage could not request motion or activity permission.',
+      });
+    } finally {
+      setRequesting(false);
+    }
   };
 
   const handleNotificationRequest = async () => {
     setRequesting(true);
-    const granted = await requestNotificationPermission();
-    setNotificationsGranted(granted);
-    localSettings.update({ notification_permission_granted: granted });
-    await refreshSetupStatus().catch(() => {});
-    setRequesting(false);
+    try {
+      const granted = await requestNotificationPermission();
+      setNotificationsGranted(granted);
+      localSettings.update({ notification_permission_granted: granted });
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_notification_permission', err, {
+          title: 'Setup status not refreshed',
+          description: 'Notification setup was handled, but Road Sage could not refresh the setup checklist yet.',
+        });
+      });
+    } catch (error) {
+      notifyUserError('onboarding_notification_permission', error, {
+        title: 'Notification setup failed',
+        description: 'Road Sage could not request notification permission.',
+      });
+    } finally {
+      setRequesting(false);
+    }
   };
 
   const handleBackgroundLocationRequest = async () => {
     setRequesting(true);
-    const granted = await requestBackgroundLocationPermission();
-    setBackgroundGranted(granted);
-    await refreshSetupStatus().catch(() => {});
-    setRequesting(false);
+    try {
+      const granted = await requestBackgroundLocationPermission();
+      setBackgroundGranted(granted);
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_background_location_permission', err, {
+          title: 'Setup status not refreshed',
+          description: 'Background location setup was handled, but Road Sage could not refresh the setup checklist yet.',
+        });
+      });
+    } catch (error) {
+      notifyUserError('onboarding_background_location_permission', error, {
+        title: 'Background tracking setup failed',
+        description: 'Road Sage could not request background location permission.',
+      });
+    } finally {
+      setRequesting(false);
+    }
   };
 
   const handleBatterySetup = async () => {
-    await openAndroidBatteryOptimizationSettings();
-    await refreshSetupStatus().catch(() => {});
+    try {
+      await openAndroidBatteryOptimizationSettings();
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_battery_settings', err, {
+          title: 'Setup status not refreshed',
+          description: 'Battery settings opened, but Road Sage could not refresh the setup checklist yet.',
+        });
+      });
+    } catch (error) {
+      notifyUserError('onboarding_battery_settings', error, {
+        title: 'Battery settings not opened',
+        description: 'Road Sage could not open Android battery optimization settings.',
+      });
+    }
+  };
+
+  const enableRoadDataAutoFetch = () => {
+    localSettings.update({ external_context_auto_fetch_enabled: true });
+    setRoadDataAutoFetch(true);
   };
 
   const requestTrackingModePermissions = async (mode = trackingMode) => {
@@ -199,9 +271,9 @@ export default function Onboarding({ onComplete }) {
     }
     if (mode === 'background_auto') {
       if (isAndroid()) {
-        try {
-          await startNativeAutoTracking();
-        } catch {}
+        await startNativeAutoTracking().catch((err) => {
+          logError('native_auto_tracking_start_onboarding', err, { mode });
+        });
       }
     }
   };
@@ -209,16 +281,36 @@ export default function Onboarding({ onComplete }) {
   const handleRecommendedSetup = async ({ autoOpenUsageAccess = false } = {}) => {
     setRequesting(true);
     setSetupStatus('Requesting location, notifications, motion, activity, and background tracking permissions...');
-    const recommendedMode = isAndroid() ? 'background_auto' : 'auto_detect';
-    setTrackingMode(recommendedMode);
-    await requestTrackingModePermissions(recommendedMode);
-    await refreshSetupStatus().catch(() => {});
-    setSetupStatus(isAndroid()
-      ? 'Core prompts complete. Finish any Android settings rows that still show setup.'
-      : 'Core prompts complete.');
-    setRequesting(false);
-    if (autoOpenUsageAccess && isAndroid()) {
-      await openAndroidUsageAccessSettings().catch(() => {});
+    try {
+      const recommendedMode = isAndroid() ? 'background_auto' : 'auto_detect';
+      setTrackingMode(recommendedMode);
+      await requestTrackingModePermissions(recommendedMode);
+      await refreshSetupStatus().catch((err) => {
+        notifyUserError('onboarding_refresh_after_recommended_setup', err, {
+          title: 'Setup status not refreshed',
+          description: 'Core prompts completed, but Road Sage could not refresh the setup checklist yet.',
+          extra: { mode: recommendedMode },
+        });
+      });
+      setSetupStatus(isAndroid()
+        ? 'Core prompts complete. Finish any Android settings rows that still show setup.'
+        : 'Core prompts complete.');
+      if (autoOpenUsageAccess && isAndroid()) {
+        await openAndroidUsageAccessSettings().catch((err) => {
+          notifyUserError('onboarding_open_usage_access_settings', err, {
+            title: 'Usage access settings not opened',
+            description: 'Open Android settings manually to allow phone-use evidence.',
+          });
+        });
+      }
+    } catch (error) {
+      setSetupStatus('Recommended setup could not finish. Use the checklist rows below to finish setup.');
+      notifyUserError('onboarding_recommended_setup', error, {
+        title: 'Recommended setup failed',
+        description: 'Road Sage could not complete the recommended permission setup. Use the checklist rows below to retry each item.',
+      });
+    } finally {
+      setRequesting(false);
     }
   };
 
@@ -230,11 +322,17 @@ export default function Onboarding({ onComplete }) {
       await setJson(FIRST_LAUNCH_PERMISSION_PROMPTED_KEY, true);
       if (cancelled) return;
       timer = setTimeout(() => {
-        handleRecommendedSetup({ autoOpenUsageAccess: true }).catch(() => {
+        handleRecommendedSetup({ autoOpenUsageAccess: true }).catch((err) => {
+          logError('onboarding_auto_recommended_setup', err);
           setRequesting(false);
         });
       }, 700);
-    }).catch(() => {});
+    }).catch((err) => {
+      notifyUserError('onboarding_first_launch_prompt_load', err, {
+        title: 'Setup prompt delayed',
+        description: 'Road Sage could not check the first-launch setup prompt state. You can still use the setup checklist.',
+      });
+    });
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -242,11 +340,17 @@ export default function Onboarding({ onComplete }) {
   }, []);
 
   useEffect(() => {
-    refreshSetupStatus().catch(() => {});
+    refreshSetupStatus().catch((err) => {
+      logError('onboarding_initial_status_refresh', err);
+    });
     const onVisible = () => {
-      if (document.visibilityState === 'visible') refreshSetupStatus().catch(() => {});
+      if (document.visibilityState === 'visible') refreshSetupStatus().catch((err) => {
+        logError('onboarding_visible_status_refresh', err);
+      });
     };
-    const onFocus = () => refreshSetupStatus().catch(() => {});
+    const onFocus = () => refreshSetupStatus().catch((err) => {
+      logError('onboarding_focus_status_refresh', err);
+    });
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -264,6 +368,7 @@ export default function Onboarding({ onComplete }) {
         tracking_mode: trackingMode,
         auto_tracking_enabled: trackingMode !== 'manual',
         background_tracking_enabled: trackingMode === 'background_auto',
+        external_context_auto_fetch_enabled: true,
       });
       onComplete?.();
       navigate('/');
@@ -496,11 +601,21 @@ export default function Onboarding({ onComplete }) {
                     label="Phone Usage Access"
                     detail="Optional, but makes phone-use detection measured instead of inferred."
                     ready={usageAccessGranted}
-                    onAction={() => openAndroidUsageAccessSettings().then(() => refreshSetupStatus()).catch(() => {})}
+                    onAction={() => openAndroidUsageAccessSettings()
+                      .then(() => refreshSetupStatus())
+                      .catch((err) => logError('onboarding_usage_access_checklist_action', err))}
                     actionLabel="Open"
                     disabled={requesting}
                   />
                 )}
+                <SetupChecklistRow
+                  label="Automatic road data"
+                  detail="Fetches OpenStreetMap speed-limit context for new trips so speeding scores do not stay GPS-inferred."
+                  ready={roadDataAutoFetch}
+                  onAction={enableRoadDataAutoFetch}
+                  actionLabel="Enable"
+                  disabled={requesting}
+                />
               </div>
             </div>
           )}

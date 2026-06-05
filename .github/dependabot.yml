@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      capacitor:
+        patterns: ["@capacitor/*", "@capacitor-community/*"]
+      ui-primitives:
+        patterns: ["@radix-ui/*", "lucide-react", "framer-motion"]
+      security-sensitive:
+        patterns: ["html2canvas", "react-markdown", "jspdf", "dompurify"]
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "gradle"
+    directory: "/android"
+    schedule:
+      interval: "weekly"

@@ -3,8 +3,6 @@ name: Security CI
 on:
   pull_request:
   push:
-    branches:
-      - main
   workflow_dispatch:
   schedule:
     - cron: '0 12 * * 1'
@@ -16,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -26,8 +26,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit production and development dependencies
-        run: npm audit --audit-level=moderate
+      - name: Check promotion blocker JSDoc
+        run: npm run calibration:check-promotion-blockers
+
+      - name: Evaluate calibration validation gate
+        id: calibration_gate
+        run: node scripts/evaluate-calibration-gate.mjs
+
+      - name: Validate promoted calibration constants
+        if: steps.calibration_gate.outputs.should_validate == 'true'
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run calibration:validate 2>&1 | tee calibration-report.txt
+
+      - name: Upload calibration report
+        if: always() && steps.calibration_gate.outputs.should_validate == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-report
+          path: calibration-report.txt
+
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Audit all dependencies for critical CVEs
+        run: npm audit --audit-level=critical
 
       - name: Block react-quill source imports
         run: |
@@ -38,6 +62,9 @@ jobs:
 
       - name: Check repository hygiene
         run: npm run check:repo-hygiene
+
+      - name: Check certificate pin expiry dates
+        run: python3 scripts/check_pin_expiry.py android/app/src/main/res/xml/network_security_config.xml 60
 
       - name: Test
         run: npm test
@@ -50,6 +77,14 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify debug routes are absent from production bundle
+        run: |
+          if grep -rE '"/diagnostics"|path:"/diagnostics"|Tracking Diagnostics|diagnostics-trips|native_diagnostics_clear' dist/assets/*.js 2>/dev/null; then
+            echo "ERROR: Diagnostics route found in production bundle!"
+            exit 1
+          fi
+          echo "OK: No debug routes in production bundle."
 
       - name: Block localhost API fallback in production bundle
         run: |

@@ -5,13 +5,15 @@ import { tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDate, formatDistance, getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
+import { reverseGeocodeIfPermitted } from '@/lib/geocoding';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
-import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { ensureRouteRiskIndexMigration, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
   buildOpenSourceTripContextPatch,
@@ -22,6 +24,7 @@ import {
 } from '@/lib/openSourceTripContext';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
+import { notifyUserError } from '@/lib/userFeedback';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -82,6 +85,10 @@ export default function MapScreen() {
   const { data: trips = [] } = useQuery({
     queryKey: ['map-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    meta: {
+      errorTitle: 'Map trips unavailable',
+      errorDescription: 'Road Sage could not load trips for the map. Try again after trip storage is available.',
+    },
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
@@ -107,6 +114,10 @@ export default function MapScreen() {
     },
     onError: (error) => {
       setOsmFetchStatus(error?.message || 'Could not get road data');
+      notifyUserError('map_road_context_fetch', error, {
+        title: 'Road data unavailable',
+        description: 'Road Sage could not fetch speed limits or map matching for this trip. The GPS route is unchanged.',
+      });
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
@@ -202,8 +213,13 @@ export default function MapScreen() {
       setCurrentLocation({ lat: point.lat, lng: point.lng });
       setShowCurrentLoc(true);
       setLocError(null);
-    } catch {
-      setLocError('Could not get location. Check location permission and GPS settings.');
+    } catch (error) {
+      const message = 'Could not get location. Check location permission and GPS settings.';
+      setLocError(message);
+      notifyUserError('map_current_location', error, {
+        title: 'Location unavailable',
+        description: message,
+      });
     }
   };
 
@@ -222,11 +238,9 @@ export default function MapScreen() {
 
       const zones = buildRiskHotspots(allCompleted);
       await saveDangerZones(zones);
-      let index = await loadRouteRiskIndex(privacyZones);
-      if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted, privacyZones);
-        await saveRouteRiskIndex(index);
-      } else if (privacyZones.length) {
+      const migration = await ensureRouteRiskIndexMigration({ trips: allCompleted, privacyZones });
+      const index = migration.index || await loadRouteRiskIndex(privacyZones);
+      if (privacyZones.length) {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {
@@ -235,37 +249,54 @@ export default function MapScreen() {
       }
     };
 
-    rebuildOverlays();
+    rebuildOverlays().catch((error) => {
+      if (cancelled) return;
+      setDangerZones([]);
+      setRouteRiskIndex(new Map());
+      notifyUserError('map_overlay_rebuild', error, {
+        title: 'Map layers unavailable',
+        description: 'Repeated-event and route-risk layers could not be rebuilt. Trip routes can still be viewed.',
+      });
+    });
     return () => {
       cancelled = true;
     };
   }, [allCompleted.length, trips, privacyZonesKey]);
 
   const handleWhereParked = async () => {
-    const stored = await getLastParkedLocation();
-    if (!stored) {
-      setParkingError('No parked location saved yet.');
-      return;
-    }
-
-    let next = stored;
-    if (!stored.address) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const data = await response.json();
-          next = { ...stored, address: data.display_name || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-          await saveLastParkedLocation(next);
-        }
-      } catch {
-        next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+    try {
+      const stored = await getLastParkedLocation();
+      if (!stored) {
+        setParkingError('No parked location saved yet.');
+        return;
       }
-    }
 
-    setParkedLocation(next);
-    setParkingError(null);
-    setPlaybackMode(false);
+      let next = stored;
+      if (!stored.address) {
+        const inPrivacyZone = isPointInPrivacyZone(stored, privacyZones);
+        if (inPrivacyZone) {
+          next = { ...stored, address: 'Private location' };
+        } else {
+          const address = await reverseGeocodeIfPermitted(stored.lat, stored.lng, { privacyZones });
+          next = { ...stored, address: address || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+          if (address) await saveLastParkedLocation(next);
+        }
+        if (!next.address) {
+          next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+        }
+      }
+
+      setParkedLocation(next);
+      setParkingError(null);
+      setPlaybackMode(false);
+    } catch (error) {
+      const message = 'Could not load your last parked location.';
+      setParkingError(message);
+      notifyUserError('map_parked_location', error, {
+        title: 'Parked location unavailable',
+        description: message,
+      });
+    }
   };
 
   return (
@@ -455,7 +486,7 @@ export default function MapScreen() {
               <div className="mt-2 grid gap-1">
                 <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'asks OpenStreetMap for road names and posted/default limits near the route.'}</div>
                 <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'asks Open-Meteo for privacy-safe route point/date weather.'}</div>
-                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint and consent are saved in Settings.'}</div>
+                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : isOsrmMapMatchingConfigured(settings) ? 'ON' : 'NEEDS VERIFICATION'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : isOsrmMapMatchingConfigured(settings) ? 'sends sampled GPS points to your verified OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint, consent, health check, and domain record are saved in Settings.'}</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : selectedLayerEffect}
