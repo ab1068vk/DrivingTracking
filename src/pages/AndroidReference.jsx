@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { secureClipboardCopy } from '@/lib/clipboard';
 
 const ANDROID_CODE = [
   {
@@ -130,15 +131,15 @@ First launch should request foreground location first, then request background l
 }
 
 android {
-    namespace = "com.drivesense.app"
+    namespace = "com.roadsage.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.drivesense.app"
+        applicationId = "com.roadsage.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = appVersionName
     }
 
     buildFeatures { compose = true }
@@ -206,7 +207,7 @@ dependencies {
     id: 'data_models',
     title: '🗄️ Data Models (Room Entities)',
     language: 'kotlin',
-    content: `package com.drivesense.app.data.local.entity
+    content: `package com.roadsage.app.data.local.entity
 
 import androidx.room.*
 
@@ -294,16 +295,16 @@ data class TripWithDetails(
     id: 'tracking_service',
     title: '🚗 TripTrackingService.kt (Foreground Service)',
     language: 'kotlin',
-    content: `package com.drivesense.app.services
+    content: `package com.roadsage.app.services
 
 import android.app.*
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
-import com.drivesense.app.R
-import com.drivesense.app.data.repository.TripRepository
-import com.drivesense.app.domain.usecase.AnalyzeTripUseCase
+import com.roadsage.app.R
+import com.roadsage.app.data.repository.TripRepository
+import com.roadsage.app.domain.usecase.AnalyzeTripUseCase
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import javax.inject.Inject
@@ -327,7 +328,7 @@ class TripTrackingService : Service() {
     companion object {
         const val ACTION_START = "START_TRACKING"
         const val ACTION_STOP = "STOP_TRACKING"
-        const val CHANNEL_ID = "drivesense_tracking"
+        const val CHANNEL_ID = "road_sage_tracking"
         const val NOTIFICATION_ID = 1001
         const val LOCATION_UPDATE_INTERVAL_MS = 2000L     // 2 seconds while trip is live
         const val LOCATION_FASTEST_INTERVAL_MS = 1000L    // 1 second
@@ -475,10 +476,10 @@ private fun Float.format(decimals: Int) = "%.\${decimals}f".format(this)
     id: 'scoring',
     title: '🧠 ScoringEngine.kt',
     language: 'kotlin',
-    content: `package com.drivesense.app.domain.scoring
+    content: `package com.roadsage.app.domain.scoring
 
-import com.drivesense.app.data.local.entity.DrivingEventEntity
-import com.drivesense.app.data.local.entity.RoutePointEntity
+import com.roadsage.app.data.local.entity.DrivingEventEntity
+import com.roadsage.app.data.local.entity.RoutePointEntity
 import kotlin.math.*
 
 /**
@@ -730,9 +731,9 @@ data class TripScores(val overall: Int, val safety: Int, val smoothness: Int, va
     id: 'tests',
     title: '🧪 ScoringEngineTest.kt (Unit Tests)',
     language: 'kotlin',
-    content: `package com.drivesense.app.domain.scoring
+    content: `package com.roadsage.app.domain.scoring
 
-import com.drivesense.app.data.local.entity.RoutePointEntity
+import com.roadsage.app.data.local.entity.RoutePointEntity
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -871,7 +872,7 @@ function CodeBlock({ content, language, id }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(content).then(() => {
+    secureClipboardCopy(content, `Road Sage ${language} reference`).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

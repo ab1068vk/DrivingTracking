@@ -1,14 +1,19 @@
 apply plugin: 'com.android.application'
 
+import groovy.json.JsonSlurper
+
+def appPackageJson = new JsonSlurper().parse(file("../../package.json"))
+def appVersionName = appPackageJson.version.toString()
+
 android {
-    namespace = "com.drivesense.app"
+    namespace = "com.roadsage.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.drivesense.app"
+        applicationId "com.roadsage.app"
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
         versionCode = 1
-        versionName = "1.0"
+        versionName = appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,7 +23,9 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled = false
+            minifyEnabled true
+            shrinkResources true
+            debuggable false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -26,6 +33,9 @@ android {
         coreLibraryDesugaringEnabled = true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+    buildFeatures {
+        buildConfig true
     }
     sourceSets {
         test {
@@ -73,10 +83,15 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.biometric:biometric:1.2.0-alpha05"
+    implementation "androidx.security:security-crypto:1.1.0"
+    implementation "androidx.work:work-runtime:2.9.0"
     implementation "com.google.android.gms:play-services-location:21.3.0"
+    implementation "com.google.android.play:integrity:1.6.0"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    testImplementation "org.json:json:20240303"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

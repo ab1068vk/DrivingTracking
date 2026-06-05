@@ -1,9 +1,9 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp } from '@/lib/mathUtils';
-import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/tripEngine';
+import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/gps/math';
 import { scoringValue } from '@/lib/scoringConstants';
 
-export const CALIBRATION_PROFILE_KEY = 'drivesense_calibration_profile';
+export const CALIBRATION_PROFILE_KEY = 'road_sage_calibration_profile';
 
 const round1 = (value) => Math.round(value * 10) / 10;
 const round2 = (value) => Math.round(value * 100) / 100;

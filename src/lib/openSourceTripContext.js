@@ -1,9 +1,9 @@
 import {
   buildDrivingThresholds,
   calculateTripScores,
-  calculateTripStats,
-  detectDrivingEvents,
-} from '@/lib/tripEngine';
+} from '@/lib/scoring/componentScores';
+import { calculateTripStats } from '@/lib/gps/routeSummary';
+import { detectDrivingEvents } from '@/lib/detection/harshEvents';
 import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
@@ -11,6 +11,7 @@ import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weat
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -23,12 +24,57 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
 
 export { PUBLIC_OSRM_DEMO_URL };
 
-export const isOsrmMapMatchingConfigured = (settings = {}) => (
-  settings.map_matching_enabled !== false &&
-  Boolean(settings.osrm_map_matching_url) &&
-  settings.osrm_data_sharing_consented === true &&
-  !isPublicOsrmDemoUrl(settings.osrm_map_matching_url)
-);
+function skippedMapMatchingContext(originalPoints = [], settings = {}) {
+  const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
+  if (settings.map_matching_enabled === false) {
+    return { routePoints: originalPoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
+  }
+  if (isOsrmDemoUrl) {
+    return {
+      routePoints: originalPoints,
+      status: 'public_demo_blocked',
+      provider: 'osrm',
+      error: 'The public OSRM demo is reference-only in Road Sage. Configure a private or trusted OSRM endpoint before route snapping.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (!settings.osrm_map_matching_url) {
+    return {
+      routePoints: originalPoints,
+      status: 'needs_endpoint',
+      provider: 'osrm',
+      error: 'Route snapping is optional and needs a private or trusted OSRM endpoint before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (settings.osrm_data_sharing_consented !== true) {
+    return {
+      routePoints: originalPoints,
+      status: 'needs_consent',
+      provider: 'osrm',
+      error: 'Route snapping needs explicit OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (!hasVerifiedOsrmEndpoint(settings)) {
+    return {
+      routePoints: originalPoints,
+      status: 'unavailable',
+      provider: 'osrm',
+      error: settings.osrm_last_health_error || 'Route snapping is disabled until the OSRM endpoint passes verification and has a matching domain trust record.',
+      isOsrmDemoUrl,
+    };
+  }
+  return {
+    routePoints: originalPoints,
+    status: 'unavailable',
+    provider: 'osrm',
+    error: 'Route snapping is unavailable.',
+    isOsrmDemoUrl,
+  };
+}
+
+export const isOsrmMapMatchingConfigured = (settings = {}) => hasVerifiedOsrmEndpoint(settings);
 
 export const isOsrmMapMatchingEnabled = (settings = {}) => (
   settings.map_matching_enabled !== false
@@ -47,12 +93,14 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
+    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather when all candidates are private or the origin, midpoint, or destination is inside the expanded weather privacy guard.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');
+    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your verified OSRM endpoint, one request per continuous route segment.');
   } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
+  } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true) {
+    lines.push('- Snap route to roads has an endpoint but will be skipped until its OSRM health check passes and the verified domain record matches.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
     lines.push('- Snap route to roads has an endpoint but will be skipped until OSRM data-sharing consent is saved.');
   } else if (isOsrmMapMatchingEnabled(settings)) {
@@ -103,7 +151,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
   stage(onProgress, osrmConfigured ? 'Snapping route to roads with OSRM' : 'Skipping route snapping');
-  const mapMatchingContext = await timeout(
+  const mapMatchingContext = (await timeout(
     mapMatchRoute(originalPoints, settings),
     16000,
     'OSRM route snapping timed out'
@@ -114,7 +162,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     error: error?.message || 'Map matching unavailable',
     confidence: null,
     snapped_coverage: 0,
-  }));
+  }))) || skippedMapMatchingContext(originalPoints, settings);
   let routePoints = mapMatchingContext.routePoints || originalPoints;
   stage(onProgress, 'Getting speed limits from OpenStreetMap');
   const speedLimitContext = await timeout(

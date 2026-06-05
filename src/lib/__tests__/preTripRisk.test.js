@@ -8,11 +8,35 @@ import {
   deriveWeights,
 } from '@/lib/preTripRisk';
 import { getFallbackTimeRisk } from '@/lib/habitProfile';
-import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
+import { decayWeight } from '@/lib/mathUtils';
+import { ROUTE_RISK_CONSTANTS, estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isEveningRushHour, isNightRiskHour } from '@/lib/appConstants';
 
 const trip = (score, offsetDays = 0) => {
   const date = new Date(2026, 0, 10 - offsetDays, 12, 0, 0);
+  return {
+    status: 'completed',
+    start_time: date.toISOString(),
+    end_time: new Date(date.getTime() + 30 * 60000).toISOString(),
+    distance_km: 10,
+    score_overall: score,
+  };
+};
+
+const endedTrip = ({ score = 90, endedMinutesAgo = 15, now = new Date(2026, 0, 10, 12) } = {}) => {
+  const end = new Date(now.getTime() - endedMinutesAgo * 60000);
+  const start = new Date(end.getTime() - 30 * 60000);
+  return {
+    status: 'completed',
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    distance_km: 10,
+    score_overall: score,
+  };
+};
+
+const timeBucketTrip = ({ score, daysAgo = 0, hour = 8 }) => {
+  const date = new Date(2026, 0, 10 - daysAgo, hour, 0, 0);
   return {
     status: 'completed',
     start_time: date.toISOString(),
@@ -34,7 +58,7 @@ const profile = (patch = {}) => ({
   },
   dayOfWeek: Object.fromEntries(Array.from({ length: 7 }, (_, day) => [
     day,
-    { avgScore: 80, riskScore: 20, tripCount: 2, insufficient: false },
+    { avgScore: 80, riskScore: 20, tripCount: 2, stdDev: 0, insufficient: false },
   ])),
   hourlyRisk: {},
   recentAvgScore: 80,
@@ -85,9 +109,97 @@ describe('preTripRisk', () => {
     expect(total).toBeCloseTo(1, 5);
   });
 
+  it('applies calibration offsets and keeps weights normalized', () => {
+    const weights = deriveWeights(null, new Date(2026, 0, 10, 12), {
+      timeOfDay: -0.05,
+      dailyFatigue: 0.05,
+    });
+    const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
+
+    expect(total).toBeCloseTo(1, 5);
+    expect(weights.timeOfDay).toBeLessThan(PRE_TRIP_RISK_WEIGHTS.timeOfDay);
+    expect(weights.dailyFatigue).toBeGreaterThan(PRE_TRIP_RISK_WEIGHTS.dailyFatigue);
+  });
+
+  it('returns the calibrated weights used for the readiness result', () => {
+    const state = computePreTripRisk(
+      Array.from({ length: 6 }, (_, i) => trip(90, i)),
+      {},
+      { fatigueLevel: 'high' },
+      { now: new Date(2026, 0, 10, 12) },
+      profile(),
+      { dailyFatigue: 0.05 }
+    );
+
+    expect(state.weights.dailyFatigue).toBeGreaterThan(PRE_TRIP_RISK_WEIGHTS.dailyFatigue);
+  });
+
   it('readinessScore is 100 minus compositeRisk', () => {
     const state = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 12) }, profile());
     expect(state.readinessScore).toBe(100 - state.compositeRisk);
+  });
+
+  it('uses fitted thresholds from context for risk level classification', () => {
+    const baseline = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 12) }, profile());
+    const fitted = computePreTripRisk(
+      [],
+      {},
+      { fatigueLevel: 'low' },
+      {
+        now: new Date(2026, 0, 10, 12),
+        fittedThresholds: {
+          highRiskFloor: 10,
+          moderateRiskFloor: 5,
+        },
+      },
+      profile()
+    );
+
+    expect(baseline.compositeRisk).toBeGreaterThanOrEqual(10);
+    expect(baseline.riskLevel).not.toBe('high');
+    expect(fitted.riskLevel).toBe('high');
+    expect(fitted.dataQuality.effectiveRiskFloors).toEqual({ high: 10, moderate: 5 });
+  });
+
+  it('compositeStdDev is null when compositeRisk is null', () => {
+    const result = computePreTripRisk([], {}, null, { now: new Date(2026, 0, 10, 12) });
+
+    expect(result.compositeRisk).toBeNull();
+    expect(result.compositeStdDev).toBeNull();
+    expect(result.readinessInterval).toBeNull();
+  });
+
+  it('readinessInterval.low is always less than or equal to readinessInterval.high', () => {
+    const result = computePreTripRisk(
+      Array.from({ length: 8 }, (_, index) => trip(82 - index, index)),
+      {},
+      { fatigueLevel: 'moderate' },
+      { now: new Date(2026, 0, 10, 12) },
+      profile()
+    );
+
+    expect(result.readinessInterval.low).toBeLessThanOrEqual(result.readinessInterval.high);
+  });
+
+  it('readiness interval is narrower when bucket variance is low', () => {
+    const morningProfile = (stdDev) => profile({
+      timeBuckets: {
+        ...profile().timeBuckets,
+        Morning: { avgScore: 80, riskScore: 20, tripCount: 5, stdDev, insufficient: false },
+      },
+      dayOfWeek: Object.fromEntries(Array.from({ length: 7 }, (_, day) => [
+        day,
+        { avgScore: 80, riskScore: 20, tripCount: 5, stdDev, insufficient: false },
+      ])),
+    });
+    const trips = Array.from({ length: 8 }, (_, index) => trip(82 - index, index));
+    const context = { now: new Date(2026, 0, 10, 8) };
+    const stable = computePreTripRisk(trips, {}, { fatigueLevel: 'moderate' }, context, morningProfile(2));
+    const noisy = computePreTripRisk(trips, {}, { fatigueLevel: 'moderate' }, context, morningProfile(20));
+    const stableWidth = stable.readinessInterval.high - stable.readinessInterval.low;
+    const noisyWidth = noisy.readinessInterval.high - noisy.readinessInterval.low;
+
+    expect(stableWidth).toBeLessThan(noisyWidth);
   });
 
   it('suppresses readiness score when core personal signals are unavailable', () => {
@@ -95,13 +207,15 @@ describe('preTripRisk', () => {
 
     expect(state.compositeRisk).toBeNull();
     expect(state.readinessScore).toBeNull();
-    expect(state.dataQuality.readinessEvidence).toBe('unavailable');
+    expect(state.evidenceTier).toBe('bootstrapping');
+    expect(state.bootstrapReadinessScore).not.toBeNull();
+    expect(state.dataQuality.readinessEvidence).toBe('bootstrapping');
     expect(state.dataQuality.missingCoreSignals).toEqual(['timeOfDay', 'recentTrend']);
     expect(state.dataQuality.fallbackSignalCount).toBeGreaterThan(1);
     expect(state.dataQuality.fallbackGateTriggered).toBe(true);
   });
 
-  it('returns unavailable when more than one personal readiness signal would be fallback data', () => {
+  it('returns a developing score when at least two actual-user readiness signals exist', () => {
     const state = computePreTripRisk(
       Array.from({ length: 3 }, (_, i) => trip(88, i + 1)),
       {},
@@ -113,13 +227,40 @@ describe('preTripRisk', () => {
     expect(state.dataQuality.fallbackSignalKeys).not.toContain('timeOfDay');
     expect(state.dataQuality.fallbackSignalCount).toBeGreaterThan(1);
     expect(state.dataQuality.fallbackGateTriggered).toBe(true);
-    expect(state.compositeRisk).toBeNull();
-    expect(state.readinessScore).toBeNull();
-    expect(state.riskLevel).toBe('unavailable');
+    expect(state.evidenceTier).toBe('developing');
+    expect(state.compositeRisk).not.toBeNull();
+    expect(state.readinessScore).not.toBeNull();
+    expect(state.riskLevel).not.toBe('unavailable');
   });
 
   it('handles empty trips gracefully', () => {
     expect(() => computePreTripRisk([])).not.toThrow();
+  });
+
+  it('treats recentTrend as unavailable when trip count is below PERSONAL_BASELINE_MIN_TRIPS', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 12));
+    const trips = [trip(85)];
+    const result = computePreTripRisk(trips, {}, null, { now: new Date(2026, 0, 10, 12) });
+
+    expect(result.dataQuality.missingCoreSignals).toContain('recentTrend');
+    expect(result.dataQuality.signalProvenance.recentTrend.fallback).toBe(true);
+    expect(result.readinessScore).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('does not mark recentTrend as actualUserData when baseline returns null', () => {
+    const result = computePreTripRisk([], {}, null, { now: new Date() });
+
+    expect(result.dataQuality.signalProvenance.recentTrend.actualUserData).not.toBe(true);
+  });
+
+  it('correctly marks recentTrend as actualUserData when sufficient baseline trips exist', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 12));
+    const trips = Array.from({ length: 10 }, (_, index) => trip(80 - index, index));
+    const result = computePreTripRisk(trips, {}, null, { now: new Date(2026, 0, 10, 12) });
+
+    expect(result.dataQuality.signalProvenance.recentTrend.actualUserData).toBe(true);
+    vi.useRealTimers();
   });
 
   it('primaryConcern follows the highest signal risk', () => {
@@ -139,6 +280,85 @@ describe('preTripRisk', () => {
     expect(state.signals.routeForecast).toBe(80);
     expect(state.topSignals.some((signal) => signal.key === 'routeForecast')).toBe(true);
     vi.useRealTimers();
+  });
+
+  it('danger zone risk uses exponential saturation matching predictiveRouteRisk model', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 12));
+    const zoneCount = 2;
+    const expected = Math.round(
+      (1 - Math.exp(-zoneCount / ROUTE_RISK_CONSTANTS.DANGER_ZONE_DECAY_COUNT)) * 100
+    );
+
+    const result = computePreTripRisk(
+      Array.from({ length: 10 }, (_, index) => trip(90 - index, index)),
+      {},
+      null,
+      { now: new Date(2026, 0, 10, 12), nearbyDangerZoneCount: zoneCount }
+    );
+
+    expect(result.signals.dangerZones).toBe(expected);
+    vi.useRealTimers();
+  });
+
+  it('danger zone risk does not exceed 100 for very high zone counts', () => {
+    vi.setSystemTime(new Date(2026, 0, 10, 12));
+    const result = computePreTripRisk(
+      Array.from({ length: 10 }, (_, index) => trip(90 - index, index)),
+      {},
+      null,
+      { now: new Date(2026, 0, 10, 12), nearbyDangerZoneCount: 50 }
+    );
+
+    expect(result.signals.dangerZones).toBeLessThanOrEqual(100);
+    expect(result.signals.dangerZones).toBeGreaterThan(90);
+    vi.useRealTimers();
+  });
+
+  it('recent bad trips raise risk more than equally bad trips from 60 days ago', () => {
+    const context = { now: new Date(2026, 0, 10, 8) };
+    const recentBadTrips = [
+      ...Array.from({ length: 5 }, (_, index) => timeBucketTrip({ score: 45, daysAgo: index + 1 })),
+      ...Array.from({ length: 5 }, (_, index) => timeBucketTrip({ score: 90, daysAgo: 60 + index })),
+    ];
+    const oldBadTrips = [
+      ...Array.from({ length: 5 }, (_, index) => timeBucketTrip({ score: 90, daysAgo: index + 1 })),
+      ...Array.from({ length: 5 }, (_, index) => timeBucketTrip({ score: 45, daysAgo: 60 + index })),
+    ];
+
+    const resultRecent = computePreTripRisk(recentBadTrips, {}, null, context);
+    const resultOld = computePreTripRisk(oldBadTrips, {}, null, context);
+
+    expect(resultRecent.signals.timeOfDay).toBeGreaterThan(resultOld.signals.timeOfDay);
+  });
+
+  it('decayWeight returns 1.0 for age 0 and 0.5 for age equal to half-life', () => {
+    expect(decayWeight(0)).toBeCloseTo(1.0);
+    expect(decayWeight(21)).toBeCloseTo(0.5);
+    expect(decayWeight(42)).toBeCloseTo(0.25);
+  });
+
+  it('returns bootstrapReadinessScore for new users with only fatigue/rest signals', () => {
+    const fatigueState = {
+      cumulativeFatigueScore: 3,
+      fatigueLevel: 'moderate',
+      recommendedBreakMinutes: 20,
+    };
+    const result = computePreTripRisk([], {}, fatigueState, { now: new Date(2026, 0, 10, 12) });
+
+    expect(result.evidenceTier).toBe('bootstrapping');
+    expect(result.bootstrapReadinessScore).not.toBeNull();
+    expect(result.readinessScore).toBeNull();
+  });
+
+  it('transitions to developing tier after sufficient actual-user signals appear', () => {
+    const result = computePreTripRisk(
+      Array.from({ length: 8 }, (_, index) => trip(86 - index, index)),
+      {},
+      null,
+      { now: new Date(2026, 0, 10, 12) }
+    );
+
+    expect(['developing', 'calibrated']).toContain(result.evidenceTier);
   });
 
   it('treats insufficient historical context history as unavailable route evidence', () => {
@@ -170,9 +390,10 @@ describe('preTripRisk', () => {
 
     expect(state.signals.timeOfDay).toBeNull();
     expect(state.signals.routeForecast).toBe(42);
-    expect(state.compositeRisk).toBeNull();
-    expect(state.riskLevel).toBe('unavailable');
-    expect(state.readinessScore).toBeNull();
+    expect(state.evidenceTier).toBe('developing');
+    expect(state.compositeRisk).not.toBeNull();
+    expect(state.riskLevel).toBe('moderate');
+    expect(state.readinessScore).not.toBeNull();
     vi.useRealTimers();
   });
 
@@ -183,9 +404,42 @@ describe('preTripRisk', () => {
 
     const state = computePreTripRisk([recentTrip], {}, { fatigueLevel: 'low' });
 
-    expect(state.signals.recentRest).toBe(80);
+    expect(state.signals.recentRest).toBe(67);
     expect(state.topSignals[0].key).toBe('recentRest');
     vi.useRealTimers();
+  });
+
+  it('rest risk is higher after a long drive with a short break than after a short drive with the same break', () => {
+    const breakMinutes = 15;
+    const now = new Date(2026, 0, 10, 12);
+    const lastTrip = endedTrip({ endedMinutesAgo: breakMinutes, now });
+    const resultHigh = computePreTripRisk(
+      [],
+      {},
+      { recommendedBreakMinutes: 45 },
+      { now, lastTrip }
+    );
+    const resultLow = computePreTripRisk(
+      [],
+      {},
+      { recommendedBreakMinutes: 10 },
+      { now, lastTrip }
+    );
+
+    expect(resultHigh.signals.recentRest).toBeGreaterThan(resultLow.signals.recentRest);
+  });
+
+  it('rest risk is 0 when break exceeds recommended threshold', () => {
+    const now = new Date(2026, 0, 10, 12);
+    const lastTrip = endedTrip({ endedMinutesAgo: 45, now });
+    const result = computePreTripRisk(
+      [],
+      {},
+      { recommendedBreakMinutes: 30 },
+      { now, lastTrip }
+    );
+
+    expect(result.signals.recentRest).toBe(0);
   });
 });
 
@@ -208,7 +462,8 @@ describe('computePreTripRisk - with habitProfile', () => {
     const state = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 23) }, habitProfile);
 
     expect(state.signals.timeOfDay).toBeNull();
-    expect(state.readinessScore).toBeNull();
+    expect(state.evidenceTier).toBe('developing');
+    expect(state.readinessScore).not.toBeNull();
     expect(state.dataQuality.sufficientTimeData).toBe(false);
   });
 

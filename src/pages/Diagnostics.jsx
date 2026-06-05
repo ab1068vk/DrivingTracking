@@ -35,12 +35,19 @@ import {
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
 import { activeTripStore, localSettings } from '@/lib/trackingStore';
-import { formatDateTime } from '@/lib/tripEngine';
+import { formatDateTime } from '@/lib/gps/formatting';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
+import { logError } from '@/lib/errorReporting';
+import PageNotFound from '@/lib/PageNotFound';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import {
+  CALIBRATION_MIN_TRIPS,
+  loadCalibrationState,
+} from '@/lib/readinessCalibration';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -141,7 +148,7 @@ function motionEvidenceLabel(status) {
   return labels[status] || labels.none;
 }
 
-export default function Diagnostics() {
+function DiagnosticsContent() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
@@ -152,6 +159,7 @@ export default function Diagnostics() {
   const [motionPermissionBusy, setMotionPermissionBusy] = useState(false);
   const [testDataBusy, setTestDataBusy] = useState(false);
   const [testDataNotice, setTestDataNotice] = useState('');
+  const [readinessCalibration, setReadinessCalibration] = useState({ offsets: {}, tripCount: 0, version: 1 });
 
   const { data: trips = [], refetch } = useQuery({
     queryKey: ['diagnostics-trips'],
@@ -173,16 +181,18 @@ export default function Diagnostics() {
     setWebDiagnostics(getTrackingDiagnostics());
     setActiveTrip(activeTripStore.get());
     try {
-      const [permissions, native, battery, nativeLog] = await Promise.all([
+      const [permissions, native, battery, nativeLog, calibration] = await Promise.all([
         getPermissionStatus(),
         isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
         isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
         isAndroid() ? getNativeDiagnostics().catch(() => ({ enabled: false, events: [] })) : Promise.resolve({ enabled: false, events: [] }),
+        loadCalibrationState().catch(() => ({ offsets: {}, tripCount: 0, version: 1 })),
       ]);
       setPermissionStatus(permissions);
       setNativeStatus(native);
       setBatteryStatus(battery);
       setNativeDiagnostics(nativeLog || { enabled: false, events: [] });
+      setReadinessCalibration(calibration);
       setActiveTrip(activeTripStore.get());
       await Promise.all([
         refetch(),
@@ -213,9 +223,19 @@ export default function Diagnostics() {
   }, [nativeDiagnostics, webDiagnostics]);
 
   const parkingTimeline = useMemo(() => buildParkingTimeline(latestTrip), [latestTrip]);
+  const latestOvertakeDiagnostics = useMemo(() => ({
+    eventCount: Number(latestTrip?.overtake_event_count ?? 0),
+    qualityScore: latestTrip?.overtake_quality_score ?? null,
+    unsafeReentryCount: Number(latestTrip?.unsafe_reentry_count ?? 0),
+    status: latestTrip?.overtake_quality_status || 'development_diagnostic_only',
+  }), [latestTrip]);
   const settings = localSettings.get();
   const backgroundAutoEnabled = settings.tracking_mode === 'background_auto' && !settings.tracking_paused;
   const osrmLastReachable = settings.osrm_last_reachable_at ? relativeAge(settings.osrm_last_reachable_at) : 'never';
+  const readinessCalibrationActive = Number(readinessCalibration.tripCount) >= CALIBRATION_MIN_TRIPS;
+  const readinessTripsRemaining = Math.max(0, CALIBRATION_MIN_TRIPS - Number(readinessCalibration.tripCount || 0));
+  const readinessOffsets = Object.entries(readinessCalibration.offsets || {})
+    .sort(([a], [b]) => a.localeCompare(b));
   const motionDiagnostics = useMemo(() => buildMotionSensorDiagnostics({
     permissionState: permissionStatus?.motionSensors,
     settings,
@@ -225,7 +245,9 @@ export default function Diagnostics() {
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
-    if (isAndroid()) await clearNativeDiagnostics().catch(() => {});
+    if (isAndroid()) await clearNativeDiagnostics().catch((err) => {
+      logError('native_diagnostics_clear', err);
+    });
     await refresh();
   };
 
@@ -241,7 +263,9 @@ export default function Diagnostics() {
 
   const armNative = async () => {
     if (!isAndroid()) return;
-    await startNativeAutoTracking().catch(() => {});
+    await startNativeAutoTracking().catch((err) => {
+      logError('native_auto_tracking_start_diagnostics', err);
+    });
     await refresh();
   };
 
@@ -330,6 +354,34 @@ export default function Diagnostics() {
         </section>
       )}
 
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">Development Diagnostics</h2>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Overtake pattern detection is hidden from Trip Detail and excluded from scores, coaching, route risk, and achievements.
+            </div>
+          </div>
+          <span className="w-fit rounded-full border border-border bg-secondary px-2.5 py-1 text-xs font-bold uppercase text-muted-foreground">
+            {latestOvertakeDiagnostics.status.replace(/_/g, ' ')}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Overtake patterns</div>
+            <div className="mt-1 text-sm font-semibold">{latestOvertakeDiagnostics.eventCount}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Quality score</div>
+            <div className="mt-1 text-sm font-semibold">{latestOvertakeDiagnostics.qualityScore ?? 'unavailable'}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Unsafe re-entry alerts</div>
+            <div className="mt-1 text-sm font-semibold">{latestOvertakeDiagnostics.unsafeReentryCount}</div>
+          </div>
+        </div>
+      </section>
+
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold">System Health</h2>
@@ -366,21 +418,63 @@ export default function Diagnostics() {
           <div>
             <h2 className="font-semibold">OSRM Route Snapping</h2>
             <div className="mt-1 text-xs text-muted-foreground">
-              OSRM last reachable: {osrmLastReachable}. {settings.osrm_health_status === 'unreachable' && settings.osrm_last_health_error ? settings.osrm_last_health_error : 'Health checks run when the endpoint is saved in Settings.'}
+              OSRM last reachable: {osrmLastReachable}. {settings.osrm_verified_domain ? `Verified domain: ${settings.osrm_verified_domain}.` : ''} {settings.osrm_health_status === 'unreachable' && settings.osrm_last_health_error ? settings.osrm_last_health_error : 'Health checks run when the endpoint is saved in Settings.'}
             </div>
           </div>
           <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${
-            settings.osrm_health_status === 'connected'
+            hasVerifiedOsrmEndpoint(settings)
               ? statusStyle.good
               : settings.osrm_health_status === 'unreachable'
                 ? statusStyle.bad
                 : statusStyle.unknown
           }`}>
-            {settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true
-              ? settings.osrm_health_status || 'not checked'
+            {hasVerifiedOsrmEndpoint(settings)
+              ? 'verified'
+              : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true
+                ? settings.osrm_health_status || 'not checked'
               : 'not configured'}
           </span>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">Readiness Calibration</h2>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {readinessCalibration.tripCount} / {CALIBRATION_MIN_TRIPS} completed calibration trips.
+            </div>
+          </div>
+          <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${readinessCalibrationActive ? statusStyle.good : statusStyle.warn}`}>
+            {readinessCalibrationActive ? 'Calibration active' : `Pending ${readinessTripsRemaining}`}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Version</div>
+            <div className="mt-1 text-sm font-semibold">v{readinessCalibration.version || 1}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Active offsets</div>
+            <div className="mt-1 text-sm font-semibold">{readinessCalibrationActive ? readinessOffsets.length : 0}</div>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="text-[11px] font-bold uppercase text-muted-foreground">Updated</div>
+            <div className="mt-1 text-sm font-semibold">{readinessCalibration.updatedAt ? relativeAge(readinessCalibration.updatedAt) : 'never'}</div>
+          </div>
+        </div>
+        {readinessOffsets.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-xl border border-border">
+            {readinessOffsets.map(([signal, offset]) => (
+              <div key={signal} className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs last:border-b-0">
+                <span className="font-medium">{signal}</span>
+                <span className={Number(offset) < 0 ? 'font-semibold text-emerald-600 dark:text-emerald-300' : 'font-semibold text-orange-600 dark:text-orange-300'}>
+                  {Number(offset).toFixed(3)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section>
@@ -491,4 +585,12 @@ export default function Diagnostics() {
       </section>
     </div>
   );
+}
+
+export default function Diagnostics() {
+  if (!import.meta.env.DEV) {
+    return <PageNotFound />;
+  }
+
+  return <DiagnosticsContent />;
 }

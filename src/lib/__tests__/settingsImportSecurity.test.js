@@ -73,12 +73,16 @@ describe('backup settings import security', () => {
       osrm_public_demo_consent_at: '2026-05-26T12:00:00.000Z',
       osrm_data_sharing_consented: true,
       osrm_last_reachable_at: '2026-05-26T12:00:00.000Z',
+      osrm_verified_endpoint: 'https://evil.example.com',
+      osrm_verified_domain: 'evil.example.com',
     }));
 
     expect(localSettings.get().osrm_map_matching_url).toBe('');
     expect(localSettings.get().osrm_public_demo_consent_at).toBe('');
     expect(localSettings.get().osrm_data_sharing_consented).toBe(false);
     expect(localSettings.get().osrm_last_reachable_at).toBe('');
+    expect(localSettings.get().osrm_verified_endpoint).toBe('');
+    expect(localSettings.get().osrm_verified_domain).toBe('');
   });
 
   it('clamps imported harsh-braking thresholds to the safe range', async () => {

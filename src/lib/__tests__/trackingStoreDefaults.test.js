@@ -11,16 +11,22 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.osrm_map_matching_url).not.toBe('https://router.project-osrm.org');
     expect(DEFAULT_SETTINGS.osrm_data_sharing_consented).toBe(false);
     expect(DEFAULT_SETTINGS.osrm_health_status).toBe('');
+    expect(DEFAULT_SETTINGS.osrm_verified_endpoint).toBe('');
+    expect(DEFAULT_SETTINGS.osrm_verified_domain).toBe('');
     expect(DEFAULT_SETTINGS.osrm_timeout_ms).toBe(12000);
     expect(sanitizeImportedSettings({
       osrm_map_matching_url: 'https://evil.example.com',
       osrm_data_sharing_consented: true,
       osrm_last_reachable_at: '2026-05-30T12:00:00.000Z',
+      osrm_verified_endpoint: 'https://evil.example.com',
+      osrm_verified_domain: 'evil.example.com',
       osrm_timeout_ms: 45000,
     }).osrm_map_matching_url).toBeUndefined();
     expect(sanitizeImportedSettings({ osrm_timeout_ms: 45000 }).osrm_timeout_ms).toBe(30000);
     expect(validateSettingsPatch({ osrm_timeout_ms: 5000 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ osrm_timeout_ms: 4999 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'http://osrm.example' })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'https://192.168.1.10' })).toMatchObject({ valid: false });
   });
 
   it('keeps calibration sharing opt-in by default', () => {
@@ -28,6 +34,23 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({ calibration_sharing_enabled: true })).toMatchObject({
       calibration_sharing_enabled: true,
     });
+  });
+
+  it('defaults biometric session auto-lock to five minutes', () => {
+    expect(DEFAULT_SETTINGS.biometric_lock_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.lock_timeout_minutes).toBe(5);
+    expect(sanitizeImportedSettings({ biometric_lock_enabled: true })).toMatchObject({
+      biometric_lock_enabled: true,
+    });
+    expect(sanitizeImportedSettings({ lock_timeout_minutes: 15 })).toMatchObject({
+      lock_timeout_minutes: 15,
+    });
+    expect(validateSettingsPatch({ biometric_lock_enabled: true })).toMatchObject({ valid: true });
+    expect(sanitizeImportedSettings({ lock_timeout_minutes: 60 })).toMatchObject({
+      lock_timeout_minutes: 30,
+    });
+    expect(validateSettingsPatch({ lock_timeout_minutes: 0 })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ lock_timeout_minutes: 31 })).toMatchObject({ valid: false });
   });
 
   it('stores the last map center as an opt-in contextual fallback', () => {
@@ -51,6 +74,9 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({
       last_map_center: { lat: 91, lng: -181 },
     }).last_map_center).toBeUndefined();
+    expect(sanitizeImportedSettings({
+      last_map_center: { lat: 0, lng: 0 },
+    }).last_map_center).toBeUndefined();
   });
 
   it('keeps inferred speed-limit country defaults configurable', () => {
@@ -67,6 +93,33 @@ describe('tracking store default settings', () => {
 
   it('keeps the rapid acceleration minimum speed at 5 km/h', () => {
     expect(DEFAULT_SETTINGS.min_speed_rapid_accel_kmh).toBe(5);
+  });
+
+  it('defines and validates voice profile defaults', () => {
+    expect(DEFAULT_SETTINGS.voice_alert_rate).toBe(1.0);
+    expect(DEFAULT_SETTINGS.voice_alert_volume).toBe(0.9);
+    expect(DEFAULT_SETTINGS.voice_alerts_min_severity).toBe(1);
+    expect(DEFAULT_SETTINGS.voice_earcon_enabled).toBe(true);
+    expect(DEFAULT_SETTINGS.voice_quiet_hours_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.voice_quiet_hours_start).toBe('22:00');
+    expect(DEFAULT_SETTINGS.voice_quiet_hours_end).toBe('06:00');
+
+    expect(sanitizeImportedSettings({
+      voice_alert_rate: 1.2,
+      voice_alert_volume: 0.2,
+      voice_alerts_min_severity: 4,
+      voice_earcon_enabled: false,
+      voice_quiet_hours_start: '23:30',
+    })).toMatchObject({
+      voice_alert_rate: 1.2,
+      voice_alert_volume: 0.3,
+      voice_alerts_min_severity: 3,
+      voice_earcon_enabled: false,
+      voice_quiet_hours_start: '23:30',
+    });
+    expect(validateSettingsPatch({ voice_alert_rate: 1.2 })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ voice_alert_rate: 1.3 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ voice_alerts_min_severity: 4 })).toMatchObject({ valid: false });
   });
 
   it('defines configurable CO2 economics defaults', () => {
@@ -106,8 +159,26 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(7);
+    expect(legacySunset.settings_defaults_version).toBe(10);
     expect(legacyCustom.night_end_time).toBe('06:00');
+  });
+
+  it('defaults local trip retention to 24 months and migrates legacy day values', () => {
+    expect(DEFAULT_SETTINGS.data_retention_months).toBe(24);
+    expect(DEFAULT_SETTINGS.data_retention_days).toBeUndefined();
+
+    const migrated = migrateDefaultSettings({
+      settings_defaults_version: 7,
+      data_retention_days: 365,
+    });
+
+    expect(migrated.settings.data_retention_months).toBe(12);
+    expect(migrated.settings.data_retention_days).toBeUndefined();
+    expect(migrated.changed).toBe(true);
+    expect(sanitizeImportedSettings({ data_retention_days: 730 }).data_retention_months).toBe(24);
+    expect(sanitizeImportedSettings({ data_retention_months: 36 }).data_retention_months).toBe(36);
+    expect(validateSettingsPatch({ data_retention_months: 0 })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ data_retention_months: -1 })).toMatchObject({ valid: false });
   });
 
   it('migrates unsupported proxy setting names to neutral metric names', () => {

@@ -8,6 +8,17 @@ const point = (index) => ({
   timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, index * 10)).toISOString(),
 });
 
+const verifiedOsrmSettings = (patch = {}) => ({
+  osrm_map_matching_url: 'https://example.test',
+  osrm_data_sharing_consented: true,
+  osrm_health_status: 'connected',
+  osrm_last_reachable_at: '2026-01-01T12:00:00.000Z',
+  osrm_verified_endpoint: 'https://example.test',
+  osrm_verified_origin: 'https://example.test',
+  osrm_verified_domain: 'example.test',
+  ...patch,
+});
+
 describe('mapMatching', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -32,10 +43,7 @@ describe('mapMatching', () => {
     })));
 
     const route = [point(20), point(21), point(22)];
-    const result = await mapMatchRoute(route, {
-      osrm_map_matching_url: 'https://example.test',
-      osrm_data_sharing_consented: true,
-    });
+    const result = await mapMatchRoute(route, verifiedOsrmSettings());
 
     expect(result.status).toBe('matched');
     expect(typeof result.confidence).toBe('number');
@@ -66,10 +74,7 @@ describe('mapMatching', () => {
     })));
 
     const route = [point(70), point(71), point(72)];
-    const result = await mapMatchRoute(route, {
-      osrm_map_matching_url: 'https://example.test',
-      osrm_data_sharing_consented: true,
-    });
+    const result = await mapMatchRoute(route, verifiedOsrmSettings());
 
     expect(result.status).toBe('matched');
     expect(result.confidence).toBe(1);
@@ -83,7 +88,53 @@ describe('mapMatching', () => {
       osrm_map_matching_url: 'https://example.test',
     });
 
-    expect(result.status).toBe('needs_consent');
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('requires OSRM consent to be explicitly boolean true', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: 'true',
+    });
+
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not send route points without a configured OSRM endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not send route points when the OSRM endpoint has not passed verification', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(result).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not send route points when the verified endpoint record does not match', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], verifiedOsrmSettings({
+      osrm_map_matching_url: 'https://changed.example.test',
+    }));
+
+    expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -105,11 +156,9 @@ describe('mapMatching', () => {
       }),
     })));
 
-    const result = await mapMatchRoute([point(900), point(901), point(902)], {
-      osrm_map_matching_url: 'https://example.test',
-      osrm_data_sharing_consented: true,
+    const result = await mapMatchRoute([point(900), point(901), point(902)], verifiedOsrmSettings({
       osrm_timeout_ms: 7000,
-    });
+    }));
 
     expect(result.status).toBe('matched');
     expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 7000);
@@ -135,12 +184,14 @@ describe('mapMatching', () => {
     const result = await mapMatchRoute([point(0), point(1), point(2)], {
       osrm_map_matching_url: 'https://router.project-osrm.org',
       osrm_data_sharing_consented: true,
+      osrm_health_status: 'connected',
+      osrm_last_reachable_at: '2026-01-01T12:00:00.000Z',
+      osrm_verified_endpoint: 'https://router.project-osrm.org',
+      osrm_verified_origin: 'https://router.project-osrm.org',
+      osrm_verified_domain: 'router.project-osrm.org',
     });
 
-    expect(result).toMatchObject({
-      status: 'public_demo_blocked',
-      isOsrmDemoUrl: true,
-    });
+    expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -173,10 +224,7 @@ describe('mapMatching', () => {
       point(402),
     ];
 
-    const result = await mapMatchRoute(route, {
-      osrm_map_matching_url: 'https://example.test',
-      osrm_data_sharing_consented: true,
-    });
+    const result = await mapMatchRoute(route, verifiedOsrmSettings());
 
     expect(fetch).toHaveBeenCalledTimes(2);
     const requestedCoords = fetch.mock.calls.map(([url]) => (
