@@ -6,6 +6,7 @@ import {
   NOTIFICATION_IDS,
   achievementNotificationId,
   dispatchPostTripNotification,
+  isNotificationChannelEnabled,
   isQuietHours,
   notifySpeedingAlert,
 } from '@/lib/notificationService';
@@ -115,6 +116,25 @@ describe('advanced notifications', () => {
     }), [], { ...settings, notifications_enabled: false });
 
     expect(notification).toBeNull();
+  });
+
+  it('requires both master and channel notification toggles', () => {
+    expect(isNotificationChannelEnabled({
+      notifications_enabled: true,
+      notif_safety_alerts_enabled: true,
+    }, 'notif_safety_alerts_enabled')).toBe(true);
+    expect(isNotificationChannelEnabled({
+      notifications_enabled: false,
+      notif_safety_alerts_enabled: true,
+    }, 'notif_safety_alerts_enabled')).toBe(false);
+    expect(isNotificationChannelEnabled({
+      notifications_enabled: true,
+      notif_safety_alerts_enabled: false,
+    }, 'notif_safety_alerts_enabled')).toBe(false);
+    expect(isNotificationChannelEnabled({
+      notifications_enabled: false,
+      notif_safety_alerts_enabled: false,
+    }, 'notif_safety_alerts_enabled')).toBe(false);
   });
 
   it('does not fire phantom speeding alerts for empty or invalid speed context', async () => {

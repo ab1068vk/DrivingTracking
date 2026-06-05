@@ -54,6 +54,7 @@ export default function TripCard({
   trip,
   units = 'metric',
   index = 0,
+  animateEntry = true,
   scoreDelta = null,
   onToggleFavorite = null,
   onCalibrationLabelSaved = null,
@@ -78,7 +79,8 @@ export default function TripCard({
   const [dismissed, setDismissed] = useState(false);
   const [savingRating, setSavingRating] = useState(null);
   const [showThanks, setShowThanks] = useState(false);
-  const [isEntering, setIsEntering] = useState(true);
+  const shouldAnimateEntry = animateEntry !== false;
+  const [isEntering, setIsEntering] = useState(shouldAnimateEntry);
   const sharingEnabled = localSettings.get().calibration_sharing_enabled === true;
   const hasCalibrationLabel = Number.isInteger(Number(surveyStatus?.rating));
   const showRatingFooter = !unavailableScore && !hasCalibrationLabel && !showThanks && (sharingEnabled || !dismissed);
@@ -131,10 +133,10 @@ export default function TripCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: animationDelay }}
-      onAnimationComplete={() => setIsEntering(false)}
+      initial={shouldAnimateEntry ? { opacity: 0, y: 16 } : false}
+      animate={shouldAnimateEntry ? { opacity: 1, y: 0 } : false}
+      transition={shouldAnimateEntry ? { delay: animationDelay } : undefined}
+      onAnimationComplete={shouldAnimateEntry ? () => setIsEntering(false) : undefined}
       onClick={() => navigate(`/trips/${trip.id}`)}
       className={`${isEntering ? 'trip-card-entering' : ''} bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group`}
     >

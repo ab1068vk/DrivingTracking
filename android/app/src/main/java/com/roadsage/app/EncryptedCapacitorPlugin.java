@@ -32,8 +32,14 @@ public class EncryptedCapacitorPlugin extends Plugin {
             call.reject("key is required.");
             return;
         }
-        prefs().edit().putString(key, value == null ? "null" : value).apply();
-        call.resolve();
+        boolean success = prefs().edit()
+            .putString(key, value == null ? "null" : value)
+            .commit();
+        if (success) {
+            call.resolve();
+        } else {
+            call.reject("Failed to write key to encrypted storage: " + key);
+        }
     }
 
     @PluginMethod
@@ -43,14 +49,22 @@ public class EncryptedCapacitorPlugin extends Plugin {
             call.reject("key is required.");
             return;
         }
-        prefs().edit().remove(key).apply();
-        call.resolve();
+        boolean success = prefs().edit().remove(key).commit();
+        if (success) {
+            call.resolve();
+        } else {
+            call.reject("Failed to remove key from encrypted storage: " + key);
+        }
     }
 
     @PluginMethod
     public void clear(PluginCall call) {
-        prefs().edit().clear().apply();
-        call.resolve();
+        boolean success = prefs().edit().clear().commit();
+        if (success) {
+            call.resolve();
+        } else {
+            call.reject("Failed to clear encrypted storage.");
+        }
     }
 
     private SharedPreferences prefs() {

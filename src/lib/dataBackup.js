@@ -2,11 +2,17 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Capacitor } from '@capacitor/core';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
-import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
+import { localSettings, migrateDefaultSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 import { getJson, getOrCreateInstallHash, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
-import { decryptBackup, encryptBackup, isEncryptedBackup } from '@/lib/backupEncryption';
+import { logError } from '@/lib/errorReporting';
+import {
+  decryptBackupInWorker,
+  encryptBackup,
+  isEncryptedBackup,
+  terminateDecryptWorker,
+} from '@/lib/backupEncryption';
 
 /*
  * Backup schema history:
@@ -34,11 +40,83 @@ const filterString = (value, fallback = '') => (
   typeof value === 'string' ? value.slice(0, 120) : fallback
 );
 const INTEGRITY_FIELD = '_integrity';
+const IMPORT_SESSION_KEY = 'drivesense_import_session';
 
 const IMPORTED_TRIP_STATUS = new Set(['completed', 'discarded']);
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_IMPORTED_NESTED_ARRAY_ITEMS = 500;
 const MAX_IMPORTED_NESTED_OBJECT_KEYS = 100;
+const IMPORT_BATCH_SIZE = 50;
+
+function yieldToUI() {
+  return new Promise((resolve) => {
+    const finish = () => setTimeout(resolve, 0);
+    if (typeof globalThis?.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(finish);
+    } else {
+      finish();
+    }
+  });
+}
+
+const reportImportProgress = async (onProgress, progress) => {
+  if (typeof onProgress === 'function') onProgress(progress);
+  await yieldToUI();
+};
+
+const browserStorage = () => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+};
+
+const readBrowserStorageItem = (key) => browserStorage()?.getItem(key) || '';
+const writeBrowserStorageItem = (key, value) => browserStorage()?.setItem(key, value);
+const removeBrowserStorageItem = (key) => browserStorage()?.removeItem(key);
+
+function writeImportSessionMarker(info = {}) {
+  try {
+    writeBrowserStorageItem(IMPORT_SESSION_KEY, JSON.stringify({
+      startedAt: new Date().toISOString(),
+      fileSize: Number.isFinite(Number(info.fileSize)) ? Number(info.fileSize) : null,
+      tripCount: Number.isFinite(Number(info.tripCount)) ? Number(info.tripCount) : 0,
+      stage: info.stage || 'retention',
+    }));
+  } catch {
+    // Best-effort crash recovery marker.
+  }
+}
+
+function updateImportSessionStage(stage) {
+  try {
+    const existing = readBrowserStorageItem(IMPORT_SESSION_KEY);
+    if (!existing) return;
+    const parsed = JSON.parse(existing);
+    writeBrowserStorageItem(IMPORT_SESSION_KEY, JSON.stringify({ ...parsed, stage }));
+  } catch {
+    // Best-effort crash recovery marker.
+  }
+}
+
+export function clearImportSessionMarker() {
+  try {
+    removeBrowserStorageItem(IMPORT_SESSION_KEY);
+  } catch {
+    // Best-effort crash recovery marker.
+  }
+}
+
+export function readInterruptedImportSession() {
+  try {
+    const raw = readBrowserStorageItem(IMPORT_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 const IMPORTED_STRING_LIMITS_BY_FIELD = {
   id: 120,
   name: 200,
@@ -603,6 +681,7 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
       label: zone.label,
       radius_m: zone.radius_m,
       masked_for_privacy: true,
+      _coordinate_stripped: true,
     })),
   };
   return {
@@ -800,14 +879,7 @@ export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
   return { ...migrated, version: BACKUP_VERSION };
 }
 
-export function parseDriveSenseBackup(text) {
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('Backup file is not valid JSON. Please select the correct file.');
-  }
-
+export function parseDriveSenseBackupFromObject(parsed) {
   if (!parsed || !['Road Sage', 'DriveSense'].includes(parsed.app) || !Array.isArray(parsed.trips)) {
     throw new Error('This is not a valid Road Sage backup file.');
   }
@@ -834,6 +906,17 @@ export function parseDriveSenseBackup(text) {
   };
 }
 
+export function parseDriveSenseBackup(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Backup file is not valid JSON. Please select the correct file.');
+  }
+
+  return parseDriveSenseBackupFromObject(parsed);
+}
+
 export function countTripsOutsideRetentionWindow(trips = [], retentionMonths = 0, nowMs = Date.now()) {
   const months = Number(retentionMonths);
   if (!Number.isFinite(months) || months <= 0) return 0;
@@ -846,60 +929,126 @@ export function countTripsOutsideRetentionWindow(trips = [], retentionMonths = 0
   }).length;
 }
 
-export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false, password = null } = {}) {
-  if (Number(file?.size) > MAX_BACKUP_BYTES) {
-    throw new Error(BACKUP_TOO_LARGE_MESSAGE);
-  }
-  let text = (await file.text()).replace(/^\uFEFF/, '');
-  const encryptedBackup = isEncryptedBackup(text);
-  if (encryptedBackup) {
-    if (!password) return { error: 'password_required' };
-    try {
-      text = await decryptBackup(text, password);
-    } catch (error) {
-      if (error?.name === 'OperationError') {
-        return { error: 'wrong_password' };
-      }
-      throw error;
+export async function importDriveSenseBackup(file, {
+  includeSettings = true,
+  acknowledgeTruncation = false,
+  password = null,
+  onProgress = null,
+  _parsedBackup = null,
+} = {}) {
+  let backup = _parsedBackup;
+
+  if (!backup) {
+    if (!file) throw new Error('No backup file provided.');
+    if (Number(file?.size) > MAX_BACKUP_BYTES) {
+      throw new Error(BACKUP_TOO_LARGE_MESSAGE);
     }
-  } else {
-    const integrity = await verifyPlaintextBackupIntegrity(text);
-    if (integrity.error) return { error: integrity.error };
-    text = integrity.text;
+
+    await reportImportProgress(onProgress, { stage: 'reading' });
+    let text = (await file.text()).replace(/^\uFEFF/, '');
+    const encryptedBackup = isEncryptedBackup(text);
+    if (encryptedBackup) {
+      if (!password) return { error: 'password_required' };
+      await reportImportProgress(onProgress, { stage: 'decrypting' });
+      try {
+        text = await decryptBackupInWorker(text, password);
+      } catch (error) {
+        if (error?.code === 'wrong_password' || error?.name === 'OperationError') {
+          return { error: 'wrong_password' };
+        }
+        if (error?.code === 'invalid_format') {
+          throw new Error('Encrypted backup file is incomplete or uses an unsupported format.');
+        }
+        throw new Error('The backup could not be decrypted. The file may be corrupted.');
+      } finally {
+        terminateDecryptWorker();
+      }
+    }
+
+    await reportImportProgress(onProgress, { stage: 'parsing' });
+    let rawBackup;
+    try {
+      rawBackup = JSON.parse(text);
+    } catch {
+      throw new Error('Backup file is not valid JSON. Please select the correct file.');
+    }
+
+    if (!encryptedBackup) {
+      await reportImportProgress(onProgress, { stage: 'verifying' });
+      const { data, integrity } = stripIntegrityField(rawBackup);
+      if (integrity) {
+        const valid = await hmacVerify(canonicalStringify(data), integrity);
+        if (!valid) return { error: BACKUP_INTEGRITY_ERROR };
+        rawBackup = data;
+      }
+    }
+
+    await reportImportProgress(onProgress, { stage: 'validating' });
+    backup = parseDriveSenseBackupFromObject(rawBackup);
   }
-  const backup = parseDriveSenseBackup(text);
+
   if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {
     return {
       requiresAcknowledgement: true,
       truncatedNoteTripCount: backup.truncatedNoteTripCount,
       warnings: backup.warnings,
       truncatedFields: backup.warnings.length,
+      _parsedBackup: backup,
     };
   }
 
+  await reportImportProgress(onProgress, { stage: 'saving', detail: 'Preparing imported settings...' });
+  writeImportSessionMarker({
+    fileSize: file?.size,
+    tripCount: backup.trips.length,
+    stage: 'retention',
+  });
+
   const currentSettings = localSettings.get();
   let sanitizedSettings = includeSettings && backup.settings
-    ? sanitizeImportedSettings(backup.settings)
+    ? sanitizeImportedSettings(backup.settings, currentSettings)
     : null;
   const effectiveSettings = sanitizedSettings
-    ? { ...currentSettings, ...sanitizedSettings }
+    ? migrateDefaultSettings({ ...currentSettings, ...sanitizedSettings }).settings
     : currentSettings;
   const retentionPreservedTripCount = countTripsOutsideRetentionWindow(
     backup.trips,
     effectiveSettings.data_retention_months
   );
-  if (retentionPreservedTripCount > 0 && includeSettings) {
+  const retentionAutoDeleteDisabled = retentionPreservedTripCount > 0 && includeSettings;
+  if (retentionAutoDeleteDisabled) {
     sanitizedSettings = {
       ...(sanitizedSettings || {}),
       data_retention_months: 0,
     };
-    localSettings.set({ ...localSettings.get(), data_retention_months: 0 });
+    try {
+      await localSettings.updateAsync({ data_retention_months: 0 });
+    } catch (error) {
+      logError('import_retention_protect_save', error);
+      throw new Error(
+        'Could not save retention settings before importing old trips. The import was cancelled to prevent data loss. Try again after restarting the app.'
+      );
+    }
+    await reportImportProgress(onProgress, { stage: 'saving', detail: 'Protected older trips from auto-delete.' });
   }
 
-  const importedTrips = await tripService.upsertMany(backup.trips, {
-    skipRetentionPrune: true,
-    skipRescore: true,
-  });
+  updateImportSessionStage('trips');
+  const importedTrips = [];
+  for (let index = 0; index < backup.trips.length; index += IMPORT_BATCH_SIZE) {
+    const batch = backup.trips.slice(index, index + IMPORT_BATCH_SIZE);
+    const savedBatch = await tripService.upsertMany(batch, {
+      skipRetentionPrune: true,
+      skipRescore: true,
+    });
+    importedTrips.push(...savedBatch);
+    await reportImportProgress(onProgress, {
+      stage: 'saving',
+      detail: `Saving trips... ${Math.min(index + IMPORT_BATCH_SIZE, backup.trips.length)} of ${backup.trips.length}`,
+    });
+  }
+
+  updateImportSessionStage('vehicles');
+  await reportImportProgress(onProgress, { stage: 'saving', detail: 'Saving vehicles...' });
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
 
   const privacyZonesNeedReconfiguration = includeSettings && Array.isArray(backup.settings?.privacy_zones)
@@ -909,12 +1058,29 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     )).length
     : 0;
 
+  updateImportSessionStage('settings');
   let importedSettings = false;
   if (includeSettings && sanitizedSettings) {
-    localSettings.set({ ...localSettings.get(), ...sanitizedSettings });
-    importedSettings = Object.keys(sanitizedSettings).length > 0;
+    const settingsToRestore = { ...sanitizedSettings };
+    if (retentionAutoDeleteDisabled) {
+      delete settingsToRestore.data_retention_months;
+    }
+    if (Object.keys(settingsToRestore).length > 0) {
+      try {
+        const { settings: migratedSettings } = migrateDefaultSettings({ ...localSettings.get(), ...settingsToRestore });
+        await localSettings.setAsync(migratedSettings);
+        importedSettings = true;
+        await reportImportProgress(onProgress, { stage: 'saving', detail: 'Saving restored settings...' });
+      } catch (error) {
+        logError('import_settings_save', error);
+        importedSettings = false;
+      }
+    } else {
+      importedSettings = retentionAutoDeleteDisabled;
+    }
   }
 
+  updateImportSessionStage('filters');
   const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
   let savedFiltersRestored = false;
   if (savedFilters.length > 0) {
@@ -925,6 +1091,8 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
       console.warn('Could not restore saved trip filters from backup.', error);
     }
   }
+  await reportImportProgress(onProgress, { stage: 'done' });
+  clearImportSessionMarker();
 
   return {
     trips: importedTrips.length,
@@ -936,7 +1104,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
-    retentionAutoDeleteDisabled: retentionPreservedTripCount > 0 && includeSettings,
+    retentionAutoDeleteDisabled,
     retentionPreservedTripCount,
   };
 }

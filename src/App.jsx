@@ -18,6 +18,7 @@ import { logError } from '@/lib/errorReporting';
 import { notifyUserError } from '@/lib/userFeedback';
 import { reverifyConfiguredOsrmEndpoint } from '@/lib/osrmEndpointVerifier';
 import { getJson } from '@/lib/mobileStorage';
+import { clearImportSessionMarker, readInterruptedImportSession } from '@/lib/dataBackup';
 import {
   BIOMETRIC_LOCK_STATE_CHANGE_EVENT,
   isBiometricLockEnabled,
@@ -41,20 +42,89 @@ import { PageSkeleton } from '@/components/PageSkeleton';
 // import.meta.env.DEV is a compile-time constant set to true by the Vite dev
 // server and false in every npm run build output.
 const showDebugRoutes = import.meta.env.DEV;
-const Onboarding = lazy(() => import('@/pages/Onboarding'));
-const Dashboard = lazy(() => import('@/pages/Dashboard'));
-const TripHistory = lazy(() => import('@/pages/TripHistory'));
-const TripDetail = lazy(() => import('@/pages/TripDetail'));
-const SurveyPage = lazy(() => import('@/pages/SurveyPage'));
-const MapScreen = lazy(() => import('@/pages/MapScreen'));
-const Reports = lazy(() => import('@/pages/Report'));
-const Settings = lazy(() => import('@/pages/Settings'));
-const AndroidReference = showDebugRoutes ? lazy(() => import('@/pages/AndroidReference')) : null;
-const Vehicles = lazy(() => import('@/pages/Vehicles'));
-const Achievements = lazy(() => import('@/pages/Achievements'));
-const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
-const Diagnostics = showDebugRoutes ? lazy(() => import('@/pages/Diagnostics')) : null;
-const Insights = lazy(() => import('@/pages/Insights'));
+const lazyWithPreload = (loader) => {
+  let loadPromise;
+  const load = () => {
+    loadPromise ||= loader();
+    return loadPromise;
+  };
+  const Component = lazy(load);
+  Component.preload = load;
+  return Component;
+};
+
+const Onboarding = lazyWithPreload(() => import('@/pages/Onboarding'));
+const Dashboard = lazyWithPreload(() => import('@/pages/Dashboard'));
+const TripHistory = lazyWithPreload(() => import('@/pages/TripHistory'));
+const TripDetail = lazyWithPreload(() => import('@/pages/TripDetail'));
+const SurveyPage = lazyWithPreload(() => import('@/pages/SurveyPage'));
+const MapScreen = lazyWithPreload(() => import('@/pages/MapScreen'));
+const Reports = lazyWithPreload(() => import('@/pages/Report'));
+const Settings = lazyWithPreload(() => import('@/pages/Settings'));
+const AndroidReference = showDebugRoutes ? lazyWithPreload(() => import('@/pages/AndroidReference')) : null;
+const Vehicles = lazyWithPreload(() => import('@/pages/Vehicles'));
+const Achievements = lazyWithPreload(() => import('@/pages/Achievements'));
+const DrivingCoach = lazyWithPreload(() => import('@/pages/DrivingCoach'));
+const Diagnostics = showDebugRoutes ? lazyWithPreload(() => import('@/pages/Diagnostics')) : null;
+const Insights = lazyWithPreload(() => import('@/pages/Insights'));
+
+const primaryPreloadRoutes = [
+  Dashboard,
+  TripHistory,
+  MapScreen,
+  Settings,
+];
+const LAUNCH_NATIVE_SETTINGS_TIMEOUT_MS = 1_500;
+const LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS = 500;
+const DEFERRED_NATIVE_SETTINGS_DELAY_MS = 2_500;
+const DEFERRED_NATIVE_SETTINGS_TIMEOUT_MS = 10_000;
+const NATIVE_SETTINGS_APP_POLL_MS = 2_000;
+const IMPORT_STAGE_LABELS = {
+  retention: 'retention protection',
+  trips: 'trip import',
+  vehicles: 'vehicle import',
+  settings: 'settings restore',
+  filters: 'saved filter restore',
+};
+
+const formatInterruptedImportStartedAt = (startedAt) => {
+  const timestamp = Date.parse(startedAt || '');
+  if (!Number.isFinite(timestamp)) return 'recently';
+  return new Date(timestamp).toLocaleString();
+};
+
+const scheduleRoutePreloads = () => {
+  if (typeof window === 'undefined') return () => {};
+
+  const handles = [];
+  let cancelled = false;
+  const runWhenIdle = (callback, delay) => {
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) return;
+      if ('requestIdleCallback' in window) {
+        const idleId = window.requestIdleCallback(callback, { timeout: 2_000 });
+        handles.push({ type: 'idle', id: idleId });
+        return;
+      }
+      callback();
+    }, delay);
+    handles.push({ type: 'timeout', id: timeoutId });
+  };
+
+  primaryPreloadRoutes.forEach((RouteComponent, index) => {
+    runWhenIdle(() => {
+      if (!cancelled) RouteComponent.preload?.();
+    }, 350 + index * 250);
+  });
+
+  return () => {
+    cancelled = true;
+    handles.forEach((handle) => {
+      if (handle.type === 'idle') window.cancelIdleCallback?.(handle.id);
+      else window.clearTimeout(handle.id);
+    });
+  };
+};
 
 const scheduleDataRetentionPrune = (retentionMonths) => {
   const prune = () => {
@@ -107,13 +177,11 @@ const ensureNativeAutoTrackingStarted = async (settings, context) => {
   }
 };
 
-const hasCompletedOnboarding = async (settings, { persistMarker = true } = {}) => {
+const hasCompletedOnboarding = async (
+  settings,
+  { persistMarker = true, markerTimeoutMs = LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS } = {}
+) => {
   if (settings?.onboarding_completed === true) return true;
-
-  const completedMarker = await getJson(ONBOARDING_COMPLETED_KEY, false).catch((err) => {
-    logError('onboarding_completion_marker_read', err);
-    return false;
-  });
 
   let browserMarker = false;
   try {
@@ -121,8 +189,26 @@ const hasCompletedOnboarding = async (settings, { persistMarker = true } = {}) =
   } catch {
     browserMarker = false;
   }
+  if (browserMarker) {
+    if (persistMarker) localSettings.update({ onboarding_completed: true });
+    return true;
+  }
 
-  if (completedMarker === true || browserMarker) {
+  const markerRead = getJson(ONBOARDING_COMPLETED_KEY, false).catch((err) => {
+    logError('onboarding_completion_marker_read', err);
+    return false;
+  });
+  const completedMarker = markerTimeoutMs > 0 && typeof window !== 'undefined'
+    ? await withLaunchTimeout(
+      markerRead,
+      false,
+      'onboarding_completion_marker_timeout',
+      markerTimeoutMs,
+      { logTimeout: false }
+    )
+    : await markerRead;
+
+  if (completedMarker === true) {
     if (persistMarker) localSettings.update({ onboarding_completed: true });
     return true;
   }
@@ -143,6 +229,14 @@ function AppLoading() {
   );
 }
 
+function LazyRoute({ children }) {
+  return (
+    <Suspense fallback={null}>
+      {children}
+    </Suspense>
+  );
+}
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const [onboardingDone, setOnboardingDone] = useState(null);
@@ -158,27 +252,26 @@ const AuthenticatedApp = () => {
           description: 'Road Sage could not finish notification setup. Trip tracking still works, but reminders may not appear yet.',
         });
       });
-      const fallbackSettings = localSettings.get();
-      const nativeSettingsPromise = isAndroid()
-        ? localSettings.hydrateFromNative()
-        : null;
-      const cachedSettings = nativeSettingsPromise
-        ? await withLaunchTimeout(
-          nativeSettingsPromise,
-          fallbackSettings,
-          'settings_hydrate_initial_timeout',
-          10_000,
-          { logTimeout: false }
-        )
-        : fallbackSettings;
-      setBiometricLockEnabled(cachedSettings?.biometric_lock_enabled === true);
-      setOnboardingDone(await hasCompletedOnboarding(cachedSettings, {
+      const launchSettings = localSettings.get();
+      setBiometricLockEnabled(launchSettings?.biometric_lock_enabled === true);
+      setOnboardingDone(await hasCompletedOnboarding(launchSettings, {
         persistMarker: !isAndroid(),
+        markerTimeoutMs: isAndroid() ? LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS : 0,
       }));
-      applyThemeMode(cachedSettings.dark_mode);
+      applyThemeMode(launchSettings.dark_mode);
 
-      scheduleDataRetentionPrune(cachedSettings.data_retention_months);
-      reverifyConfiguredOsrmEndpoint(cachedSettings).then(({ result }) => {
+      const interruptedImport = readInterruptedImportSession();
+      if (interruptedImport) {
+        clearImportSessionMarker();
+        toast({
+          title: 'Backup import was interrupted',
+          description: `An import started ${formatInterruptedImportStartedAt(interruptedImport.startedAt)} reached the ${IMPORT_STAGE_LABELS[interruptedImport.stage] || 'import'} step. Some data may be partially restored; importing the same backup again updates matching trips instead of duplicating them.`,
+          variant: 'destructive',
+        });
+      }
+
+      scheduleDataRetentionPrune(launchSettings.data_retention_months);
+      reverifyConfiguredOsrmEndpoint(launchSettings).then(({ result }) => {
         if (result && !result.ok) {
           toast({
             title: 'OSRM route snapping disabled',
@@ -189,45 +282,80 @@ const AuthenticatedApp = () => {
       }).catch((err) => {
         logError('osrm_launch_reverify', err);
       });
-      syncReminderNotifications(cachedSettings, { requestPermission: false }).catch((err) => {
+      syncReminderNotifications(launchSettings, { requestPermission: false }).catch((err) => {
         notifyUserError('reminder_notification_sync', err, {
           title: 'Reminder sync delayed',
           description: 'Reminder notifications could not be refreshed. Road Sage will try again when settings reload.',
-          extra: { tracking_mode: cachedSettings.tracking_mode },
+          extra: { tracking_mode: launchSettings.tracking_mode },
         });
       });
-      nativeSettingsPromise?.then(async (settings) => {
-        if (!settings || settings === cachedSettings) return;
+
+      const applyHydratedNativeSettings = async (settings, context) => {
+        if (!settings) return;
         setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
         const completed = await hasCompletedOnboarding(settings);
         setOnboardingDone((previous) => previous === true || completed);
         applyThemeMode(settings.dark_mode);
         scheduleDataRetentionPrune(settings.data_retention_months);
-        await ensureNativeAutoTrackingStarted(settings, 'native_auto_tracking_start_after_late_hydration');
-      }).catch((err) => {
-        logError('settings_hydrate_late', err);
-      });
-      nativeHydrationTimer = window.setTimeout(async () => {
+        await ensureNativeAutoTrackingStarted(settings, context);
+      };
+
+      const hydrateNativeSettings = async (promise, timeoutContext, autoTrackingContext, timeoutMs) => {
         const settings = await withLaunchTimeout(
-          localSettings.hydrateFromNative(),
-          cachedSettings,
-          'settings_hydrate_deferred_timeout',
-          10_000,
+          promise,
+          null,
+          timeoutContext,
+          timeoutMs,
           { logTimeout: false }
         );
-        setBiometricLockEnabled(settings?.biometric_lock_enabled === true);
-        const completed = await hasCompletedOnboarding(settings);
-        setOnboardingDone((previous) => previous === true || completed);
-        applyThemeMode(settings.dark_mode);
-        scheduleDataRetentionPrune(settings.data_retention_months);
-        await ensureNativeAutoTrackingStarted(settings, 'native_auto_tracking_start_after_hydration');
-      }, 2500);
+        await applyHydratedNativeSettings(settings, autoTrackingContext);
+      };
+
+      if (!isAndroid()) return;
+
+      hydrateNativeSettings(
+        localSettings.hydrateFromNative(),
+        'settings_hydrate_launch_timeout',
+        'native_auto_tracking_start_after_launch_hydration',
+        LAUNCH_NATIVE_SETTINGS_TIMEOUT_MS
+      ).catch((err) => {
+        logError('settings_hydrate_launch', err);
+      });
+
+      nativeHydrationTimer = window.setTimeout(async () => {
+        await hydrateNativeSettings(
+          localSettings.hydrateFromNative(),
+          'settings_hydrate_deferred_timeout',
+          'native_auto_tracking_start_after_hydration',
+          DEFERRED_NATIVE_SETTINGS_TIMEOUT_MS
+        );
+      }, DEFERRED_NATIVE_SETTINGS_DELAY_MS);
     };
     bootstrapSettings();
     return () => {
       if (nativeHydrationTimer !== null) window.clearTimeout(nativeHydrationTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (onboardingDone !== true) return undefined;
+    return scheduleRoutePreloads();
+  }, [onboardingDone]);
+
+  useEffect(() => {
+    if (!isAndroid() || onboardingDone !== true) return undefined;
+
+    const pollNativeSettings = async () => {
+      try {
+        await localSettings.hydrateFromNative();
+      } catch {
+        // Keep app-wide native hydration best-effort.
+      }
+    };
+
+    const timer = window.setInterval(pollNativeSettings, NATIVE_SETTINGS_APP_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [onboardingDone]);
 
   useEffect(() => {
     const lockIfIdle = () => {
@@ -302,40 +430,42 @@ const AuthenticatedApp = () => {
   }
 
   return (
-    <Suspense fallback={<PageSkeleton />}>
     <Routes>
       {/* Main App with shared Layout */}
       <Route element={<BiometricRouteGuard><Layout /></BiometricRouteGuard>}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/trips" element={<TripHistory />} />
-        <Route path="/survey/:tripId" element={<SurveyPage />} />
+        <Route path="/" element={<LazyRoute><Dashboard /></LazyRoute>} />
+        <Route path="/trips" element={<LazyRoute><TripHistory /></LazyRoute>} />
+        <Route path="/survey/:tripId" element={<LazyRoute><SurveyPage /></LazyRoute>} />
         <Route path="/trips/:id" element={(
-          <SectionErrorBoundary
-            context="trip_detail_page"
-            title="Trip detail unavailable"
-            message="Something went wrong while opening this trip. Reload to try again."
-          >
-            <TripDetail />
-          </SectionErrorBoundary>
+          <LazyRoute>
+            <SectionErrorBoundary
+              context="trip_detail_page"
+              title="Trip detail unavailable"
+              message="Something went wrong while opening this trip. Reload to try again."
+            >
+              <TripDetail />
+            </SectionErrorBoundary>
+          </LazyRoute>
         )} />
-        <Route path="/map" element={<MapScreen />} />
-        <Route path="/coach" element={<DrivingCoach />} />
-        <Route path="/insights" element={<Insights />} />
-        <Route path="/achievements" element={<Achievements />} />
-        <Route path="/reports" element={<Reports />} />
-        {showDebugRoutes && Diagnostics && <Route path="/diagnostics" element={<Diagnostics />} />}
+        <Route path="/map" element={<LazyRoute><MapScreen /></LazyRoute>} />
+        <Route path="/coach" element={<LazyRoute><DrivingCoach /></LazyRoute>} />
+        <Route path="/insights" element={<LazyRoute><Insights /></LazyRoute>} />
+        <Route path="/achievements" element={<LazyRoute><Achievements /></LazyRoute>} />
+        <Route path="/reports" element={<LazyRoute><Reports /></LazyRoute>} />
+        {showDebugRoutes && Diagnostics && <Route path="/diagnostics" element={<LazyRoute><Diagnostics /></LazyRoute>} />}
         <Route path="/settings" element={(
-          <SectionErrorBoundary context="settings_page">
-            <Settings />
-          </SectionErrorBoundary>
+          <LazyRoute>
+            <SectionErrorBoundary context="settings_page">
+              <Settings />
+            </SectionErrorBoundary>
+          </LazyRoute>
         )} />
-        {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
-        <Route path="/vehicles" element={<Vehicles />} />
+        {showDebugRoutes && AndroidReference && <Route path="/android" element={<LazyRoute><AndroidReference /></LazyRoute>} />}
+        <Route path="/vehicles" element={<LazyRoute><Vehicles /></LazyRoute>} />
       </Route>
 
       <Route path="*" element={<PageNotFound />} />
     </Routes>
-    </Suspense>
   );
 };
 

@@ -38,6 +38,7 @@ const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
 const PRIVACY_ZONES_KEY = 'road_sage_privacy_zones';
+const PENDING_NATIVE_SYNC_KEY = 'drivesense_pending_native_sync';
 const ACTIVE_TRIP_STORAGE_KEY = resolveStorageKey(ACTIVE_TRIP_KEY);
 const SETTINGS_STORAGE_KEY = resolveStorageKey(SETTINGS_KEY);
 const ECO_DEFAULTS = Object.freeze({
@@ -52,7 +53,10 @@ const PRIVACY_ZONE_RADIUS_MAX_M = 500;
 const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let pendingNativeSettingsSync = '';
+let settingsWriteQueue = Promise.resolve();
 let memorySettings = null;
+let highWaterNativeRevision = 0;
+let settingsMutationCounter = 0;
 let activeTripMemory = null;
 const LIVE_POINTS_MAX = 6000;
 let liveRoutePoints = [];
@@ -83,6 +87,9 @@ const browserSettingsStorage = () => {
   }
 };
 
+const readBrowserStorageItem = (key) => browserSettingsStorage()?.getItem(key) || '';
+const writeBrowserStorageItem = (key, value) => browserSettingsStorage()?.setItem(key, value);
+const removeBrowserStorageItem = (key) => browserSettingsStorage()?.removeItem(key);
 const readBrowserSettingsJson = () => readStorageWithLegacyFallback(browserSettingsStorage(), SETTINGS_KEY);
 
 const writeBrowserSettingsMirror = (serialized) => {
@@ -92,6 +99,35 @@ const writeBrowserSettingsMirror = (serialized) => {
     // Browser storage is only a recovery mirror on native.
   }
 };
+
+function storePendingNativeSync(serialized) {
+  pendingNativeSettingsSync = serialized || '';
+  if (!pendingNativeSettingsSync) return;
+  try {
+    writeBrowserStorageItem(PENDING_NATIVE_SYNC_KEY, pendingNativeSettingsSync);
+  } catch {
+    // In-memory retry still covers the current process lifetime.
+  }
+}
+
+function clearPendingNativeSync() {
+  pendingNativeSettingsSync = '';
+  try {
+    removeBrowserStorageItem(PENDING_NATIVE_SYNC_KEY);
+  } catch {
+    // Browser storage is only a crash-recovery mirror.
+  }
+}
+
+function readPersistedPendingNativeSync() {
+  try {
+    return readBrowserStorageItem(PENDING_NATIVE_SYNC_KEY);
+  } catch {
+    return '';
+  }
+}
+
+pendingNativeSettingsSync = readPersistedPendingNativeSync();
 
 const readStorageWithLegacyFallback = (storage, key) => {
   const currentKey = resolveStorageKey(key);
@@ -119,6 +155,11 @@ const settingsUpdatedAtMs = (settings = {}) => {
   return Number.isFinite(value) ? value : 0;
 };
 
+const safeCandidateNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
 const settingsNonDefaultDeltaCount = (settings = {}) => (
   Object.entries(DEFAULT_SETTINGS).reduce((count, [key, defaultValue]) => {
     if (key.startsWith('_')) return count;
@@ -128,14 +169,25 @@ const settingsNonDefaultDeltaCount = (settings = {}) => (
 
 const stampSettingsSnapshot = (settings = {}, previousSettings = null) => {
   const previousRevision = Math.max(
+    highWaterNativeRevision,
     settingsRevisionNumber(previousSettings),
     settingsRevisionNumber(settings)
   );
-  return {
+  const stamped = {
     ...settings,
     _settings_revision: previousRevision + 1,
     _settings_updated_at: new Date().toISOString(),
   };
+  highWaterNativeRevision = Math.max(highWaterNativeRevision, stamped._settings_revision);
+  return stamped;
+};
+
+const enforceLocalOnlySnapshot = (settings = {}, previousSettings = {}) => {
+  const localOnlyStaysOn = settings.external_requests_local_only !== false &&
+    (settings.external_requests_local_only === true || previousSettings?.external_requests_local_only === true);
+  return localOnlyStaysOn
+    ? enforceLocalOnlyPatch({ ...settings, external_requests_local_only: true })
+    : settings;
 };
 
 const normalizeSettingsCandidate = (source, raw) => {
@@ -170,11 +222,21 @@ export function chooseSettingsHydrationCandidate(candidates = []) {
   const normalized = candidates.filter(Boolean);
   if (!normalized.length) return null;
   return normalized.sort((a, b) => (
-    (b.revision - a.revision) ||
-    (b.updatedAtMs - a.updatedAtMs) ||
-    (b.onboardingCompleted - a.onboardingCompleted) ||
-    (b.deltaCount - a.deltaCount)
+    (safeCandidateNumber(b.revision) - safeCandidateNumber(a.revision)) ||
+    (safeCandidateNumber(b.updatedAtMs) - safeCandidateNumber(a.updatedAtMs)) ||
+    (safeCandidateNumber(b.onboardingCompleted) - safeCandidateNumber(a.onboardingCompleted)) ||
+    (safeCandidateNumber(b.deltaCount) - safeCandidateNumber(a.deltaCount))
   ))[0];
+}
+
+export function chooseHydrationCandidateAfterLocalMutations(
+  chosen,
+  mutationCounterAtStart,
+  mutationCounterNow,
+  localCandidates = []
+) {
+  if (!chosen || mutationCounterAtStart === mutationCounterNow) return chosen;
+  return chooseSettingsHydrationCandidate(localCandidates) || chosen;
 }
 
 function downsampleOldestQuarter(points) {
@@ -459,30 +521,57 @@ export async function isInPrivacyZone(lat, lng, zones = null) {
   return { inZone: false, zoneName: null };
 }
 
-const syncSettingsForNative = (settings) => {
-  if (typeof window === 'undefined') return;
-  const serialized = JSON.stringify(settings);
-  if (serialized === lastNativeSettingsSync || serialized === pendingNativeSettingsSync) return;
-  pendingNativeSettingsSync = serialized;
-  Promise.resolve(Capacitor.isNativePlatform() ? androidNativeDriveSensePlugin() : null)
-    .then((nativePlugin) => {
-      if (!nativePlugin?.saveSettings) {
-        if (pendingNativeSettingsSync === serialized) pendingNativeSettingsSync = '';
-        return;
-      }
-      nativePlugin.saveSettings({ settingsJson: serialized }).then(() => {
-        if (pendingNativeSettingsSync === serialized) {
-          lastNativeSettingsSync = serialized;
-          pendingNativeSettingsSync = '';
-        }
-      }).catch((err) => {
-        logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
-      });
-    })
-    .catch((err) => {
-      logError('native_settings_sync_module_load', err);
-    });
+const enqueueSettingsWrite = (writeTask) => {
+  const run = settingsWriteQueue.catch(() => null).then(writeTask);
+  settingsWriteQueue = run.catch(() => null);
+  return run;
 };
+
+const syncSettingsForNative = (settings) => {
+  syncSettingsForNativeAsync(settings).catch((err) => {
+    logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
+  });
+};
+
+async function syncSettingsForNativeAsync(settings, { force = false } = {}) {
+  if (typeof window === 'undefined' || !Capacitor.isNativePlatform()) return;
+
+  const serialized = typeof settings === 'string' ? settings : JSON.stringify(settings);
+  if (!force && serialized === lastNativeSettingsSync && pendingNativeSettingsSync !== serialized) return;
+  storePendingNativeSync(serialized);
+
+  const nativePlugin = await androidNativeDriveSensePlugin().catch((err) => {
+    logError('native_settings_sync_module_load', err);
+    return null;
+  });
+  if (!nativePlugin?.saveSettings) {
+    lastNativeSettingsSync = '';
+    throw new Error('Native settings plugin unavailable');
+  }
+
+  if (import.meta.env.DEV) {
+    console.debug('[settings] native save start', {
+      revision: settings?._settings_revision,
+      updatedAt: settings?._settings_updated_at,
+    });
+  }
+
+  try {
+    await nativePlugin.saveSettings({ settingsJson: serialized });
+    lastNativeSettingsSync = serialized;
+    if (pendingNativeSettingsSync === serialized) clearPendingNativeSync();
+    if (import.meta.env.DEV) {
+      console.debug('[settings] native save confirmed', {
+        revision: settings?._settings_revision,
+      });
+    }
+  } catch (err) {
+    lastNativeSettingsSync = '';
+    storePendingNativeSync(serialized);
+    logError('native_settings_sync_async', err, { key: SETTINGS_STORAGE_KEY });
+    throw err;
+  }
+}
 
 export function reconcileSettingsHydrationSnapshot(nativeSettings, pendingSettingsJson = '') {
   const { settings: normalizedNative } = migrateDefaultSettings(nativeSettings || {});
@@ -534,6 +623,18 @@ function persistOnboardingCompletedMarker(settings) {
 }
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
+function tryParseBrowserSettingsMirror() {
+  try {
+    const raw = readBrowserSettingsJson();
+    if (!raw) return null;
+    const { settings: merged, changed } = migrateDefaultSettings(JSON.parse(raw));
+    if (changed) writeBrowserSettingsMirror(JSON.stringify(merged));
+    return merged;
+  } catch {
+    return null;
+  }
+}
+
 export const DEFAULT_SETTINGS = {
   settings_defaults_version: CURRENT_SETTINGS_DEFAULTS_VERSION,
   _settings_revision: 0,
@@ -690,16 +791,33 @@ export const DEFAULT_SETTINGS = {
  * @param {Record<string, any>} parsed
  * @returns {{settings: Record<string, any>, changed: boolean}}
  */
+const MIGRATION_LEGACY_KEYS = [
+  'threshold_tailgate_decel_ms2',
+  'threshold_near_miss_brake_ms2',
+  'threshold_near_miss_turn_degs',
+  'threshold_drowsy_heading_std',
+  'notif_drowsy_alert_enabled',
+  'data_retention_days',
+];
+
+const migrationAllowedKeys = () => new Set([
+  ...Object.keys(DEFAULT_SETTINGS),
+  ...MIGRATION_LEGACY_KEYS,
+]);
+
+const sanitizeSettingsForMigration = (input = {}) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const allowed = migrationAllowedKeys();
+  return Object.fromEntries(
+    Object.entries(input).filter(([key]) => allowed.has(key))
+  );
+};
+
 export function migrateDefaultSettings(parsed = {}) {
+  parsed = sanitizeSettingsForMigration(parsed);
   const merged = { ...DEFAULT_SETTINGS, ...parsed };
   const version = Number(parsed.settings_defaults_version) || 1;
-  const legacyProxyKeys = [
-    'threshold_tailgate_decel_ms2',
-    'threshold_near_miss_brake_ms2',
-    'threshold_near_miss_turn_degs',
-    'threshold_drowsy_heading_std',
-    'notif_drowsy_alert_enabled',
-  ];
+  const legacyProxyKeys = MIGRATION_LEGACY_KEYS.filter((key) => key !== 'data_retention_days');
 
   if (version < 2) {
     if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
@@ -850,6 +968,7 @@ const IMPORT_ENUMS = {
 const IMPORT_STRIPPED_KEYS = new Set([
   '_settings_revision',
   '_settings_updated_at',
+  'settings_defaults_version',
   'osrm_map_matching_url',
   'osrm_public_demo_consent_at',
   'osrm_data_sharing_consented',
@@ -871,7 +990,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
       .slice(0, 20)
       .map((zone, index) => {
         const radius = clampNumber(Number(zone.radius_m) || 150, 50, 1000);
-        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean,lat?:number,lng?:number}} */
+        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean,_coordinate_stripped?:boolean,lat?:number,lng?:number}} */
         const sanitized = {
           id: typeof zone.id === 'string' ? zone.id.slice(0, 80) : `privacy_zone_import_${index}`,
           label: typeof zone.label === 'string' && zone.label.trim()
@@ -879,6 +998,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
             : 'Private place',
           radius_m: radius,
           ...(zone.masked_for_privacy === true ? { masked_for_privacy: true } : {}),
+          ...(zone._coordinate_stripped === true ? { _coordinate_stripped: true } : {}),
         };
         const lat = Number(zone.lat);
         const lng = Number(zone.lng);
@@ -906,10 +1026,18 @@ const sanitizeMapCenter = (value) => {
   };
 };
 
+const finiteSettingsNumber = (value) => {
+  if (value == null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 /**
  * @param {Record<string, any>} raw Settings imported from backup or user storage.
+ * @param {Record<string, any>} currentSettings Settings currently active on this device.
  */
-export function sanitizeImportedSettings(raw = {}) {
+export function sanitizeImportedSettings(raw = {}, currentSettings = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
 
   const normalizedRaw = { ...raw };
@@ -935,7 +1063,7 @@ export function sanitizeImportedSettings(raw = {}) {
       : 0;
   }
 
-  const sanitized = {};
+  const sanitized = Object.create(null);
   Object.entries(DEFAULT_SETTINGS).forEach(([key, defaultValue]) => {
     if (!Object.prototype.hasOwnProperty.call(normalizedRaw, key) || normalizedRaw[key] == null) return;
     if (IMPORT_STRIPPED_KEYS.has(key)) return;
@@ -968,8 +1096,8 @@ export function sanitizeImportedSettings(raw = {}) {
     }
 
     if (typeof defaultValue === 'number') {
-      const number = Number(value);
-      if (!Number.isFinite(number)) return;
+      const number = finiteSettingsNumber(value);
+      if (number == null) return;
       const [min, max] = IMPORT_NUMBER_RANGES[key] || [-1_000_000, 1_000_000];
       sanitized[key] = clampNumber(number, min, max);
       return;
@@ -980,6 +1108,10 @@ export function sanitizeImportedSettings(raw = {}) {
     }
   });
   repairEcoScoringSettings(sanitized, 'backup_settings_import', normalizedRaw);
+
+  if (currentSettings.external_requests_local_only === true || raw.external_requests_local_only === true) {
+    return enforceLocalOnlyPatch({ ...sanitized, external_requests_local_only: true });
+  }
 
   return sanitized;
 }
@@ -1008,9 +1140,9 @@ export function validateSettingsPatch(patch = {}) {
       return;
     }
     if (IMPORT_NUMBER_RANGES[key]) {
-      const number = Number(value);
+      const number = finiteSettingsNumber(value);
       const [min, max] = IMPORT_NUMBER_RANGES[key];
-      if (!Number.isFinite(number) || number < min || number > max) {
+      if (number == null || number < min || number > max) {
         errors.push(`${key} must be between ${min} and ${max}.`);
       }
     }
@@ -1112,6 +1244,7 @@ export const localSettings = {
     try {
       if (!Capacitor.isNativePlatform()) return this.get();
 
+      const mutationCounterAtStart = settingsMutationCounter;
       const androidNative = await isAndroidNativePlatform();
       const nativePlugin = await androidNativeDriveSensePlugin();
       const candidates = [];
@@ -1124,7 +1257,7 @@ export const localSettings = {
       if (pendingNativeSettingsSync) {
         const pending = normalizeSettingsJsonCandidate('pending_memory', pendingNativeSettingsSync);
         if (pending) candidates.push(pending);
-        else pendingNativeSettingsSync = '';
+        else clearPendingNativeSync();
       }
       const encryptedSettings = await getJson(SETTINGS_KEY, null);
       candidates.push(normalizeSettingsCandidate('encrypted_storage', encryptedSettings));
@@ -1145,11 +1278,22 @@ export const localSettings = {
         if (value) candidates.push(normalizeSettingsJsonCandidate('plain_preferences', value));
       }
 
-      const chosen = chooseSettingsHydrationCandidate(candidates);
+      let chosen = chooseSettingsHydrationCandidate(candidates);
+      chosen = chooseHydrationCandidateAfterLocalMutations(
+        chosen,
+        mutationCounterAtStart,
+        settingsMutationCounter,
+        [
+          normalizeSettingsCandidate('runtime_memory', memorySettings),
+          normalizeSettingsJsonCandidate('browser_mirror', readBrowserSettingsJson()),
+          normalizeSettingsJsonCandidate('pending_memory', pendingNativeSettingsSync),
+        ]
+      );
       if (!chosen) return this.get();
 
       const settings = await applyOnboardingCompletedMarker(chosen.settings);
       const serialized = JSON.stringify(settings);
+      highWaterNativeRevision = Math.max(highWaterNativeRevision, settingsRevisionNumber(settings));
       cacheSettingsForRuntime(settings);
       writeBrowserSettingsMirror(serialized);
       setJson(SETTINGS_KEY, settings).catch((err) => {
@@ -1158,13 +1302,10 @@ export const localSettings = {
       if (!androidNative && Preferences && (chosen.source === 'plain_preferences' ? chosen.changed || settings !== chosen.settings : true)) {
         await Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized }).catch(() => null);
       }
-      lastNativeSettingsSync = serialized;
-      if (nativePlugin?.saveSettings) {
-        await nativePlugin.saveSettings({ settingsJson: serialized }).catch((err) => {
-          logError('settings_native_hydration_resync', err, { source: chosen.source });
-        });
-      }
-      if (pendingNativeSettingsSync === serialized) pendingNativeSettingsSync = '';
+      await syncSettingsForNativeAsync(settings, { force: true }).catch((err) => {
+        logError('settings_native_hydration_resync', err, { source: chosen.source });
+      });
+      if (pendingNativeSettingsSync === serialized && lastNativeSettingsSync === serialized) clearPendingNativeSync();
       return settings;
     } catch (err) {
       logError('settings_hydrate_from_native', err);
@@ -1172,39 +1313,84 @@ export const localSettings = {
     }
   },
   get() {
-    try {
-      const storage = settingsStorage();
-      const raw = readStorageWithLegacyFallback(storage, SETTINGS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        const { settings: merged, changed } = migrateDefaultSettings(parsed);
-        if (changed) {
-          storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
-        }
-        return merged;
+    const storage = settingsStorage();
+    if (storage) {
+      let raw = null;
+      try {
+        raw = readStorageWithLegacyFallback(storage, SETTINGS_KEY);
+      } catch (err) {
+        logError('settings_storage_read', err);
       }
-      if (!storage && memorySettings) {
+      if (raw) {
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (err) {
+          logError('settings_parse_corrupt', err, { rawLength: raw.length });
+          try {
+            storage.removeItem(SETTINGS_STORAGE_KEY);
+            legacyStorageKeysFor(SETTINGS_KEY).forEach((key) => storage.removeItem(key));
+          } catch {
+            // Best-effort corrupt entry cleanup.
+          }
+          const fromMirror = tryParseBrowserSettingsMirror();
+          return fromMirror || { ...DEFAULT_SETTINGS };
+        }
+
+        try {
+          const { settings: merged, changed } = migrateDefaultSettings(parsed);
+          if (changed) {
+            storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
+          }
+          return merged;
+        } catch (err) {
+          logError('settings_migrate_error', err);
+          return { ...DEFAULT_SETTINGS };
+        }
+      }
+
+      const fromMirror = tryParseBrowserSettingsMirror();
+      if (fromMirror) return fromMirror;
+
+      const defaults = { ...DEFAULT_SETTINGS };
+      try {
+        storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults));
+      } catch (err) {
+        logError('settings_defaults_save', err);
+      }
+      return defaults;
+    }
+
+    if (memorySettings) {
+      try {
         const { settings: merged } = migrateDefaultSettings(memorySettings);
         memorySettings = merged;
         return merged;
+      } catch (err) {
+        logError('settings_memory_migrate_error', err);
       }
-      // New user: save defaults immediately so we can detect returning users
-      const defaults = { ...DEFAULT_SETTINGS };
-      if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults));
-      else memorySettings = defaults;
-      return defaults;
-    } catch {
-      return { ...DEFAULT_SETTINGS };
     }
+
+    const fromMirror = tryParseBrowserSettingsMirror();
+    if (fromMirror) {
+      memorySettings = fromMirror;
+      return fromMirror;
+    }
+
+    const defaults = { ...DEFAULT_SETTINGS };
+    memorySettings = defaults;
+    return defaults;
   },
   set(data) {
     try {
       const current = memorySettings || this.get();
-      const stamped = stampSettingsSnapshot(data, current);
+      const enforced = enforceLocalOnlySnapshot(data, current);
+      const stamped = stampSettingsSnapshot(enforced, current);
       const serialized = JSON.stringify(stamped);
       const storage = settingsStorage();
       if (storage) storage.setItem(SETTINGS_STORAGE_KEY, serialized);
       else memorySettings = stamped;
+      settingsMutationCounter += 1;
       writeBrowserSettingsMirror(serialized);
       setJson(SETTINGS_KEY, stamped).catch((err) => {
         logError('settings_encrypted_save', err);
@@ -1215,11 +1401,43 @@ export const localSettings = {
       logError('settings_save', err);
     }
   },
+  async setAsync(data) {
+    const current = memorySettings || this.get();
+    const enforced = enforceLocalOnlySnapshot(data, current);
+    const stamped = stampSettingsSnapshot(enforced, current);
+    const serialized = JSON.stringify(stamped);
+    const storage = settingsStorage();
+
+    if (storage) storage.setItem(SETTINGS_STORAGE_KEY, serialized);
+    else if (!Capacitor.isNativePlatform()) memorySettings = stamped;
+
+    settingsMutationCounter += 1;
+    writeBrowserSettingsMirror(serialized);
+    persistOnboardingCompletedMarker(stamped);
+
+    await enqueueSettingsWrite(async () => {
+      try {
+        await setJson(SETTINGS_KEY, stamped);
+      } catch (err) {
+        logError('settings_encrypted_save_async', err);
+        if (Capacitor.isNativePlatform()) throw err;
+      }
+      await syncSettingsForNativeAsync(stamped);
+    });
+
+    if (!storage) memorySettings = stamped;
+    return stamped;
+  },
   update(patch) {
     const current = this.get();
     const updated = { ...current, ...enforceLocalOnlyPatch(patch) };
     this.set(updated);
     return updated;
+  },
+  async updateAsync(patch) {
+    const current = this.get();
+    const updated = { ...current, ...enforceLocalOnlyPatch(patch) };
+    return this.setAsync(updated);
   },
 };
 

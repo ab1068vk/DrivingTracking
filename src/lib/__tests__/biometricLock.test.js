@@ -28,6 +28,8 @@ describe('biometric lock session timeout', () => {
     expect(getLockTimeoutMs({ lock_timeout_minutes: 1 })).toBe(60 * 1000);
     expect(getLockTimeoutMs({ lock_timeout_minutes: 0 })).toBe(Number.POSITIVE_INFINITY);
     expect(getLockTimeoutMs({ lock_timeout_minutes: -1 })).toBe(5 * 60 * 1000);
+    expect(getLockTimeoutMs({ lock_timeout_minutes: '' })).toBe(5 * 60 * 1000);
+    expect(getLockTimeoutMs({ lock_timeout_minutes: null })).toBe(5 * 60 * 1000);
   });
 
   it('requires an explicit true value to enable biometric lock', () => {

@@ -4,6 +4,7 @@ import { API_BASE_URL, API_ENDPOINT_CONFIGURED, API_ENDPOINT_TRUST } from '@/api
 import { notifyUserError } from '@/lib/userFeedback';
 
 const AuthContext = createContext();
+const LAUNCH_AUTH_CHECK_TIMEOUT_MS = 2_500;
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -57,25 +58,32 @@ export const AuthProvider = ({ children }) => {
   };
 
   const checkUserAuth = async () => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+      ? globalThis.setTimeout(() => controller.abort(), LAUNCH_AUTH_CHECK_TIMEOUT_MS)
+      : null;
+
     try {
       setIsLoadingAuth(true);
-      const currentUser = await authService.me();
+      const currentUser = await authService.me(controller ? { signal: controller.signal } : undefined);
       setUser(currentUser);
       setIsAuthenticated(true);
       setIsLoadingAuth(false);
       setAuthChecked(true);
     } catch (error) {
-      notifyUserError('auth_check', error, {
-        title: 'Sign-in check failed',
-        description: error.status === 401 || error.status === 403
-          ? 'Please sign in again to use the configured backend.'
-          : 'Road Sage could not verify your sign-in. Local app features can still load where available.',
-      });
+      if (error?.name !== 'AbortError') {
+        notifyUserError('auth_check', error, {
+          title: 'Sign-in check failed',
+          description: error.status === 401 || error.status === 403
+            ? 'Please sign in again to use the configured backend.'
+            : 'Road Sage could not verify your sign-in. Local app features can still load where available.',
+        });
+      }
       setIsLoadingAuth(false);
       setIsAuthenticated(false);
       setAuthChecked(true);
       
-      if (error.status === 401 || error.status === 403) {
+      if (error?.status === 401 || error?.status === 403) {
         authService.logout();
         setAuthError({
           type: 'auth_required',
@@ -84,9 +92,13 @@ export const AuthProvider = ({ children }) => {
       } else {
         setAuthError({
           type: 'auth_check_failed',
-          message: error?.message || 'Authentication check failed',
+          message: error?.name === 'AbortError'
+            ? 'Authentication check timed out'
+            : error?.message || 'Authentication check failed',
         });
       }
+    } finally {
+      if (timeoutId !== null) globalThis.clearTimeout(timeoutId);
     }
   };
 

@@ -46,6 +46,7 @@ export const enforceLocalOnlyPatch = (patch = {}) => (
       backend_sync_enabled: false,
       reverse_geocoding_enabled: false,
       map_tiles_enabled: false,
+      road_data_fetch_always_allow: false,
     }
     : patch
 );

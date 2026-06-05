@@ -4,9 +4,11 @@ import {
   BACKUP_PASSWORD_MIN_LENGTH,
   BACKUP_PBKDF2_ITERATIONS,
   decryptBackup,
+  decryptBackupInWorker,
   encryptBackup,
   getBackupPasswordValidation,
   isEncryptedBackup,
+  terminateDecryptWorker,
 } from '@/lib/backupEncryption';
 
 describe('backup encryption', () => {
@@ -21,6 +23,13 @@ describe('backup encryption', () => {
 
     expect(isEncryptedBackup(encrypted)).toBe(true);
     await expect(decryptBackup(encrypted, 'correct horse battery')).resolves.toBe('{"app":"Road Sage","trips":[]}');
+  });
+
+  it('round-trips encrypted backups through the worker-backed decrypt helper', async () => {
+    const encrypted = await encryptBackup('{"app":"Road Sage","trips":[]}', 'correct horse battery');
+
+    await expect(decryptBackupInWorker(encrypted, 'correct horse battery')).resolves.toBe('{"app":"Road Sage","trips":[]}');
+    terminateDecryptWorker();
   });
 
   it('rejects the wrong password', async () => {

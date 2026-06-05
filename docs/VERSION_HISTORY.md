@@ -2,6 +2,22 @@
 
 This file records closeout-level release history. Keep it updated when a version is considered done, before starting the next version.
 
+## 1.0.1 - In progress
+
+### Focus
+
+- Started the fixes and improvements cycle after the 1.0.0 closeout.
+
+### Current State
+
+- App package: `drivesense-app`
+- App version: `1.0.1`
+- Android versionName: `1.0.1`
+- Android versionCode: `2`
+- Settings defaults version: `12`
+- Canonical trip schema: `v23`
+- Backup schema: `v6`
+
 ## 1.0.0 - 2026-06-04
 
 ### Closeout Scope

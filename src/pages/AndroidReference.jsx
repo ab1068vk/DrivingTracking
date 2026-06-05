@@ -138,7 +138,7 @@ android {
         applicationId = "com.roadsage.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
+        versionCode = 2
         versionName = appVersionName
     }
 

@@ -1419,9 +1419,8 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
     }
 
     private void sendPhoneUseWarningNotification() {
-        if (!isSettingEnabled("notifications_enabled", true) ||
-            !isSettingEnabled("notif_safety_alerts_enabled", true) ||
-            !isSettingEnabled("notif_phone_use_alert_enabled", true) ||
+        if (!safetyAlertsEnabled() ||
+            !phoneUseAlertEnabled() ||
             !isSettingEnabled("phone_use_live_alert_enabled", true)) {
             return;
         }
@@ -1655,6 +1654,19 @@ public class RoadSageAutoTrackingService extends Service implements SensorEventL
         } catch (Exception ignored) {
             return defaultValue;
         }
+    }
+
+    private boolean notificationChannelEnabled(String channelKey) {
+        return isSettingEnabled("notifications_enabled", true) &&
+            isSettingEnabled(channelKey, true);
+    }
+
+    private boolean safetyAlertsEnabled() {
+        return notificationChannelEnabled("notif_safety_alerts_enabled");
+    }
+
+    private boolean phoneUseAlertEnabled() {
+        return notificationChannelEnabled("notif_phone_use_alert_enabled");
     }
 
     private SharedPreferences notificationPrefs() {

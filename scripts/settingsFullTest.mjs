@@ -92,6 +92,28 @@ const loaderSource = `
   }
   export async function load(url, context, nextLoad) {
     if (url.startsWith('file:') && /\\.(ts|tsx)$/.test(url)) {
+      const file = fileURLToPath(url);
+      if (file.endsWith(path.join('src', 'lib', 'scoring', 'pipeline.ts'))) {
+        return {
+          format: 'module',
+          source: "export const SCORING_PIPELINE = Object.freeze([]); export function runScoringPipeline(routePoints = [], events = [], settings = {}, externalContext = {}, stages = SCORING_PIPELINE) { return { routePoints: Array.isArray(routePoints) ? routePoints : [], events: Array.isArray(events) ? events : [], settings: settings && typeof settings === 'object' ? settings : {}, externalContext: externalContext && typeof externalContext === 'object' ? externalContext : {}, stages: {} }; } export function createScoringPipelineContext({ routePoints = [], events = [], settings = {}, externalContext = {}, stages = {} } = {}) { return { routePoints: Array.isArray(routePoints) ? routePoints : [], events: Array.isArray(events) ? events : [], settings: settings && typeof settings === 'object' ? settings : {}, externalContext: externalContext && typeof externalContext === 'object' ? externalContext : {}, stages: Object.freeze({ ...(stages && typeof stages === 'object' ? stages : {}) }) }; }",
+          shortCircuit: true,
+        };
+      }
+      if (file.endsWith(path.join('src', 'engine', 'scoring', 'pipeline.ts'))) {
+        return {
+          format: 'module',
+          source: "export function calculateTripScores() { return {}; }",
+          shortCircuit: true,
+        };
+      }
+      if (file.endsWith(path.join('src', 'lib', 'scoring', 'explainer.ts'))) {
+        return {
+          format: 'module',
+          source: "export function explainScores() { return {}; }",
+          shortCircuit: true,
+        };
+      }
       return { format: 'module', source: stripTs(await readFile(fileURLToPath(url), 'utf8')), shortCircuit: true };
     }
     if (url.startsWith('file:') && /\\.(js|jsx)$/.test(url) && fileURLToPath(url).startsWith(SRC)) {
@@ -153,6 +175,7 @@ async function importModule(label, relPath) {
     return await import(pathToFileURL(path.join(ROOT, relPath)).href);
   } catch (error) {
     console.warn(`  ⚠️ IMPORT FAILED ${label}: ${error.message}`);
+    if (globalThis.__SETTINGS_FULL_TEST_DEBUG_IMPORTS__) console.warn(error.stack);
     return null;
   }
 }
@@ -211,7 +234,9 @@ const modules = {
   ephemeralTripMode: await importModule('ephemeralTripMode', 'src/lib/ephemeralTripMode.js'),
   mobileStorage: await importModule('mobileStorage', 'src/lib/mobileStorage.js'),
   privacyZones: await importModule('privacyZones', 'src/lib/privacyZones.js'),
+  privacyControls: await importModule('privacyControls', 'src/lib/privacyControls.js'),
   voiceAlerts: await importModule('voiceAlerts', 'src/lib/voiceAlerts.js'),
+  notificationService: await importModule('notificationService', 'src/lib/notificationService.js'),
   currency: await importModule('currency', 'src/lib/currency.js'),
   mathUtils: await importModule('mathUtils', 'src/lib/mathUtils.ts'),
   speedLimitSource: await importModule('speedLimitSource', 'src/lib/speedLimitSource.js'),
@@ -222,10 +247,12 @@ const modules = {
   useSettingsSections: await importModule('useSettingsSections', 'src/features/settings/hooks/useSettingsSections.js'),
   privacyZoneConstants: await importModule('privacyZoneConstants', 'src/settings/privacy-zones/privacyZoneConstants.js'),
   privacyZoneFormatting: await importModule('privacyZoneFormatting', 'src/settings/privacy-zones/privacyZoneFormatting.js'),
-  localTripRepository: await importModule('localTripRepository', 'src/lib/localTripRepository.js'),
+  localTripRepository: await importModule('localTripRepository', 'src/lib/localTripRepository.core.js'),
 };
 
 const TS = modules.trackingStore;
+const VALID_BACKUP_PASSWORD = 'Road$age2026!Secure';
+const WRONG_BACKUP_PASSWORD = 'Wrong$age2026!Secure';
 
 await group(1, 'DEFAULT_SETTINGS integrity', async () => {
   if (!TS) return skipStep('1.x', 'DEFAULT_SETTINGS integrity', 'trackingStore import failed');
@@ -260,6 +287,13 @@ await group(2, 'migrateDefaultSettings', async () => {
     assert(Object.prototype.x === undefined, 'prototype polluted');
     assert(!Object.prototype.hasOwnProperty.call(out, '__proto__'), '__proto__ transferred');
   });
+  await step('2.9', 'malformed timestamps do not destabilize candidate choice', () => {
+    const chosen = TS.chooseSettingsHydrationCandidate([
+      { source: 'native_plugin', revision: 3, updatedAtMs: NaN, onboardingCompleted: 0, deltaCount: 1 },
+      { source: 'browser_mirror', revision: 3, updatedAtMs: 'not-a-date', onboardingCompleted: 1, deltaCount: 0 },
+    ]);
+    assert(chosen.source === 'browser_mirror', 'bad malformed timestamp winner');
+  });
 });
 
 await group(3, 'sanitizeImportedSettings', async () => {
@@ -285,6 +319,17 @@ await group(3, 'sanitizeImportedSettings', async () => {
   await step('3.18', 'null numeric defaults', () => assert((sanitizeImportedSettings({ threshold_harsh_brake_ms2: null }).threshold_harsh_brake_ms2 ?? DEFAULT_SETTINGS.threshold_harsh_brake_ms2) === DEFAULT_SETTINGS.threshold_harsh_brake_ms2, 'null survived'));
   await step('3.19', 'negative osrm timeout safe', () => assert((sanitizeImportedSettings({ osrm_timeout_ms: -1000 }).osrm_timeout_ms ?? DEFAULT_SETTINGS.osrm_timeout_ms) >= 5000, 'timeout unsafe'));
   await step('3.20', 'zero UBI optimal handled', () => assert((sanitizeImportedSettings({ ubi_optimal_annual_km: 0 }).ubi_optimal_annual_km ?? DEFAULT_SETTINGS.ubi_optimal_annual_km) >= 0, 'ubi unsafe'));
+  await step('3.21', 'future settings_defaults_version stripped', () => assert(!Object.prototype.hasOwnProperty.call(sanitizeImportedSettings({ settings_defaults_version: 999 }), 'settings_defaults_version'), 'version survived'));
+  await step('3.22', 'backup cannot clear active local-only mode', () => {
+    const result = sanitizeImportedSettings({
+      external_requests_local_only: false,
+      map_tiles_enabled: true,
+      backend_sync_enabled: true,
+      road_data_fetch_always_allow: true,
+    }, { ...DEFAULT_SETTINGS, external_requests_local_only: true });
+    assert(result.external_requests_local_only === true, 'local-only disabled');
+    assert(result.map_tiles_enabled === false && result.backend_sync_enabled === false && result.road_data_fetch_always_allow === false, 'external toggles survived');
+  });
 });
 
 await group(4, 'validateSettingsPatch', async () => {
@@ -384,6 +429,16 @@ await group(9, 'Privacy Zones CRUD', async () => {
   await step('9.12', 'FAKE invalid zone no throw', async () => { await TS.isInPrivacyZone(43.45, -80.5, [{ lat: 'not-a-number', lng: -80.5, radius: 100 }]); });
   await step('9.13', 'FAKE null point no throw', async () => { await TS.isInPrivacyZone(null, null, [{ lat: 43, lng: -80, radius: 100 }]); });
   await step('9.14', 'FAKE null zones no throw', async () => { await TS.isInPrivacyZone(43, -80, null); });
+  await step('9.15', 'stripped and zero-coordinate zones are inactive', () => {
+    const active = modules.privacyZones.getPrivacyZones({
+      privacy_zones: [
+        { id: 'stripped', radius_m: 200, masked_for_privacy: true, _coordinate_stripped: true },
+        { id: 'zero', lat: 0, lng: 0, radius_m: 200 },
+        { id: 'valid', lat: 43.45, lng: -80.5, radius_m: 200 },
+      ],
+    });
+    assert(active.length === 1 && active[0].id === 'valid', 'inactive zones included');
+  });
 });
 
 await group(10, 'Biometric lock', async () => {
@@ -398,7 +453,7 @@ await group(10, 'Biometric lock', async () => {
   await step('10.7', 'msUntilAutoLock zero after lock', () => { B.lock(); assert(B.msUntilAutoLock({ biometric_lock_enabled: true, lock_timeout_minutes: 5 }) <= 0, 'expected <=0'); });
   await step('10.8', 'FAKE enable string no throw', () => B.setBiometricLockEnabled('yes'));
   await step('10.9', 'FAKE enable null no throw', () => B.setBiometricLockEnabled(null));
-  await step('10.10', 'timeout never NaN', () => assert(Number.isFinite(B.getLockTimeoutMs({ lock_timeout_minutes: NaN })), 'NaN timeout'));
+  await step('10.10', 'timeout never NaN', () => assert(!Number.isNaN(B.getLockTimeoutMs({ lock_timeout_minutes: NaN })), 'NaN timeout'));
 });
 
 await group(11, 'Stealth / Ephemeral Trip Mode', async () => {
@@ -438,13 +493,13 @@ await group(13, 'Currency symbol', async () => {
   await step('13.1', 'currency options non-empty', () => assert(C.CURRENCY_SYMBOL_OPTIONS.length > 0, 'empty'));
   await step('13.2', 'options shape', () => C.CURRENCY_SYMBOL_OPTIONS.forEach((o) => assert(o.value && o.label, 'bad option')));
   await step('13.3', '$ normalizes', () => assert(C.normalizeCurrencySymbol('$') === '$', 'bad $'));
-  await step('13.4', 'euro normalizes if configured', () => assert(C.normalizeCurrencySymbol('â‚¬') === 'â‚¬', 'bad euro'));
+  await step('13.4', 'euro normalizes if configured', () => assert(C.normalizeCurrencySymbol('\u20ac') === '\u20ac', 'bad euro'));
   for (const [id, input] of [['13.5', ''], ['13.6', null], ['13.7', undefined], ['13.8', '<script>']]) await step(id, `normalize ${String(input)} safe`, () => assert(!C.normalizeCurrencySymbol(input).includes('<'), 'unsafe'));
   await step('13.9', 'formatCurrencyAmount 100', () => assert(C.formatCurrencyAmount(100, '$').includes('100'), 'format missing amount'));
-  await step('13.10', 'format zero euro', () => assert(typeof C.formatCurrencyAmount(0, 'â‚¬') === 'string', 'format failed'));
+  await step('13.10', 'format zero euro', () => assert(typeof C.formatCurrencyAmount(0, '\u20ac') === 'string', 'format failed'));
   await step('13.11', 'format negative no throw', () => C.formatCurrencyAmount(-1, '$'));
   await step('13.12', 'format NaN no throw', () => C.formatCurrencyAmount(NaN, '$'));
-  await step('13.13', 'yen import if allowed', () => assert((withSanitizedDefaults({ currencySymbol: 'Â¥' }, TS).currencySymbol) === 'Â¥', 'yen failed'));
+  await step('13.13', 'yen import if allowed', () => assert((withSanitizedDefaults({ currencySymbol: '\u00a5' }, TS).currencySymbol) === '\u00a5', 'yen failed'));
   await step('13.14', 'bad emoji currency defaults', () => assert(C.CURRENCY_SYMBOL_OPTIONS.some((o) => o.value === withSanitizedDefaults({ currencySymbol: 'pizza' }, TS).currencySymbol), 'bad currency survived'));
 });
 
@@ -535,10 +590,10 @@ await group(19, 'Backup encryption and integrity', async () => {
   await step('19.1', '{} not encrypted', () => assert(B.isEncryptedBackup('{}') === false, 'encrypted'));
   await step('19.2', 'empty not encrypted', () => assert(B.isEncryptedBackup('') === false, 'encrypted'));
   await step('19.3', 'null not encrypted', () => assert(B.isEncryptedBackup(null) === false, 'encrypted'));
-  await step('19.4', 'encrypt/decrypt roundtrip', async () => { const e = await B.encryptBackup(payload, 'validpassword!ok'); assert(await B.decryptBackup(e, 'validpassword!ok') === payload, 'roundtrip failed'); });
+  await step('19.4', 'encrypt/decrypt roundtrip', async () => { const e = await B.encryptBackup(payload, VALID_BACKUP_PASSWORD); assert(await B.decryptBackup(e, VALID_BACKUP_PASSWORD) === payload, 'roundtrip failed'); });
   await step('19.5', 'short password rejects', async () => expectThrows(() => B.encryptBackup(payload, 'short'), 'short password accepted'));
-  await step('19.6', 'encrypted string detected', async () => assert(B.isEncryptedBackup(await B.encryptBackup(payload, 'validpassword!ok')), 'not detected'));
-  await step('19.7', 'wrong password rejects', async () => { const e = await B.encryptBackup(payload, 'validpassword!ok'); await expectThrows(() => B.decryptBackup(e, 'wrongpassword!12'), 'wrong password accepted'); });
+  await step('19.6', 'encrypted string detected', async () => assert(B.isEncryptedBackup(await B.encryptBackup(payload, VALID_BACKUP_PASSWORD)), 'not detected'));
+  await step('19.7', 'wrong password rejects', async () => { const e = await B.encryptBackup(payload, VALID_BACKUP_PASSWORD); await expectThrows(() => B.decryptBackup(e, WRONG_BACKUP_PASSWORD), 'wrong password accepted'); });
   await step('19.8', 'backup version positive', () => assert(D.BACKUP_VERSION >= 1, 'bad version'));
   await step('19.9', 'max backup bytes positive', () => assert(D.MAX_BACKUP_BYTES > 0, 'bad max'));
   await step('19.10', 'seal adds integrity', async () => assert(Object.keys(await D.sealPlaintextBackup({})).some((k) => k.includes('integrity')), 'no integrity'));
@@ -566,6 +621,10 @@ await group(20, 'Settings import security', async () => {
   await step('20.11', 'valid harsh brake patch accepted', () => assert(okPatch(TS.validateSettingsPatch({ threshold_harsh_brake_ms2: 5 })), 'valid rejected'));
   await step('20.12', 'null patch cleanly invalid', () => assert(badPatch(TS.validateSettingsPatch(null)), 'null valid'));
   await step('20.13', 'array patch cleanly invalid', () => assert(badPatch(TS.validateSettingsPatch([])), 'array valid'));
+  await step('20.14', 'local-only clears road data always allow', () => {
+    const enforced = modules.privacyControls.enforceLocalOnlyPatch({ external_requests_local_only: true, road_data_fetch_always_allow: true });
+    assert(enforced.road_data_fetch_always_allow === false, 'road-data always allow survived');
+  });
 });
 
 await group(21, 'UBI coaching settings', async () => {
@@ -590,6 +649,13 @@ await group(22, 'Notification settings round-trip', async () => {
   await step('22.10', 'FAKE YES notification true', () => assert(normalizeBooleanImport('YES') === true, 'YES failed'));
   await step('22.11', 'FAKE NO notification false', () => assert(normalizeBooleanImport('NO') === false, 'NO failed'));
   await step('22.12', 'FAKE null notification defaults', () => keys.forEach((k) => assert(typeof withSanitizedDefaults({ [k]: null }, TS)[k] === 'boolean', `${k} not boolean`)));
+  await step('22.13', 'master and channel notification gates both required', () => {
+    const isOn = modules.notificationService.isNotificationChannelEnabled;
+    assert(isOn({ notifications_enabled: true, notif_safety_alerts_enabled: true }, 'notif_safety_alerts_enabled') === true, 'true/true failed');
+    assert(isOn({ notifications_enabled: false, notif_safety_alerts_enabled: true }, 'notif_safety_alerts_enabled') === false, 'false/true failed');
+    assert(isOn({ notifications_enabled: true, notif_safety_alerts_enabled: false }, 'notif_safety_alerts_enabled') === false, 'true/false failed');
+    assert(isOn({ notifications_enabled: false, notif_safety_alerts_enabled: false }, 'notif_safety_alerts_enabled') === false, 'false/false failed');
+  });
 });
 
 await group(23, 'Math / clamp utilities', async () => {

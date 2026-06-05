@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -70,7 +70,7 @@ import {
   saveCalibrationProfile,
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
-import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
+import { getPrivacyZones, removePrivacyZoneAsync, upsertPrivacyZoneAsync } from '@/lib/privacyZones';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
@@ -276,6 +276,7 @@ const PRIVACY_RADIUS_MAX_M = 1000;
 const RECOMMENDED_PRIVACY_RADIUS_M = 200;
 const PRIVACY_RADIUS_DEFAULT_M = RECOMMENDED_PRIVACY_RADIUS_M;
 const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
+const PASSWORD_DIALOG_CONTENT_CLASS = 'max-h-[85vh] overflow-y-auto rounded-2xl';
 const PENALTY_SCALE_CALIBRATION = Object.freeze({
   key: 'PENALTY_SCALE_FACTOR',
   ...SCORING_CONSTANTS.PENALTY_SCALE_FACTOR,
@@ -295,6 +296,18 @@ const SETTINGS_RENDER_FALLBACKS = {
   osrm_map_matching_url: '',
 };
 const SETTINGS_ANDROID_STATUS_POLL_MS = 30_000;
+const BACKUP_IMPORT_ACTIVE_STAGES = new Set(['reading', 'decrypting', 'verifying', 'parsing', 'validating', 'saving']);
+const BACKUP_IMPORT_STAGE_LABELS = {
+  idle: '',
+  reading: 'Reading backup file...',
+  decrypting: 'Decrypting backup... this may take a moment',
+  verifying: 'Checking backup integrity...',
+  parsing: 'Reading backup contents...',
+  validating: 'Checking backup data...',
+  saving: 'Saving your data...',
+  done: 'Import complete',
+  error: 'Import could not be completed',
+};
 
 function normalizeSettingsSnapshot(settings) {
   return {
@@ -370,12 +383,15 @@ export default function Settings() {
   const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [backupImportBusy, setBackupImportBusy] = useState(false);
+  const [backupImportStage, setBackupImportStage] = useState('idle');
+  const [backupImportStatusDetail, setBackupImportStatusDetail] = useState('');
   const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => readLocalSettingsSnapshot().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
+  const backupImportStatusTimeoutRef = useRef(null);
   const refreshPermissionsInFlightRef = useRef(null);
-  const backupImportPickerBusy = false;
+  const settingsSaveGenerationRef = useRef(0);
   const qc = useQueryClient();
   const permissionContext = useOptionalPermissions();
 
@@ -423,7 +439,7 @@ export default function Settings() {
     },
   });
 
-  const updateCfg = (patch) => {
+  const updateCfg = useCallback(async (patch) => {
     const validation = validateSettingsPatch(patch);
     if (!validation.valid) {
       toast({
@@ -434,10 +450,10 @@ export default function Settings() {
       return cfg;
     }
     const currentCfg = normalizeSettingsSnapshot(cfg);
-    const nextCfg = { ...currentCfg, ...patch };
+    const optimistic = normalizeSettingsSnapshot({ ...currentCfg, ...patch });
     const touchesEcoMultipliers = Object.prototype.hasOwnProperty.call(patch, 'eco_cruise_score_multiplier') ||
       Object.prototype.hasOwnProperty.call(patch, 'eco_idle_penalty_multiplier');
-    if (touchesEcoMultipliers && wouldDisableEcoScore(nextCfg)) {
+    if (touchesEcoMultipliers && wouldDisableEcoScore(optimistic)) {
       toast({
         title: 'Eco setting not saved',
         description: 'Eco scoring needs either the cruise multiplier or idle multiplier above 0.',
@@ -445,20 +461,69 @@ export default function Settings() {
       });
       return cfg;
     }
+
+    const saveGeneration = settingsSaveGenerationRef.current + 1;
+    settingsSaveGenerationRef.current = saveGeneration;
+    setCfg(optimistic);
+
     try {
-      const updated = normalizeSettingsSnapshot(localSettings.update(patch));
-      setCfg(updated);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      const updated = normalizeSettingsSnapshot(await localSettings.setAsync(optimistic));
+      if (settingsSaveGenerationRef.current === saveGeneration) {
+        setCfg(updated);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
+      }
       return updated;
     } catch (error) {
-      notifyUserError('settings_save', error, {
-        title: 'Setting not saved',
-        description: 'Road Sage could not write this setting. Try again after storage is available.',
-      });
+      if (settingsSaveGenerationRef.current === saveGeneration) {
+        setCfg(currentCfg);
+        notifyUserError('settings_save', error, {
+          title: 'Setting not saved',
+          description: 'Road Sage could not write this setting to secure storage. Try again.',
+        });
+      }
       return currentCfg;
     }
-  };
+  }, [cfg]);
+
+  useEffect(() => {
+    if (!isAndroid()) return undefined;
+
+    let cancelled = false;
+
+    const hydrateIfNewer = async () => {
+      if (cancelled) return;
+      try {
+        const latest = await localSettings.hydrateFromNative();
+        if (cancelled) return;
+        setCfg((prev) => {
+          const prevRev = prev?._settings_revision ?? 0;
+          const latestRev = latest?._settings_revision ?? 0;
+          return latestRev > prevRev
+            ? normalizeSettingsSnapshot(latest)
+            : prev;
+        });
+      } catch {
+        // Native hydration failures must not interrupt the Settings UI.
+      }
+    };
+
+    const hydrateOnVisible = () => {
+      if (document.visibilityState === 'visible') hydrateIfNewer();
+    };
+
+    hydrateIfNewer();
+    document.addEventListener('visibilitychange', hydrateOnVisible);
+    window.addEventListener('focus', hydrateIfNewer);
+    const interval = window.setInterval(hydrateIfNewer, 2000);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', hydrateOnVisible);
+      window.removeEventListener('focus', hydrateIfNewer);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
@@ -513,6 +578,12 @@ export default function Settings() {
     return () => window.removeEventListener(RESCORE_PROGRESS_EVENT, onProgress);
   }, [qc]);
 
+  useEffect(() => () => {
+    if (backupImportStatusTimeoutRef.current) {
+      clearTimeout(backupImportStatusTimeoutRef.current);
+    }
+  }, []);
+
   const dismissHeadingEventMigrationNote = async () => {
     try {
       await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
@@ -525,9 +596,9 @@ export default function Settings() {
     }
   };
 
-  const enableOsrmMapMatching = (enabled) => {
+  const enableOsrmMapMatching = async (enabled) => {
     if (!enabled) {
-      updateCfg({ map_matching_enabled: false });
+      await updateCfg({ map_matching_enabled: false });
       return;
     }
     if (cfg.external_requests_local_only === true) {
@@ -546,7 +617,7 @@ export default function Settings() {
       });
       return;
     }
-    updateCfg({ map_matching_enabled: true });
+    await updateCfg({ map_matching_enabled: true });
   };
 
   const runOsrmEndpointHealthCheck = async (endpoint) => {
@@ -568,7 +639,7 @@ export default function Settings() {
       return;
     }
     if (!value) {
-      updateCfg({
+      await updateCfg({
         map_matching_enabled: false,
         osrm_map_matching_url: '',
         osrm_public_demo_consent_at: '',
@@ -612,7 +683,7 @@ export default function Settings() {
       });
       return;
     }
-    updateCfg({
+    await updateCfg({
       map_matching_enabled: true,
       osrm_map_matching_url: normalizedValue,
       osrm_public_demo_consent_at: '',
@@ -687,8 +758,8 @@ export default function Settings() {
     return wouldDisableEcoScore(next) ? 'Eco score unavailable' : null;
   };
 
-  const updateTheme = (mode) => {
-    const updated = updateCfg({ dark_mode: mode });
+  const updateTheme = async (mode) => {
+    const updated = await updateCfg({ dark_mode: mode });
     applyThemeMode(updated.dark_mode);
   };
 
@@ -728,7 +799,7 @@ export default function Settings() {
     try {
       const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
         const normalizedNext = normalizeSettingsSnapshot(next);
-        localSettings.set(normalizedNext);
+        await localSettings.setAsync(normalizedNext);
         setCfg(normalizedNext);
       });
       let count = 0;
@@ -801,7 +872,7 @@ export default function Settings() {
         }
       }
 
-      const updated = updateCfg(patch);
+      const updated = await updateCfg(patch);
       await syncReminderNotifications(updated);
       await refreshPermissions();
     } catch (error) {
@@ -813,7 +884,7 @@ export default function Settings() {
   };
 
   const updateRetention = async (months) => {
-    const updated = updateCfg({ data_retention_months: months });
+    const updated = await updateCfg({ data_retention_months: months });
     const deleted = await enforceDataRetention(updated.data_retention_months);
     if (deleted > 0) {
       logError('data_retention_pruned', new Error('Retention pruning'), { deleted });
@@ -858,12 +929,12 @@ export default function Settings() {
   };
 
   const updateTrackingPaused = async (paused) => {
-    const updated = updateCfg({ tracking_paused: paused });
+    const updated = await updateCfg({ tracking_paused: paused });
     if (!isAndroid()) return;
 
     if (paused) {
       const stopped = await stopNativeAutoTrackingSafely('Auto tracking could not be paused');
-      if (!stopped) updateCfg({ tracking_paused: false });
+      if (!stopped) await updateCfg({ tracking_paused: false });
       return;
     }
 
@@ -872,7 +943,7 @@ export default function Settings() {
         await startNativeAutoTracking();
         await refreshPermissions();
       } catch (error) {
-        updateCfg({ tracking_paused: true });
+        await updateCfg({ tracking_paused: true });
         toast({
           title: 'Background tracking could not resume',
           description: error.message || 'Check Location, Physical Activity, Notifications, and Battery Optimization settings.',
@@ -885,13 +956,13 @@ export default function Settings() {
 
   const enableTrackingMode = async (mode) => {
     if (cfg.tracking_paused && mode !== 'manual') {
-      updateCfg({ tracking_paused: false });
+      await updateCfg({ tracking_paused: false });
     }
 
     if (mode === 'manual') {
       const stopped = await stopNativeAutoTrackingSafely('Manual mode could not stop background tracking');
       if (!stopped) return;
-      updateCfg({
+      await updateCfg({
         tracking_mode: 'manual',
         auto_tracking_enabled: false,
         background_tracking_enabled: false,
@@ -954,7 +1025,7 @@ export default function Settings() {
       const stopped = await stopNativeAutoTrackingSafely('Background tracking could not be turned off');
       if (!stopped) return;
     }
-    updateCfg({
+    await updateCfg({
       tracking_mode: mode,
       auto_tracking_enabled: mode !== 'manual',
       background_tracking_enabled: mode === 'background_auto',
@@ -1053,7 +1124,7 @@ export default function Settings() {
     return true;
   };
 
-  const savePrivacyZone = (location, sourceLabel) => {
+  const savePrivacyZone = async (location, sourceLabel) => {
     const validation = validatePrivacyRadius(privacyDraft.radius_m);
     if (!validation.valid) {
       setPrivacyDraftRadiusError(validation.error);
@@ -1076,22 +1147,29 @@ export default function Settings() {
       return;
     }
     setPrivacyDraftRadiusError('');
-    const updated = upsertPrivacyZone({
-      label: privacyDraft.label || sourceLabel,
-      radius_m: validation.radius,
-      lat,
-      lng,
-    }, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(normalizeSettingsSnapshot(updated));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    try {
+      const updated = await upsertPrivacyZoneAsync({
+        label: privacyDraft.label || sourceLabel,
+        radius_m: validation.radius,
+        lat,
+        lng,
+      }, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(normalizeSettingsSnapshot(updated));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (error) {
+      notifyUserError('settings_privacy_zone_save', error, {
+        title: 'Privacy zone not saved',
+        description: 'Road Sage could not write this privacy zone to secure storage. Try again.',
+      });
+    }
   };
 
   const addCurrentPrivacyZone = async () => {
     try {
       const location = await getCurrentLocation();
-      savePrivacyZone(location, 'Current location');
+      await savePrivacyZone(location, 'Current location');
     } catch (error) {
       toast({
         title: 'Could not get current location',
@@ -1101,25 +1179,32 @@ export default function Settings() {
     }
   };
 
-  const deletePrivacyZone = (id) => {
-    const updated = removePrivacyZone(id, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(normalizeSettingsSnapshot(updated));
-    setPrivacyRadiusDrafts((drafts) => {
-      const next = { ...drafts };
-      delete next[id];
-      return next;
-    });
-    setPrivacyZoneRadiusErrors((errors) => {
-      const next = { ...errors };
-      delete next[id];
-      return next;
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  const deletePrivacyZone = async (id) => {
+    try {
+      const updated = await removePrivacyZoneAsync(id, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(normalizeSettingsSnapshot(updated));
+      setPrivacyRadiusDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[id];
+        return next;
+      });
+      setPrivacyZoneRadiusErrors((errors) => {
+        const next = { ...errors };
+        delete next[id];
+        return next;
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (error) {
+      notifyUserError('settings_privacy_zone_delete', error, {
+        title: 'Privacy zone not deleted',
+        description: 'Road Sage could not update secure storage. Try again.',
+      });
+    }
   };
 
-  const updatePrivacyZoneRadius = (zone, rawValue) => {
+  const updatePrivacyZoneRadius = async (zone, rawValue) => {
     const validation = validatePrivacyRadius(rawValue);
     if (!validation.valid) {
       setPrivacyZoneRadiusErrors((errors) => ({ ...errors, [zone.id]: validation.error }));
@@ -1132,17 +1217,24 @@ export default function Settings() {
     }
 
     const radius = validation.radius;
-    const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(normalizeSettingsSnapshot(updated));
-    setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
-    setPrivacyZoneRadiusErrors((errors) => {
-      const next = { ...errors };
-      delete next[zone.id];
-      return next;
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+    try {
+      const updated = await upsertPrivacyZoneAsync({ ...zone, radius_m: radius }, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(normalizeSettingsSnapshot(updated));
+      setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
+      setPrivacyZoneRadiusErrors((errors) => {
+        const next = { ...errors };
+        delete next[zone.id];
+        return next;
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (error) {
+      notifyUserError('settings_privacy_zone_radius', error, {
+        title: 'Privacy radius not saved',
+        description: 'Road Sage could not write this privacy zone to secure storage. Try again.',
+      });
+    }
   };
 
   useEffect(() => {
@@ -1204,7 +1296,7 @@ export default function Settings() {
       const result = await connectObdBleAdapter();
       const name = result.device?.name || 'OBD-II adapter';
       setObdPairingStatus(result.connected ? `${name} connected for this session.` : `${name} selected. Could not open a GATT session.`);
-      updateCfg({ obd_bluetooth_enabled: true });
+      await updateCfg({ obd_bluetooth_enabled: true });
       await refreshPermissions();
     } catch (error) {
       setObdPairingStatus(error?.message || 'Could not connect to the OBD-II adapter.');
@@ -1277,6 +1369,17 @@ export default function Settings() {
         ? 'Fair'
         : 'Weak';
   const pendingBackupImportIsEncrypted = /\.rsbackup$/i.test(pendingBackupImportFile?.name || '');
+  const backupImportPickerBusy = backupImportBusy || BACKUP_IMPORT_ACTIVE_STAGES.has(backupImportStage);
+  const backupImportStatusLabel = backupImportStatusDetail || BACKUP_IMPORT_STAGE_LABELS[backupImportStage] || '';
+
+  const setBackupImportStatus = useCallback(({ stage, detail } = {}) => {
+    if (backupImportStatusTimeoutRef.current) {
+      clearTimeout(backupImportStatusTimeoutRef.current);
+      backupImportStatusTimeoutRef.current = null;
+    }
+    if (stage) setBackupImportStage(stage);
+    setBackupImportStatusDetail(detail || '');
+  }, []);
 
   const showBackupExportToast = (result) => {
     toast({
@@ -1346,9 +1449,15 @@ export default function Settings() {
     }
   };
 
-  const finishImportBackup = async (file, { password = null, acknowledgeTruncation = false } = {}) => {
-    const result = await importDriveSenseBackup(file, { password, acknowledgeTruncation });
+  const finishImportBackup = async (file, { password = null, acknowledgeTruncation = false, parsedBackup = null } = {}) => {
+    const result = await importDriveSenseBackup(file, {
+      password,
+      acknowledgeTruncation,
+      _parsedBackup: parsedBackup,
+      onProgress: setBackupImportStatus,
+    });
     if (result?.error === 'password_required' || result?.error === 'wrong_password') {
+      setBackupImportStatus({ stage: 'idle' });
       setPendingBackupImportFile(file);
       setBackupImportError(result.error);
       setBackupImportPasswordVisible(false);
@@ -1356,6 +1465,10 @@ export default function Settings() {
       return null;
     }
     if (result?.error === BACKUP_INTEGRITY_ERROR) {
+      setBackupImportStatus({
+        stage: 'error',
+        detail: 'This backup failed its integrity check. Try exporting a fresh backup.',
+      });
       toast({
         title: 'Backup integrity check failed',
         description: /\.rsbackup$/i.test(file?.name || '')
@@ -1366,37 +1479,63 @@ export default function Settings() {
       return null;
     }
     if (result.requiresAcknowledgement) {
+      setBackupImportStatus({ stage: 'idle' });
       const affected = result.truncatedNoteTripCount;
       if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
-      return finishImportBackup(file, { password, acknowledgeTruncation: true });
+      return finishImportBackup(null, {
+        password,
+        acknowledgeTruncation: true,
+        parsedBackup: result._parsedBackup,
+      });
     }
     const latestSettings = readLocalSettingsSnapshot();
+    setCfg(latestSettings);
+    applyThemeMode(latestSettings.dark_mode);
+    setBackupImportOpen(false);
+    setPendingBackupImportFile(null);
+    setBackupImportPassword('');
+    setBackupImportError('');
+    setBackupImportBusy(false);
     await recordOutboundDataEvent({
       service: 'import_file',
       status: 'used',
       detail: 'Backup import merged trips, vehicles, saved filters, and safe settings into local storage.',
     });
-    setCfg(latestSettings);
-    applyThemeMode(latestSettings.dark_mode);
-    await qc.invalidateQueries();
+    void Promise.allSettled([
+      qc.invalidateQueries({ queryKey: ['settings-trips'] }),
+      qc.invalidateQueries({ queryKey: ['all-trips'] }),
+      qc.invalidateQueries({ queryKey: ['recent-trips'] }),
+      qc.invalidateQueries({ queryKey: ['map-trips'] }),
+      qc.invalidateQueries({ queryKey: ['vehicles'] }),
+      qc.invalidateQueries({ queryKey: ['score-migration-summary'] }),
+    ]);
     const retentionNote = result.retentionAutoDeleteDisabled
       ? ` Auto-delete was set to Never so ${result.retentionPreservedTripCount} older imported trip${result.retentionPreservedTripCount === 1 ? '' : 's'} stay visible.`
       : '';
+    const settingsWarning = result.settings === false && result.trips > 0
+      ? ' Trips were imported, but settings could not be restored due to a device storage issue.'
+      : '';
+    const importSummary = `${result.trips} trip${result.trips === 1 ? '' : 's'}, ${result.vehicles} vehicle${result.vehicles === 1 ? '' : 's'}, and ${result.savedFilters || 0} saved filter${result.savedFilters === 1 ? '' : 's'} merged.${retentionNote}${settingsWarning}`;
+    setBackupImportStatus({
+      stage: 'done',
+      detail: importSummary,
+    });
+    backupImportStatusTimeoutRef.current = setTimeout(() => {
+      setBackupImportStage('idle');
+      setBackupImportStatusDetail('');
+      backupImportStatusTimeoutRef.current = null;
+    }, 10_000);
     toast({
       title: 'Import complete',
       description: result.truncatedFields
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}${retentionNote}`
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}${retentionNote}${settingsWarning}`
         : !result.savedFiltersRestored && result.savedFilters
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.${retentionNote}`
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.${retentionNote}${settingsWarning}`
         : result.privacy_zones_need_reconfiguration
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.${retentionNote}`
-        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.${retentionNote}`,
-      variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.${retentionNote}${settingsWarning}`
+        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.${retentionNote}${settingsWarning}`,
+      variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration || settingsWarning ? 'destructive' : undefined,
     });
-    setBackupImportOpen(false);
-    setPendingBackupImportFile(null);
-    setBackupImportPassword('');
-    setBackupImportError('');
     return result;
   };
 
@@ -1411,6 +1550,10 @@ export default function Settings() {
     try {
       await finishImportBackup(pendingBackupImportFile, { password: backupImportPassword });
     } catch (error) {
+      setBackupImportStatus({
+        stage: 'error',
+        detail: error.message || 'Make sure the file is a Road Sage backup file.',
+      });
       toast({
         title: 'Could not import backup',
         description: error.message || 'Make sure the file is a Road Sage backup file.',
@@ -1440,9 +1583,15 @@ export default function Settings() {
     }
     if (!confirmImportBackup(file)) return;
 
+    setBackupImportBusy(true);
+    setBackupImportStatus({ stage: 'reading' });
     try {
       await finishImportBackup(file);
     } catch (error) {
+      setBackupImportStatus({
+        stage: 'error',
+        detail: error.message || 'Make sure the file is a Road Sage backup file.',
+      });
       toast({
         title: 'Could not import backup',
         description: /\.rsbackup$/i.test(file.name || '')
@@ -1450,14 +1599,21 @@ export default function Settings() {
           : error.message || 'Make sure the file is a Road Sage backup JSON file.',
         variant: 'destructive',
       });
+    } finally {
+      setBackupImportBusy(false);
     }
   };
 
   const handleOpenImportBackup = () => {
+    if (backupImportPickerBusy) return;
     importInputRef.current?.click();
   };
 
   const handleImportBackup = async (event) => {
+    if (backupImportPickerBusy) {
+      event.target.value = '';
+      return;
+    }
     const file = event.target.files?.[0];
     event.target.value = '';
     await startImportBackup(file);
@@ -1478,7 +1634,7 @@ export default function Settings() {
   const settingsContext = {
     AlertTriangle, Banknote, Bell, Bluetooth, Check, ChevronRight, Clock, Download, Droplets, Focus, Gauge, Info, Leaf, LocateFixed, Lock, MapPin, Monitor, Moon, Plus, Route, Search, Shield, SlidersHorizontal, Smartphone, Sun, Target, Trash2, Unlock, Upload, Volume2, X, Zap,
     AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO, CALIBRATION_STATUSES, Checkbox, COMMUTE_MATCH_RADIUS_M, CURRENCY_SYMBOL_OPTIONS, CalibrationStatusTag, NIGHT_END_TIME, NIGHT_START_TIME, PENALTY_SCALE_CALIBRATION, PRIVACY_RADIUS_MAX_M, PRIVACY_RADIUS_MIN_M, PROVISIONAL_SCORING_CONSTANTS, PUBLIC_OSRM_DEMO_URL, RECOMMENDED_PRIVACY_RADIUS_M, SCORING_VERSION, SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
-    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, backupImportPickerBusy, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected: handleImportBackup, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleImportBackup: handleOpenImportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
+    addCurrentPrivacyZone, applyCalibration, autoRescoreVisible, backupImportPickerBusy, backupImportStage, backupImportStatusLabel, batteryStatus, calibLoading, calibProfile, calibrationEntryForSetting, calibrationStatusLabel, cfg, commitPrivacyDraftRadius, deletePrivacyZone, dismissCalibration, ecoScoreWarning, effectiveTrackingMode, enableOsrmMapMatching, enableTrackingMode, ephemeralModeState, getPermissionExplanation, handleBackupFileSelected: handleImportBackup, handleBatteryOptimization, handleDeleteAllTrips, handleExportAll, handleExportBackup, handleImportBackup: handleOpenImportBackup, handleMotionPermission, handleObdPairing, handleWipeAllData, importInputRef, isAndroid, isPublicOsrmDemoUrl, locationFeatureStatus, motionSupport, nativeTrackingStatus, notificationFeatureStatus, obdPairingStatus, obdSupport, openAndroidUsageAccessSettings, osrmEndpointDraft, osrmHealthCheckState, parkedLocation, permissionStatus, privacyDraft, privacyDraftRadiusError, privacyRadiusDrafts, privacyZoneRadiusErrors, privacyZones, refreshPermissions, requestActivityRecognitionPermission, requestBackgroundLocationPermission, requestForegroundLocationPermission, requestNotificationPermission, requestSaveOsrmEndpoint, rescoreCompleted, rescoreProgress, rescoreProgressPct, rescoreStatus, rescoreTotal, rescoreTrips, runCalibration, runVoiceTest, saveOsrmEndpoint, savePrivacyZone, scoreMigrationSummary, scoringValue, setOsrmEndpointDraft, setPatternGuideOpen, setPrivacyDraft, setPrivacyDraftRadiusError, setPrivacyRadiusDrafts, setPrivacyZoneRadiusErrors, setStealthNextTripEnabled, setThresholdEditingEnabled, showPrivacyPolicy, sliderWarning, speedLimitDefaultCountryKey, stealthTripToggleDisabled, stopNativeAutoTrackingSafely, thresholdEditingEnabled, updateCfg, updateExternalContextAutoFetch, updateNightMode, updateNotificationSetting, updatePrivacyZoneRadius, updateRetention, updateTheme, updateTrackingPaused, voiceTestStatus,
   };
 
   return (
@@ -1550,7 +1706,7 @@ export default function Settings() {
           setBackupExportPasswordVisible(false);
         }
       }}>
-        <DialogContent className="rounded-2xl">
+        <DialogContent className={PASSWORD_DIALOG_CONTENT_CLASS}>
           <DialogHeader>
             <DialogTitle>{backupExportMode === 'csv' ? 'Export Trips' : 'Export Backup'}</DialogTitle>
             <DialogDescription>
@@ -1671,7 +1827,7 @@ export default function Settings() {
           setBackupImportPasswordVisible(false);
         }
       }}>
-        <DialogContent className="rounded-2xl">
+        <DialogContent className={PASSWORD_DIALOG_CONTENT_CLASS}>
           <DialogHeader>
             <DialogTitle>Import Backup</DialogTitle>
             <DialogDescription>

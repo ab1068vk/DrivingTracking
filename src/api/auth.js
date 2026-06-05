@@ -28,7 +28,7 @@ export const consumeLegacyAuthTokenMigration = () => {
 export const authService = {
   exchangeTokenForCookie: (token) => apiClient.post("/auth/token", { token }),
 
-  me: () => apiClient.get("/auth/me"),
+  me: (options) => apiClient.get("/auth/me", options),
 
   logout: () => {
     AUTH_STORAGE_KEYS.forEach((key) => {

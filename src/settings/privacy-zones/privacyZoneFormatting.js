@@ -9,5 +9,6 @@ export function formatCoordinateLabel(lat, lng) {
 }
 
 export function zoneKey(zone, index) {
+  if (!zone || typeof zone !== 'object') return null;
   return `${zone.name || 'zone'}-${zone.lat}-${zone.lng}-${index}`;
 }

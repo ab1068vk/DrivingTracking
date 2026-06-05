@@ -59,6 +59,16 @@ public final class SecureDelete {
         return xml && backup;
     }
 
+    public static boolean wipeEncryptedPrefs(Context context, String prefsName) {
+        if (context == null || prefsName == null || prefsName.trim().isEmpty()) return true;
+        File prefsDir = new File(context.getApplicationInfo().dataDir, "shared_prefs");
+        boolean xml = wipeAndDelete(new File(prefsDir, prefsName + ".xml"));
+        boolean backup = wipeAndDelete(new File(prefsDir, prefsName + ".xml.bak"));
+        boolean success = xml && backup;
+        Log.d(TAG, "wipeEncryptedPrefs " + prefsName + ": success=" + success);
+        return success;
+    }
+
     public static int wipeSensitiveFiles(Context context) {
         if (context == null) return 0;
         int count = 0;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -133,6 +133,7 @@ export default function TripHistory() {
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
   const [isRescoring, setIsRescoring] = useState(false);
+  const deferredSearch = useDeferredValue(search);
   const settings = localSettings.get();
   const settingsVersion = useSettingsVersion(settings);
   const units = settings.units || 'metric';
@@ -165,7 +166,10 @@ export default function TripHistory() {
     },
   });
 
-  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
+  const vehicleById = useMemo(
+    () => new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle])),
+    [vehicles]
+  );
   const invalidateTrips = () => {
     qc.invalidateQueries({ queryKey: ['all-trips'] });
     qc.invalidateQueries({ queryKey: ['recent-trips'] });
@@ -191,51 +195,75 @@ export default function TripHistory() {
     },
   });
 
-  const completed = trips.filter((trip) => trip.status === 'completed');
-  const staleTripIds = useStaleTripDetection(completed, settings, settingsVersion);
-  const recentChronological = [...completed]
-    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-    .slice(-5);
-  const sparklineData = recentChronological.map((trip, index) => ({
-    index,
-    score_overall: getTripComponentScore(trip, 'overall').value,
-    score_safety: getTripComponentScore(trip, 'safety').value,
-    score_smoothness: getTripComponentScore(trip, 'smoothness').value,
-    score_eco: getTripComponentScore(trip, 'eco').value,
-  }));
-  const improvement = calculateRecentBrakingImprovement(completed);
-  const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  const isTripUnlabeled = (trip) => (
-    getTripComponentScore(trip, 'overall').value != null &&
-    !Number.isInteger(Number(calibrationMarkers?.[String(trip.id)]?.rating))
+  const completed = useMemo(
+    () => trips.filter((trip) => trip.status === 'completed'),
+    [trips]
   );
+  const staleTripIds = useStaleTripDetection(completed, settings, settingsVersion);
+  const sparklineData = useMemo(() => {
+    const recentChronological = [...completed]
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+      .slice(-5);
+    return recentChronological.map((trip, index) => ({
+      index,
+      score_overall: getTripComponentScore(trip, 'overall').value,
+      score_safety: getTripComponentScore(trip, 'safety').value,
+      score_smoothness: getTripComponentScore(trip, 'smoothness').value,
+      score_eco: getTripComponentScore(trip, 'eco').value,
+    }));
+  }, [completed]);
+  const improvement = useMemo(
+    () => calculateRecentBrakingImprovement(completed),
+    [completed]
+  );
+  const tripsByRecentOrder = useMemo(
+    () => [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
+    [completed]
+  );
+  const scoreDeltaByTripId = useMemo(() => new Map(
+    tripsByRecentOrder.map((trip) => [String(trip.id), scoreDeltaForTrip(trip, tripsByRecentOrder)])
+  ), [tripsByRecentOrder]);
+  const filtered = useMemo(() => {
+    const normalizedSearch = deferredSearch.trim().toLowerCase();
+    return completed.filter((trip) => {
+      if (
+        filterBy === 'unlabeled' &&
+        (
+          getTripComponentScore(trip, 'overall').value == null ||
+          Number.isInteger(Number(calibrationMarkers?.[String(trip.id)]?.rating))
+        )
+      ) {
+        return false;
+      }
+      if (!matchesQuickFilter(trip, filterBy)) return false;
+      if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
+      if (normalizedSearch) {
+        const vehicle = vehicleById.get(String(trip.vehicle_id));
+        if (!buildTripSearchText(trip, vehicle).includes(normalizedSearch)) return false;
+      }
+      return true;
+    });
+  }, [calibrationMarkers, completed, deferredSearch, filterBy, selectedTag, vehicleById]);
 
-  const filtered = completed.filter((trip) => {
-    if (filterBy === 'unlabeled' && !isTripUnlabeled(trip)) return false;
-    if (!matchesQuickFilter(trip, filterBy)) return false;
-    if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
-    if (search) {
-      const vehicle = vehicleById.get(String(trip.vehicle_id));
-      if (!buildTripSearchText(trip, vehicle).includes(search.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const sorted = useMemo(() => {
+    const sortedTrips = [...filtered];
+    sortedTrips.sort((a, b) => {
+      switch (sortBy) {
+        case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+        case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+        case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
+        case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
+        case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
+        case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
+        default: return 0;
+      }
+    });
+    return sortedTrips;
+  }, [filtered, sortBy]);
 
   useEffect(() => {
     if (searchParams.get('filter') === 'unlabeled') setFilterBy('unlabeled');
   }, [searchParams]);
-
-  const sorted = [...filtered].sort((a, b) => {
-    switch (sortBy) {
-      case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
-      case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
-      case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
-      case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
-      case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
-      case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
-      default: return 0;
-    }
-  });
   const rowVirtualizer = useVirtualizer({
     count: sorted.length,
     getScrollElement: () => tripListRef.current,
@@ -563,8 +591,9 @@ export default function TripHistory() {
                     trip={trip}
                     units={units}
                     index={virtualRow.index}
+                    animateEntry={virtualRow.index < 8}
                     tripCount={completed.length}
-                    scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+                    scoreDelta={scoreDeltaByTripId.get(String(trip.id))}
                     onToggleFavorite={(target) => updateTripMut.mutate({
                       id: target.id,
                       patch: { is_favorite: target.is_favorite !== true },

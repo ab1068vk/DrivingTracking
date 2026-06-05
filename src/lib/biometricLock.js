@@ -30,7 +30,10 @@ export function isBiometricLockEnabled() {
 export function getLockTimeoutMs(settings = {}) {
   if (!isBiometricLockEnabled()) return Number.POSITIVE_INFINITY;
 
-  const minutes = Number(settings.lock_timeout_minutes);
+  const rawMinutes = settings.lock_timeout_minutes;
+  const minutes = rawMinutes == null || (typeof rawMinutes === 'string' && rawMinutes.trim() === '')
+    ? NaN
+    : Number(rawMinutes);
   if (!Number.isFinite(minutes) || minutes < 0) return BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES * 60 * 1000;
   if (minutes === 0) return Number.POSITIVE_INFINITY;
   return minutes * 60 * 1000;

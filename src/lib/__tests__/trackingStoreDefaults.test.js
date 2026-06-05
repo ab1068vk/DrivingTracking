@@ -1,14 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
+  chooseHydrationCandidateAfterLocalMutations,
   chooseSettingsHydrationCandidate,
   DEFAULT_SETTINGS,
+  localSettings,
   migrateDefaultSettings,
   reconcileSettingsHydrationSnapshot,
   sanitizeImportedSettings,
   validateSettingsPatch,
 } from '@/lib/trackingStore';
+import { enforceLocalOnlyPatch } from '@/lib/privacyControls';
+import { resolveStorageKey } from '@/lib/storageKeyMigration';
 
 describe('tracking store default settings', () => {
+  afterEach(() => {
+    localSettings.set(DEFAULT_SETTINGS);
+  });
+
   it('keeps external road and weather requests opt-in by default', () => {
     expect(DEFAULT_SETTINGS.external_requests_local_only).toBe(false);
     expect(DEFAULT_SETTINGS.map_tiles_enabled).toBe(false);
@@ -64,6 +72,9 @@ describe('tracking store default settings', () => {
     });
     expect(validateSettingsPatch({ lock_timeout_minutes: 0 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ lock_timeout_minutes: 31 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ lock_timeout_minutes: '' })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ lock_timeout_minutes: null })).toMatchObject({ valid: false });
+    expect(sanitizeImportedSettings({ lock_timeout_minutes: '' }).lock_timeout_minutes).toBeUndefined();
   });
 
   it('keeps pending local settings ahead of stale native hydration', () => {
@@ -92,6 +103,33 @@ describe('tracking store default settings', () => {
       background_tracking_enabled: false,
       biometric_lock_enabled: false,
     });
+  });
+
+  it('does not overwrite corrupted primary settings JSON with defaults during get', () => {
+    const settingsKey = resolveStorageKey('drivesense_settings');
+    const values = new Map([[settingsKey, '{not-json']]);
+    const previousLocalStorage = globalThis.localStorage;
+    globalThis.localStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key),
+    };
+
+    try {
+      const recovered = localSettings.get();
+
+      expect(recovered).toMatchObject({
+        tracking_mode: DEFAULT_SETTINGS.tracking_mode,
+        data_retention_months: DEFAULT_SETTINGS.data_retention_months,
+      });
+      expect(values.has(settingsKey)).toBe(false);
+    } finally {
+      if (previousLocalStorage === undefined) {
+        delete globalThis.localStorage;
+      } else {
+        globalThis.localStorage = previousLocalStorage;
+      }
+    }
   });
 
   it('chooses the newest durable settings snapshot over stale native defaults on relaunch', () => {
@@ -133,6 +171,73 @@ describe('tracking store default settings', () => {
     expect(chosen.source).toBe('browser_mirror');
     expect(chosen.settings).toMatchObject({
       onboarding_completed: true,
+      dark_mode: 'dark',
+      map_tiles_enabled: true,
+    });
+  });
+
+  it('chooses hydration candidates deterministically when timestamps are malformed', () => {
+    const chosen = chooseSettingsHydrationCandidate([
+      {
+        source: 'native_plugin',
+        revision: 3,
+        updatedAtMs: NaN,
+        onboardingCompleted: 0,
+        deltaCount: 1,
+      },
+      {
+        source: 'browser_mirror',
+        revision: 3,
+        updatedAtMs: 'not-a-date',
+        onboardingCompleted: 1,
+        deltaCount: 0,
+      },
+    ]);
+
+    expect(chosen.source).toBe('browser_mirror');
+  });
+
+  it('keeps local settings saved during native hydration from being overwritten', () => {
+    const staleNative = {
+      ...DEFAULT_SETTINGS,
+      dark_mode: 'system',
+      map_tiles_enabled: false,
+      _settings_revision: 9,
+      _settings_updated_at: '2026-01-01T00:00:00.000Z',
+    };
+    const savedDuringHydration = {
+      ...DEFAULT_SETTINGS,
+      dark_mode: 'dark',
+      map_tiles_enabled: true,
+      _settings_revision: 1,
+      _settings_updated_at: '2026-01-01T00:01:00.000Z',
+    };
+
+    const chosen = chooseHydrationCandidateAfterLocalMutations(
+      {
+        source: 'native_plugin',
+        settings: staleNative,
+        revision: staleNative._settings_revision,
+        updatedAtMs: Date.parse(staleNative._settings_updated_at),
+        onboardingCompleted: 0,
+        deltaCount: 0,
+      },
+      0,
+      1,
+      [
+        {
+          source: 'runtime_memory',
+          settings: savedDuringHydration,
+          revision: savedDuringHydration._settings_revision,
+          updatedAtMs: Date.parse(savedDuringHydration._settings_updated_at),
+          onboardingCompleted: 0,
+          deltaCount: 2,
+        },
+      ]
+    );
+
+    expect(chosen.source).toBe('runtime_memory');
+    expect(chosen.settings).toMatchObject({
       dark_mode: 'dark',
       map_tiles_enabled: true,
     });
@@ -329,7 +434,114 @@ describe('tracking store default settings', () => {
       calibration_sharing_enabled: false,
       backend_sync_enabled: false,
       reverse_geocoding_enabled: false,
+      road_data_fetch_always_allow: false,
     });
+  });
+
+  it('enforceLocalOnlyPatch clears road-data always-allow', () => {
+    expect(enforceLocalOnlyPatch({
+      external_requests_local_only: true,
+      road_data_fetch_always_allow: true,
+    }).road_data_fetch_always_allow).toBe(false);
+  });
+
+  it('backup import sanitization cannot disable active local-only mode', () => {
+    const result = sanitizeImportedSettings({
+      external_requests_local_only: false,
+      map_tiles_enabled: true,
+      backend_sync_enabled: true,
+      road_data_fetch_always_allow: true,
+    }, {
+      ...DEFAULT_SETTINGS,
+      external_requests_local_only: true,
+    });
+
+    expect(result).toMatchObject({
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      backend_sync_enabled: false,
+      road_data_fetch_always_allow: false,
+    });
+  });
+
+  it('backup import can enable local-only mode from the imported snapshot', () => {
+    const result = sanitizeImportedSettings({
+      external_requests_local_only: true,
+      map_tiles_enabled: true,
+      backend_sync_enabled: true,
+      road_data_fetch_always_allow: true,
+    }, DEFAULT_SETTINGS);
+
+    expect(result).toMatchObject({
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      backend_sync_enabled: false,
+      road_data_fetch_always_allow: false,
+    });
+  });
+
+  it('strips imported settings_defaults_version from backups', () => {
+    const sanitized = sanitizeImportedSettings({
+      ...DEFAULT_SETTINGS,
+      settings_defaults_version: 999,
+      units: 'imperial',
+    });
+
+    expect(sanitized.settings_defaults_version).toBeUndefined();
+    expect(sanitized.units).toBe('imperial');
+    expect(migrateDefaultSettings(sanitized).settings.settings_defaults_version).toBe(DEFAULT_SETTINGS.settings_defaults_version);
+  });
+
+  it('local-only mode is enforced when persisted settings already have it active', () => {
+    localSettings.set({
+      ...DEFAULT_SETTINGS,
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      speed_limit_lookup_enabled: false,
+    });
+
+    localSettings.set({
+      ...localSettings.get(),
+      map_tiles_enabled: true,
+      speed_limit_lookup_enabled: true,
+    });
+
+    expect(localSettings.get()).toMatchObject({
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      speed_limit_lookup_enabled: false,
+    });
+  });
+
+  it('allows local-only mode to be explicitly disabled', () => {
+    localSettings.set({
+      ...DEFAULT_SETTINGS,
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+    });
+
+    localSettings.set({
+      ...localSettings.get(),
+      external_requests_local_only: false,
+      map_tiles_enabled: true,
+    });
+
+    expect(localSettings.get()).toMatchObject({
+      external_requests_local_only: false,
+      map_tiles_enabled: true,
+    });
+  });
+
+  it('migrates nullish inputs and strips dangerous unknown keys', () => {
+    expect(migrateDefaultSettings(null).settings).toMatchObject(DEFAULT_SETTINGS);
+    expect(migrateDefaultSettings(undefined).settings).toMatchObject(DEFAULT_SETTINGS);
+    expect(migrateDefaultSettings([]).settings).toMatchObject(DEFAULT_SETTINGS);
+
+    const migrated = migrateDefaultSettings(JSON.parse('{"constructor":{"prototype":{"polluted":true}},"__proto__":{"polluted":true},"units":"imperial"}')).settings;
+    expect(migrated.units).toBe('imperial');
+    expect(Object.prototype.polluted).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(migrated, 'constructor')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(migrated, '__proto__')).toBe(false);
   });
 
   it('migrates unsupported proxy setting names to neutral metric names', () => {

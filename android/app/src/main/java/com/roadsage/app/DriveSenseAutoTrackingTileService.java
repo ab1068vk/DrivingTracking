@@ -8,6 +8,9 @@ import android.service.quicksettings.TileService;
 
 import androidx.core.content.ContextCompat;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.json.JSONObject;
 
 public class DriveSenseAutoTrackingTileService extends TileService {
@@ -61,25 +64,21 @@ public class DriveSenseAutoTrackingTileService extends TileService {
     }
 
     private void setBackgroundAutoEnabled() {
-        JSONObject settings = getSettings();
-        try {
-            settings.put("tracking_mode", "background_auto");
-            settings.put("auto_tracking_enabled", true);
-            settings.put("background_tracking_enabled", true);
-            settings.put("tracking_paused", false);
-            NativeSettingsStore.saveSettingsJson(this, settings.toString());
-        } catch (Exception ignored) {}
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("tracking_mode", "background_auto");
+        updates.put("auto_tracking_enabled", true);
+        updates.put("background_tracking_enabled", true);
+        updates.put("tracking_paused", false);
+        NativeSettingsStore.updateSettingsFields(this, updates);
     }
 
     private void setBackgroundAutoPaused() {
-        JSONObject settings = getSettings();
-        try {
-            settings.put("tracking_mode", "background_auto");
-            settings.put("auto_tracking_enabled", true);
-            settings.put("background_tracking_enabled", true);
-            settings.put("tracking_paused", true);
-            NativeSettingsStore.saveSettingsJson(this, settings.toString());
-        } catch (Exception ignored) {}
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("tracking_mode", "background_auto");
+        updates.put("auto_tracking_enabled", true);
+        updates.put("background_tracking_enabled", true);
+        updates.put("tracking_paused", true);
+        NativeSettingsStore.updateSettingsFields(this, updates);
     }
 
     private boolean isBackgroundAutoActive() {

@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
+import android.util.Log;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -72,6 +73,7 @@ import java.util.Locale;
     }
 )
 public class DriveSenseActivityRecognitionPlugin extends Plugin {
+    private static final String SETTINGS_LOG_TAG = "RoadSageSettings";
     private static final String SECURE_EXPORT_MIME_TYPE = "application/octet-stream";
     private static final long MAX_BACKUP_IMPORT_BYTES = 50L * 1024L * 1024L;
     private static final int BACKUP_ENC_VERSION = 1;
@@ -582,11 +584,14 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             return;
         }
 
+        Log.d(SETTINGS_LOG_TAG, "saveSettings called, json length=" + settingsJson.length());
         Context appContext = getContext().getApplicationContext();
         call.setKeepAlive(true);
         new Thread(() -> {
             try {
-                if (!NativeSettingsStore.saveSettingsJson(appContext, settingsJson)) {
+                boolean saved = NativeSettingsStore.saveSettingsJson(appContext, settingsJson);
+                Log.d(SETTINGS_LOG_TAG, "NativeSettingsStore.commit() result=" + saved);
+                if (!saved) {
                     resolveSettingsSaveFailure(call, "Settings could not be saved to encrypted native storage.", null);
                     return;
                 }

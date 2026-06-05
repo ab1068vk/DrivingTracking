@@ -18,7 +18,7 @@ vi.mock('@/api/vehicles', () => ({
 }));
 
 import { importDriveSenseBackup } from '@/lib/dataBackup';
-import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
+import { DEFAULT_SETTINGS, localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 
 function makeMemoryStorage(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -64,6 +64,16 @@ describe('backup settings import security', () => {
     expect({}.polluted).toBeUndefined();
   });
 
+  it('strips constructor and __proto__ from imported settings', () => {
+    const hostile = JSON.parse('{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}},"units":"metric"}');
+    const result = sanitizeImportedSettings(hostile);
+
+    expect(result.units).toBe('metric');
+    expect(result.constructor).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(false);
+    expect({}.polluted).toBeUndefined();
+  });
+
   it('strips imported OSRM endpoints so backups cannot redirect route data', async () => {
     vi.stubGlobal('localStorage', makeMemoryStorage());
 
@@ -104,5 +114,30 @@ describe('backup settings import security', () => {
     }));
 
     expect(localSettings.get().tracking_mode).toBe('manual');
+  });
+
+  it('backup import cannot disable local-only mode on this device', async () => {
+    vi.stubGlobal('localStorage', makeMemoryStorage());
+    localSettings.set({
+      ...DEFAULT_SETTINGS,
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      backend_sync_enabled: false,
+      road_data_fetch_always_allow: false,
+    });
+
+    await importDriveSenseBackup(backupFile({
+      external_requests_local_only: false,
+      map_tiles_enabled: true,
+      backend_sync_enabled: true,
+      road_data_fetch_always_allow: true,
+    }));
+
+    expect(localSettings.get()).toMatchObject({
+      external_requests_local_only: true,
+      map_tiles_enabled: false,
+      backend_sync_enabled: false,
+      road_data_fetch_always_allow: false,
+    });
   });
 });

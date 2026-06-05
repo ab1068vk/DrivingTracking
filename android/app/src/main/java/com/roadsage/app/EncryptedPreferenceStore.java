@@ -3,8 +3,10 @@ package com.roadsage.app;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.security.keystore.StrongBoxUnavailableException;
 import android.security.keystore.KeyInfo;
 import android.security.keystore.KeyProperties;
+import android.util.Log;
 
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKey;
@@ -19,6 +21,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 
 final class EncryptedPreferenceStore {
+    private static final String TAG = "EncryptedPreferenceStore";
     private static final String MASTER_KEY_ALIAS = "road_sage_master_key_v3";
     private static final Object PREFS_CACHE_LOCK = new Object();
     private static final Map<String, SharedPreferences> PREFS_CACHE = new HashMap<>();
@@ -37,12 +40,17 @@ final class EncryptedPreferenceStore {
             SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, masterKey);
             return cachePrefs(prefsName, prefs);
         } catch (GeneralSecurityException | IOException firstOpenError) {
+            Log.w(TAG, "First encrypted preferences open failed for " + prefsName, firstOpenError);
             SecureDelete.wipePlaintextPrefs(appContext, prefsName);
+            SecureDelete.wipeEncryptedPrefs(appContext, prefsName);
+            resetMasterKey();
+            MasterKey freshKey = masterKey(appContext);
             try {
-                SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, masterKey);
+                SharedPreferences prefs = openEncryptedPrefs(appContext, prefsName, freshKey);
                 return cachePrefs(prefsName, prefs);
             } catch (GeneralSecurityException | IOException secondOpenError) {
-                throw new IllegalStateException("Encrypted preferences are unavailable.", secondOpenError);
+                Log.e(TAG, "Second encrypted preferences open failed for " + prefsName, secondOpenError);
+                throw new IllegalStateException("Encrypted preferences are unavailable after recovery attempt.", secondOpenError);
             }
         }
     }
@@ -87,6 +95,21 @@ final class EncryptedPreferenceStore {
         }
     }
 
+    private static void resetMasterKey() {
+        synchronized (EncryptedPreferenceStore.class) {
+            cachedMasterKey = null;
+        }
+        try {
+            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            if (keyStore.containsAlias(MASTER_KEY_ALIAS)) {
+                keyStore.deleteEntry(MASTER_KEY_ALIAS);
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "Could not delete encrypted preferences master key alias.", error);
+        }
+    }
+
     static String keyBacking(Context context) {
         try {
             KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
@@ -109,30 +132,26 @@ final class EncryptedPreferenceStore {
 
     private static MasterKey buildHardwareMasterKey(Context context)
             throws GeneralSecurityException, IOException {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                return buildMasterKey(context, true);
+            } catch (StrongBoxUnavailableException ignored) {}
+        }
+
+        return buildMasterKey(context, false);
+    }
+
+    private static MasterKey buildMasterKey(Context context, boolean requestStrongBox)
+            throws GeneralSecurityException, IOException {
         MasterKey.Builder builder = new MasterKey.Builder(context, MASTER_KEY_ALIAS)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .setUserAuthenticationRequired(false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (requestStrongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             builder.setRequestStrongBoxBacked(true);
         }
 
-        MasterKey key = builder.build();
-        if (!isRequiredBacking()) {
-            deleteMasterKey();
-            throw new GeneralSecurityException(
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                    ? "Road Sage requires a StrongBox-backed Android Keystore key."
-                    : "Road Sage requires a hardware-backed Android Keystore key."
-            );
-        }
-        return key;
-    }
-
-    private static boolean isRequiredBacking() {
-        String backing = keyBackingInternal();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return "StrongBox".equals(backing);
-        return "TEE".equals(backing);
+        return builder.build();
     }
 
     private static String keyBackingInternal() {
@@ -153,16 +172,6 @@ final class EncryptedPreferenceStore {
             }
         } catch (Exception ignored) {}
         return "Unknown";
-    }
-
-    private static void deleteMasterKey() {
-        try {
-            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
-            keyStore.load(null);
-            if (keyStore.containsAlias(MASTER_KEY_ALIAS)) {
-                keyStore.deleteEntry(MASTER_KEY_ALIAS);
-            }
-        } catch (Exception ignored) {}
     }
 
     static void put(SharedPreferences.Editor editor, String key, Object value) {

@@ -7,6 +7,8 @@ const SALT_BYTES = 32;
 const IV_BYTES = 12;
 const HEADER_SIZE = 1 + SALT_BYTES + IV_BYTES;
 const BASE64_CHUNK_SIZE = 0x8000;
+let decryptWorker = null;
+let decryptWorkerRequestId = 0;
 
 const subtleCrypto = () => {
   const api = globalThis.crypto?.subtle;
@@ -132,6 +134,65 @@ export async function decryptBackup(encryptedB64, password) {
   const key = await deriveKey(password, salt);
   const plaintext = await subtleCrypto().decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
   return new TextDecoder().decode(plaintext);
+}
+
+function getDecryptWorker() {
+  if (!decryptWorker) {
+    decryptWorker = new Worker(
+      new URL('../workers/backupDecrypt.worker.js', import.meta.url),
+      { type: 'module' }
+    );
+  }
+  return decryptWorker;
+}
+
+export function decryptBackupInWorker(encryptedB64, password) {
+  if (typeof Worker !== 'function') {
+    return decryptBackup(encryptedB64, password);
+  }
+
+  return new Promise((resolve, reject) => {
+    const worker = getDecryptWorker();
+    const requestId = `${Date.now()}_${decryptWorkerRequestId += 1}`;
+
+    const cleanup = () => {
+      worker.removeEventListener('message', handleMessage);
+      worker.removeEventListener('error', handleError);
+      worker.removeEventListener('messageerror', handleError);
+    };
+
+    const handleMessage = (event) => {
+      const { type, requestId: responseId, plaintext, code } = event.data || {};
+      if (responseId !== requestId) return;
+
+      cleanup();
+      if (type === 'result') {
+        resolve(plaintext);
+        return;
+      }
+
+      const error = new Error(code || 'decrypt_failed');
+      error.code = code || 'decrypt_failed';
+      reject(error);
+    };
+
+    const handleError = (error) => {
+      cleanup();
+      reject(error);
+    };
+
+    worker.addEventListener('message', handleMessage);
+    worker.addEventListener('error', handleError);
+    worker.addEventListener('messageerror', handleError);
+    worker.postMessage({ type: 'decrypt', requestId, payload: encryptedB64, password });
+  });
+}
+
+export function terminateDecryptWorker() {
+  if (decryptWorker) {
+    decryptWorker.terminate();
+    decryptWorker = null;
+  }
 }
 
 export function isEncryptedBackup(value) {

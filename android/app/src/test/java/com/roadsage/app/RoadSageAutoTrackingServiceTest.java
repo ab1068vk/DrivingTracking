@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.TimeZone;
 
 import org.json.JSONArray;
@@ -123,6 +125,25 @@ public class RoadSageAutoTrackingServiceTest {
 
         JSONObject isoTimestamp = new JSONObject().put("timestamp", "2026-05-31T04:00:00Z");
         assertEquals(Instant.parse("2026-05-31T04:00:00Z").toEpochMilli(), ParkedCarWidgetProvider.parkedTimestampMs(isoTimestamp, 42L));
+    }
+
+    @Test
+    public void nativeSettingsFieldUpdatesIncrementRevisionAndTimestamp() throws Exception {
+        JSONObject current = new JSONObject()
+            .put("_settings_revision", 7)
+            .put("_settings_updated_at", "2026-01-01T00:00:00.000Z")
+            .put("tracking_paused", false);
+        Map<String, Object> updates = new HashMap<>();
+        updates.put("tracking_paused", true);
+        updates.put("background_tracking_enabled", true);
+
+        JSONObject stamped = new JSONObject(NativeSettingsStore.stampedSettingsJson(current.toString(), updates));
+
+        assertEquals(8, stamped.getInt("_settings_revision"));
+        assertTrue(stamped.getBoolean("tracking_paused"));
+        assertTrue(stamped.getBoolean("background_tracking_enabled"));
+        assertTrue(stamped.getString("_settings_updated_at").endsWith("Z"));
+        assertFalse("timestamp should be refreshed", "2026-01-01T00:00:00.000Z".equals(stamped.getString("_settings_updated_at")));
     }
 
     private static JSONObject loadParityFixture() throws Exception {

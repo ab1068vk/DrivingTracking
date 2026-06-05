@@ -146,7 +146,7 @@ Version closeout history is kept in [docs/VERSION_HISTORY.md](docs/VERSION_HISTO
 ## Architecture And Data
 
 - Package: `drivesense-app`
-- Version: `1.0.0`
+- Version: `1.0.1`
 - Web stack: React 18, Vite 6, React Router, TanStack Query, Tailwind, Radix UI, Leaflet, Recharts, jsPDF, Vitest, ESLint
 - Native stack: Capacitor 8 Android shell plus custom Java services/plugins for activity recognition, background tracking, phone usage evidence, native IMU motion sampling, native downloads/import picker, notifications, quick settings tile, parked-car widget, WorkManager tile-preview cache, secure clipboard, Android Keystore-backed field encryption, encrypted native key-value storage, biometric/device-credential gating, local runtime-integrity checks, encrypted SharedPreferences storage, and Android security hardening
 - Optional device evidence: Android Usage Access for confirmed phone use, optional OBD-II BLE evidence where Web Bluetooth is available, Android Nearby Devices/Bluetooth permission through the native `BLUETOOTH_CONNECT` bridge, and browser/native motion sensors for IMU summaries, lane-changing confidence, and possible incident signals. Permission status is centralized in `PermissionProvider`, normalized through `permissionStateMachine`, and cached briefly between native bridge checks.

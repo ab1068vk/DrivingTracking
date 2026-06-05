@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKUP_INTEGRITY_ERROR,
+  buildDriveSenseBackup,
   importDriveSenseBackup,
   BACKUP_VERSION,
   countTripsOutsideRetentionWindow,
@@ -36,6 +37,9 @@ const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
   version: 5,
   trips,
 })).trips;
+
+const VALID_BACKUP_PASSWORD = 'Road$age2026!Secure';
+const WRONG_BACKUP_PASSWORD = 'Wrong$age2026!Secure';
 
 describe('backup trip import sanitization', () => {
   afterEach(() => {
@@ -179,6 +183,56 @@ describe('backup trip import sanitization', () => {
     expect(vehicles[0].injected).toBeUndefined();
     expect(vehicles[0].maintenance_items[0].extra).toBeUndefined();
     expect({}.polluted).toBeUndefined();
+  });
+
+  it('exports privacy-zone metadata without coordinates and marks zones for reconfiguration', async () => {
+    const backup = buildDriveSenseBackup({
+      trips: [],
+      vehicles: [],
+      settings: {
+        ...DEFAULT_SETTINGS,
+        privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 200 }],
+      },
+    });
+
+    expect(backup.settings.privacy_zones[0]).toMatchObject({
+      id: 'home',
+      label: 'Home',
+      radius_m: 200,
+      masked_for_privacy: true,
+      _coordinate_stripped: true,
+    });
+    expect(backup.settings.privacy_zones[0].lat).toBeUndefined();
+    expect(backup.settings.privacy_zones[0].lng).toBeUndefined();
+  });
+
+  it('reports imported stripped privacy zones as needing reconfiguration', async () => {
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        settings: {
+          privacy_zones: [{
+            id: 'home',
+            label: 'Home',
+            radius_m: 200,
+            masked_for_privacy: true,
+            _coordinate_stripped: true,
+          }],
+        },
+        vehicles: [],
+        trips: [],
+      })),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({
+      privacy_zones_need_reconfiguration: 1,
+    });
+    expect(localSettings.get().privacy_zones[0]).toMatchObject({
+      id: 'home',
+      _coordinate_stripped: true,
+    });
   });
 
   it('truncates oversized imported trip routes', () => {
@@ -422,8 +476,12 @@ describe('backup trip import sanitization', () => {
     const pending = await importDriveSenseBackup(file);
     expect(pending).toMatchObject({ requiresAcknowledgement: true, truncatedNoteTripCount: 1 });
 
-    const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
+    const imported = await importDriveSenseBackup(null, {
+      acknowledgeTruncation: true,
+      _parsedBackup: pending._parsedBackup,
+    });
     expect(imported.trips).toBe(1);
+    expect(file.text).toHaveBeenCalledTimes(1);
   });
 
   it('prompts for a password before importing encrypted backups', async () => {
@@ -432,15 +490,15 @@ describe('backup trip import sanitization', () => {
       version: BACKUP_VERSION,
       vehicles: [],
       trips: [],
-    }), 'correct horse battery');
+    }), VALID_BACKUP_PASSWORD);
     const file = {
       size: encrypted.length,
       text: vi.fn(async () => encrypted),
     };
 
     await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: 'password_required' });
-    await expect(importDriveSenseBackup(file, { password: 'wrong horse battery' })).resolves.toEqual({ error: 'wrong_password' });
-    await expect(importDriveSenseBackup(file, { password: 'correct horse battery' })).resolves.toMatchObject({
+    await expect(importDriveSenseBackup(file, { password: WRONG_BACKUP_PASSWORD })).resolves.toEqual({ error: 'wrong_password' });
+    await expect(importDriveSenseBackup(file, { password: VALID_BACKUP_PASSWORD })).resolves.toMatchObject({
       trips: 0,
       vehicles: 0,
     });

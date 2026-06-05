@@ -27,7 +27,12 @@ function literalValue(value) {
 }
 
 function settingValue(settingsSource, key) {
-  return literalValue(match(settingsSource, new RegExp(`${key}:\\s*([^,\\n]+)`), `DEFAULT_SETTINGS.${key}`));
+  const defaults = match(
+    settingsSource,
+    /export const DEFAULT_SETTINGS = \{([\s\S]*?)\n\};/,
+    'DEFAULT_SETTINGS block'
+  );
+  return literalValue(match(defaults, new RegExp(`${key}:\\s*([^,\\n]+)`), `DEFAULT_SETTINGS.${key}`));
 }
 
 function constNumber(source, name, label = name) {

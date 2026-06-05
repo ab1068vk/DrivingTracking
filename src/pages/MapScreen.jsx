@@ -34,6 +34,23 @@ const MAP_FILTERS = [
 ];
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
+const scheduleIdleWork = (callback) => {
+  if (typeof window === 'undefined') {
+    callback();
+    return null;
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    return { type: 'idle', id: window.requestIdleCallback(callback, { timeout: 2000 }) };
+  }
+  return { type: 'timeout', id: window.setTimeout(callback, 50) };
+};
+
+const cancelIdleWork = (handle) => {
+  if (!handle || typeof window === 'undefined') return;
+  if (handle.type === 'idle') window.cancelIdleCallback?.(handle.id);
+  else window.clearTimeout(handle.id);
+};
+
 const relativeTime = (value) => {
   const elapsed = Date.now() - new Date(value).getTime();
   if (!Number.isFinite(elapsed)) return 'recently';
@@ -132,12 +149,15 @@ export default function MapScreen() {
     },
   });
 
-  const allCompleted = trips.filter(t => t.status === 'completed' && t.route_points?.length > 1);
-  const completed = allCompleted.filter(t => {
+  const allCompleted = useMemo(
+    () => trips.filter(t => t.status === 'completed' && t.route_points?.length > 1),
+    [trips]
+  );
+  const completed = useMemo(() => allCompleted.filter(t => {
     if (mapFilter === 'night') return t.night_driving;
     if (mapFilter === 'harsh_braking') return (t.harsh_brakes_count || 0) > 0;
     return true;
-  });
+  }), [allCompleted, mapFilter]);
   const selectedTrip = allCompleted.find(t => t.id === selectedTripId);
   const secondaryTrip = allCompleted.find(t => String(t.id) === String(secondaryTripId));
   const selectedPrivacySummary = selectedTrip
@@ -191,23 +211,25 @@ export default function MapScreen() {
         .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
     ].slice(0, 6);
   }, [allCompleted, commutePatterns, selectedTrip, units]);
-  const mapRoutes = selectedTrip
-    ? [{
-      id: selectedTrip.id,
-      route_points: selectedTrip.route_points,
-      rawPointCount: selectedTrip.route_points_raw_count,
-      selected: true,
-      color: '#3b82f6',
-      label: formatDate(selectedTrip.start_time),
-    }]
-    : completed.map((trip, index) => ({
-      id: trip.id,
-      route_points: trip.route_points,
-      rawPointCount: trip.route_points_raw_count,
-      selected: false,
-      color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
-      label: formatDate(trip.start_time),
-    }));
+  const mapRoutes = useMemo(() => (
+    selectedTrip
+      ? [{
+        id: selectedTrip.id,
+        route_points: selectedTrip.route_points,
+        rawPointCount: selectedTrip.route_points_raw_count,
+        selected: true,
+        color: '#3b82f6',
+        label: formatDate(selectedTrip.start_time),
+      }]
+      : completed.map((trip, index) => ({
+        id: trip.id,
+        route_points: trip.route_points,
+        rawPointCount: trip.route_points_raw_count,
+        selected: false,
+        color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
+        label: formatDate(trip.start_time),
+      }))
+  ), [completed, selectedTrip]);
 
   const confirmAndFetchRoadContext = () => {
     if (!selectedTrip) return;
@@ -250,6 +272,7 @@ export default function MapScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    let idleHandle = null;
     const rebuildOverlays = async () => {
       if (!allCompleted.length) {
         setDangerZones([]);
@@ -270,19 +293,22 @@ export default function MapScreen() {
       }
     };
 
-    rebuildOverlays().catch((error) => {
-      if (cancelled) return;
-      setDangerZones([]);
-      setRouteRiskIndex(new Map());
-      notifyUserError('map_overlay_rebuild', error, {
-        title: 'Map layers unavailable',
-        description: 'Repeated-event and route-risk layers could not be rebuilt. Trip routes can still be viewed.',
+    idleHandle = scheduleIdleWork(() => {
+      rebuildOverlays().catch((error) => {
+        if (cancelled) return;
+        setDangerZones([]);
+        setRouteRiskIndex(new Map());
+        notifyUserError('map_overlay_rebuild', error, {
+          title: 'Map layers unavailable',
+          description: 'Repeated-event and route-risk layers could not be rebuilt. Trip routes can still be viewed.',
+        });
       });
     });
     return () => {
       cancelled = true;
+      cancelIdleWork(idleHandle);
     };
-  }, [allCompleted.length, trips, privacyZonesKey]);
+  }, [allCompleted, privacyZonesKey]);
 
   const handleWhereParked = async () => {
     try {

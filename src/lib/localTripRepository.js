@@ -16,6 +16,7 @@ import { detectDrivingEvents } from '@/lib/detection/harshEvents';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { enforceDataRetention as enforceDataRetentionCore } from '@/lib/localTripRepository.core';
 import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import {
@@ -933,22 +934,11 @@ const deleteAllTripsFromStorage = async () => {
 };
 
 export async function enforceDataRetention(retentionMonths = localSettings.get().data_retention_months) {
-  const months = Number(retentionMonths);
-  if (!Number.isFinite(months) || months <= 0) return 0;
-
-  const cutoff = Date.now() - months * 30.44 * 24 * 60 * 60 * 1000;
-  const trips = await getAllTrips();
-  const expired = trips.filter((trip) => {
-    if (trip?.status !== 'completed') return false;
-    const startedAt = new Date(trip.start_time || 0).getTime();
-    return Number.isFinite(startedAt) && startedAt > 0 && startedAt < cutoff;
+  return enforceDataRetentionCore(retentionMonths, {
+    getAllTrips,
+    deleteTrip,
+    invalidateTripDerivedCaches,
   });
-
-  for (const trip of expired) {
-    await deleteTrip(trip.id);
-  }
-  if (expired.length) await invalidateTripDerivedCaches();
-  return expired.length;
 }
 
 const pruneExpiredTrips = async () => enforceDataRetention(localSettings.get().data_retention_months);

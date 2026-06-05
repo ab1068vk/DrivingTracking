@@ -100,9 +100,13 @@ const SAFE_DRIVING_TIPS = [
   'A steady speed usually beats hard acceleration followed by hard braking.',
 ];
 
+export const isNotificationChannelEnabled = (settings = localSettings.get(), key) => (
+  settings.notifications_enabled !== false && settings[key] !== false
+);
+
 const notificationsEnabled = (key) => {
   const settings = localSettings.get();
-  return settings.notifications_enabled !== false && settings[key] !== false;
+  return isNotificationChannelEnabled(settings, key);
 };
 
 const lockScreenVisibilityForChannel = (channelId) => (
