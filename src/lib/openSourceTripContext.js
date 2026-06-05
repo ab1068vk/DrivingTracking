@@ -1,16 +1,18 @@
 import {
   buildDrivingThresholds,
   calculateTripScores,
-  calculateTripStats,
-  detectDrivingEvents,
-} from '@/lib/tripEngine';
+} from '@/lib/scoring/componentScores';
+import { calculateTripStats } from '@/lib/gps/routeSummary';
+import { detectDrivingEvents } from '@/lib/detection/harshEvents';
 import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
+import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import { isLocalOnlyMode, summarizePrivacyZoneFiltering } from '@/lib/privacyControls';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -23,42 +25,107 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
 
 export { PUBLIC_OSRM_DEMO_URL };
 
+function skippedMapMatchingContext(originalPoints = [], settings = {}) {
+  const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
+  if (settings.map_matching_enabled === false) {
+    return { routePoints: originalPoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
+  }
+  if (isOsrmDemoUrl) {
+    return {
+      routePoints: originalPoints,
+      status: 'public_demo_blocked',
+      provider: 'osrm',
+      error: 'The public OSRM demo is reference-only in Road Sage. Configure a private or trusted OSRM endpoint before route snapping.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (!settings.osrm_map_matching_url) {
+    return {
+      routePoints: originalPoints,
+      status: 'needs_endpoint',
+      provider: 'osrm',
+      error: 'Route snapping is optional and needs a private or trusted OSRM endpoint before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (settings.osrm_data_sharing_consented !== true) {
+    return {
+      routePoints: originalPoints,
+      status: 'needs_consent',
+      provider: 'osrm',
+      error: 'Route snapping needs explicit OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
+      isOsrmDemoUrl,
+    };
+  }
+  if (!hasVerifiedOsrmEndpoint(settings)) {
+    return {
+      routePoints: originalPoints,
+      status: 'unavailable',
+      provider: 'osrm',
+      error: settings.osrm_last_health_error || 'Route snapping is disabled until the OSRM endpoint passes verification and has a matching domain trust record.',
+      isOsrmDemoUrl,
+    };
+  }
+  return {
+    routePoints: originalPoints,
+    status: 'unavailable',
+    provider: 'osrm',
+    error: 'Route snapping is unavailable.',
+    isOsrmDemoUrl,
+  };
+}
+
 export const isOsrmMapMatchingConfigured = (settings = {}) => (
-  settings.map_matching_enabled !== false &&
-  Boolean(settings.osrm_map_matching_url) &&
-  settings.osrm_data_sharing_consented === true &&
-  !isPublicOsrmDemoUrl(settings.osrm_map_matching_url)
+  !isLocalOnlyMode(settings) && hasVerifiedOsrmEndpoint(settings)
 );
 
 export const isOsrmMapMatchingEnabled = (settings = {}) => (
-  settings.map_matching_enabled !== false
+  !isLocalOnlyMode(settings) && settings.map_matching_enabled === true
 );
 
 export const isExternalContextAutoFetchEnabled = (settings = {}) => (
-  settings.external_context_auto_fetch_enabled !== false
+  !isLocalOnlyMode(settings) && settings.external_context_auto_fetch_enabled === true
 );
 
-export function buildRoadContextPrivacyMessage(settings = {}) {
+export function buildRoadContextPrivacySummary(routePoints = [], settings = {}) {
+  const privacyZones = getPrivacyZones(settings);
+  const originalPoints = Array.isArray(routePoints) ? routePoints : [];
+  const safePoints = privacyZones.length
+    ? originalPoints.filter((point) => !isPointInPrivacyZone(point, privacyZones))
+    : originalPoints;
+  return summarizePrivacyZoneFiltering({ originalPoints, safePoints, privacyZones });
+}
+
+export function buildRoadContextPrivacyMessage(settings = {}, trip = null) {
   const lines = [
     'Get Road Data will check online services for this selected trip:',
     '',
   ];
-  if (settings.speed_limit_lookup_enabled !== false) {
+  if (settings.external_requests_local_only === true) {
+    lines.push('Local-only mode is on, so external road, weather, and route-snapping requests will be skipped.');
+  }
+  if (settings.speed_limit_lookup_enabled === true) {
     lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
   }
-  if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
+  if (settings.weather_context_enabled === true) {
+    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather when all candidates are private or the origin, midpoint, or destination is inside the expanded weather privacy guard.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');
-  } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
+    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your verified OSRM endpoint, one request per continuous route segment.');
+  } else if (settings.map_matching_enabled === true && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
-  } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
+  } else if (settings.map_matching_enabled === true && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true) {
+    lines.push('- Snap route to roads has an endpoint but will be skipped until its OSRM health check passes and the verified domain record matches.');
+  } else if (settings.map_matching_enabled === true && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
     lines.push('- Snap route to roads has an endpoint but will be skipped until OSRM data-sharing consent is saved.');
   } else if (isOsrmMapMatchingEnabled(settings)) {
     lines.push('- Snap route to roads is on but has no endpoint, so OSRM will be skipped until a link is added.');
   } else {
     lines.push('- Snap route to roads is off, so GPS points are not sent to OSRM.');
+  }
+  if (trip?.route_points?.length) {
+    const privacySummary = buildRoadContextPrivacySummary(trip.route_points, settings);
+    lines.push('', `Privacy zones: ${privacySummary.message}`);
   }
   lines.push('', 'Continue?');
   return lines.join('\n');
@@ -87,6 +154,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const thresholds = buildDrivingThresholds(settings);
   const privacyZones = getPrivacyZones(settings);
+  const privacySummary = buildRoadContextPrivacySummary(originalPoints, settings);
   stage(onProgress, 'Getting weather');
   const weatherPromise = timeout(
     fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
@@ -103,7 +171,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
   stage(onProgress, osrmConfigured ? 'Snapping route to roads with OSRM' : 'Skipping route snapping');
-  const mapMatchingContext = await timeout(
+  const mapMatchingContext = (await timeout(
     mapMatchRoute(originalPoints, settings),
     16000,
     'OSRM route snapping timed out'
@@ -114,7 +182,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     error: error?.message || 'Map matching unavailable',
     confidence: null,
     snapped_coverage: 0,
-  }));
+  }))) || skippedMapMatchingContext(originalPoints, settings);
   let routePoints = mapMatchingContext.routePoints || originalPoints;
   stage(onProgress, 'Getting speed limits from OpenStreetMap');
   const speedLimitContext = await timeout(
@@ -165,6 +233,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       fallback_country: speedLimitContext.fallback_country,
       query_count: speedLimitContext.query_count,
       error: speedLimitContext.error,
+      privacy_removed_points: privacySummary.removedCount,
     },
     map_matching_context: {
       provider: mapMatchingContext.provider,
@@ -176,6 +245,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     },
     weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
     weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
+    external_context_privacy_summary: privacySummary,
     needs_rescore: false,
   };
 }
@@ -185,6 +255,7 @@ export function describeOsmSpeedLimitStatus(context = {}) {
     return 'OpenStreetMap speed limits have not been fetched for this trip yet.';
   }
   if (context.status === 'manual_required') return 'Speed limits have not been fetched. Tap Get Road Data when you want to send route-area boxes to OpenStreetMap.';
+  if (context.status === 'local_only') return 'Local-only mode is on, so OpenStreetMap speed-limit lookup is disabled.';
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route') return 'This trip does not have enough GPS points to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
@@ -202,6 +273,9 @@ export function describeMapMatchingStatus(context = {}) {
   }
   if (context.status === 'manual_required') {
     return 'Route snapping is configured but waits for Get Road Data before sending sampled GPS points to OSRM.';
+  }
+  if (context.status === 'local_only') {
+    return 'Local-only mode is on, so sampled GPS points are not sent to OSRM.';
   }
   if (context.status === 'disabled') {
     return 'Route snapping was skipped. Add an OSRM endpoint in Settings only if you want sampled GPS points sent there.';

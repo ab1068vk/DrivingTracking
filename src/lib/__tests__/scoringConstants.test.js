@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, test } from 'vitest';
 import {
   CALIBRATION_STATUSES,
   DEFAULT_HOURLY_RISK_PROFILE,
@@ -15,6 +16,7 @@ import {
 import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE_FACTOR } from '@/lib/appConstants';
 import { PHONE_USE_PENALTY_POINTS } from '@/lib/phoneUsageAccess';
 import { DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
+import { PERSONAL_BASELINE_MIN_TRIPS } from '@/lib/tripInsights';
 import { TIME_OF_DAY_NIGHT_MULTIPLIER } from '@/lib/ubiReport';
 
 describe('scoring constants registry', () => {
@@ -35,6 +37,24 @@ describe('scoring constants registry', () => {
     });
   });
 
+  test('every constant with @promotionBlocker has a calibrationRequirement comment', () => {
+    const source = readFileSync(new URL('../scoringConstants.js', import.meta.url), 'utf8');
+    const promotionBlockerBlocks = source.match(/\/\*\*[\s\S]*?@promotionBlocker true[\s\S]*?\*\//g) ?? [];
+
+    expect(promotionBlockerBlocks.length).toBeGreaterThan(0);
+    for (const block of promotionBlockerBlocks) {
+      expect(block).toContain('@calibrationRequirement');
+    }
+  });
+
+  test('fatigue promotion blockers keep their literature anchor explicit', () => {
+    const source = readFileSync(new URL('../scoringConstants.js', import.meta.url), 'utf8');
+
+    expect(source).toContain('@literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655)');
+    expect(source).toContain('18-hour wakefulness → impairment equivalent to BAC 0.05%');
+    expect(source).toContain('Recalibration against fatigue self-reports may update this anchor.');
+  });
+
   it('drives existing scoring exports from the central values', () => {
     expect(PENALTY_SCALE_FACTOR).toBe(scoringValue('PENALTY_SCALE_FACTOR'));
     expect(FATIGUE_SAFETY_PENALTY_SCALE).toBe(scoringValue('FATIGUE_SAFETY_PENALTY_SCALE'));
@@ -43,6 +63,73 @@ describe('scoring constants registry', () => {
     expect(DEFAULT_THRESHOLDS.HILL_INFRACTION_PENALTY_POINTS_PER_KM).toBe(scoringValue('HILL_INFRACTION_PENALTY_POINTS_PER_KM'));
     expect(PHONE_USE_PENALTY_POINTS.high).toBe(scoringValue('PHONE_PENALTY_HIGH'));
     expect(TIME_OF_DAY_NIGHT_MULTIPLIER).toBe(scoringValue('UBI_NIGHT_MULTIPLIER'));
+  });
+
+  it('uses the personal baseline minimum for pre-trip trend evidence', () => {
+    expect(scoringValue('PRE_TRIP_TREND_MIN_BASELINE_TRIPS')).toBe(PERSONAL_BASELINE_MIN_TRIPS);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_TREND_MIN_BASELINE_TRIPS).toBe(PERSONAL_BASELINE_MIN_TRIPS);
+    expect(scoringValue('SIGNAL_DECAY_HALF_LIFE_DAYS')).toBe(21);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_HALF_LIFE_DAYS).toBe(21);
+    expect(scoringValue('SIGNAL_DECAY_MIN_HALF_LIFE_DAYS')).toBe(7);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_MIN_HALF_LIFE_DAYS).toBe(7);
+    expect(scoringValue('SIGNAL_DECAY_MAX_HALF_LIFE_DAYS')).toBe(60);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_MAX_HALF_LIFE_DAYS).toBe(60);
+    expect(scoringValue('SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS')).toBe(21);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS).toBe(21);
+    expect(scoringValue('SIGNAL_DECAY_AUTOCORR_THRESHOLD')).toBe(0.5);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_AUTOCORR_THRESHOLD).toBe(0.5);
+    expect(scoringValue('SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR')).toBe(20);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR).toBe(20);
+    expect(scoringValue('VIF_CORRELATION_FLOOR')).toBe(0.65);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').VIF_CORRELATION_FLOOR).toBe(0.65);
+    expect(scoringValue('VIF_DAMP_FACTOR')).toBe(0.7);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').VIF_DAMP_FACTOR).toBe(0.7);
+    [
+      ['FALLBACK_VARIANCE_TIME', 64],
+      ['FALLBACK_VARIANCE_DAY', 64],
+      ['FALLBACK_VARIANCE_TREND', 81],
+      ['FALLBACK_VARIANCE_FATIGUE', 36],
+      ['FALLBACK_VARIANCE_LAST_TRIP', 100],
+      ['FALLBACK_VARIANCE_WEATHER', 25],
+      ['FALLBACK_VARIANCE_DANGER', 81],
+      ['FALLBACK_VARIANCE_ROUTE', 64],
+      ['FALLBACK_VARIANCE_REST', 36],
+    ].forEach(([key, value]) => {
+      expect(scoringValue(key)).toBe(value);
+      expect(scoringValue('PRE_TRIP_READINESS_POLICY')[key]).toBe(value);
+    });
+    expect(scoringValue('PRE_TRIP_REST_DEFAULT_BREAK_MINUTES')).toBe(30);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_REST_DEFAULT_BREAK_MINUTES).toBe(30);
+    expect(scoringValue('PRE_TRIP_REST_MIN_THRESHOLD_MINUTES')).toBe(10);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').PRE_TRIP_REST_MIN_THRESHOLD_MINUTES).toBe(10);
+    expect(scoringValue('CALIBRATED_SIGNAL_THRESHOLD')).toBe(5);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').CALIBRATED_SIGNAL_THRESHOLD).toBe(5);
+    expect(scoringValue('DEVELOPING_SIGNAL_THRESHOLD')).toBe(2);
+    expect(scoringValue('PRE_TRIP_READINESS_POLICY').DEVELOPING_SIGNAL_THRESHOLD).toBe(2);
+  });
+
+  it('keeps blend weights normalized and non-negative', () => {
+    const blendConfigs = [
+      ['OVERALL_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.OVERALL_SCORE_BLEND_WEIGHTS.value],
+      ['SAFETY_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.SAFETY_SCORE_BLEND_WEIGHTS.value],
+      ['SMOOTHNESS_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.SMOOTHNESS_SCORE_BLEND_WEIGHTS.value],
+      ['ECO_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.ECO_SCORE_BLEND_WEIGHTS.value],
+      ['DEFENSIVE_SCORE_BLEND_WEIGHTS', SCORING_CONSTANTS.DEFENSIVE_SCORE_BLEND_WEIGHTS.value],
+      ['UBI_CATEGORY_WEIGHTS', SCORING_CONSTANTS.UBI_CATEGORY_WEIGHTS.value],
+      ['PRE_TRIP_RISK_WEIGHTS', SCORING_CONSTANTS.PRE_TRIP_RISK_WEIGHTS.value],
+    ];
+
+    for (const [key, weights] of blendConfigs) {
+      const values = Object.values(weights);
+      const sum = values.reduce((total, weight) => total + weight, 0);
+
+      expect(sum, key).toBeCloseTo(1.0, 6);
+      for (const weight of values) {
+        expect(Number.isFinite(weight), key).toBe(true);
+        expect(weight, key).toBeGreaterThanOrEqual(0);
+      }
+    }
+    expect(SCORING_CONSTANTS.SAFETY_SCORE_BLEND_WEIGHTS.value.phoneUse).toBe(scoringValue('PHONE_USE_SAFETY_WEIGHT'));
   });
 
   it('registers the default hourly fallback risk profile with calibration metadata', () => {
@@ -99,6 +186,7 @@ describe('scoring constants registry', () => {
     });
     expect(hasProvisionalCalibration(['score_overall'])).toBe(true);
     expect(hasProvisionalCalibration(['ubi_score'])).toBe(true);
+    expect(hasProvisionalCalibration()).toBe(true);
     expect(calibrationStatusForMetrics(['score_overall'])).toBe(SCORE_OUTPUT_CALIBRATION_STATUSES.APPROXIMATE);
   });
 

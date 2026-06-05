@@ -1,12 +1,15 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { logError } from '@/lib/errorReporting';
+import { hasVerifiedOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import { externalServiceAllowed, recordOutboundDataEvent } from '@/lib/privacyControls';
+export { checkOsrmEndpointHealth } from '@/lib/osrmEndpointHealth';
 
-const CACHE_KEY = 'drivesense_map_matching_cache_v2';
+const CACHE_KEY = 'road_sage_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
 export const DEFAULT_OSRM_TIMEOUT_MS = 12000;
 export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || DEFAULT_OSRM_TIMEOUT_MS;
-const OSRM_HEALTH_TIMEOUT_MS = 5000;
 
 const round = (value, places = 5) => +Number(value).toFixed(places);
 const isValidRoutePoint = (point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng);
@@ -124,57 +127,6 @@ function osrmMatchUrl(points = [], baseUrl) {
   return url.toString();
 }
 
-function osrmHealthCheckUrl(baseUrl) {
-  const url = new URL('/route/v1/driving/13.388860,52.517037;13.397634,52.529407', baseUrl);
-  url.searchParams.set('overview', 'false');
-  url.searchParams.set('steps', 'false');
-  return url.toString();
-}
-
-export async function checkOsrmEndpointHealth(endpoint) {
-  let url;
-  try {
-    url = new URL(String(endpoint || '').trim());
-  } catch {
-    return {
-      status: 'unreachable',
-      ok: false,
-      checked_at: new Date().toISOString(),
-      error: 'The OSRM endpoint is not a valid URL.',
-    };
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OSRM_HEALTH_TIMEOUT_MS);
-    const response = await fetch(osrmHealthCheckUrl(url.toString()), { signal: controller.signal })
-      .finally(() => clearTimeout(timeout));
-    if (!response.ok) {
-      return {
-        status: 'unreachable',
-        ok: false,
-        checked_at: new Date().toISOString(),
-        error: `OSRM health check failed (${response.status}).`,
-      };
-    }
-    return {
-      status: 'connected',
-      ok: true,
-      checked_at: new Date().toISOString(),
-      error: '',
-    };
-  } catch (error) {
-    return {
-      status: 'unreachable',
-      ok: false,
-      checked_at: new Date().toISOString(),
-      error: error?.name === 'AbortError'
-        ? 'OSRM health check timed out.'
-        : error?.message || 'OSRM health check failed.',
-    };
-  }
-}
-
 function nearestMatchedPoint(original, geometry = []) {
   if (!geometry.length) return null;
   let best = null;
@@ -197,6 +149,12 @@ async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIME
   const response = await withRetry('osrm-map-matching', async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    recordOutboundDataEvent({
+      service: 'osrm_route_snapping',
+      status: 'used',
+      destination: new URL(endpoint).origin,
+      detail: `${sampled.length} sampled GPS coordinate pair${sampled.length === 1 ? '' : 's'} sent for route snapping.`,
+    }).catch(() => {});
     return fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
       .finally(() => clearTimeout(timeout));
   });
@@ -232,36 +190,30 @@ async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIME
 }
 
 export async function mapMatchRoute(routePoints = [], settings = {}) {
-  const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
+  const endpoint = typeof settings?.osrm_map_matching_url === 'string'
+    ? settings.osrm_map_matching_url.trim()
+    : '';
+  const consented = settings?.osrm_data_sharing_consented === true;
+  const hasEndpoint = endpoint.length > 0;
+  const isOsrmDemoUrl = isPublicOsrmDemoUrl(endpoint);
+
+  if (!externalServiceAllowed(settings, 'osrm_route_snapping')) {
+    return settings.external_requests_local_only === true
+      ? { routePoints, status: 'local_only', provider: 'osrm', isOsrmDemoUrl }
+      : settings.map_matching_enabled === false
+        ? { routePoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl }
+        : null;
+  }
   if (settings.map_matching_enabled === false) {
     return { routePoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
   }
-  if (!settings.osrm_map_matching_url) {
-    return {
-      routePoints,
-      status: 'needs_endpoint',
-      provider: 'osrm',
-      error: 'Route snapping is on, but no OSRM endpoint is set.',
-      isOsrmDemoUrl,
-    };
+  if (!consented || !hasEndpoint) return null;
+  if (!hasVerifiedOsrmEndpoint(settings)) {
+    return null;
   }
   if (isOsrmDemoUrl) {
-    return {
-      routePoints,
-      status: 'public_demo_blocked',
-      provider: 'osrm',
-      error: 'The public OSRM demo is reference-only in Road Sage. Configure a private or trusted OSRM endpoint before route snapping.',
-      isOsrmDemoUrl,
-    };
-  }
-  if (settings.osrm_data_sharing_consented !== true) {
-    return {
-      routePoints,
-      status: 'needs_consent',
-      provider: 'osrm',
-      error: 'Route snapping needs OSRM data-sharing consent before sampled GPS coordinate pairs are sent.',
-      isOsrmDemoUrl,
-    };
+    logError('osrm_public_demo_blocked', new Error('Public OSRM demo blocked'), {});
+    return null;
   }
   const { segments, mergedTemplate, gapCount } = splitAtNullPoints(routePoints);
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
@@ -273,7 +225,6 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   if (cache[key]) return { ...cache[key], status: 'cache_hit', provider: 'osrm', isOsrmDemoUrl };
 
   try {
-    const endpoint = settings.osrm_map_matching_url;
     const timeoutMs = osrmTimeoutMs(settings);
     try {
       new URL(endpoint);

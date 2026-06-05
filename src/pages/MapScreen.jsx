@@ -5,23 +5,27 @@ import { tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDate, formatDistance, getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
+import { reverseGeocodeIfPermitted } from '@/lib/geocoding';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
-import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { ensureRouteRiskIndexMigration, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
   buildOpenSourceTripContextPatch,
   buildRoadContextPrivacyMessage,
+  buildRoadContextPrivacySummary,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
   isOsrmMapMatchingConfigured,
 } from '@/lib/openSourceTripContext';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
+import { notifyUserError, notifyUserMessage, notifyUserSuccess } from '@/lib/userFeedback';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -30,6 +34,23 @@ const MAP_FILTERS = [
 ];
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
+const scheduleIdleWork = (callback) => {
+  if (typeof window === 'undefined') {
+    callback();
+    return null;
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    return { type: 'idle', id: window.requestIdleCallback(callback, { timeout: 2000 }) };
+  }
+  return { type: 'timeout', id: window.setTimeout(callback, 50) };
+};
+
+const cancelIdleWork = (handle) => {
+  if (!handle || typeof window === 'undefined') return;
+  if (handle.type === 'idle') window.cancelIdleCallback?.(handle.id);
+  else window.clearTimeout(handle.id);
+};
+
 const relativeTime = (value) => {
   const elapsed = Date.now() - new Date(value).getTime();
   if (!Number.isFinite(elapsed)) return 'recently';
@@ -69,6 +90,7 @@ export default function MapScreen() {
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const settings = localSettings.get();
+  const localOnlyMode = settings.external_requests_local_only === true;
   const units = settings.units || 'metric';
   const privacyZones = getPrivacyZones(settings);
   const privacyZonesKey = JSON.stringify(privacyZones.map((zone) => [
@@ -82,6 +104,10 @@ export default function MapScreen() {
   const { data: trips = [] } = useQuery({
     queryKey: ['map-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+    meta: {
+      errorTitle: 'Map trips unavailable',
+      errorDescription: 'Road Sage could not load trips for the map. Try again after trip storage is available.',
+    },
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
@@ -104,23 +130,39 @@ export default function MapScreen() {
       if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
       setShowSpeedLimits(hasSpeedLimits);
+      notifyUserSuccess('map_road_context_fetch', {
+        title: 'Road data updated',
+        description: hasSpeedLimits
+          ? 'Speed-limit context is ready for this trip.'
+          : 'Road context was checked. No speed-limit layer was returned for this trip.',
+      });
     },
     onError: (error) => {
       setOsmFetchStatus(error?.message || 'Could not get road data');
+      notifyUserError('map_road_context_fetch', error, {
+        title: 'Road data unavailable',
+        description: 'Road Sage could not fetch speed limits or map matching for this trip. The GPS route is unchanged.',
+      });
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
     },
   });
 
-  const allCompleted = trips.filter(t => t.status === 'completed' && t.route_points?.length > 1);
-  const completed = allCompleted.filter(t => {
+  const allCompleted = useMemo(
+    () => trips.filter(t => t.status === 'completed' && t.route_points?.length > 1),
+    [trips]
+  );
+  const completed = useMemo(() => allCompleted.filter(t => {
     if (mapFilter === 'night') return t.night_driving;
     if (mapFilter === 'harsh_braking') return (t.harsh_brakes_count || 0) > 0;
     return true;
-  });
+  }), [allCompleted, mapFilter]);
   const selectedTrip = allCompleted.find(t => t.id === selectedTripId);
   const secondaryTrip = allCompleted.find(t => String(t.id) === String(secondaryTripId));
+  const selectedPrivacySummary = selectedTrip
+    ? buildRoadContextPrivacySummary(selectedTrip.route_points || [], settings)
+    : null;
   const selectedEvents = settings.phone_use_show_on_map === false
     ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
     : (selectedTrip?.driving_events || []);
@@ -169,29 +211,37 @@ export default function MapScreen() {
         .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
     ].slice(0, 6);
   }, [allCompleted, commutePatterns, selectedTrip, units]);
-  const mapRoutes = selectedTrip
-    ? [{
-      id: selectedTrip.id,
-      route_points: selectedTrip.route_points,
-      rawPointCount: selectedTrip.route_points_raw_count,
-      selected: true,
-      color: '#3b82f6',
-      label: formatDate(selectedTrip.start_time),
-    }]
-    : completed.map((trip, index) => ({
-      id: trip.id,
-      route_points: trip.route_points,
-      rawPointCount: trip.route_points_raw_count,
-      selected: false,
-      color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
-      label: formatDate(trip.start_time),
-    }));
+  const mapRoutes = useMemo(() => (
+    selectedTrip
+      ? [{
+        id: selectedTrip.id,
+        route_points: selectedTrip.route_points,
+        rawPointCount: selectedTrip.route_points_raw_count,
+        selected: true,
+        color: '#3b82f6',
+        label: formatDate(selectedTrip.start_time),
+      }]
+      : completed.map((trip, index) => ({
+        id: trip.id,
+        route_points: trip.route_points,
+        rawPointCount: trip.route_points_raw_count,
+        selected: false,
+        color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
+        label: formatDate(trip.start_time),
+      }))
+  ), [completed, selectedTrip]);
 
   const confirmAndFetchRoadContext = () => {
     if (!selectedTrip) return;
     const latestSettings = localSettings.get();
-    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
-      return;
+    if (latestSettings.road_data_fetch_always_allow !== true && typeof window !== 'undefined') {
+      const answer = window.prompt(`${buildRoadContextPrivacyMessage(latestSettings, selectedTrip)}\n\nType "once" to continue once, "always" to allow future Get Road Data taps, or "cancel" to stop.`, 'once');
+      const normalized = String(answer || '').trim().toLowerCase();
+      if (normalized === 'always') {
+        localSettings.update({ road_data_fetch_always_allow: true });
+      } else if (normalized !== 'once') {
+        return;
+      }
     }
     contextMutation.mutate();
   };
@@ -202,8 +252,17 @@ export default function MapScreen() {
       setCurrentLocation({ lat: point.lat, lng: point.lng });
       setShowCurrentLoc(true);
       setLocError(null);
-    } catch {
-      setLocError('Could not get location. Check location permission and GPS settings.');
+      notifyUserSuccess('map_current_location', {
+        title: 'Location found',
+        description: 'The map is centered on your current GPS position.',
+      });
+    } catch (error) {
+      const message = 'Could not get location. Check location permission and GPS settings.';
+      setLocError(message);
+      notifyUserError('map_current_location', error, {
+        title: 'Location unavailable',
+        description: message,
+      });
     }
   };
 
@@ -213,6 +272,7 @@ export default function MapScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    let idleHandle = null;
     const rebuildOverlays = async () => {
       if (!allCompleted.length) {
         setDangerZones([]);
@@ -222,11 +282,9 @@ export default function MapScreen() {
 
       const zones = buildRiskHotspots(allCompleted);
       await saveDangerZones(zones);
-      let index = await loadRouteRiskIndex(privacyZones);
-      if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted, privacyZones);
-        await saveRouteRiskIndex(index);
-      } else if (privacyZones.length) {
+      const migration = await ensureRouteRiskIndexMigration({ trips: allCompleted, privacyZones });
+      const index = migration.index || await loadRouteRiskIndex(privacyZones);
+      if (privacyZones.length) {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {
@@ -235,37 +293,67 @@ export default function MapScreen() {
       }
     };
 
-    rebuildOverlays();
+    idleHandle = scheduleIdleWork(() => {
+      rebuildOverlays().catch((error) => {
+        if (cancelled) return;
+        setDangerZones([]);
+        setRouteRiskIndex(new Map());
+        notifyUserError('map_overlay_rebuild', error, {
+          title: 'Map layers unavailable',
+          description: 'Repeated-event and route-risk layers could not be rebuilt. Trip routes can still be viewed.',
+        });
+      });
+    });
     return () => {
       cancelled = true;
+      cancelIdleWork(idleHandle);
     };
-  }, [allCompleted.length, trips, privacyZonesKey]);
+  }, [allCompleted, privacyZonesKey]);
 
   const handleWhereParked = async () => {
-    const stored = await getLastParkedLocation();
-    if (!stored) {
-      setParkingError('No parked location saved yet.');
-      return;
-    }
-
-    let next = stored;
-    if (!stored.address) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const data = await response.json();
-          next = { ...stored, address: data.display_name || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-          await saveLastParkedLocation(next);
-        }
-      } catch {
-        next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+    try {
+      const stored = await getLastParkedLocation();
+      if (!stored) {
+        setParkingError('No parked location saved yet.');
+        notifyUserMessage('map_parked_location_missing', {
+          title: 'No parked location yet',
+          description: 'Road Sage will save one after a completed trip ends while stopped.',
+        });
+        return;
       }
-    }
 
-    setParkedLocation(next);
-    setParkingError(null);
-    setPlaybackMode(false);
+      let next = stored;
+      if (!stored.address) {
+        const inPrivacyZone = isPointInPrivacyZone(stored, privacyZones);
+        if (inPrivacyZone) {
+          next = { ...stored, address: 'Private location' };
+        } else {
+          const address = await reverseGeocodeIfPermitted(stored.lat, stored.lng, { privacyZones, settings });
+          next = { ...stored, address: address || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+          if (address) await saveLastParkedLocation(next);
+        }
+        if (!next.address) {
+          next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
+        }
+      }
+
+      setParkedLocation(next);
+      setParkingError(null);
+      setPlaybackMode(false);
+      notifyUserSuccess('map_parked_location', {
+        title: 'Parked location shown',
+        description: isPointInPrivacyZone(next, privacyZones)
+          ? 'The saved location is inside a privacy zone.'
+          : 'Your last saved parking position is on the map.',
+      });
+    } catch (error) {
+      const message = 'Could not load your last parked location.';
+      setParkingError(message);
+      notifyUserError('map_parked_location', error, {
+        title: 'Parked location unavailable',
+        description: message,
+      });
+    }
   };
 
   return (
@@ -453,10 +541,16 @@ export default function MapScreen() {
               <div className="font-semibold text-foreground">What Get Road Data does</div>
               <div className="mt-1">For this selected trip only:</div>
               <div className="mt-2 grid gap-1">
-                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'asks OpenStreetMap for road names and posted/default limits near the route.'}</div>
-                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'asks Open-Meteo for privacy-safe route point/date weather.'}</div>
-                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint and consent are saved in Settings.'}</div>
+                {localOnlyMode && <div className="font-semibold text-foreground">Local-only mode is on: external road, weather, and route-snapping calls are skipped.</div>}
+                <div><PrivacyBadge kind={settings.speed_limit_lookup_enabled && !localOnlyMode ? 'external' : 'local'} /> Speed limits {settings.speed_limit_lookup_enabled === true ? 'ON' : 'OFF'}: {settings.speed_limit_lookup_enabled === true && !localOnlyMode ? 'asks OpenStreetMap for road names and posted/default limits near the route.' : 'skipped; map uses GPS/fallback limits.'}</div>
+                <div><PrivacyBadge kind={settings.weather_context_enabled && !localOnlyMode ? 'external' : 'local'} /> Weather {settings.weather_context_enabled === true ? 'ON' : 'OFF'}: {settings.weather_context_enabled === true && !localOnlyMode ? 'asks Open-Meteo for privacy-safe route point/date weather.' : 'skipped; scores get no weather adjustment.'}</div>
+                <div><PrivacyBadge kind={settings.map_matching_enabled && isOsrmMapMatchingConfigured(settings) ? 'location' : 'local'} /> Snap to roads {settings.map_matching_enabled === false ? 'OFF' : isOsrmMapMatchingConfigured(settings) ? 'ON' : 'NEEDS VERIFICATION'}: {settings.map_matching_enabled === false || localOnlyMode ? 'skipped; map/playback keep GPS shape.' : isOsrmMapMatchingConfigured(settings) ? 'sends sampled GPS points to your verified OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint, consent, health check, and domain record are saved in Settings.'}</div>
               </div>
+              {selectedPrivacySummary && (
+                <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
+                  Privacy zones: {selectedPrivacySummary.message}
+                </div>
+              )}
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : selectedLayerEffect}
               </div>
@@ -480,6 +574,7 @@ export default function MapScreen() {
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
+                <span className="mr-2 align-middle"><PrivacyBadge kind={localOnlyMode ? 'local' : 'external'} /></span>
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
               </button>
               {contextMutation.isError && (
@@ -651,8 +746,28 @@ export default function MapScreen() {
 
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground">
         <div className="font-medium text-foreground mb-1">About the Map</div>
-        Map tiles provided by <strong>OpenStreetMap</strong> contributors via Leaflet. Event markers appear when a single trip is selected.
+        Online map tiles are user-controlled in Privacy settings. With tiles off, routes draw on a local plain background.
       </div>
     </div>
+  );
+}
+
+function PrivacyBadge({ kind = 'local' }) {
+  const labels = {
+    local: 'Local only',
+    external: 'External request',
+    file: 'File leaves app',
+    location: 'Location-derived',
+  };
+  const classes = {
+    local: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300',
+    external: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300',
+    file: 'bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300',
+    location: 'bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300',
+  };
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${classes[kind] || classes.local}`}>
+      {labels[kind] || labels.local}
+    </span>
   );
 }

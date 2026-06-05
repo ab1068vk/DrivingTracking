@@ -1,8 +1,14 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useSyncExternalStore, useTransition } from 'react';
 import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/rescoreEvents';
+import { activeTripStore } from '@/lib/trackingStore';
+import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
+
+const debugNavItems = import.meta.env.DEV
+  ? [{ path: '/diagnostics', label: 'Diagnostics', icon: Activity }]
+  : [];
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -12,10 +18,37 @@ const navItems = [
   { path: '/insights', label: 'Insights', icon: TrendingUp },
   { path: '/achievements', label: 'Awards', icon: Award },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
-  { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
+  ...debugNavItems,
   { path: '/vehicles', label: 'Vehicles', icon: Car },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
+
+const routePreloaders = {
+  '/': () => import('@/pages/Dashboard'),
+  '/trips': () => import('@/pages/TripHistory'),
+  '/map': () => import('@/pages/MapScreen'),
+  '/coach': () => import('@/pages/DrivingCoach'),
+  '/insights': () => import('@/pages/Insights'),
+  '/achievements': () => import('@/pages/Achievements'),
+  '/reports': () => import('@/pages/Report'),
+  '/vehicles': () => import('@/pages/Vehicles'),
+  '/settings': () => import('@/pages/Settings'),
+  ...(import.meta.env.DEV ? { '/diagnostics': () => import('@/pages/Diagnostics') } : {}),
+};
+
+const preloadRoute = (path) => {
+  routePreloaders[path]?.();
+};
+
+const shouldUseNativeNavigation = (event) => (
+  event.defaultPrevented ||
+  event.button !== 0 ||
+  event.metaKey ||
+  event.altKey ||
+  event.ctrlKey ||
+  event.shiftKey ||
+  event.currentTarget.target
+);
 
 function BrandMark({ className = '' }) {
   return (
@@ -28,22 +61,33 @@ function BrandMark({ className = '' }) {
 
 export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [trackingActive, setTrackingActive] = useState(false);
   const [rescoreProgress, setRescoreProgress] = useState(null);
+  const [isPending, startTransition] = useTransition();
   const location = useLocation();
+  const navigate = useNavigate();
+  const activeTripSnapshot = useSyncExternalStore(
+    activeTripStore.subscribe,
+    activeTripStore.getSnapshot,
+    activeTripStore.getSnapshot
+  );
+  const [hadInitialActiveTrip] = useState(() => {
+    try {
+      return Boolean(activeTripStore.get?.());
+    } catch {
+      return false;
+    }
+  });
+  const trackingActive = Boolean(activeTripSnapshot.trip) ||
+    (activeTripSnapshot.version === 0 && hadInitialActiveTrip);
 
-  // Listen for tracking state changes
-  useEffect(() => {
-    const checkTracking = () => {
-      try {
-        const raw = localStorage.getItem('drivesense_active_trip');
-        setTrackingActive(!!raw);
-      } catch {}
-    };
-    checkTracking();
-    const interval = setInterval(checkTracking, 2000);
-    return () => clearInterval(interval);
-  }, []);
+  const handleNavClick = (event, path) => {
+    if (shouldUseNativeNavigation(event)) return;
+    event.preventDefault();
+    setMobileMenuOpen(false);
+    startTransition(() => {
+      navigate(path);
+    });
+  };
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -68,6 +112,12 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {isPending && (
+        <div
+          className="fixed left-0 top-0 z-[60] h-0.5 bg-primary shadow-[0_0_10px_rgba(20,184,166,0.55)] motion-safe:animate-pulse"
+          style={{ width: '70%', transition: 'width 0.3s ease' }}
+        />
+      )}
       {/* Top Header */}
       <header className="bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
         <div className="flex items-center gap-3">
@@ -106,6 +156,9 @@ export default function Layout() {
                 key={item.path}
                 to={item.path}
                 end={item.path === '/'}
+                onClick={(event) => handleNavClick(event, item.path)}
+                onFocus={() => preloadRoute(item.path)}
+                onMouseEnter={() => preloadRoute(item.path)}
                 className={({ isActive }) =>
                   `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                     isActive
@@ -157,6 +210,9 @@ export default function Layout() {
                       key={item.path}
                       to={item.path}
                       end={item.path === '/'}
+                      onClick={(event) => handleNavClick(event, item.path)}
+                      onFocus={() => preloadRoute(item.path)}
+                      onTouchStart={() => preloadRoute(item.path)}
                       className={({ isActive }) =>
                         `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                           isActive
@@ -180,6 +236,9 @@ export default function Layout() {
       <main className="flex-1 container max-w-6xl mx-auto px-4 py-6">
         <Outlet />
       </main>
+      <footer className="border-t border-border/50 bg-card/50 px-4 py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+        {LEGAL_DISCLAIMER_SHORT} Obey posted signs and local laws.
+      </footer>
     </div>
   );
 }

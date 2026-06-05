@@ -2,8 +2,10 @@ import { jsPDF } from 'jspdf';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { calculateNoHarshBrakeStreak, estimateTripEconomics } from '@/lib/tripInsights';
-import { formatDate, formatDistance, formatDuration, generateReportSummary } from '@/lib/tripEngine';
+import { formatDate, formatDistance, formatDuration } from '@/lib/gps/formatting';
+import { generateReportSummary } from '@/engine/export/index.js';
 import { formatCurrencyAmount } from '@/lib/currency';
+import { buildEncryptedExport, encryptedExportFilename } from '@/lib/exportEncryption';
 import {
   METRIC_REGISTRY,
   MONTHLY_PDF_METRIC_KEYS,
@@ -148,7 +150,7 @@ function writeMetricReferencePage(doc, title, metricKeys) {
  * @param {string} period
  * @param {{units?:string,currencySymbol?:string}} settings
  */
-export async function exportMonthlyReportPDF(trips = [], period = 'month', settings = {}) {
+export async function exportMonthlyReportPDF(trips = [], period = 'month', settings = {}, { password } = {}) {
   const tripList = Array.isArray(trips) ? trips : [];
   const doc = new jsPDF();
   const summary = generateReportSummary(tripList);
@@ -264,22 +266,38 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   drawHorizontalBars(doc, 'Risk Event Breakdown', riskRows, y + 12, { barWidth: 82, barX: 78 });
   writeMetricReferencePage(doc, 'Metric Reference', MONTHLY_PDF_METRIC_KEYS);
 
-  if (isNativePlatform()) {
+  if (password) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
-    const result = await saveExportToDownloads({
+    const exportFilename = encryptedExportFilename(filename);
+    const encrypted = await buildEncryptedExport({
       filename,
       data: base64,
       mimeType: 'application/pdf',
-      base64: true,
+      password,
+      kind: 'pdf',
     });
-    return { ...result, filename, native: true };
+    if (isNativePlatform()) {
+      const result = await saveExportToDownloads({
+        filename: exportFilename,
+        data: encrypted,
+        mimeType: 'application/octet-stream',
+      });
+      return { ...result, filename: exportFilename, native: true, encrypted: true };
+    }
+
+    downloadBrowserBlob(encrypted, exportFilename);
+    return { filename: exportFilename, native: false, encrypted: true };
+  }
+
+  if (isNativePlatform()) {
+    throw new Error('PDF exports require a password on native platforms.');
   }
 
   doc.save(filename);
   return { filename, native: false };
 }
 
-export async function exportUBIReportPDF(ubiReport, settings = {}) {
+export async function exportUBIReportPDF(ubiReport, settings = {}, { password } = {}) {
   const doc = new jsPDF();
   const now = new Date(ubiReport.generatedAt || Date.now());
   const insufficientData = ubiReport.insufficientData === true || ubiReport.ubiScore == null;
@@ -291,21 +309,30 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
   doc.text('Road Sage - Driver Score Card', 14, 22);
+  doc.setFontSize(9);
+  doc.setTextColor(200, 80, 0);
+  doc.text(
+    'NOT AN INSURANCE RATING - internal coaching estimate only, not for insurance, legal, or underwriting use.',
+    14,
+    30,
+    { maxWidth: 182 }
+  );
+  doc.setTextColor(0, 0, 0);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
-  doc.text(`Generated: ${now.toLocaleDateString()}`, 14, 32);
-  doc.text(`Period: ${period}`, 14, 39);
+  doc.text(`Generated: ${now.toLocaleDateString()}`, 14, 39);
+  doc.text(`Period: ${period}`, 14, 46);
 
   doc.setDrawColor(220, 38, 38);
   doc.setFillColor(254, 242, 242);
-  doc.roundedRect(14, 47, 182, 26, 2, 2, 'FD');
+  doc.roundedRect(14, 54, 182, 26, 2, 2, 'FD');
   doc.setTextColor(127, 29, 29);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
-  doc.text(UBI_INSURANCE_NOTICE, 18, 56);
+  doc.text(UBI_INSURANCE_NOTICE, 18, 63);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text(`${SCORE_ESTIMATE_NOTICE}. ${UBI_INSURANCE_NOTICE_DETAIL}`, 18, 63, { maxWidth: 174 });
+  doc.text(`${SCORE_ESTIMATE_NOTICE}. ${UBI_INSURANCE_NOTICE_DETAIL}`, 18, 70, { maxWidth: 174 });
   doc.setTextColor(0);
 
   doc.setFont('helvetica', 'bold');
@@ -359,17 +386,46 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   doc.setTextColor(0);
   writeMetricReferencePage(doc, 'Metric Reference', UBI_PDF_METRIC_KEYS);
 
-  if (isNativePlatform()) {
+  if (password) {
     const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
-    const result = await saveExportToDownloads({
+    const exportFilename = encryptedExportFilename(filename);
+    const encrypted = await buildEncryptedExport({
       filename,
       data: base64,
       mimeType: 'application/pdf',
-      base64: true,
+      password,
+      kind: 'pdf',
     });
-    return { ...result, filename, native: true };
+    if (isNativePlatform()) {
+      const result = await saveExportToDownloads({
+        filename: exportFilename,
+        data: encrypted,
+        mimeType: 'application/octet-stream',
+      });
+      return { ...result, filename: exportFilename, native: true, encrypted: true };
+    }
+
+    downloadBrowserBlob(encrypted, exportFilename);
+    return { filename: exportFilename, native: false, encrypted: true };
+  }
+
+  if (isNativePlatform()) {
+    throw new Error('PDF exports require a password on native platforms.');
   }
 
   doc.save(filename);
   return { filename, native: false };
+}
+
+function downloadBrowserBlob(content, filename) {
+  const blob = new Blob([content], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }

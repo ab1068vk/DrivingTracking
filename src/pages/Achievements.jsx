@@ -7,6 +7,8 @@ import { vehicleService } from '@/api/vehicles';
 import { localSettings } from '@/lib/trackingStore';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 import { syncAchievementNotifications } from '@/lib/notificationService';
+import { logError } from '@/lib/errorReporting';
+import { notifyUserError } from '@/lib/userFeedback';
 
 const progressLabel = (badge) => {
   if (badge.earned) return 'Unlocked';
@@ -41,10 +43,18 @@ export default function Achievements() {
   const { data: allTrips = [], isLoading } = useQuery({
     queryKey: ['achievement-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    meta: {
+      errorTitle: 'Achievements unavailable',
+      errorDescription: 'Road Sage could not load trips for achievement progress.',
+    },
   });
   const { data: vehicles = [] } = useQuery({
     queryKey: ['achievement-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    meta: {
+      errorTitle: 'Achievement vehicle data unavailable',
+      errorDescription: 'Vehicle-based achievements may be incomplete until vehicles load.',
+    },
   });
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');
@@ -52,7 +62,14 @@ export default function Achievements() {
   const earned = badges.filter((badge) => badge.earned);
 
   useEffect(() => {
-    syncAchievementNotifications(badges, { requestPermission: false }).catch(() => {});
+    syncAchievementNotifications(badges, { requestPermission: false }).catch((err) => {
+      logError('achievement_notification_sync', err, { badge_count: badges.length });
+      notifyUserError('achievement_notification_sync', err, {
+        title: 'Achievement notification delayed',
+        description: 'Achievements are still calculated, but Road Sage could not refresh badge notifications.',
+        log: false,
+      });
+    });
   }, [badges]);
 
   return (

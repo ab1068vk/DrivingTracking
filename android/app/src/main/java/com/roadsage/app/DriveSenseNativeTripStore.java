@@ -1,0 +1,165 @@
+package com.roadsage.app;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.UUID;
+
+class DriveSenseNativeTripStore {
+    private static final String PREFS_OLD = "drivesense_native_tracking";
+    private static final String PREFS = "road_sage_native_tracking";
+    private static final String PREFS_ENCRYPTED = "road_sage_native_tracking_v2";
+    private static final String KEY_COMPLETED_TRIPS = "completed_trips";
+    private static final String KEY_SERVICE_ENABLED = "service_enabled";
+    private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
+    private static final String KEY_LAST_PARKED = "last_parked_location";
+    private static final String KEY_MIGRATED_FROM_V1 = "migrated_from_drivesense_v1";
+    private static final String KEY_MIGRATED_FROM_PLAINTEXT = "migrated_from_plaintext";
+    private static final int MAX_DIAGNOSTIC_EVENTS = 120;
+    private static SharedPreferences encryptedPrefs;
+
+    static SharedPreferences prefs(Context context) {
+        return migratePlaintextPrefsIfNeeded(context);
+    }
+
+    static synchronized SharedPreferences migratePlaintextPrefsIfNeeded(Context context) {
+        if (encryptedPrefs == null) {
+            encryptedPrefs = EncryptedPreferenceStore.open(context.getApplicationContext(), PREFS_ENCRYPTED);
+            if (!encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_PLAINTEXT, false)) {
+                SharedPreferences.Editor editor = encryptedPrefs.edit();
+                boolean migratedFromV1 = copyPlaintextPrefs(context, PREFS_OLD, encryptedPrefs, editor);
+                copyPlaintextPrefs(context, PREFS, encryptedPrefs, editor);
+                editor.putBoolean(KEY_MIGRATED_FROM_V1, migratedFromV1 || encryptedPrefs.getBoolean(KEY_MIGRATED_FROM_V1, false));
+                editor.putBoolean(KEY_MIGRATED_FROM_PLAINTEXT, true);
+                editor.commit();
+            }
+        }
+
+        EncryptedPreferenceStore.deletePlaintext(context, PREFS);
+        EncryptedPreferenceStore.deletePlaintext(context, PREFS_OLD);
+        return encryptedPrefs;
+    }
+
+    static boolean isServiceEnabled(Context context) {
+        return prefs(context).getBoolean(KEY_SERVICE_ENABLED, false);
+    }
+
+    static void setServiceEnabled(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean(KEY_SERVICE_ENABLED, enabled).apply();
+    }
+
+    static JSONArray getCompletedTrips(Context context) {
+        String raw = prefs(context).getString(KEY_COMPLETED_TRIPS, "[]");
+        try {
+            return new JSONArray(raw);
+        } catch (JSONException e) {
+            return new JSONArray();
+        }
+    }
+
+    static void addCompletedTrip(Context context, JSONObject trip) {
+        JSONArray trips = getCompletedTrips(context);
+        trips.put(trip);
+        prefs(context).edit().putString(KEY_COMPLETED_TRIPS, trips.toString()).apply();
+    }
+
+    static void clearCompletedTrips(Context context) {
+        SharedPreferences storage = prefs(context);
+        JSONArray trips = getCompletedTrips(context);
+        for (int i = 0; i < trips.length(); i++) {
+            JSONObject trip = trips.optJSONObject(i);
+            if (trip == null) continue;
+            RoadSageAutoTrackingService.zeroMotionSamples(trip.optJSONArray("motion_samples"));
+        }
+        storage.edit().putString(KEY_COMPLETED_TRIPS, trips.toString()).commit();
+        storage.edit().putString(KEY_COMPLETED_TRIPS, "[]").apply();
+    }
+
+    static JSONArray getDiagnosticEvents(Context context) {
+        String raw = prefs(context).getString(KEY_DIAGNOSTIC_EVENTS, "[]");
+        try {
+            return new JSONArray(raw);
+        } catch (JSONException e) {
+            return new JSONArray();
+        }
+    }
+
+    static void addDiagnosticEvent(Context context, JSONObject event) {
+        JSONArray current = getDiagnosticEvents(context);
+        JSONArray next = new JSONArray();
+        next.put(event);
+        for (int i = 0; i < current.length() && next.length() < MAX_DIAGNOSTIC_EVENTS; i++) {
+            JSONObject item = current.optJSONObject(i);
+            if (item != null) next.put(item);
+        }
+        prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, next.toString()).commit();
+    }
+
+    static void clearDiagnosticEvents(Context context) {
+        prefs(context).edit().putString(KEY_DIAGNOSTIC_EVENTS, "[]").apply();
+    }
+
+    static JSONObject getLastParkedLocation(Context context) {
+        prefs(context);
+        return ParkedLocationPreferenceReconciler.readLatest(context);
+    }
+
+    static void saveLastParkedLocation(Context context, double lat, double lng, long timestampMs, String tripId, String source) {
+        JSONObject parked = new JSONObject();
+        try {
+            parked.put("lat", roundCoordinate(lat));
+            parked.put("lng", roundCoordinate(lng));
+            parked.put("timestamp", RoadSageAutoTrackingService.iso(timestampMs));
+            parked.put("timestamp_ms", timestampMs);
+            parked.put("tripId", tripId);
+            parked.put("source", source);
+            ParkedLocationPreferenceReconciler.writeCurrent(context, parked);
+        } catch (JSONException ignored) {}
+    }
+
+    static void saveLastParkedLocation(Context context, JSONObject parked) {
+        if (parked != null) {
+            try {
+                double lat = parked.optDouble("lat", Double.NaN);
+                double lng = parked.optDouble("lng", Double.NaN);
+                if (Double.isFinite(lat)) parked.put("lat", roundCoordinate(lat));
+                if (Double.isFinite(lng)) parked.put("lng", roundCoordinate(lng));
+            } catch (JSONException ignored) {}
+        }
+        ParkedLocationPreferenceReconciler.writeCurrent(context, parked);
+    }
+
+    static void clearLastParkedLocation(Context context) {
+        ParkingLocationClearer.clear(context);
+    }
+
+    static String newTripId() {
+        return "native_trip_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private static double roundCoordinate(double value) {
+        if (!Double.isFinite(value)) return value;
+        return Math.round(value * 100000d) / 100000d;
+    }
+
+    private static boolean copyPlaintextPrefs(
+        Context context,
+        String prefsName,
+        SharedPreferences encryptedPrefs,
+        SharedPreferences.Editor encryptedEditor
+    ) {
+        SharedPreferences plaintext = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
+        if (plaintext.getAll().isEmpty()) return false;
+
+        for (java.util.Map.Entry<String, ?> entry : plaintext.getAll().entrySet()) {
+            String key = entry.getKey();
+            if (key == null || encryptedPrefs.contains(key)) continue;
+            EncryptedPreferenceStore.put(encryptedEditor, key, entry.getValue());
+        }
+        return true;
+    }
+}

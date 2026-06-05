@@ -1,6 +1,7 @@
 import { registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
-import { calculateSegmentMetrics, normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/tripEngine';
+import { calculateSegmentMetrics, normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/gps/math';
+import { truncateRoutePoint } from '@/lib/gps/sanitize';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import {
   requestBackgroundLocationPermission,
@@ -32,12 +33,12 @@ export async function getCurrentLocation() {
 
   if (isNativePlatform()) {
     const position = await Geolocation.getCurrentPosition(watchOptions);
-    return normalizeLocationPoint(position);
+    return truncateRoutePoint(normalizeLocationPoint(position));
   }
 
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
-      (position) => resolve(normalizeLocationPoint(position)),
+      (position) => resolve(truncateRoutePoint(normalizeLocationPoint(position))),
       (error) => reject(error),
       watchOptions
     );
@@ -56,8 +57,9 @@ export function createDrivingTrackingService({ background = false } = {}) {
     const normalizedPoint = previousPoint
       ? { ...point, speed_kmh: segment.reliableSpeedKmh }
       : { ...point, speed_kmh: point.speed_kmh != null && point.speed_kmh >= 5 ? point.speed_kmh : 0 };
-    previousPoint = normalizedPoint;
-    onPoint(normalizedPoint);
+    const storagePoint = truncateRoutePoint(normalizedPoint);
+    previousPoint = storagePoint;
+    onPoint(storagePoint);
   };
 
   const emitInitialPoint = async (onPoint) => {
@@ -99,9 +101,10 @@ export function createDrivingTrackingService({ background = false } = {}) {
   return {
     async start(onPoint, onError) {
       try {
-        const allowed = background
+        const permissionResult = background
           ? await requestBackgroundLocationPermission()
           : await requestForegroundLocationPermission();
+        const allowed = permissionResult === true || permissionResult?.granted === true;
 
         if (!allowed) {
           onError?.({

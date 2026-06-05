@@ -1,5 +1,5 @@
-import { SCORING_VERSION } from '@/lib/tripEngine';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
+import { getJson, getOrCreateInstallHash, setJson } from '@/lib/mobileStorage';
 import {
   MIN_CALIBRATION_LABEL_COUNT,
   surveyRatingToTargetScore,
@@ -8,17 +8,47 @@ import {
 export const CALIBRATION_LABEL_SCHEMA_VERSION = 1;
 export const CALIBRATION_LABEL_TARGET_COUNT = MIN_CALIBRATION_LABEL_COUNT;
 export const CALIBRATION_LABEL_COLLECTION = 'trip_calibration_labels';
+const CALIBRATION_TIMESTAMP_GRANULARITY_MS = 3_600_000;
+export const CALIBRATION_MILESTONES = Object.freeze([
+  { count: 10, label: 'Getting started', benefit: 'Trip rating history begins' },
+  { count: 50, label: 'Early insights', benefit: 'Trend patterns emerging' },
+  { count: 200, label: 'Personalized', benefit: 'Local threshold suggestions unlocked' },
+  { count: 500, label: 'Well-calibrated', benefit: 'Scoring models refined to your style' },
+  { count: 2000, label: 'Fully calibrated', benefit: 'Community calibration eligible' },
+]);
 export const POST_TRIP_SURVEY_QUESTION = 'How did this drive feel? (1 risky - 5 excellent)';
 export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
+const ANONYMOUS_UPLOAD_ROTATION_MS = 30 * 24 * 60 * 60 * 1000;
 export const SURVEY_RATING_OPTIONS = Object.freeze([
-  { value: 1, label: 'Risky' },
-  { value: 2, label: 'Poor' },
-  { value: 3, label: 'Okay' },
-  { value: 4, label: 'Good' },
-  { value: 5, label: 'Excellent' },
+  { value: 5, label: 'Careful drive', shortLabel: 'Careful' },
+  { value: 4, label: 'Normal drive', shortLabel: 'Normal' },
+  { value: 3, label: 'Rushed/stressed', shortLabel: 'Rushed' },
+  { value: 1, label: 'Something happened', shortLabel: 'Something happened' },
 ]);
 export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'too_low']);
 export const WAS_DRIVER_OPTIONS = Object.freeze(['yes', 'no', 'unsure']);
+export const FATIGUE_SELF_REPORT_QUESTION = 'How alert did you feel during this drive?';
+export const FATIGUE_SELF_REPORT_OPTIONS = Object.freeze(['alert', 'normal', 'tired', 'very_tired']);
+export const READINESS_SURVEY_QUESTION = Object.freeze({
+  key: 'readiness_accuracy',
+  prompt: 'Was your pre-trip readiness estimate accurate?',
+});
+export const READINESS_ACCURACY_OPTIONS = Object.freeze([
+  { value: 'underestimated_risk', label: 'I felt less ready than it showed' },
+  { value: 'accurate', label: 'It matched how I felt' },
+  { value: 'overestimated_risk', label: 'I felt more ready than it showed' },
+  { value: 'no_estimate', label: 'No estimate was shown' },
+]);
+export const READINESS_CALIBRATION_MILESTONES = Object.freeze([
+  { count: 10, message: 'Readiness model is learning your patterns' },
+  { count: 25, message: 'Readiness weights partially calibrated' },
+  { count: 50, message: 'Readiness model fully calibrated' },
+]);
+export const READINESS_SURVEY_SCORE_OFFSET = Object.freeze({
+  underestimated_risk: -15,
+  accurate: 0,
+  overestimated_risk: 15,
+});
 export const TRIP_CONTEXT_TAG_OPTIONS = Object.freeze([
   'traffic',
   'weather',
@@ -44,6 +74,101 @@ const numberOrNull = (value) => {
 };
 
 const boolOrNull = (value) => (typeof value === 'boolean' ? value : null);
+
+/**
+ * Adds Laplace-distributed noise to a Unix timestamp.
+ * Calibrated for epsilon=1.0 differential privacy with sensitivity of 1 hour.
+ *
+ * epsilon=1.0 means that for adjacent timestamps differing by 1 hour, the
+ * probability ratio of observing any output is at most e^1, or about 2.72.
+ */
+export function addLaplaceNoise(timestampMs, sensitivityMs = CALIBRATION_TIMESTAMP_GRANULARITY_MS, epsilon = 1.0, random = Math.random) {
+  const timestamp = Number(timestampMs);
+  const sensitivity = Number(sensitivityMs);
+  const privacyBudget = Number(epsilon);
+
+  if (!Number.isFinite(timestamp)) return null;
+  if (!Number.isFinite(sensitivity) || sensitivity <= 0) {
+    throw new Error('Laplace sensitivity must be a positive number.');
+  }
+  if (!Number.isFinite(privacyBudget) || privacyBudget <= 0) {
+    throw new Error('Laplace epsilon must be a positive number.');
+  }
+
+  const sample = Number(random());
+  const boundedSample = Number.isFinite(sample)
+    ? Math.min(1 - Number.EPSILON, Math.max(Number.EPSILON, sample))
+    : 0.5;
+  const u = boundedSample - 0.5;
+  const scale = sensitivity / privacyBudget;
+  const noise = -scale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
+  const noisy = timestamp + noise;
+
+  return Math.round(noisy / CALIBRATION_TIMESTAMP_GRANULARITY_MS) * CALIBRATION_TIMESTAMP_GRANULARITY_MS;
+}
+
+function normalizedLabelCount(labelCount) {
+  const count = Math.floor(Number(labelCount));
+  return Number.isFinite(count) ? Math.max(0, count) : 0;
+}
+
+export function getCalibrationMilestone(labelCount) {
+  const count = normalizedLabelCount(labelCount);
+  return CALIBRATION_MILESTONES
+    .slice()
+    .reverse()
+    .find((milestone) => count >= milestone.count) ?? null;
+}
+
+export function getNextCalibrationMilestone(labelCount) {
+  const count = normalizedLabelCount(labelCount);
+  return CALIBRATION_MILESTONES.find((milestone) => count < milestone.count) ?? null;
+}
+
+const tripIdOf = (item = {}) => {
+  const id = item.trip_id ?? item.tripId ?? item.id;
+  return id == null ? null : String(id);
+};
+
+const hasComputedScore = (trip = {}) => (
+  trip.score_overall != null ||
+  trip.overall_score != null ||
+  trip.scoreOutput?.overall != null
+);
+
+const tripTimeMs = (trip = {}) => {
+  const value = trip.end_time ?? trip.start_time ?? trip.created_at ?? trip.createdAt;
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+};
+
+export function getCompletionRate(allTrips = [], labels = []) {
+  const trips = Array.isArray(allTrips) ? allTrips.filter(hasComputedScore) : [];
+  const total = trips.length;
+  const now = Date.now();
+  const recentCutoff = now - 30 * 24 * 60 * 60 * 1000;
+  const labelValues = Array.isArray(labels)
+    ? labels
+    : Object.values(labels && typeof labels === 'object' ? labels : {});
+  const labeledTripIds = new Set(labelValues
+    .filter((label) => label && label.skipped !== true)
+    .map(tripIdOf)
+    .filter(Boolean));
+  const labeled = labeledTripIds.size > 0
+    ? trips.filter((trip) => labeledTripIds.has(String(trip.id))).length
+    : Math.min(labelValues.filter((label) => label && label.skipped !== true).length, total);
+  const unlabeled_recent_30d = trips.filter((trip) => {
+    const time = tripTimeMs(trip);
+    return time != null && time >= recentCutoff && !labeledTripIds.has(String(trip.id));
+  }).length;
+
+  return {
+    labeled,
+    total,
+    rate: total > 0 ? labeled / total : 0,
+    unlabeled_recent_30d,
+  };
+}
 
 const round = (value, digits = 3) => {
   const number = Number(value);
@@ -89,12 +214,69 @@ function normalizeRating(value, { optional = false } = {}) {
   return normalized;
 }
 
+function normalizeFatigueSelfReport(value) {
+  if (value == null || value === '') return null;
+  if (!FATIGUE_SELF_REPORT_OPTIONS.includes(value)) {
+    throw new Error(`fatigue_self_report must be one of: ${FATIGUE_SELF_REPORT_OPTIONS.join(', ')}.`);
+  }
+  return value;
+}
+
+function normalizeReadinessAccuracy(value) {
+  if (value == null || value === '') return null;
+  if (!READINESS_ACCURACY_OPTIONS.some((option) => option.value === value)) {
+    throw new Error(`readiness_accuracy must be one of: ${READINESS_ACCURACY_OPTIONS.map((option) => option.value).join(', ')}.`);
+  }
+  return value;
+}
+
+function tripEndTimeMs(trip = {}) {
+  const value = trip.end_time ?? trip.endTime ?? trip.completed_at ?? trip.completedAt;
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+}
+
+function tripEndHour(trip = {}) {
+  const time = tripEndTimeMs(trip);
+  if (time == null) return null;
+  return new Date(time).getHours();
+}
+
+export function shouldAskFatigueSelfReport(trip = {}) {
+  const durationMin = Math.max(0, numberOrNull(trip.duration_seconds) || 0) / 60;
+  const hour = tripEndHour(trip);
+
+  return durationMin > 45 && hour != null && (hour >= 20 || hour < 8);
+}
+
+export function shouldAskReadinessSurvey(trip = {}, readinessContext = trip?.pre_trip_readiness_context) {
+  if (trip?.status !== 'completed') return false;
+  const durationMin = Math.max(0, numberOrNull(trip.duration_seconds) || 0) / 60;
+  if (durationMin < 5) return false;
+  const recordId = readinessContext?.recordId ??
+    readinessContext?.signalHistoryRecordId ??
+    trip?.readiness_signal_record_id;
+  if (!recordId) return false;
+  if (readinessContext?.evidenceTier === 'bootstrapping') return false;
+  if (trip.readiness_survey_answered === true) return false;
+  return true;
+}
+
+export function readinessSurveySyntheticScore(responseValue, readinessContext = {}, trip = {}) {
+  const response = normalizeReadinessAccuracy(responseValue);
+  if (!response || response === 'no_estimate') return null;
+  const baseScore = numberOrNull(readinessContext.actualScore ?? trip.score_overall ?? trip.overall_score ?? 72) ?? 72;
+  return Math.max(0, Math.min(100, baseScore + (READINESS_SURVEY_SCORE_OFFSET[response] ?? 0)));
+}
+
 function normalizeSurveyLabel(input = {}) {
   const source = typeof input === 'number' ? { overallDriveRating: input } : input || {};
   const overallDriveRating = normalizeRating(source.overallDriveRating ?? source.rating);
   const scoreAccuracy = source.scoreAccuracy || null;
   const wasDriver = source.wasDriver || 'unsure';
   const tripDifficulty = normalizeRating(source.tripDifficulty, { optional: true });
+  const fatigueSelfReport = normalizeFatigueSelfReport(source.fatigue_self_report ?? source.fatigueSelfReport);
+  const readinessAccuracy = normalizeReadinessAccuracy(source.readiness_accuracy ?? source.readinessAccuracy);
 
   if (scoreAccuracy != null && !SCORE_ACCURACY_OPTIONS.includes(scoreAccuracy)) {
     throw new Error(`scoreAccuracy must be one of: ${SCORE_ACCURACY_OPTIONS.join(', ')}.`);
@@ -116,6 +298,8 @@ function normalizeSurveyLabel(input = {}) {
     wasDriver,
     tripDifficulty,
     contextTags,
+    fatigue_self_report: fatigueSelfReport,
+    readiness_accuracy: readinessAccuracy,
   };
 }
 
@@ -229,27 +413,56 @@ export function isCalibrationEligible(qualityFlags = []) {
   ].includes(flag));
 }
 
-function roundedCreatedAt(value, granularity = 'hour') {
-  const date = value ? new Date(value) : new Date();
-  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 13) + ':00:00.000Z';
-  if (granularity === 'day') {
-    date.setUTCHours(0, 0, 0, 0);
-  } else {
-    date.setUTCMinutes(0, 0, 0);
-  }
-  return date.toISOString();
+function timeMsFromValue(value) {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
 }
 
-const randomInstallId = () => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return `install_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-};
+function tripStartTimeMs(trip = {}) {
+  return timeMsFromValue(
+    trip.start_time ??
+      trip.startTime ??
+      trip.started_at ??
+      trip.startedAt ??
+      trip.start_timestamp ??
+      trip.startTimestamp
+  );
+}
+
+function calibrationTimestampMs(trip = {}, options = {}) {
+  return (
+    tripStartTimeMs(trip) ??
+    timeMsFromValue(options.createdAt ?? options.submittedAt) ??
+    Date.now()
+  );
+}
+
+function noisyRoundedCreatedAt(trip = {}, options = {}) {
+  const timestampMs = calibrationTimestampMs(trip, options);
+  const noisyTimestampMs = addLaplaceNoise(
+    timestampMs,
+    options.timestampSensitivityMs ?? CALIBRATION_TIMESTAMP_GRANULARITY_MS,
+    options.timestampPrivacyEpsilon ?? 1.0,
+    options.timestampNoiseRandom ?? Math.random
+  );
+  return new Date(noisyTimestampMs).toISOString();
+}
 
 export async function getAnonymousInstallIdHash() {
+  const now = Date.now();
+  const bucket = Math.floor(now / ANONYMOUS_UPLOAD_ROTATION_MS);
   const existing = await getJson(ANONYMOUS_INSTALL_ID_KEY, null);
-  const installId = typeof existing === 'string' && existing ? existing : randomInstallId();
-  if (!existing) await setJson(ANONYMOUS_INSTALL_ID_KEY, installId);
-  const input = `road-sage-calibration:${installId}`;
+  const existingBucket = existing && typeof existing === 'object' ? existing.bucket : null;
+  const existingSeed = existing && typeof existing === 'object' ? existing.seed : null;
+  const seed = existingBucket === bucket && typeof existingSeed === 'string' && existingSeed
+    ? existingSeed
+    : `${await getOrCreateInstallHash()}:${bucket}:${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+
+  if (existingBucket !== bucket || existingSeed !== seed) {
+    await setJson(ANONYMOUS_INSTALL_ID_KEY, { bucket, seed, rotated_at: new Date(now).toISOString() });
+  }
+
+  const input = `road-sage-calibration:${seed}`;
 
   if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
@@ -264,10 +477,16 @@ export async function getAnonymousInstallIdHash() {
 }
 
 export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {}) {
-  const surveyLabel = normalizeSurveyLabel(surveyInput);
+  const normalizedSurveyLabel = normalizeSurveyLabel(surveyInput);
+  const surveyLabel = shouldAskFatigueSelfReport(trip)
+    ? normalizedSurveyLabel
+    : { ...normalizedSurveyLabel, fatigue_self_report: null };
+  const surveyLabelWithReadiness = shouldAskReadinessSurvey(trip, trip.pre_trip_readiness_context)
+    ? surveyLabel
+    : { ...surveyLabel, readiness_accuracy: null };
   const tripFeatureSummary = buildTripFeatureSummary(trip);
   const scoreOutput = buildScoreOutputSummary(trip);
-  const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabel, tripFeatureSummary);
+  const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabelWithReadiness, tripFeatureSummary);
   const scoringVersion = trip.score_provenance?.scoring_version || SCORING_VERSION;
   const labelId = options.labelId || `label_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
@@ -276,10 +495,10 @@ export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {
     schemaVersion: CALIBRATION_LABEL_SCHEMA_VERSION,
     anonymousInstallIdHash: options.anonymousInstallIdHash || null,
     scoringModelVersion: scoringVersion,
-    createdAt: roundedCreatedAt(options.createdAt || options.submittedAt, options.createdAtGranularity || 'hour'),
+    createdAt: noisyRoundedCreatedAt(trip, options),
     tripFeatureSummary,
     scoreOutput,
-    surveyLabel,
+    surveyLabel: surveyLabelWithReadiness,
     dataQualityFlags,
     eligibleForCalibration: isCalibrationEligible(dataQualityFlags),
   };

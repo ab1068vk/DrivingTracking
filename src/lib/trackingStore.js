@@ -1,32 +1,72 @@
 /**
  * Road Sage Tracking Store
- * Manages active trip state in memory and persists to sessionStorage for crash recovery.
+ * Manages active trip state in memory and persists encrypted native crash recovery.
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { Capacitor } from '@capacitor/core';
+import { isEphemeralModeActive } from '@/lib/ephemeralTripMode';
+import { truncateCoord, truncateRoutePoint, truncateTripCoordinates } from '@/lib/gps/sanitize';
+import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
+import { isValidLatLng } from '@/lib/mapDefaults';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
-import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import {
+  BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
+  BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES,
+  BIOMETRIC_LOCK_TIMEOUT_MIN_MINUTES,
+  BIOMETRIC_LOCK_DEFAULT_ENABLED,
+  NIGHT_END_TIME,
+  NIGHT_START_TIME,
+  ONBOARDING_COMPLETED_KEY,
+} from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
-import { ECO_DEFAULTS } from '@/lib/tripEngine';
-import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { isNativePlatform } from '@/lib/nativePlatform';
+import DriveSenseActivityRecognition from '@/lib/driveSenseNativePlugin';
+import { evaluateOsrmEndpointTrust, normalizeOsrmEndpoint } from '@/lib/osrmEndpointTrust';
+import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
+import { enforceLocalOnlyPatch } from '@/lib/privacyControls';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
   DEFAULT_GRID_CO2_KG_PER_KWH,
   DEFAULT_TREE_CO2_KG_PER_YEAR,
-} from '@/lib/tripInsights';
+} from '@/lib/vehicleEconomyConstants';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+const PRIVACY_ZONES_KEY = 'road_sage_privacy_zones';
+const PENDING_NATIVE_SYNC_KEY = 'drivesense_pending_native_sync';
+const ACTIVE_TRIP_STORAGE_KEY = resolveStorageKey(ACTIVE_TRIP_KEY);
+const SETTINGS_STORAGE_KEY = resolveStorageKey(SETTINGS_KEY);
+const ECO_DEFAULTS = Object.freeze({
+  CRUISE_SCORE_MULTIPLIER: scoringValue('ECO_CRUISE_SCORE_MULTIPLIER'),
+  IDLE_PENALTY_MULTIPLIER: scoringValue('ECO_IDLE_PENALTY_MULTIPLIER'),
+  IDLE_MAX_PENALTY: scoringValue('ECO_IDLE_MAX_PENALTY'),
+});
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
+const PRIVACY_ZONE_RADIUS_DEFAULT_M = 200;
+const PRIVACY_ZONE_RADIUS_MIN_M = 50;
+const PRIVACY_ZONE_RADIUS_MAX_M = 500;
+const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
+let pendingNativeSettingsSync = '';
+let settingsWriteQueue = Promise.resolve();
 let memorySettings = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
+let highWaterNativeRevision = 0;
+let settingsMutationCounter = 0;
+let activeTripMemory = null;
+const LIVE_POINTS_MAX = 6000;
+let liveRoutePoints = [];
+const activeTripListeners = new Set();
+let activeTripSnapshot = { trip: null, version: 0 };
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 12;
+const PROTOTYPE_POISON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const settingsStorage = () => {
+  if (isNativePlatform()) return null;
   try {
     return typeof localStorage !== 'undefined' ? localStorage : null;
   } catch {
@@ -34,20 +74,344 @@ const settingsStorage = () => {
   }
 };
 
+const cacheSettingsForRuntime = (settings) => {
+  memorySettings = settings;
+  if (isNativePlatform()) return;
+  settingsStorage()?.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+};
+
+const browserSettingsStorage = () => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+};
+
+const readBrowserStorageItem = (key) => browserSettingsStorage()?.getItem(key) || '';
+const writeBrowserStorageItem = (key, value) => browserSettingsStorage()?.setItem(key, value);
+const removeBrowserStorageItem = (key) => browserSettingsStorage()?.removeItem(key);
+const readBrowserSettingsJson = () => readStorageWithLegacyFallback(browserSettingsStorage(), SETTINGS_KEY);
+
+const writeBrowserSettingsMirror = (serialized) => {
+  try {
+    browserSettingsStorage()?.setItem(SETTINGS_STORAGE_KEY, serialized);
+  } catch {
+    // Browser storage is only a recovery mirror on native.
+  }
+};
+
+function storePendingNativeSync(serialized) {
+  pendingNativeSettingsSync = serialized || '';
+  if (!pendingNativeSettingsSync) return;
+  try {
+    writeBrowserStorageItem(PENDING_NATIVE_SYNC_KEY, pendingNativeSettingsSync);
+  } catch {
+    // In-memory retry still covers the current process lifetime.
+  }
+}
+
+function clearPendingNativeSync() {
+  pendingNativeSettingsSync = '';
+  try {
+    removeBrowserStorageItem(PENDING_NATIVE_SYNC_KEY);
+  } catch {
+    // Browser storage is only a crash-recovery mirror.
+  }
+}
+
+function readPersistedPendingNativeSync() {
+  try {
+    return readBrowserStorageItem(PENDING_NATIVE_SYNC_KEY);
+  } catch {
+    return '';
+  }
+}
+
+pendingNativeSettingsSync = readPersistedPendingNativeSync();
+
+const readStorageWithLegacyFallback = (storage, key) => {
+  const currentKey = resolveStorageKey(key);
+  let raw = storage?.getItem(currentKey);
+  if (raw != null) return raw;
+
+  for (const legacyKey of legacyStorageKeysFor(key)) {
+    raw = storage?.getItem(legacyKey);
+    if (raw != null) {
+      storage?.setItem(currentKey, raw);
+      return raw;
+    }
+  }
+
+  return null;
+};
+
+const settingsRevisionNumber = (settings = {}) => {
+  const revision = Number(settings?._settings_revision);
+  return Number.isFinite(revision) && revision > 0 ? revision : 0;
+};
+
+const settingsUpdatedAtMs = (settings = {}) => {
+  const value = Date.parse(settings?._settings_updated_at || '');
+  return Number.isFinite(value) ? value : 0;
+};
+
+const safeCandidateNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const settingsNonDefaultDeltaCount = (settings = {}) => (
+  Object.entries(DEFAULT_SETTINGS).reduce((count, [key, defaultValue]) => {
+    if (key.startsWith('_')) return count;
+    return JSON.stringify(settings?.[key]) === JSON.stringify(defaultValue) ? count : count + 1;
+  }, 0)
+);
+
+const stampSettingsSnapshot = (settings = {}, previousSettings = null) => {
+  const previousRevision = Math.max(
+    highWaterNativeRevision,
+    settingsRevisionNumber(previousSettings),
+    settingsRevisionNumber(settings)
+  );
+  const stamped = {
+    ...settings,
+    _settings_revision: previousRevision + 1,
+    _settings_updated_at: new Date().toISOString(),
+  };
+  highWaterNativeRevision = Math.max(highWaterNativeRevision, stamped._settings_revision);
+  return stamped;
+};
+
+const enforceLocalOnlySnapshot = (settings = {}, previousSettings = {}) => {
+  const localOnlyStaysOn = settings.external_requests_local_only !== false &&
+    (settings.external_requests_local_only === true || previousSettings?.external_requests_local_only === true);
+  return localOnlyStaysOn
+    ? enforceLocalOnlyPatch({ ...settings, external_requests_local_only: true })
+    : settings;
+};
+
+const normalizeSettingsCandidate = (source, raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  try {
+    const { settings, changed } = migrateDefaultSettings(raw);
+    return {
+      source,
+      settings,
+      changed,
+      serialized: JSON.stringify(settings),
+      revision: settingsRevisionNumber(settings),
+      updatedAtMs: settingsUpdatedAtMs(settings),
+      onboardingCompleted: settings.onboarding_completed === true ? 1 : 0,
+      deltaCount: settingsNonDefaultDeltaCount(settings),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const normalizeSettingsJsonCandidate = (source, json) => {
+  if (!json) return null;
+  try {
+    return normalizeSettingsCandidate(source, JSON.parse(json));
+  } catch {
+    return null;
+  }
+};
+
+export function chooseSettingsHydrationCandidate(candidates = []) {
+  const normalized = candidates.filter(Boolean);
+  if (!normalized.length) return null;
+  return normalized.sort((a, b) => (
+    (safeCandidateNumber(b.revision) - safeCandidateNumber(a.revision)) ||
+    (safeCandidateNumber(b.updatedAtMs) - safeCandidateNumber(a.updatedAtMs)) ||
+    (safeCandidateNumber(b.onboardingCompleted) - safeCandidateNumber(a.onboardingCompleted)) ||
+    (safeCandidateNumber(b.deltaCount) - safeCandidateNumber(a.deltaCount))
+  ))[0];
+}
+
+export function chooseHydrationCandidateAfterLocalMutations(
+  chosen,
+  mutationCounterAtStart,
+  mutationCounterNow,
+  localCandidates = []
+) {
+  if (!chosen || mutationCounterAtStart === mutationCounterNow) return chosen;
+  return chooseSettingsHydrationCandidate(localCandidates) || chosen;
+}
+
+function downsampleOldestQuarter(points) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  const keepFrom = Math.floor(points.length * 0.25);
+  const thinned = points.slice(0, keepFrom).filter((_, index) => index % 2 === 0);
+  return [...thinned, ...points.slice(keepFrom)];
+}
+
+function stripActiveTripRoutePoints(trip) {
+  if (!trip || typeof trip !== 'object') return trip ?? null;
+  const { route_points: _routePoints, raw_route_points: _rawRoutePoints, ...metaWithoutPoints } = trip;
+  return metaWithoutPoints;
+}
+
+function attachLiveRoutePoints(trip) {
+  if (!trip || typeof trip !== 'object') return trip ?? null;
+  trip.route_points = liveRoutePoints;
+  return trip;
+}
+
+function notifyActiveTripListeners() {
+  activeTripSnapshot = {
+    trip: activeTripMemory,
+    version: activeTripSnapshot.version + 1,
+  };
+  activeTripListeners.forEach((listener) => listener());
+}
+
+function syncLiveRoutePointsFromTrip(trip) {
+  if (Array.isArray(trip?.route_points)) {
+    liveRoutePoints = trip.route_points.map(truncateRoutePoint);
+  }
+  return attachLiveRoutePoints(trip);
+}
+
+export function appendLiveRoutePoint(point) {
+  if (isEphemeralModeActive()) return liveRoutePoints;
+  if (liveRoutePoints.length >= LIVE_POINTS_MAX) {
+    liveRoutePoints = downsampleOldestQuarter(liveRoutePoints);
+    attachLiveRoutePoints(activeTripMemory);
+  }
+  liveRoutePoints.push(truncateRoutePoint(point));
+  attachLiveRoutePoints(activeTripMemory);
+  notifyActiveTripListeners();
+  return liveRoutePoints;
+}
+
+export function persistActiveTripMeta(tripMeta = activeTripMemory) {
+  if (isEphemeralModeActive() || !tripMeta) return;
+  const metaWithoutPoints = stripActiveTripRoutePoints(tripMeta);
+  try {
+    if (isNativePlatform()) {
+      setJson(ACTIVE_TRIP_KEY, metaWithoutPoints).catch((err) => {
+        logError('active_trip_encrypted_meta_save', err, {
+          trip_state: tripMeta?.trip_state,
+          point_count: liveRoutePoints.length,
+        });
+      });
+      return;
+    }
+    localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(metaWithoutPoints));
+  } catch (err) {
+    logError('active_trip_meta_save', err, {
+      trip_state: tripMeta?.trip_state,
+      point_count: liveRoutePoints.length,
+    });
+  }
+}
+
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
 
+const isPrivacyZoneLatLng = (lat, lng) => {
+  const parsedLat = Number(lat);
+  const parsedLng = Number(lng);
+  return Number.isFinite(parsedLat) &&
+    Number.isFinite(parsedLng) &&
+    parsedLat >= -90 &&
+    parsedLat <= 90 &&
+    parsedLng >= -180 &&
+    parsedLng <= 180;
+};
+
+const clampPrivacyZoneRadius = (radius) => {
+  const value = Number(radius);
+  if (!Number.isFinite(value)) return PRIVACY_ZONE_RADIUS_DEFAULT_M;
+  return clampNumber(Math.round(value), PRIVACY_ZONE_RADIUS_MIN_M, PRIVACY_ZONE_RADIUS_MAX_M);
+};
+
+const normalizePreferencePrivacyZone = (zone) => {
+  if (!zone || typeof zone !== 'object' || Array.isArray(zone)) return null;
+  const lat = Number(zone.lat);
+  const lng = Number(zone.lng);
+  if (!isPrivacyZoneLatLng(lat, lng)) return null;
+
+  return {
+    name: String(zone.name || 'Private zone').trim().slice(0, 80) || 'Private zone',
+    lat: truncateCoord(lat),
+    lng: truncateCoord(lng),
+    radius: clampPrivacyZoneRadius(zone.radius),
+  };
+};
+
+const normalizePreferencePrivacyZones = (zones) => (
+  Array.isArray(zones)
+    ? zones.map(normalizePreferencePrivacyZone).filter(Boolean).slice(0, 20)
+    : []
+);
+
+const preferencesModule = async () => {
+  const { Preferences } = await import('@capacitor/preferences');
+  return { Preferences };
+};
+
+const nativeDriveSenseMethods = [
+  'clearLastParkedLocation',
+  'getLastParkedLocation',
+  'getPrivacyZones',
+  'getSettings',
+  'saveLastParkedLocation',
+  'savePrivacyZones',
+  'saveSettings',
+];
+
+const nativeDriveSenseApi = Object.freeze(nativeDriveSenseMethods.reduce((api, method) => {
+  const nativeMethod = DriveSenseActivityRecognition?.[method];
+  if (typeof nativeMethod !== 'function') return api;
+  return {
+    ...api,
+    [method]: (...args) => nativeMethod(...args),
+  };
+}, {}));
+
+const androidNativeDriveSensePlugin = async () => {
+  try {
+    if (Capacitor.getPlatform?.() !== 'android') return null;
+    return nativeDriveSenseApi;
+  } catch {
+    return null;
+  }
+};
+
+const isAndroidNativePlatform = async () => {
+  try {
+    return Capacitor.getPlatform?.() === 'android';
+  } catch {
+    return false;
+  }
+};
+
+const distanceMetersBetweenLatLng = (lat, lng, zone) => {
+  const zoneLat = Number(zone?.lat);
+  const zoneLng = Number(zone?.lng);
+  if (!isPrivacyZoneLatLng(lat, lng) || !isPrivacyZoneLatLng(zoneLat, zoneLng)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const phi1 = lat * Math.PI / 180;
+  const phi2 = zoneLat * Math.PI / 180;
+  const deltaPhi = (zoneLat - lat) * Math.PI / 180;
+  const deltaLambda = (zoneLng - lng) * Math.PI / 180;
+  const a = Math.sin(deltaPhi / 2) ** 2 +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+};
+
 const defaultOsrmEndpoint = () => {
   const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL || '').trim();
-  if (!value || isPublicOsrmDemoUrl(value)) return '';
-  try {
-    return new URL(value).toString().replace(/\/$/, '');
-  } catch {
-    return '';
-  }
+  const trust = evaluateOsrmEndpointTrust(value);
+  return trust.ok ? normalizeOsrmEndpoint(value) : '';
 };
 
 const defaultOsrmTimeoutMs = () => {
@@ -107,26 +471,175 @@ const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
   });
 };
 
-const syncSettingsForNative = (settings) => {
-  if (typeof window === 'undefined') return;
-  const serialized = JSON.stringify(settings);
-  if (serialized === lastNativeSettingsSync) return;
-  lastNativeSettingsSync = serialized;
-  import('@capacitor/core')
-    .then(({ Capacitor }) => {
-      if (!Capacitor.isNativePlatform()) return null;
-      return import('@capacitor/preferences');
-    })
-    .then((module) => {
-      if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch(() => {});
-    })
-    .catch(() => {});
+export async function getPrivacyZones() {
+  const nativePrivacyZones = await androidNativeDriveSensePlugin();
+  if (nativePrivacyZones?.getPrivacyZones) {
+    try {
+      const result = await nativePrivacyZones.getPrivacyZones();
+      return normalizePreferencePrivacyZones(JSON.parse(result?.zonesJson || '[]'));
+    } catch {
+      return [];
+    }
+  }
+
+  if (await isAndroidNativePlatform()) return [];
+
+  try {
+    const { Preferences } = await preferencesModule();
+    const { value } = await Preferences.get({ key: PRIVACY_ZONES_KEY });
+    return normalizePreferencePrivacyZones(value ? JSON.parse(value) : []);
+  } catch {
+    return [];
+  }
+}
+
+export async function savePrivacyZones(zones) {
+  const normalizedZones = normalizePreferencePrivacyZones(zones);
+  const nativePrivacyZones = await androidNativeDriveSensePlugin();
+  if (nativePrivacyZones?.savePrivacyZones) {
+    await nativePrivacyZones.savePrivacyZones({
+      zonesJson: JSON.stringify(normalizedZones),
+    });
+    return;
+  }
+
+  if (await isAndroidNativePlatform()) return;
+
+  const { Preferences } = await preferencesModule();
+  await Preferences.set({
+    key: PRIVACY_ZONES_KEY,
+    value: JSON.stringify(normalizedZones),
+  });
+}
+
+export async function isInPrivacyZone(lat, lng, zones = null) {
+  const privacyZones = Array.isArray(zones) ? zones : await getPrivacyZones();
+  for (const zone of privacyZones) {
+    if (distanceMetersBetweenLatLng(lat, lng, zone) <= zone.radius) {
+      return { inZone: true, zoneName: zone.name };
+    }
+  }
+  return { inZone: false, zoneName: null };
+}
+
+const enqueueSettingsWrite = (writeTask) => {
+  const run = settingsWriteQueue.catch(() => null).then(writeTask);
+  settingsWriteQueue = run.catch(() => null);
+  return run;
 };
 
+const syncSettingsForNative = (settings) => {
+  syncSettingsForNativeAsync(settings).catch((err) => {
+    logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
+  });
+};
+
+async function syncSettingsForNativeAsync(settings, { force = false } = {}) {
+  if (typeof window === 'undefined' || !Capacitor.isNativePlatform()) return;
+
+  const serialized = typeof settings === 'string' ? settings : JSON.stringify(settings);
+  if (!force && serialized === lastNativeSettingsSync && pendingNativeSettingsSync !== serialized) return;
+  storePendingNativeSync(serialized);
+
+  const nativePlugin = await androidNativeDriveSensePlugin().catch((err) => {
+    logError('native_settings_sync_module_load', err);
+    return null;
+  });
+  if (!nativePlugin?.saveSettings) {
+    lastNativeSettingsSync = '';
+    throw new Error('Native settings plugin unavailable');
+  }
+
+  if (import.meta.env.DEV) {
+    console.debug('[settings] native save start', {
+      revision: settings?._settings_revision,
+      updatedAt: settings?._settings_updated_at,
+    });
+  }
+
+  try {
+    await nativePlugin.saveSettings({ settingsJson: serialized });
+    lastNativeSettingsSync = serialized;
+    if (pendingNativeSettingsSync === serialized) clearPendingNativeSync();
+    if (import.meta.env.DEV) {
+      console.debug('[settings] native save confirmed', {
+        revision: settings?._settings_revision,
+      });
+    }
+  } catch (err) {
+    lastNativeSettingsSync = '';
+    storePendingNativeSync(serialized);
+    logError('native_settings_sync_async', err, { key: SETTINGS_STORAGE_KEY });
+    throw err;
+  }
+}
+
+export function reconcileSettingsHydrationSnapshot(nativeSettings, pendingSettingsJson = '') {
+  const { settings: normalizedNative } = migrateDefaultSettings(nativeSettings || {});
+  const nativeSerialized = JSON.stringify(normalizedNative);
+  if (!pendingSettingsJson || pendingSettingsJson === nativeSerialized) {
+    return {
+      settings: normalizedNative,
+      serialized: nativeSerialized,
+      shouldPersistPending: false,
+      invalidPending: false,
+    };
+  }
+
+  try {
+    const { settings: pendingSettings } = migrateDefaultSettings(JSON.parse(pendingSettingsJson));
+    return {
+      settings: pendingSettings,
+      serialized: JSON.stringify(pendingSettings),
+      shouldPersistPending: true,
+      invalidPending: false,
+    };
+  } catch {
+    return {
+      settings: normalizedNative,
+      serialized: nativeSerialized,
+      shouldPersistPending: false,
+      invalidPending: true,
+    };
+  }
+}
+
+async function applyOnboardingCompletedMarker(settings) {
+  if (!settings || settings.onboarding_completed === true) return settings;
+
+  const completed = await getJson(ONBOARDING_COMPLETED_KEY, false);
+  if (completed !== true) return settings;
+
+  return {
+    ...settings,
+    onboarding_completed: true,
+  };
+}
+
+function persistOnboardingCompletedMarker(settings) {
+  if (settings?.onboarding_completed !== true) return;
+  setJson(ONBOARDING_COMPLETED_KEY, true).catch((err) => {
+    logError('onboarding_completion_marker_save', err);
+  });
+}
+
 // ─── Default Settings ──────────────────────────────────────────────────────────
+function tryParseBrowserSettingsMirror() {
+  try {
+    const raw = readBrowserSettingsJson();
+    if (!raw) return null;
+    const { settings: merged, changed } = migrateDefaultSettings(JSON.parse(raw));
+    if (changed) writeBrowserSettingsMirror(JSON.stringify(merged));
+    return merged;
+  } catch {
+    return null;
+  }
+}
+
 export const DEFAULT_SETTINGS = {
   settings_defaults_version: CURRENT_SETTINGS_DEFAULTS_VERSION,
+  _settings_revision: 0,
+  _settings_updated_at: '',
   tracking_mode: 'manual',
   units: 'metric',
   currencySymbol: '$',
@@ -141,7 +654,13 @@ export const DEFAULT_SETTINGS = {
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
   activity_permission_granted: false,
-  data_retention_days: 365,
+  biometric_lock_enabled: BIOMETRIC_LOCK_DEFAULT_ENABLED,
+  // PRIVACY: auto-delete completed trips older than this many months.
+  // 0 = never delete automatically.
+  data_retention_months: 24,
+  // PRIVACY: require biometric re-authentication after this many unlocked minutes.
+  // 0 = never time out while the app remains visible; backgrounding still locks.
+  lock_timeout_minutes: BIOMETRIC_LOCK_TIMEOUT_DEFAULT_MINUTES,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -186,11 +705,17 @@ export const DEFAULT_SETTINGS = {
   threshold_overtake_accel_ms2: scoringValue('OVERTAKE_ACCEL_THRESHOLD_MS2'),
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
-  speed_limit_lookup_enabled: true,
+  external_requests_local_only: false,
+  map_tiles_enabled: false,
+  map_tiles_first_prompt_seen: false,
+  road_data_fetch_always_allow: false,
+  backend_sync_enabled: false,
+  reverse_geocoding_enabled: false,
+  speed_limit_lookup_enabled: false,
   country_code: '',
   configurable_country_defaults: 'global',
-  weather_context_enabled: true,
-  external_context_auto_fetch_enabled: true,
+  weather_context_enabled: false,
+  external_context_auto_fetch_enabled: false,
   min_speed_rapid_accel_kmh: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
   min_speed_harsh_brake_kmh: scoringValue('MIN_SPEED_HARSH_BRAKE_KMH'),
   weekly_goal_harsh_brakes: 5,
@@ -203,9 +728,17 @@ export const DEFAULT_SETTINGS = {
   onboarding_completed: false,
   location_permission_granted: false,
   background_location_granted: false,
+  _background_location_denial_count: 0,
   tracking_paused: false,
   live_coaching_enabled: true,
   voice_alerts_enabled: true,
+  voice_alert_rate: 1.0,
+  voice_alert_volume: 0.9,
+  voice_alerts_min_severity: 1,
+  voice_earcon_enabled: true,
+  voice_quiet_hours_enabled: false,
+  voice_quiet_hours_start: '22:00',
+  voice_quiet_hours_end: '06:00',
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
@@ -218,9 +751,14 @@ export const DEFAULT_SETTINGS = {
   osrm_last_health_checked_at: '',
   osrm_last_reachable_at: '',
   osrm_last_health_error: '',
+  osrm_verified_endpoint: '',
+  osrm_verified_origin: '',
+  osrm_verified_domain: '',
+  osrm_trust_verified_at: '',
   osrm_timeout_ms: defaultOsrmTimeoutMs(),
   last_map_center: null,
   predictive_route_risk_enabled: true,
+  route_risk_disclaimer_seen_count: 0,
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
   notif_phone_use_alert_enabled: true,
@@ -255,16 +793,40 @@ export const DEFAULT_SETTINGS = {
  * @param {Record<string, any>} parsed
  * @returns {{settings: Record<string, any>, changed: boolean}}
  */
+const MIGRATION_LEGACY_KEYS = [
+  'threshold_tailgate_decel_ms2',
+  'threshold_near_miss_brake_ms2',
+  'threshold_near_miss_turn_degs',
+  'threshold_drowsy_heading_std',
+  'notif_drowsy_alert_enabled',
+  'data_retention_days',
+];
+
+const migrationAllowedKeys = () => new Set([
+  ...Object.keys(DEFAULT_SETTINGS),
+  ...MIGRATION_LEGACY_KEYS,
+]);
+
+const sanitizeSettingsForMigration = (input = {}) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const allowed = migrationAllowedKeys();
+  return Object.fromEntries(
+    Object.entries(input).filter(([key]) => allowed.has(key) && !PROTOTYPE_POISON_KEYS.has(key))
+  );
+};
+
 export function migrateDefaultSettings(parsed = {}) {
-  const merged = { ...DEFAULT_SETTINGS, ...parsed };
+  parsed = sanitizeSettingsForMigration(parsed);
+  const merged = Object.assign(Object.create(null), DEFAULT_SETTINGS);
+  Object.keys(parsed).forEach((key) => {
+    if (PROTOTYPE_POISON_KEYS.has(key)) return;
+    if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key) ||
+      MIGRATION_LEGACY_KEYS.includes(key)) {
+      merged[key] = parsed[key];
+    }
+  });
   const version = Number(parsed.settings_defaults_version) || 1;
-  const legacyProxyKeys = [
-    'threshold_tailgate_decel_ms2',
-    'threshold_near_miss_brake_ms2',
-    'threshold_near_miss_turn_degs',
-    'threshold_drowsy_heading_std',
-    'notif_drowsy_alert_enabled',
-  ];
+  const legacyProxyKeys = MIGRATION_LEGACY_KEYS.filter((key) => key !== 'data_retention_days');
 
   if (version < 2) {
     if (parsed.threshold_harsh_brake_ms2 == null || parsed.threshold_harsh_brake_ms2 === 4.5) merged.threshold_harsh_brake_ms2 = 3.5;
@@ -303,18 +865,53 @@ export function migrateDefaultSettings(parsed = {}) {
   if (parsed.notif_heading_drift_alert_enabled == null && parsed.notif_drowsy_alert_enabled != null) {
     merged.notif_heading_drift_alert_enabled = parsed.notif_drowsy_alert_enabled;
   }
+  if (parsed.data_retention_months == null && parsed.data_retention_days != null) {
+    const days = Number(parsed.data_retention_days);
+    merged.data_retention_months = Number.isFinite(days) && days > 0
+      ? Math.max(1, Math.round(days / 30.44))
+      : 0;
+  }
+
+  if (version < 11) {
+    merged.speed_limit_lookup_enabled = false;
+    merged.weather_context_enabled = false;
+    merged.external_context_auto_fetch_enabled = false;
+  }
+
+  if (version < 12) {
+    merged.external_requests_local_only = parsed.external_requests_local_only === true;
+    merged.map_tiles_enabled = false;
+    merged.map_tiles_first_prompt_seen = false;
+    merged.road_data_fetch_always_allow = false;
+    merged.backend_sync_enabled = false;
+    merged.reverse_geocoding_enabled = false;
+  }
+
+  if (merged.external_requests_local_only === true) {
+    Object.assign(merged, enforceLocalOnlyPatch({ external_requests_local_only: true }));
+  }
+
+  delete merged.data_retention_days;
   legacyProxyKeys.forEach((key) => delete merged[key]);
   const ecoSettingsRepaired = repairEcoScoringSettings(merged, 'default_settings_migration');
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete merged[key]; });
 
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: ecoSettingsRepaired ||
+      version < CURRENT_SETTINGS_DEFAULTS_VERSION ||
+      Object.prototype.hasOwnProperty.call(parsed, 'data_retention_days') ||
+      legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
 const IMPORT_NUMBER_RANGES = {
-  data_retention_days: [1, 3650],
+  data_retention_months: [0, 120],
+  lock_timeout_minutes: [BIOMETRIC_LOCK_TIMEOUT_MIN_MINUTES, BIOMETRIC_LOCK_TIMEOUT_MAX_MINUTES],
+  voice_alert_rate: [0.7, 1.2],
+  voice_alert_volume: [0.3, 1],
+  voice_alerts_min_severity: [0, 3],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_stop_start_decel_ms2: [0.5, 15],
@@ -379,6 +976,9 @@ const IMPORT_ENUMS = {
 };
 
 const IMPORT_STRIPPED_KEYS = new Set([
+  '_settings_revision',
+  '_settings_updated_at',
+  'settings_defaults_version',
   'osrm_map_matching_url',
   'osrm_public_demo_consent_at',
   'osrm_data_sharing_consented',
@@ -387,6 +987,10 @@ const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_last_health_checked_at',
   'osrm_last_reachable_at',
   'osrm_last_health_error',
+  'osrm_verified_endpoint',
+  'osrm_verified_origin',
+  'osrm_verified_domain',
+  'osrm_trust_verified_at',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -396,7 +1000,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
       .slice(0, 20)
       .map((zone, index) => {
         const radius = clampNumber(Number(zone.radius_m) || 150, 50, 1000);
-        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean,lat?:number,lng?:number}} */
+        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean,_coordinate_stripped?:boolean,lat?:number,lng?:number}} */
         const sanitized = {
           id: typeof zone.id === 'string' ? zone.id.slice(0, 80) : `privacy_zone_import_${index}`,
           label: typeof zone.label === 'string' && zone.label.trim()
@@ -404,12 +1008,13 @@ const sanitizeImportedPrivacyZones = (zones) => (
             : 'Private place',
           radius_m: radius,
           ...(zone.masked_for_privacy === true ? { masked_for_privacy: true } : {}),
+          ...(zone._coordinate_stripped === true ? { _coordinate_stripped: true } : {}),
         };
         const lat = Number(zone.lat);
         const lng = Number(zone.lng);
         if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-          sanitized.lat = lat;
-          sanitized.lng = lng;
+          sanitized.lat = truncateCoord(lat);
+          sanitized.lng = truncateCoord(lng);
         }
         return sanitized;
       })
@@ -420,24 +1025,33 @@ const sanitizeMapCenter = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const lat = Number(value.lat);
   const lng = Number(value.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  if (!isValidLatLng(lat, lng)) return null;
 
   return {
-    lat,
-    lng,
+    lat: truncateCoord(lat),
+    lng: truncateCoord(lng),
     ...(typeof value.tripId === 'string' ? { tripId: value.tripId.slice(0, 120) } : {}),
     ...(typeof value.source === 'string' ? { source: value.source.slice(0, 80) } : {}),
     ...(typeof value.updated_at === 'string' ? { updated_at: value.updated_at.slice(0, 80) } : {}),
   };
 };
 
+const finiteSettingsNumber = (value) => {
+  if (value == null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 /**
  * @param {Record<string, any>} raw Settings imported from backup or user storage.
+ * @param {Record<string, any>} currentSettings Settings currently active on this device.
  */
-export function sanitizeImportedSettings(raw = {}) {
+export function sanitizeImportedSettings(raw = {}, currentSettings = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
 
-  const normalizedRaw = { ...raw };
+  const normalizedRaw = Object.assign(Object.create(null), raw);
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete normalizedRaw[key]; });
   if (normalizedRaw.threshold_stop_start_decel_ms2 == null) {
     normalizedRaw.threshold_stop_start_decel_ms2 = raw.threshold_tailgate_decel_ms2;
   }
@@ -453,9 +1067,16 @@ export function sanitizeImportedSettings(raw = {}) {
   if (normalizedRaw.notif_heading_drift_alert_enabled == null) {
     normalizedRaw.notif_heading_drift_alert_enabled = raw.notif_drowsy_alert_enabled;
   }
+  if (normalizedRaw.data_retention_months == null && raw.data_retention_days != null) {
+    const days = Number(raw.data_retention_days);
+    normalizedRaw.data_retention_months = Number.isFinite(days) && days > 0
+      ? Math.max(1, Math.round(days / 30.44))
+      : 0;
+  }
 
-  const sanitized = {};
+  const sanitized = Object.create(null);
   Object.entries(DEFAULT_SETTINGS).forEach(([key, defaultValue]) => {
+    if (PROTOTYPE_POISON_KEYS.has(key)) return;
     if (!Object.prototype.hasOwnProperty.call(normalizedRaw, key) || normalizedRaw[key] == null) return;
     if (IMPORT_STRIPPED_KEYS.has(key)) return;
     const value = normalizedRaw[key];
@@ -487,8 +1108,8 @@ export function sanitizeImportedSettings(raw = {}) {
     }
 
     if (typeof defaultValue === 'number') {
-      const number = Number(value);
-      if (!Number.isFinite(number)) return;
+      const number = finiteSettingsNumber(value);
+      if (number == null) return;
       const [min, max] = IMPORT_NUMBER_RANGES[key] || [-1_000_000, 1_000_000];
       sanitized[key] = clampNumber(number, min, max);
       return;
@@ -498,7 +1119,15 @@ export function sanitizeImportedSettings(raw = {}) {
       if (typeof value === 'string') sanitized[key] = value.slice(0, 500);
     }
   });
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete sanitized[key]; });
   repairEcoScoringSettings(sanitized, 'backup_settings_import', normalizedRaw);
+  PROTOTYPE_POISON_KEYS.forEach((key) => { delete sanitized[key]; });
+
+  if (currentSettings.external_requests_local_only === true || raw.external_requests_local_only === true) {
+    const localOnly = enforceLocalOnlyPatch({ ...sanitized, external_requests_local_only: true });
+    PROTOTYPE_POISON_KEYS.forEach((key) => { delete localOnly[key]; });
+    return localOnly;
+  }
 
   return sanitized;
 }
@@ -518,13 +1147,8 @@ export function validateSettingsPatch(patch = {}) {
     if (key === 'osrm_map_matching_url') {
       const endpoint = String(value || '').trim();
       if (!endpoint) return;
-      try {
-        new URL(endpoint);
-      } catch {
-        errors.push('osrm_map_matching_url must be a valid URL.');
-        return;
-      }
-      if (isPublicOsrmDemoUrl(endpoint)) errors.push('Use a private or trusted OSRM endpoint; the public OSRM demo cannot be saved as a route-snapping endpoint.');
+      const trust = evaluateOsrmEndpointTrust(endpoint);
+      if (!trust.ok) errors.push(trust.error || 'osrm_map_matching_url must be a trusted HTTPS URL.');
       return;
     }
     if (SETTINGS_ENUMS[key] && !SETTINGS_ENUMS[key].includes(value)) {
@@ -532,9 +1156,9 @@ export function validateSettingsPatch(patch = {}) {
       return;
     }
     if (IMPORT_NUMBER_RANGES[key]) {
-      const number = Number(value);
+      const number = finiteSettingsNumber(value);
       const [min, max] = IMPORT_NUMBER_RANGES[key];
-      if (!Number.isFinite(number) || number < min || number > max) {
+      if (number == null || number < min || number > max) {
         errors.push(`${key} must be between ${min} and ${max}.`);
       }
     }
@@ -544,6 +1168,21 @@ export function validateSettingsPatch(patch = {}) {
 }
 
 export async function getLastParkedLocation() {
+  const nativeDriveSense = await androidNativeDriveSensePlugin();
+  if (nativeDriveSense?.getLastParkedLocation) {
+    try {
+      const result = await nativeDriveSense.getLastParkedLocation();
+      const parkedLocation = result?.parkedJson ? JSON.parse(result.parkedJson) : null;
+      if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
+        await nativeDriveSense.clearLastParkedLocation?.();
+        return null;
+      }
+      return parkedLocation;
+    } catch {
+      return null;
+    }
+  }
+
   const parkedLocation = await getJson(LAST_PARKED_KEY, null);
   if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
     await removeJson(LAST_PARKED_KEY);
@@ -553,90 +1192,268 @@ export async function getLastParkedLocation() {
 }
 
 export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
+  if (isEphemeralModeActive()) return null;
+
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
-  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
-    await removeJson(LAST_PARKED_KEY);
+  const settings = localSettings.get();
+  const preferenceZones = await getPrivacyZones();
+  const preferenceZoneMatch = await isInPrivacyZone(parsedLat, parsedLng, preferenceZones);
+  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng }, settings) || preferenceZoneMatch.inZone) {
+    const nativeDriveSense = await androidNativeDriveSensePlugin();
+    if (nativeDriveSense?.clearLastParkedLocation) await nativeDriveSense.clearLastParkedLocation();
+    else await removeJson(LAST_PARKED_KEY);
     return null;
   }
 
+  const resolvedAddress = shortenParkedAddress(address) ||
+    await reverseGeocodeParkedLocation(parsedLat, parsedLng, {
+      settings,
+      guardM: PARKED_LOCATION_PRIVACY_GUARD_M,
+      privacyZones: [
+        ...(Array.isArray(settings?.privacy_zones) ? settings.privacy_zones : []),
+        ...preferenceZones,
+      ],
+    });
+
   const parkedLocation = {
-    lat: parsedLat,
-    lng: parsedLng,
+    lat: truncateCoord(parsedLat),
+    lng: truncateCoord(parsedLng),
     timestamp: timestamp || new Date().toISOString(),
     tripId: tripId ?? null,
-    address,
+    address: resolvedAddress,
     source,
   };
+  const nativeDriveSense = await androidNativeDriveSensePlugin();
+  if (nativeDriveSense?.saveLastParkedLocation) {
+    await nativeDriveSense.saveLastParkedLocation({
+      parkedJson: JSON.stringify(parkedLocation),
+    });
+    return parkedLocation;
+  }
+
   await setJson(LAST_PARKED_KEY, parkedLocation);
   return parkedLocation;
+}
+
+export function saveLastMapCenter({ lat, lng, tripId = null, source = 'tracking', updated_at = new Date().toISOString() } = {}) {
+  if (isEphemeralModeActive()) return null;
+
+  const settings = localSettings.get();
+  if (settings.store_last_map_center === false || !isValidLatLng(lat, lng)) return null;
+
+  const center = {
+    lat: truncateCoord(lat),
+    lng: truncateCoord(lng),
+    tripId,
+    source,
+    updated_at,
+  };
+  localSettings.update({ last_map_center: center });
+  return center;
 }
 
 // ─── Local Settings Store ──────────────────────────────────────────────────────
 export const localSettings = {
   async hydrateFromNative() {
     try {
-      const { Capacitor } = await import('@capacitor/core');
       if (!Capacitor.isNativePlatform()) return this.get();
 
-      const { Preferences } = await import('@capacitor/preferences');
-      const { value } = await Preferences.get({ key: SETTINGS_KEY });
-      if (!value) return this.get();
+      const mutationCounterAtStart = settingsMutationCounter;
+      const androidNative = await isAndroidNativePlatform();
+      const nativePlugin = await androidNativeDriveSensePlugin();
+      const candidates = [];
+      if (nativePlugin?.getSettings) {
+        const native = await nativePlugin.getSettings().catch(() => null);
+        if (native?.settingsJson) {
+          candidates.push(normalizeSettingsJsonCandidate('native_plugin', native.settingsJson));
+        }
+      }
+      if (pendingNativeSettingsSync) {
+        const pending = normalizeSettingsJsonCandidate('pending_memory', pendingNativeSettingsSync);
+        if (pending) candidates.push(pending);
+        else clearPendingNativeSync();
+      }
+      const encryptedSettings = await getJson(SETTINGS_KEY, null);
+      candidates.push(normalizeSettingsCandidate('encrypted_storage', encryptedSettings));
+      const browserRaw = readBrowserSettingsJson();
+      if (browserRaw) {
+        candidates.push(normalizeSettingsJsonCandidate('browser_mirror', browserRaw));
+      }
 
-      const parsed = JSON.parse(value);
-      const { settings: merged, changed } = migrateDefaultSettings(parsed);
-      const serialized = JSON.stringify(merged);
-      localStorage.setItem(SETTINGS_KEY, serialized);
-      if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
-      lastNativeSettingsSync = serialized;
-      return merged;
-    } catch {
+      const { Preferences } = await import('@capacitor/preferences').catch(() => ({ Preferences: null }));
+      if (Preferences) {
+        let { value } = await Preferences.get({ key: SETTINGS_STORAGE_KEY });
+        for (const legacyKey of legacyStorageKeysFor(SETTINGS_KEY)) {
+          if (value !== null) break;
+          const legacy = await Preferences.get({ key: legacyKey });
+          value = legacy.value;
+          if (value !== null && !androidNative) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value });
+        }
+        if (value) candidates.push(normalizeSettingsJsonCandidate('plain_preferences', value));
+      }
+
+      let chosen = chooseSettingsHydrationCandidate(candidates);
+      chosen = chooseHydrationCandidateAfterLocalMutations(
+        chosen,
+        mutationCounterAtStart,
+        settingsMutationCounter,
+        [
+          normalizeSettingsCandidate('runtime_memory', memorySettings),
+          normalizeSettingsJsonCandidate('browser_mirror', readBrowserSettingsJson()),
+          normalizeSettingsJsonCandidate('pending_memory', pendingNativeSettingsSync),
+        ]
+      );
+      if (!chosen) return this.get();
+
+      const settings = await applyOnboardingCompletedMarker(chosen.settings);
+      const serialized = JSON.stringify(settings);
+      highWaterNativeRevision = Math.max(highWaterNativeRevision, settingsRevisionNumber(settings));
+      cacheSettingsForRuntime(settings);
+      writeBrowserSettingsMirror(serialized);
+      setJson(SETTINGS_KEY, settings).catch((err) => {
+        logError('settings_encrypted_mirror_save', err, { source: chosen.source });
+      });
+      if (!androidNative && Preferences && (chosen.source === 'plain_preferences' ? chosen.changed || settings !== chosen.settings : true)) {
+        await Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized }).catch(() => null);
+      }
+      await syncSettingsForNativeAsync(settings, { force: true }).catch((err) => {
+        logError('settings_native_hydration_resync', err, { source: chosen.source });
+      });
+      if (pendingNativeSettingsSync === serialized && lastNativeSettingsSync === serialized) clearPendingNativeSync();
+      return settings;
+    } catch (err) {
+      logError('settings_hydrate_from_native', err);
       return this.get();
     }
   },
   get() {
-    try {
-      const storage = settingsStorage();
-      const raw = storage?.getItem(SETTINGS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        const { settings: merged, changed } = migrateDefaultSettings(parsed);
-        if (changed) {
-          storage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-          syncSettingsForNative(merged);
-        }
-        syncSettingsForNative(merged);
-        return merged;
+    const storage = settingsStorage();
+    if (storage) {
+      let raw = null;
+      try {
+        raw = readStorageWithLegacyFallback(storage, SETTINGS_KEY);
+      } catch (err) {
+        logError('settings_storage_read', err);
       }
-      if (!storage && memorySettings) {
+      if (raw) {
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (err) {
+          logError('settings_parse_corrupt', err, { rawLength: raw.length });
+          try {
+            storage.removeItem(SETTINGS_STORAGE_KEY);
+            legacyStorageKeysFor(SETTINGS_KEY).forEach((key) => storage.removeItem(key));
+          } catch {
+            // Best-effort corrupt entry cleanup.
+          }
+          const fromMirror = tryParseBrowserSettingsMirror();
+          return fromMirror || { ...DEFAULT_SETTINGS };
+        }
+
+        try {
+          const { settings: merged, changed } = migrateDefaultSettings(parsed);
+          if (changed) {
+            storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
+          }
+          return merged;
+        } catch (err) {
+          logError('settings_migrate_error', err);
+          return { ...DEFAULT_SETTINGS };
+        }
+      }
+
+      const fromMirror = tryParseBrowserSettingsMirror();
+      if (fromMirror) return fromMirror;
+
+      const defaults = { ...DEFAULT_SETTINGS };
+      try {
+        storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults));
+      } catch (err) {
+        logError('settings_defaults_save', err);
+      }
+      return defaults;
+    }
+
+    if (memorySettings) {
+      try {
         const { settings: merged } = migrateDefaultSettings(memorySettings);
         memorySettings = merged;
         return merged;
+      } catch (err) {
+        logError('settings_memory_migrate_error', err);
       }
-      // New user: save defaults immediately so we can detect returning users
-      const defaults = { ...DEFAULT_SETTINGS };
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
-      else memorySettings = defaults;
-      syncSettingsForNative(defaults);
-      return defaults;
-    } catch {
-      return { ...DEFAULT_SETTINGS };
     }
+
+    const fromMirror = tryParseBrowserSettingsMirror();
+    if (fromMirror) {
+      memorySettings = fromMirror;
+      return fromMirror;
+    }
+
+    const defaults = { ...DEFAULT_SETTINGS };
+    memorySettings = defaults;
+    return defaults;
   },
   set(data) {
     try {
+      const current = memorySettings || this.get();
+      const enforced = enforceLocalOnlySnapshot(data, current);
+      const stamped = stampSettingsSnapshot(enforced, current);
+      const serialized = JSON.stringify(stamped);
       const storage = settingsStorage();
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(data));
-      else memorySettings = data;
-      syncSettingsForNative(data);
-    } catch {}
+      if (storage) storage.setItem(SETTINGS_STORAGE_KEY, serialized);
+      else memorySettings = stamped;
+      settingsMutationCounter += 1;
+      writeBrowserSettingsMirror(serialized);
+      setJson(SETTINGS_KEY, stamped).catch((err) => {
+        logError('settings_encrypted_save', err);
+      });
+      persistOnboardingCompletedMarker(stamped);
+      syncSettingsForNative(stamped);
+    } catch (err) {
+      logError('settings_save', err);
+    }
+  },
+  async setAsync(data) {
+    const current = memorySettings || this.get();
+    const enforced = enforceLocalOnlySnapshot(data, current);
+    const stamped = stampSettingsSnapshot(enforced, current);
+    const serialized = JSON.stringify(stamped);
+    const storage = settingsStorage();
+
+    if (storage) storage.setItem(SETTINGS_STORAGE_KEY, serialized);
+    else if (!Capacitor.isNativePlatform()) memorySettings = stamped;
+
+    settingsMutationCounter += 1;
+    writeBrowserSettingsMirror(serialized);
+    persistOnboardingCompletedMarker(stamped);
+
+    await enqueueSettingsWrite(async () => {
+      try {
+        await setJson(SETTINGS_KEY, stamped);
+      } catch (err) {
+        logError('settings_encrypted_save_async', err);
+        if (Capacitor.isNativePlatform()) throw err;
+      }
+      await syncSettingsForNativeAsync(stamped);
+    });
+
+    if (!storage) memorySettings = stamped;
+    return stamped;
   },
   update(patch) {
     const current = this.get();
-    const updated = { ...current, ...patch };
+    const updated = { ...current, ...enforceLocalOnlyPatch(patch) };
     this.set(updated);
     return updated;
+  },
+  async updateAsync(patch) {
+    const current = this.get();
+    const updated = { ...current, ...enforceLocalOnlyPatch(patch) };
+    return this.setAsync(updated);
   },
 };
 
@@ -660,28 +1477,109 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────
 export const activeTripStore = {
+  subscribe(listener) {
+    activeTripListeners.add(listener);
+    return () => activeTripListeners.delete(listener);
+  },
+  getSnapshot() {
+    return activeTripSnapshot;
+  },
   get() {
+    if (isNativePlatform()) return activeTripMemory;
     try {
-      const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
-      return raw ? JSON.parse(raw) : null;
+      const raw = readStorageWithLegacyFallback(localStorage, ACTIVE_TRIP_KEY);
+      if (!raw) {
+        activeTripMemory = null;
+        liveRoutePoints = [];
+        return null;
+      }
+      activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(JSON.parse(raw)));
+      return activeTripMemory;
+    } catch {
+      return null;
+    }
+  },
+  async getAsync() {
+    if (!isNativePlatform()) return this.get();
+    try {
+      const encrypted = await getJson(ACTIVE_TRIP_KEY, null);
+      if (encrypted) {
+        activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(encrypted));
+        notifyActiveTripListeners();
+        return activeTripMemory;
+      }
+
+      const raw = readStorageWithLegacyFallback(settingsStorage(), ACTIVE_TRIP_KEY);
+      if (!raw) return null;
+      activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(JSON.parse(raw)));
+      await setJson(ACTIVE_TRIP_KEY, stripActiveTripRoutePoints(activeTripMemory));
+      this.clearPlaintext();
+      notifyActiveTripListeners();
+      return activeTripMemory;
     } catch {
       return null;
     }
   },
   set(trip) {
+    if (isEphemeralModeActive()) return;
     try {
-      localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip));
-    } catch {}
+      activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(trip));
+      notifyActiveTripListeners();
+      if (isNativePlatform()) {
+        this.clearPlaintext();
+        setJson(ACTIVE_TRIP_KEY, stripActiveTripRoutePoints(activeTripMemory)).catch((err) => {
+          logError('active_trip_encrypted_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
+        });
+        return;
+      }
+      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(stripActiveTripRoutePoints(activeTripMemory)));
+    } catch (err) {
+      logError('active_trip_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
+    }
+  },
+  async setAsync(trip) {
+    if (isEphemeralModeActive()) return;
+    activeTripMemory = syncLiveRoutePointsFromTrip(truncateTripCoordinates(trip));
+    notifyActiveTripListeners();
+    if (isNativePlatform()) {
+      this.clearPlaintext();
+      await setJson(ACTIVE_TRIP_KEY, stripActiveTripRoutePoints(activeTripMemory));
+      return;
+    }
+    this.set(activeTripMemory);
   },
   clear() {
-    localStorage.removeItem(ACTIVE_TRIP_KEY);
+    activeTripMemory = null;
+    liveRoutePoints = [];
+    notifyActiveTripListeners();
+    this.clearPlaintext();
+    if (isNativePlatform()) {
+      removeJson(ACTIVE_TRIP_KEY).catch((err) => logError('active_trip_encrypted_clear', err));
+    }
+  },
+  async clearAsync() {
+    activeTripMemory = null;
+    liveRoutePoints = [];
+    notifyActiveTripListeners();
+    this.clearPlaintext();
+    await removeJson(ACTIVE_TRIP_KEY);
+  },
+  clearPlaintext() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+      legacyStorageKeysFor(ACTIVE_TRIP_KEY).forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // Best-effort plaintext cleanup only.
+    }
   },
   addPoint(point) {
-    const trip = this.get();
+    if (isEphemeralModeActive()) return;
+    const trip = activeTripMemory || this.get();
     if (!trip) return;
-    trip.route_points = trip.route_points || [];
-    trip.route_points.push(point);
-    this.set(trip);
+    appendLiveRoutePoint(point);
+    activeTripMemory = attachLiveRoutePoints(trip);
+    return activeTripMemory;
   },
 };
 
