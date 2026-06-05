@@ -5,6 +5,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport } from '@/lib/sensorFusionModel';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
+import { logError } from '@/lib/errorReporting';
 
 const asState = (value) => value || 'unknown';
 
@@ -27,7 +28,9 @@ export async function getPermissionStatus() {
       const location = await navigator.permissions.query({ name: 'geolocation' });
       status.foregroundLocation = asState(location.state);
     }
-  } catch {}
+  } catch (err) {
+    logError('permission_status_location', err);
+  }
 
   try {
     if (isNativePlatform()) {
@@ -36,7 +39,9 @@ export async function getPermissionStatus() {
     } else if ('Notification' in window) {
       status.notifications = Notification.permission;
     }
-  } catch {}
+  } catch (err) {
+    logError('permission_status_notifications', err);
+  }
 
   try {
     if (isAndroid()) {
@@ -46,9 +51,13 @@ export async function getPermissionStatus() {
       try {
         const usage = await ActivityRecognition.usageAccessStatus();
         status.phoneUsageAccess = usage.usageAccessGranted ? 'granted' : 'not_requested';
-      } catch {}
+      } catch (err) {
+        logError('permission_status_usage_access', err);
+      }
     }
-  } catch {}
+  } catch (err) {
+    logError('permission_status_activity_recognition', err);
+  }
 
   if (status.backgroundLocation === 'unknown') {
     status.backgroundLocation = localSettings.get().background_location_granted ? 'granted' : 'not_requested';
@@ -109,7 +118,8 @@ export async function requestActivityRecognitionPermission() {
     const granted = result.activityRecognition === 'granted';
     localSettings.update({ activity_permission_granted: granted });
     return granted;
-  } catch {
+  } catch (err) {
+    logError('activity_recognition_permission_request', err);
     return false;
   }
 }
@@ -136,10 +146,13 @@ export async function requestBackgroundLocationPermission() {
         await ActivityRecognition.openAppLocationSettings();
       }
       return granted;
-    } catch {
+    } catch (err) {
+      logError('background_location_permission_request', err);
       try {
         await ActivityRecognition.openAppLocationSettings();
-      } catch {}
+      } catch (settingsErr) {
+        logError('background_location_settings_open', settingsErr);
+      }
       return false;
     }
   }

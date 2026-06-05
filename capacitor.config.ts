@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.drivesense.app',
+  appId: 'com.roadsage.app',
   appName: 'Road Sage',
   webDir: 'dist',
   android: {
