@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   analyzeIntersectionBehavior,
   calculateNightPenalty,
@@ -97,6 +97,10 @@ import {
   getMaintenanceStatus,
   getVehicleOdometerKm,
 } from '@/lib/tripInsights';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const point = (lat, lng, seconds, speedKmh = 40, accuracy = 8) => ({
   lat,
@@ -1953,17 +1957,61 @@ describe('tripEngine', () => {
       lng: -79.3832,
       timestamp: '2026-01-01T12:00:00.000Z',
       tripId: 'park-test',
-      address: 'Toronto City Hall',
+      address: 'Toronto City Hall, Toronto, Ontario',
     });
     const loaded = await getLastParkedLocation();
 
     expect(saved.tripId).toBe('park-test');
     expect(loaded.lat).toBe(43.6532);
     expect(loaded.lng).toBe(-79.3832);
-    expect(loaded.address).toBe('Toronto City Hall');
+    expect(loaded.address).toBe('Toronto City Hall, Toronto');
+  });
+
+  it('reverse-geocodes a web-originated parked location when no address is supplied', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ display_name: 'Queen Street West, Toronto, Ontario, Canada' }),
+    })));
+
+    const saved = await saveLastParkedLocation({
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-01-01T12:00:00.000Z',
+      tripId: 'park-geocode-test',
+    });
+    const loaded = await getLastParkedLocation();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(saved.address).toBe('Queen Street West, Toronto');
+    expect(loaded.address).toBe('Queen Street West, Toronto');
+  });
+
+  it('keeps saving parked locations when reverse geocoding fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('offline');
+    }));
+
+    const saved = await saveLastParkedLocation({
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-01-01T12:00:00.000Z',
+      tripId: 'park-offline-test',
+    });
+
+    expect(saved).toMatchObject({
+      lat: 43.6532,
+      lng: -79.3832,
+      tripId: 'park-offline-test',
+      address: null,
+    });
   });
 
   it('does not store the last parked location inside a privacy zone guard', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      json: async () => ({}),
+    })));
+
     const previousZones = localSettings.get().privacy_zones;
     const privacyZone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
     const guardBoundaryM = privacyZone.radius_m + PARKED_LOCATION_PRIVACY_GUARD_M;

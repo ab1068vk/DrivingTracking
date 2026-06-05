@@ -73,6 +73,9 @@ describe('recovery compatibility', () => {
   it('keeps Android identity and the native tile on the same settings record', () => {
     const capacitor = readProjectFile('capacitor.config.ts');
     const gradle = readProjectFile('android/app/build.gradle');
+    const manifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
+    const backupRules = readProjectFile('android/app/src/main/res/xml/backup_rules.xml');
+    const dataExtractionRules = readProjectFile('android/app/src/main/res/xml/data_extraction_rules.xml');
     const mainActivity = readProjectFile(
       'android/app/src/main/java/com/drivesense/app/MainActivity.java'
     );
@@ -89,5 +92,12 @@ describe('recovery compatibility', () => {
     expect(mainActivity).toContain(`package ${ANDROID_APP_ID};`);
     expect(tile).toContain(`private static final String SETTINGS_KEY = "${SETTINGS_KEY}"`);
     expect(trackingStore).toContain(`const SETTINGS_KEY = '${SETTINGS_KEY}'`);
+    expect(manifest).toContain('android:allowBackup="false"');
+    expect(manifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"');
+    expect(manifest).toContain('android:fullBackupContent="@xml/backup_rules"');
+    expect(backupRules).toContain('<exclude domain="sharedpref" path="drivesense_native_tracking.xml"/>');
+    expect(backupRules).toContain('<exclude domain="sharedpref" path="CapacitorStorage.xml"/>');
+    expect(dataExtractionRules).toContain('<cloud-backup>');
+    expect(dataExtractionRules).toContain('<device-transfer>');
   });
 });
