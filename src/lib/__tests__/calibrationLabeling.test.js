@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
+  shouldAskFatigueSelfReport,
+  getCalibrationMilestone,
+  getCompletionRate,
+  getNextCalibrationMilestone,
 } from '@/lib/calibrationLabeling';
-import { fitCalibrationDataset, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
+import { fitCalibrationDataset, fitFatigueConstants, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
-import { SCORING_VERSION } from '@/lib/tripEngine';
+import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
 
 const completedTrip = {
   id: 'trip_private_id',
@@ -45,7 +49,101 @@ const completedTrip = {
   },
 };
 
+const fatigueEligibleTrip = {
+  ...completedTrip,
+  duration_seconds: 60 * 60,
+  end_time: '2026-01-01T22:15:00',
+};
+
+const ratingForBucket = {
+  careful: 5,
+  normal: 4,
+  rushed: 3,
+  incident: 1,
+};
+
+const targetForBucket = {
+  careful: 100,
+  normal: 75,
+  rushed: 50,
+  incident: 0,
+};
+
+const syntheticCalibrationLabel = (bucket, index = 0, overrides = {}) => ({
+  schemaVersion: 1,
+  scoringModelVersion: SCORING_VERSION,
+  createdAt: '2026-05-26T18:00:00.000Z',
+  dataQualityFlags: [],
+  eligibleForCalibration: true,
+  surveyLabel: {
+    overallDriveRating: ratingForBucket[bucket],
+    rating: ratingForBucket[bucket],
+    targetScore: targetForBucket[bucket],
+    target_score: targetForBucket[bucket],
+    wasDriver: 'yes',
+    scoreAccuracy: null,
+    contextTags: [],
+  },
+  tripFeatureSummary: {
+    distanceKm: 5 + (index % 6),
+    durationMin: bucket === 'incident' ? 75 : 35,
+    fatigueRisk: bucket === 'incident' ? 70 : 0,
+    nightDrive: bucket === 'incident',
+    gpsQualityScore: 1,
+    sampleCount: 60,
+  },
+  scoreOutput: {
+    overall: targetForBucket[bucket],
+    safety: targetForBucket[bucket],
+    calibrationStatus: 'approximate',
+  },
+  calibration_features: {
+    penalty_rate_per_km: (100 - targetForBucket[bucket]) / 40,
+    fatigue_risk_score: bucket === 'incident' ? 70 : 0,
+  },
+  ...overrides,
+});
+
+const labelsFromDistribution = (distribution) => Object.entries(distribution).flatMap(([bucket, count]) => (
+  Array.from({ length: count }, (_, index) => syntheticCalibrationLabel(bucket, index))
+));
+
 describe('calibration labeling pipeline', () => {
+  it('reports intermediate calibration milestones before full calibration', () => {
+    expect(getCalibrationMilestone(5)).toBeNull();
+    expect(getNextCalibrationMilestone(5)).toMatchObject({
+      count: 10,
+      benefit: 'Trip rating history begins',
+    });
+    expect(getCalibrationMilestone(50)).toMatchObject({
+      label: 'Early insights',
+      benefit: 'Trend patterns emerging',
+    });
+    expect(getNextCalibrationMilestone(50)).toMatchObject({
+      count: 200,
+      benefit: 'Local threshold suggestions unlocked',
+    });
+    expect(getCalibrationMilestone(2500)).toMatchObject({
+      label: 'Fully calibrated',
+    });
+    expect(getNextCalibrationMilestone(2500)).toBeNull();
+  });
+
+  it('returns zero completion rate for unlabeled scored trips without throwing', () => {
+    const trips = Array.from({ length: 100 }, (_, index) => ({
+      id: `trip_${index}`,
+      status: 'completed',
+      score_overall: 80,
+      start_time: '2026-05-01T12:00:00.000Z',
+    }));
+
+    expect(getCompletionRate(trips, [])).toMatchObject({
+      labeled: 0,
+      total: 100,
+      rate: 0,
+    });
+  });
+
   it('builds anonymized post-trip survey labels without route geometry or private trip fields', () => {
     const payload = buildCalibrationLabelPayload(completedTrip, 4, {
       submittedAt: '2026-05-26T18:00:00.000Z',
@@ -91,6 +189,32 @@ describe('calibration labeling pipeline', () => {
     expect(serialized).not.toContain('Private note');
     expect(serialized).not.toContain('43.65');
     expect(serialized).not.toContain('-79.38');
+  });
+
+  it('adds optional fatigue self-report only for long late or overnight trips', () => {
+    expect(shouldAskFatigueSelfReport(fatigueEligibleTrip)).toBe(true);
+    expect(shouldAskFatigueSelfReport({
+      ...fatigueEligibleTrip,
+      duration_seconds: 45 * 60,
+    })).toBe(false);
+    expect(shouldAskFatigueSelfReport({
+      ...fatigueEligibleTrip,
+      end_time: '2026-01-01T14:15:00',
+    })).toBe(false);
+
+    const eligiblePayload = buildCalibrationLabelPayload(fatigueEligibleTrip, {
+      overallDriveRating: 4,
+      wasDriver: 'yes',
+      fatigue_self_report: 'very_tired',
+    });
+    const ordinaryPayload = buildCalibrationLabelPayload(completedTrip, {
+      overallDriveRating: 4,
+      wasDriver: 'yes',
+      fatigue_self_report: 'very_tired',
+    });
+
+    expect(eligiblePayload.surveyLabel.fatigue_self_report).toBe('very_tired');
+    expect(ordinaryPayload.surveyLabel.fatigue_self_report).toBeNull();
   });
 
   it('marks passenger and low-quality trips as ineligible', () => {
@@ -142,7 +266,7 @@ describe('calibration labeling pipeline', () => {
       status: 'insufficient_labels',
     });
     expect(result.suggested_constants.PENALTY_SCALE_FACTOR.calibration_status).toBe('heuristic_beta');
-    expect(result.suggested_constants.FATIGUE_SAFETY_PENALTY_SCALE.calibration_status).toBe('heuristic_beta');
+    expect(result.suggested_constants.FATIGUE_SAFETY_PENALTY_SCALE).toBeUndefined();
     expect(result.constants_metadata).toMatchObject({
       calibration_status: 'heuristic_beta',
       warning: 'Calibration pending: not enough labeled trips yet.',
@@ -164,7 +288,27 @@ describe('calibration labeling pipeline', () => {
       overallDriveRating: (index % 5) + 1,
       scoreAccuracy: index % 7 === 0 ? 'too_high' : 'accurate',
       wasDriver: 'yes',
-    }));
+    })).map((label) => {
+      const target = label.surveyLabel.targetScore;
+      return {
+        ...label,
+        surveyLabel: {
+          ...label.surveyLabel,
+          scoreAccuracy: null,
+          targetScore: surveyRatingToTargetScore(label.surveyLabel.overallDriveRating),
+          target_score: surveyRatingToTargetScore(label.surveyLabel.overallDriveRating),
+        },
+        calibration_features: {
+          penalty_rate_per_km: (100 - surveyRatingToTargetScore(label.surveyLabel.overallDriveRating)) / 40,
+          fatigue_risk_score: 0,
+        },
+        scoreOutput: {
+          ...label.scoreOutput,
+          overall: target,
+          safety: target,
+        },
+      };
+    });
 
     const result = fitCalibrationDataset(labels, { targetCount: 2000, datasetId: 'test-dataset' });
 
@@ -180,5 +324,99 @@ describe('calibration labeling pipeline', () => {
       eligible_trip_count: 2000,
       status: 'calibrated',
     });
+  });
+
+  it('fits stratified synthetic labels with confidence intervals and confusion matrix counts', () => {
+    const labels = labelsFromDistribution({ normal: 25, careful: 10, rushed: 10, incident: 5 });
+
+    const result = fitCalibrationDataset(labels, { targetCount: 50, bootstrapIterations: 100 });
+
+    Object.values(result.constants).forEach((value) => {
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThan(0);
+    });
+    expect(result.confidenceIntervals.PENALTY_SCALE_FACTOR.low95)
+      .toBeLessThan(result.confidenceIntervals.PENALTY_SCALE_FACTOR.high95);
+    for (const [bucket, expectedCount] of Object.entries(result.validation.labelDistribution)) {
+      const rowTotal = Object.values(result.validation.confusionMatrix[bucket])
+        .reduce((sum, count) => sum + count, 0);
+      expect(rowTotal).toBe(expectedCount);
+    }
+  });
+
+  it('fits fatigue constants from fatigue-specific self reports', () => {
+    const reports = ['alert', 'normal', 'tired', 'very_tired'];
+    const targetByReport = {
+      alert: 90,
+      normal: 82,
+      tired: 68,
+      very_tired: 50,
+    };
+    const riskByReport = {
+      alert: 5,
+      normal: 25,
+      tired: 55,
+      very_tired: 85,
+    };
+    const labels = Array.from({ length: 200 }, (_, index) => {
+      const report = reports[index % reports.length];
+      return syntheticCalibrationLabel('normal', index, {
+        surveyLabel: {
+          overallDriveRating: 4,
+          rating: 4,
+          targetScore: targetByReport[report],
+          target_score: targetByReport[report],
+          wasDriver: 'yes',
+          scoreAccuracy: null,
+          contextTags: [],
+          fatigue_self_report: report,
+        },
+        scoreOutput: {
+          overall: targetByReport[report],
+          safety: targetByReport[report],
+          calibrationStatus: 'approximate',
+        },
+        tripFeatureSummary: {
+          distanceKm: 12,
+          durationMin: 70,
+          fatigueRisk: riskByReport[report],
+          nightDrive: true,
+          gpsQualityScore: 1,
+          sampleCount: 100,
+        },
+        calibration_features: {
+          penalty_rate_per_km: 0,
+          fatigue_risk_score: riskByReport[report],
+          non_fatigue_safety_score: 92,
+        },
+      });
+    });
+
+    const result = fitFatigueConstants(labels);
+
+    expect(result.FATIGUE_SAFETY_PENALTY_SCALE).toBeGreaterThan(0);
+    expect(result.FATIGUE_SAFETY_MAX_PENALTY).toBeGreaterThan(0);
+    expect(result.validation).toMatchObject({
+      minSampleSize: 200,
+      fatigueCorrelation: expect.any(Number),
+      alertVsTiredMeanScoreDiff: expect.any(Number),
+    });
+    expect(result.validation.fatigueCorrelation).toBeGreaterThan(0.9);
+    expect(result.validation.alertVsTiredMeanScoreDiff).toBeGreaterThan(20);
+  });
+
+  it('throws a minimum-label error when no labels are eligible', () => {
+    expect(() => fitCalibrationDataset([])).toThrow(/MIN_CALIBRATION_LABEL_COUNT/);
+  });
+
+  it('does not make imbalanced incident labels look artificially better than balanced labels', () => {
+    const balanced = labelsFromDistribution({ careful: 10, normal: 10, rushed: 10, incident: 10 });
+    const imbalanced = labelsFromDistribution({ careful: 10, normal: 10, rushed: 10, incident: 13 });
+
+    const balancedResult = fitCalibrationDataset(balanced, { targetCount: 100, bootstrapIterations: 100 });
+    const imbalancedResult = fitCalibrationDataset(imbalanced, { targetCount: 100, bootstrapIterations: 100 });
+
+    expect(imbalancedResult.validation.crossValidationMAE)
+      .toBeGreaterThanOrEqual(balancedResult.validation.crossValidationMAE - 5);
   });
 });

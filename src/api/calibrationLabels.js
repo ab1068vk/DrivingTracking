@@ -64,4 +64,8 @@ export const calibrationLabelService = {
   listLocalLabels() {
     return localCalibrationLabelRepository.list();
   },
+
+  listTripSurveyMarkers() {
+    return localCalibrationLabelRepository.listSurveyMarkers();
+  },
 };

@@ -3,6 +3,12 @@ import { useState, useEffect } from 'react';
 import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
+import { activeTripStore } from '@/lib/trackingStore';
+import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
+
+const debugNavItems = import.meta.env.DEV
+  ? [{ path: '/diagnostics', label: 'Diagnostics', icon: Activity }]
+  : [];
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -12,7 +18,7 @@ const navItems = [
   { path: '/insights', label: 'Insights', icon: TrendingUp },
   { path: '/achievements', label: 'Awards', icon: Award },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
-  { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
+  ...debugNavItems,
   { path: '/vehicles', label: 'Vehicles', icon: Car },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -36,9 +42,10 @@ export default function Layout() {
   useEffect(() => {
     const checkTracking = () => {
       try {
-        const raw = localStorage.getItem('drivesense_active_trip');
-        setTrackingActive(!!raw);
-      } catch {}
+        setTrackingActive(!!activeTripStore.get());
+      } catch {
+        // Intentionally silent - header badge polling should not disrupt app navigation.
+      }
     };
     checkTracking();
     const interval = setInterval(checkTracking, 2000);
@@ -180,6 +187,9 @@ export default function Layout() {
       <main className="flex-1 container max-w-6xl mx-auto px-4 py-6">
         <Outlet />
       </main>
+      <footer className="border-t border-border/50 bg-card/50 px-4 py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+        {LEGAL_DISCLAIMER_SHORT} Obey posted signs and local laws.
+      </footer>
     </div>
   );
 }

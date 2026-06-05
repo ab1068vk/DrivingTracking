@@ -1,6 +1,6 @@
 import { registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
-import { calculateSegmentMetrics, normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/tripEngine';
+import { calculateSegmentMetrics, normalizeLocationPoint, shouldAcceptLocationPoint } from '@/lib/gps/math';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import {
   requestBackgroundLocationPermission,

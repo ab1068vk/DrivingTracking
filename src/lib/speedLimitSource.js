@@ -1,9 +1,9 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { haversineDistance } from '@/lib/tripEngine';
+import { haversineDistance } from '@/lib/gps/math';
 import { withRetry } from '@/lib/retry';
 import { getPrivacyZones } from '@/lib/privacyZones';
 
-const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
+const SPEED_LIMIT_CACHE_KEY = 'road_sage_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const FALLBACK_OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',

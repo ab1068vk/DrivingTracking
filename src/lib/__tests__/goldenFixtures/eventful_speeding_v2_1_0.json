@@ -1,7 +1,7 @@
 {
   "id": "eventful_speeding_v2_2_0",
   "description": "Human-verified eventful daytime route with inferred speed-limit speeding events; validates penalties, limited evidence, and provenance component labels independently of the test-runner timezone.",
-  "scoring_version": "43c1930f",
+  "scoring_version": "af08be91",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -32,8 +32,8 @@
       "night_driving": false
     },
     "scores": {
-      "score_overall": 45,
-      "score_safety": 16,
+      "score_overall": 44,
+      "score_safety": 13,
       "score_smoothness": 95,
       "score_eco": 20,
       "score_confidence_label": "developing",
@@ -46,8 +46,8 @@
       "defensive_driving_score": 74
     },
     "component_scores": {
-      "overall": { "value": 45, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
-      "safety": { "value": 16, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
+      "overall": { "value": 44, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
+      "safety": { "value": 13, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
       "smoothness": { "value": 95, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "eco": { "value": 20, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
@@ -57,7 +57,7 @@
       "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "43c1930f",
+      "scoring_version": "af08be91",
       "components": {
         "overall": "developing",
         "safety": "developing",
