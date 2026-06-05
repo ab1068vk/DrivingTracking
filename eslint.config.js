@@ -21,6 +21,16 @@ export default [
     },
     rules: {
       "no-dupe-keys": "error",
+      // SECURITY: rehype-raw enables raw HTML in react-markdown, which creates
+      // XSS risk when rendering user-controlled content such as imported trip notes.
+      "no-restricted-imports": ["error", {
+        paths: [
+          {
+            name: "rehype-raw",
+            message: "rehype-raw is banned. It enables XSS in react-markdown when rendering user content. See SUPP-7 in the security audit.",
+          },
+        ],
+      }],
     },
   },
   {

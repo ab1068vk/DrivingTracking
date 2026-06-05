@@ -90,7 +90,7 @@ describe('UBI PDF export', () => {
     const renderedText = pdfText.mock.calls.map(([text]) => String(text)).join(' ');
 
     expect(renderedText).toContain('Metric Reference');
-    expect(renderedText).toContain('Scores are estimates');
+    expect(renderedText).toContain('Scores are personal driving estimates');
     expect(renderedText).toContain('~82');
     expect(renderedText).toContain('Total estimated fuel cost');
     expect(renderedText).toContain('Safety Pattern Estimate [score_safety]');

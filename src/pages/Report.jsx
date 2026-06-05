@@ -12,7 +12,9 @@ import {
   ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell,
   RadarChart, Radar, PolarGrid, PolarAngleAxis
 } from 'recharts';
-import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, getTripComponentScore, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import { formatDate, formatDistance, formatDuration, formatSpeed, getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
+import { generateReportSummary, tripsToCSV, downloadCSV } from '@/engine/export/index.js';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
@@ -28,6 +30,7 @@ import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 import { computeUBIReport } from '@/lib/ubiReport';
 import { notifyExportSaved } from '@/lib/notificationService';
 import { toast } from '@/components/ui/use-toast';
+import { logError } from '@/lib/errorReporting';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -211,9 +214,11 @@ export default function Reports() {
 
   const handleExport = async () => {
     const csv = tripsToCSV(trips);
-    const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
+    const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`, { password });
     toast({
-      title: 'Export saved',
+      title: 'Encrypted export saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'CSV report'} is downloading.`,
@@ -222,16 +227,20 @@ export default function Reports() {
       await notifyExportSaved({
         filename: result.filename,
         uri: result.uri,
-        mimeType: 'text/csv',
+        mimeType: 'application/octet-stream',
         label: 'CSV export',
-      }).catch(() => {});
+      }).catch((err) => {
+        logError('export_saved_notification', err, { filename: result.filename, label: 'CSV export' });
+      });
     }
   };
 
   const handlePdfExport = async () => {
-    const result = await exportMonthlyReportPDF(trips, period, settings);
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
+    const result = await exportMonthlyReportPDF(trips, period, settings, { password });
     toast({
-      title: 'PDF saved',
+      title: 'Encrypted PDF saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'Monthly PDF report'} is downloading.`,
@@ -240,18 +249,22 @@ export default function Reports() {
       await notifyExportSaved({
         filename: result.filename,
         uri: result.uri,
-        mimeType: 'application/pdf',
+        mimeType: 'application/octet-stream',
         label: 'PDF report',
-      }).catch(() => {});
+      }).catch((err) => {
+        logError('export_saved_notification', err, { filename: result.filename, label: 'PDF report' });
+      });
     }
   };
 
   const handleUbiExport = async () => {
+    const password = prompt('Create an export password (12+ characters). You will need it to open this file.');
+    if (!password) return;
     setUbiLoading(true);
-    const result = await exportUBIReportPDF(ubiReport, settings);
+    const result = await exportUBIReportPDF(ubiReport, settings, { password });
     setUbiLoading(false);
     toast({
-      title: 'Score card saved',
+      title: 'Encrypted score card saved',
       description: result?.native
         ? `${result.filename} was saved to Downloads.`
         : `${result?.filename || 'Score card PDF'} is downloading.`,
@@ -260,9 +273,11 @@ export default function Reports() {
       await notifyExportSaved({
         filename: result.filename,
         uri: result.uri,
-        mimeType: 'application/pdf',
+        mimeType: 'application/octet-stream',
         label: 'Score card',
-      }).catch(() => {});
+      }).catch((err) => {
+        logError('export_saved_notification', err, { filename: result.filename, label: 'Score card' });
+      });
     }
   };
 
@@ -321,6 +336,15 @@ export default function Reports() {
             <FileText className="w-4 h-4" />
             Export Monthly Report (PDF)
           </button>
+          <div className="max-w-64 rounded-lg border border-orange-300 bg-orange-50 p-3 text-xs text-orange-700 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300">
+            <p className="flex items-center gap-1.5 font-bold text-orange-800 dark:text-orange-200">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {UBI_INSURANCE_NOTICE}
+            </p>
+            <p className="mt-1">
+              {UBI_INSURANCE_NOTICE_DETAIL}
+            </p>
+          </div>
           <button
             onClick={handleUbiExport}
             disabled={ubiLoading || ubiReport.insufficientData}

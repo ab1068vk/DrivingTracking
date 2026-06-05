@@ -1,4 +1,4 @@
-import { clamp } from '@/lib/mathUtils';
+import { clamp, decayWeight } from '@/lib/mathUtils';
 import {
   isEveningRushHour,
   isMorningRushHour,
@@ -7,27 +7,33 @@ import {
   NIGHT_START_HOUR,
 } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
-import { SCORING_VERSION } from '@/lib/scoringConstants';
+import { SCORING_VERSION } from '@/lib/scoringVersion.generated';
+import { scoringValue } from '@/lib/scoringConstants';
+import { PERSONAL_BASELINE_MIN_TRIPS } from './personalBaselineConstants.js';
+import {
+  CO2_KG_PER_LITER,
+  DEFAULT_CO2_BASELINE_KG_PER_100KM,
+  DEFAULT_EV_KWH_PER_100KM,
+  DEFAULT_FUEL_PRICE_PER_LITER,
+  DEFAULT_GRID_CO2_KG_PER_KWH,
+  DEFAULT_L_PER_100KM,
+  DEFAULT_MAINTENANCE_ITEMS,
+  DEFAULT_TREE_CO2_KG_PER_YEAR,
+  GASOLINE_CO2_KG_PER_LITER,
+} from '@/lib/vehicleEconomyConstants';
 
-export const DEFAULT_FUEL_PRICE_PER_LITER = 1.65;
-export const DEFAULT_L_PER_100KM = 8.5;
-export const DEFAULT_EV_KWH_PER_100KM = 18;
-export const DEFAULT_GRID_CO2_KG_PER_KWH = 0.04;
-export const DEFAULT_CO2_BASELINE_KG_PER_100KM = 12.0;
-// USDA/Arbor Day cite >48 lb CO2/year for a mature tree; 21 kg/year keeps this as a conservative planning value.
-export const DEFAULT_TREE_CO2_KG_PER_YEAR = 21.0;
-export const ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT = 0.08;
-export const GASOLINE_CO2_KG_PER_LITER = 2.31;
-export const CO2_KG_PER_LITER = {
-  gasoline: 2.31,
-  petrol: 2.31,
-  diesel: 2.68,
-  lpg: 1.65,
-  cng: 2.0,
-  hybrid: 2.10,
-  electric: 0,
-  ev: 0,
+export {
+  CO2_KG_PER_LITER,
+  DEFAULT_CO2_BASELINE_KG_PER_100KM,
+  DEFAULT_EV_KWH_PER_100KM,
+  DEFAULT_FUEL_PRICE_PER_LITER,
+  DEFAULT_GRID_CO2_KG_PER_KWH,
+  DEFAULT_L_PER_100KM,
+  DEFAULT_MAINTENANCE_ITEMS,
+  DEFAULT_TREE_CO2_KG_PER_YEAR,
+  GASOLINE_CO2_KG_PER_LITER,
 };
+export const ECO_DRIVING_MAX_ECONOMY_ADJUSTMENT = 0.08;
 /**
  * Provisional maintenance conversion used for extra-wear estimates.
  *
@@ -46,7 +52,7 @@ export const MAINTENANCE_CALIBRATION_REGISTRY = {
     note: '1 stress unit is assumed to consume about 8 km of service-life reserve until manufacturer or fleet outcome data is available.',
   },
 };
-export const PERSONAL_BASELINE_MIN_TRIPS = 10;
+export { PERSONAL_BASELINE_MIN_TRIPS };
 export const PERSONAL_PERCENTILE_MIN_WEEKS = 4;
 export const BEST_WINDOW_MIN_TRIPS = 3;
 export const PERSONAL_BASELINE_DECAY = 0.85;
@@ -69,14 +75,8 @@ export const STRESS_UNITS = {
   tailgate_cycle: { low: 1, medium: 3, high: 5 },
 };
 
-export const DEFAULT_MAINTENANCE_ITEMS = [
-  { id: 'oil', label: 'Oil change', interval_km: 8000, last_service_km: 0 },
-  { id: 'tires', label: 'Tire rotation', interval_km: 10000, last_service_km: 0 },
-  { id: 'brakes', label: 'Brake check', interval_km: 20000, last_service_km: 0 },
-  { id: 'inspection', label: 'Inspection', interval_km: 20000, last_service_km: 0 },
-];
-
 const DAY_MS = 86400000;
+const PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS = scoringValue('SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS') ?? scoringValue('SIGNAL_DECAY_HALF_LIFE_DAYS') ?? 21;
 
 const distanceWeightedScore = (trips = [], field = 'score_overall') => {
   const scored = trips
@@ -88,6 +88,35 @@ const distanceWeightedScore = (trips = [], field = 'score_overall') => {
   const totalKm = scored.reduce((sum, item) => sum + item.distance, 0);
   return totalKm > 0
     ? scored.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm
+    : null;
+};
+
+const tripEndTime = (trip = {}) => (
+  trip.end_time ||
+  trip.endedAt ||
+  trip.start_time ||
+  trip.startedAt ||
+  trip.created_at ||
+  0
+);
+
+const ageDaysForTrip = (trip, now = new Date()) => {
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const tripMs = new Date(tripEndTime(trip)).getTime();
+  if (!Number.isFinite(nowMs) || !Number.isFinite(tripMs)) return 0;
+  return (nowMs - tripMs) / DAY_MS;
+};
+
+const temporallyWeightedScore = (trips = [], now = new Date(), field = 'score_overall', halfLifeDays = PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS) => {
+  const weighted = trips
+    .map((trip) => ({
+      score: Number(trip?.[field]),
+      weight: decayWeight(ageDaysForTrip(trip, now), halfLifeDays),
+    }))
+    .filter((item) => Number.isFinite(item.score) && item.weight > 0);
+  const weightSum = weighted.reduce((sum, item) => sum + item.weight, 0);
+  return weightSum > 0
+    ? weighted.reduce((sum, item) => sum + item.score * item.weight, 0) / weightSum
     : null;
 };
 
@@ -768,7 +797,7 @@ export function calculateNoHarshBrakeStreak(trips = []) {
   return streak;
 }
 
-export function analyzeTimeOfDay(trips = []) {
+export function analyzeTimeOfDay(trips = [], now = new Date(), halfLifeDays = PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS) {
   const buckets = [
     { id: 'morning', label: 'Morning', range: '5a-12p', from: 5, to: 12 },
     { id: 'afternoon', label: 'Afternoon', range: '12p-5p', from: 12, to: 17 },
@@ -783,7 +812,7 @@ export function analyzeTimeOfDay(trips = []) {
       const normalized = hour < NIGHT_END_HOUR ? hour + 24 : hour;
       return normalized >= bucket.from && normalized < bucket.to;
     });
-    const weightedScore = distanceWeightedScore(bucketTrips);
+    const weightedScore = temporallyWeightedScore(bucketTrips, now, 'score_overall', halfLifeDays);
     const events = bucketTrips.reduce((sum, trip) => (
       sum +
       (trip.harsh_brakes_count || 0) +
@@ -800,11 +829,11 @@ export function analyzeTimeOfDay(trips = []) {
   });
 }
 
-export function analyzeDayOfWeek(trips = []) {
+export function analyzeDayOfWeek(trips = [], now = new Date(), halfLifeDays = PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS) {
   const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return labels.map((label, index) => {
     const dayTrips = trips.filter((trip) => trip.status === 'completed' && new Date(trip.start_time).getDay() === index);
-    const weightedScore = distanceWeightedScore(dayTrips);
+    const weightedScore = temporallyWeightedScore(dayTrips, now, 'score_overall', halfLifeDays);
     const events = dayTrips.reduce((sum, trip) => (
       sum +
       (trip.harsh_brakes_count || 0) +
@@ -883,7 +912,8 @@ const tripScoringVersion = (trip = {}) => (
 
 const hasCurrentScoringVersion = (trip = {}) => tripScoringVersion(trip) === SCORING_VERSION;
 
-export function computePersonalBaseline(completedTrips = []) {
+export function computePersonalBaseline(completedTrips = [], now = new Date()) {
+  const baselineNow = now instanceof Date ? now : new Date(now);
   const completed = [...completedTrips]
     .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
@@ -894,9 +924,9 @@ export function computePersonalBaseline(completedTrips = []) {
   const exponentiallyWeighted = (items) => {
     const valid = items.filter((trip) => Number.isFinite(Number(trip.score_overall)));
     if (!valid.length) return { average: null };
-    const weighted = valid.map((trip, index) => ({
+    const weighted = valid.map((trip) => ({
       score: Number(trip.score_overall),
-      weight: Math.pow(PERSONAL_BASELINE_DECAY, index),
+      weight: decayWeight(ageDaysForTrip(trip, baselineNow), PRE_TRIP_SIGNAL_DECAY_HALF_LIFE_DAYS),
     }));
     const weightSum = weighted.reduce((sum, item) => sum + item.weight, 0);
     const averageScore = weighted.reduce((sum, item) => sum + item.score * item.weight, 0) / weightSum;
@@ -916,9 +946,8 @@ export function computePersonalBaseline(completedTrips = []) {
     };
   };
 
-  const now = new Date();
-  const fourWeeksAgo = new Date(now.getTime() - 28 * DAY_MS);
-  const weekStart = startOfWeek(now);
+  const fourWeeksAgo = new Date(baselineNow.getTime() - 28 * DAY_MS);
+  const weekStart = startOfWeek(baselineNow);
   const recentWindowTrips = completed.filter((trip) => new Date(trip.start_time) >= fourWeeksAgo);
   const currentVersionRecentTrips = recentWindowTrips.filter(hasCurrentScoringVersion);
   const olderScoringRecentTripCount = recentWindowTrips.length - currentVersionRecentTrips.length;
@@ -935,7 +964,7 @@ export function computePersonalBaseline(completedTrips = []) {
   const delta = thisWeekAvg != null && baselineAvg != null ? thisWeekAvg - baselineAvg : null;
   const trend = delta == null ? 'unknown' : delta >= 5 ? 'improving' : delta <= -5 ? 'declining' : 'steady';
 
-  const twelveWeeksAgo = new Date(now.getTime() - 12 * 7 * DAY_MS);
+  const twelveWeeksAgo = new Date(baselineNow.getTime() - 12 * 7 * DAY_MS);
   const byWeek = new Map();
   comparableCompleted
     .filter((trip) => new Date(trip.start_time) >= twelveWeeksAgo)

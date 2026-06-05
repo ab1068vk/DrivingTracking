@@ -1,0 +1,1 @@
+export const PERSONAL_BASELINE_MIN_TRIPS = 10;

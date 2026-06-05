@@ -1,0 +1,77 @@
+import { registerPlugin } from '@capacitor/core';
+import { API_BASE_URL, apiClient } from '@/api/client';
+import { isNativePlatform } from '@/lib/nativePlatform';
+
+const PlayIntegrity = registerPlugin('PlayIntegrity');
+const ALLOW_UNVERIFIED_PLAY_INTEGRITY = import.meta.env.VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY === 'true';
+
+const textToBase64Url = (text) => {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+export function createIntegrityNonce(action = 'sensitive-action') {
+  const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return textToBase64Url(`road-sage:${action}:${random}`);
+}
+
+export async function requestPlayIntegrityAttestation(action = 'sensitive-action') {
+  if (!isNativePlatform()) return null;
+  const nonce = createIntegrityNonce(action);
+  const cloudProjectNumber = import.meta.env.VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER || undefined;
+  return PlayIntegrity.requestAttestation({
+    nonce,
+    ...(cloudProjectNumber ? { cloudProjectNumber } : {}),
+  });
+}
+
+async function verifyPlayIntegrityAttestation(action, attestation) {
+  if (!API_BASE_URL) {
+    throw new Error('Play Integrity attestation must be verified by a trusted backend before this native sensitive action can continue.');
+  }
+
+  const response = await apiClient.post('/play-integrity/verify', {
+    action,
+    nonce: attestation?.nonce,
+    token: attestation?.token,
+    runtimeStatus: attestation?.runtimeStatus,
+  });
+  assertServerVerifiedPlayIntegrity(response, action);
+  return response;
+}
+
+export async function assertPlayIntegrityForSensitiveAction(action = 'sensitive-action', options = {}) {
+  if (!isNativePlatform()) return null;
+  const requireServerVerification = options.requireServerVerification !== false;
+  const result = await requestPlayIntegrityAttestation(action);
+  if (!result?.token) {
+    throw new Error('Play Integrity attestation did not return a token.');
+  }
+  if (
+    requireServerVerification &&
+    result.requiresServerVerification === true &&
+    ALLOW_UNVERIFIED_PLAY_INTEGRITY !== true
+  ) {
+    await verifyPlayIntegrityAttestation(action, result);
+  }
+  return result;
+}
+
+export function assertServerVerifiedPlayIntegrity(response, action = 'sensitive-action') {
+  if (!isNativePlatform()) return true;
+  if (ALLOW_UNVERIFIED_PLAY_INTEGRITY) return true;
+
+  const verified = response?.playIntegrityVerified === true ||
+    response?.playIntegrity?.verified === true ||
+    response?.integrity?.playIntegrityVerified === true;
+  if (!verified) {
+    throw new Error(`Server did not verify Play Integrity for ${action}.`);
+  }
+  return true;
+}
