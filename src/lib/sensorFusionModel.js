@@ -1,4 +1,4 @@
-import { EVENT_TYPES } from '@/lib/tripEngine';
+import { EVENT_TYPES } from '@/lib/scoring/componentScores';
 import { clamp, pearsonCorrelation } from '@/lib/mathUtils';
 
 const MS2_PER_G = 9.80665;

@@ -1,5 +1,11 @@
-import { clamp } from '@/lib/mathUtils';
+import { clamp, pearsonCorrelation } from '@/lib/mathUtils';
 import { scoringValue } from '@/lib/scoringConstants';
+
+const SIGNAL_DECAY_MIN_HALF_LIFE_DAYS = scoringValue('SIGNAL_DECAY_MIN_HALF_LIFE_DAYS') ?? 7;
+const SIGNAL_DECAY_MAX_HALF_LIFE_DAYS = scoringValue('SIGNAL_DECAY_MAX_HALF_LIFE_DAYS') ?? 60;
+const SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS = scoringValue('SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS') ?? 21;
+const SIGNAL_DECAY_AUTOCORR_THRESHOLD = scoringValue('SIGNAL_DECAY_AUTOCORR_THRESHOLD') ?? 0.5;
+const SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR = scoringValue('SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR') ?? 20;
 
 const HABIT_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,
@@ -30,6 +36,12 @@ export { clamp };
 
 const getTripStartDate = (trip) => {
   const raw = trip?.startedAt ?? trip?.start_time ?? trip?.startTime ?? trip?.created_date;
+  const date = new Date(raw || 0);
+  return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date : null;
+};
+
+const getTripEndDate = (trip) => {
+  const raw = trip?.endedAt ?? trip?.end_time ?? trip?.endTime ?? trip?.startedAt ?? trip?.start_time ?? trip?.startTime;
   const date = new Date(raw || 0);
   return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date : null;
 };
@@ -90,6 +102,69 @@ export function getTimeBucket(hour) {
   return 'Night';
 }
 
+/**
+ * Pearson autocorrelation of a score array at a given lag.
+ * @param {number[]} scores - Ordered score sequence.
+ * @param {number} lag - Lag in trips.
+ * @returns {number} Correlation in [-1, 1], or 0 when insufficient/flat.
+ * @example scoreAutocorrelation([80, 82, 81], 1)
+ */
+export function scoreAutocorrelation(scores = [], lag = 1) {
+  const normalizedLag = Math.max(1, Math.trunc(Number(lag) || 1));
+  const finiteScores = (scores || []).map(Number).filter(Number.isFinite);
+  const n = finiteScores.length - normalizedLag;
+  if (n < 2) return 0;
+  const x = finiteScores.slice(0, n);
+  const y = finiteScores.slice(normalizedLag);
+  const identicalFlatSequence = x.every((value) => value === x[0]) &&
+    y.every((value) => value === y[0]) &&
+    x[0] === y[0];
+  if (identicalFlatSequence) return 1;
+  return pearsonCorrelation(x, y);
+}
+
+/**
+ * Estimate the score-decay half-life from per-driver score persistence.
+ * @param {object[]} sortedTrips - Chronologically sorted completed trips.
+ * @param {number} threshold - Autocorrelation cutoff for temporal persistence.
+ * @returns {number} Half-life in days, bounded by registry constants.
+ * @example computeAdaptiveHalfLife(completedTrips)
+ */
+export function computeAdaptiveHalfLife(sortedTrips = [], threshold = SIGNAL_DECAY_AUTOCORR_THRESHOLD) {
+  const scored = (sortedTrips || []).filter((trip) => getTripScore(trip) != null);
+  if (scored.length < SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR) {
+    return SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS;
+  }
+
+  const scores = scored.map((trip) => getTripScore(trip));
+  let totalGapDays = 0;
+  let gapCount = 0;
+  for (let i = 1; i < scored.length; i += 1) {
+    const previous = getTripEndDate(scored[i - 1]) || getTripStartDate(scored[i - 1]);
+    const current = getTripEndDate(scored[i]) || getTripStartDate(scored[i]);
+    const gap = previous && current ? (current.getTime() - previous.getTime()) / 86_400_000 : NaN;
+    if (Number.isFinite(gap) && gap > 0 && gap < 30) {
+      totalGapDays += gap;
+      gapCount += 1;
+    }
+  }
+  const avgDaysPerTrip = gapCount > 0 ? totalGapDays / gapCount : 1;
+  const maxLag = Math.min(30, Math.floor(scores.length / 2));
+  const cutoff = Math.max(0, Number(threshold) || SIGNAL_DECAY_AUTOCORR_THRESHOLD);
+
+  for (let lag = 1; lag <= maxLag; lag += 1) {
+    if (Math.abs(scoreAutocorrelation(scores, lag)) < cutoff) {
+      return clamp(
+        Math.round(lag * avgDaysPerTrip),
+        SIGNAL_DECAY_MIN_HALF_LIFE_DAYS,
+        SIGNAL_DECAY_MAX_HALF_LIFE_DAYS
+      );
+    }
+  }
+
+  return SIGNAL_DECAY_MAX_HALF_LIFE_DAYS;
+}
+
 const defaultHourlyRiskForHour = (hour) => {
   const risk = DEFAULT_HOURLY_RISK_PROFILE?.[hour];
   return Number.isFinite(Number(risk)) ? clamp(Math.round(Number(risk)), 0, 100) : 20;
@@ -111,6 +186,9 @@ export function buildHabitProfile(trips = []) {
   const allTimeAvgScore = allScores.length
     ? Math.round((allScores.reduce((sum, score) => sum + score, 0) / allScores.length) * 10) / 10
     : HABIT_CONSTANTS.DEFAULT_AVG_SCORE;
+  const sortedChronologicalTrips = [...completed]
+    .sort((a, b) => a.start.getTime() - b.start.getTime())
+    .map((entry) => entry.trip);
   const sortedRecent = [...completed].sort((a, b) => b.start.getTime() - a.start.getTime());
   const recentScores = sortedRecent.slice(0, HABIT_CONSTANTS.TREND_WINDOW).map((entry) => entry.score);
   const recentAvgScore = recentScores.length
@@ -146,6 +224,7 @@ export function buildHabitProfile(trips = []) {
       {
         avgScore: stats.avgScore,
         riskScore: stats.riskScore,
+        stdDev: stats.stdDev,
         tripCount: stats.tripCount,
         insufficient: stats.tripCount < HABIT_CONSTANTS.MIN_TRIPS_FOR_DAY,
       },
@@ -202,6 +281,7 @@ export function buildHabitProfile(trips = []) {
     allTimeAvgScore,
     trendDelta: Math.round((recentAvgScore - allTimeAvgScore) * 10) / 10,
     fatigueOnsetMinutes,
+    halfLifeDays: computeAdaptiveHalfLife(sortedChronologicalTrips),
   };
 }
 

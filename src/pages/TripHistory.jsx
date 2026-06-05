@@ -1,15 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
+import { calibrationLabelService } from '@/api/calibrationLabels';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
+import { StaleTripsPrompt } from '@/components/StaleTripsPrompt';
 import { localSettings } from '@/lib/trackingStore';
-import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { getScoreColor } from '@/lib/gps/formatting';
+import { getTripComponentScore } from '@/lib/scoring/componentScores';
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { useSettingsVersion } from '@/hooks/useSettingsVersion';
+import { useSearchParams } from 'react-router-dom';
+import { useStaleTripDetection } from '@/hooks/useStaleTripDetection';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { Line, LineChart, ResponsiveContainer } from 'recharts';
+import { notifyUserError, notifyUserSuccess } from '@/lib/userFeedback';
 import {
   TRIP_TAG_OPTIONS,
   buildTripSearchText,
@@ -36,6 +44,7 @@ const QUICK_FILTERS = [
   { id: 'night', label: 'Night Drives' },
   { id: 'high_risk', label: 'High Risk' },
   { id: 'favorites', label: 'Favorites' },
+  { id: 'unlabeled', label: 'Needs Ratings' },
 ];
 
 const SCORE_SPARKLINES = [
@@ -46,6 +55,8 @@ const SCORE_SPARKLINES = [
 ];
 
 export const SCORE_DELTA_MIN_PREVIOUS_TRIPS = 3;
+const TRIP_CARD_ESTIMATED_HEIGHT = 188;
+const TRIP_LIST_OVERSCAN = 5;
 
 const scoreValue = (trip, key = 'overall') => getTripComponentScore(trip, key).value;
 const sortableScore = (trip, direction = 'desc') => {
@@ -111,29 +122,54 @@ const matchesQuickFilter = (trip, filter) => {
 };
 
 export default function TripHistory() {
+  const [searchParams] = useSearchParams();
+  const tripListRef = useRef(null);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('date_desc');
-  const [filterBy, setFilterBy] = useState('all');
+  const [filterBy, setFilterBy] = useState(() => (searchParams.get('filter') === 'unlabeled' ? 'unlabeled' : 'all'));
   const [selectedTag, setSelectedTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
+  const [isRescoring, setIsRescoring] = useState(false);
+  const deferredSearch = useDeferredValue(search);
   const settings = localSettings.get();
+  const settingsVersion = useSettingsVersion(settings);
   const units = settings.units || 'metric';
   const qc = useQueryClient();
 
   const { data: trips = [], isLoading } = useQuery({
     queryKey: ['all-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
+    meta: {
+      errorTitle: 'Trip history unavailable',
+      errorDescription: 'Road Sage could not load your saved trips. Try refreshing after storage or network access is available.',
+    },
   });
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    meta: {
+      errorTitle: 'Vehicle names unavailable',
+      errorDescription: 'Trips are still shown, but vehicle names may be missing until vehicle data loads.',
+    },
   });
 
-  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
+  const { data: calibrationMarkers = {} } = useQuery({
+    queryKey: ['calibration-survey-markers'],
+    queryFn: () => calibrationLabelService.listTripSurveyMarkers(),
+    meta: {
+      errorTitle: 'Ratings status unavailable',
+      errorDescription: 'Road Sage could not load which trips still need ratings.',
+    },
+  });
+
+  const vehicleById = useMemo(
+    () => new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle])),
+    [vehicles]
+  );
   const invalidateTrips = () => {
     qc.invalidateQueries({ queryKey: ['all-trips'] });
     qc.invalidateQueries({ queryKey: ['recent-trips'] });
@@ -141,43 +177,100 @@ export default function TripHistory() {
 
   const updateTripMut = useMutation({
     mutationFn: (/** @type {{id:any,patch:any}} */ vars) => tripService.update(vars.id, vars.patch),
-    onSuccess: invalidateTrips,
+    onSuccess: (_updatedTrip, vars) => {
+      invalidateTrips();
+      if (Object.prototype.hasOwnProperty.call(vars.patch || {}, 'is_favorite')) {
+        notifyUserSuccess('trip_history_favorite_toggle', {
+          title: vars.patch.is_favorite ? 'Trip favorited' : 'Trip unfavorited',
+          description: vars.patch.is_favorite
+            ? 'This trip is now available in the Favorites filter.'
+            : 'This trip was removed from Favorites.',
+        });
+      }
+    },
+    meta: {
+      name: 'trip_history_update_trip',
+      errorTitle: 'Trip update failed',
+      errorDescription: 'Road Sage could not update this trip. Try again from the trip detail page.',
+    },
   });
 
-  const completed = trips.filter((trip) => trip.status === 'completed');
-  const recentChronological = [...completed]
-    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-    .slice(-5);
-  const sparklineData = recentChronological.map((trip, index) => ({
-    index,
-    score_overall: getTripComponentScore(trip, 'overall').value,
-    score_safety: getTripComponentScore(trip, 'safety').value,
-    score_smoothness: getTripComponentScore(trip, 'smoothness').value,
-    score_eco: getTripComponentScore(trip, 'eco').value,
-  }));
-  const improvement = calculateRecentBrakingImprovement(completed);
-  const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  const completed = useMemo(
+    () => trips.filter((trip) => trip.status === 'completed'),
+    [trips]
+  );
+  const staleTripIds = useStaleTripDetection(completed, settings, settingsVersion);
+  const sparklineData = useMemo(() => {
+    const recentChronological = [...completed]
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+      .slice(-5);
+    return recentChronological.map((trip, index) => ({
+      index,
+      score_overall: getTripComponentScore(trip, 'overall').value,
+      score_safety: getTripComponentScore(trip, 'safety').value,
+      score_smoothness: getTripComponentScore(trip, 'smoothness').value,
+      score_eco: getTripComponentScore(trip, 'eco').value,
+    }));
+  }, [completed]);
+  const improvement = useMemo(
+    () => calculateRecentBrakingImprovement(completed),
+    [completed]
+  );
+  const tripsByRecentOrder = useMemo(
+    () => [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
+    [completed]
+  );
+  const scoreDeltaByTripId = useMemo(() => new Map(
+    tripsByRecentOrder.map((trip) => [String(trip.id), scoreDeltaForTrip(trip, tripsByRecentOrder)])
+  ), [tripsByRecentOrder]);
+  const filtered = useMemo(() => {
+    const normalizedSearch = deferredSearch.trim().toLowerCase();
+    return completed.filter((trip) => {
+      if (
+        filterBy === 'unlabeled' &&
+        (
+          getTripComponentScore(trip, 'overall').value == null ||
+          Number.isInteger(Number(calibrationMarkers?.[String(trip.id)]?.rating))
+        )
+      ) {
+        return false;
+      }
+      if (!matchesQuickFilter(trip, filterBy)) return false;
+      if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
+      if (normalizedSearch) {
+        const vehicle = vehicleById.get(String(trip.vehicle_id));
+        if (!buildTripSearchText(trip, vehicle).includes(normalizedSearch)) return false;
+      }
+      return true;
+    });
+  }, [calibrationMarkers, completed, deferredSearch, filterBy, selectedTag, vehicleById]);
 
-  const filtered = completed.filter((trip) => {
-    if (!matchesQuickFilter(trip, filterBy)) return false;
-    if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
-    if (search) {
-      const vehicle = vehicleById.get(String(trip.vehicle_id));
-      if (!buildTripSearchText(trip, vehicle).includes(search.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const sorted = useMemo(() => {
+    const sortedTrips = [...filtered];
+    sortedTrips.sort((a, b) => {
+      switch (sortBy) {
+        case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+        case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+        case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
+        case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
+        case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
+        case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
+        default: return 0;
+      }
+    });
+    return sortedTrips;
+  }, [filtered, sortBy]);
 
-  const sorted = [...filtered].sort((a, b) => {
-    switch (sortBy) {
-      case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
-      case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
-      case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
-      case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
-      case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
-      case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
-      default: return 0;
-    }
+  useEffect(() => {
+    if (searchParams.get('filter') === 'unlabeled') setFilterBy('unlabeled');
+  }, [searchParams]);
+  const rowVirtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => tripListRef.current,
+    estimateSize: () => TRIP_CARD_ESTIMATED_HEIGHT,
+    getItemKey: (index) => sorted[index]?.id ?? index,
+    initialRect: { width: 0, height: 720 },
+    overscan: TRIP_LIST_OVERSCAN,
   });
 
   const clearFilters = () => {
@@ -201,7 +294,12 @@ export default function TripHistory() {
 
   useEffect(() => {
     if (!savedFiltersLoaded) return;
-    setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {});
+    setJson(SAVED_FILTERS_KEY, savedFilters).catch((error) => {
+      notifyUserError('trip_history_saved_filters', error, {
+        title: 'Filter was not saved',
+        description: 'This filter is active for now, but Road Sage could not save it for next time.',
+      });
+    });
   }, [savedFilters, savedFiltersLoaded]);
 
   const saveCurrentFilter = () => {
@@ -217,6 +315,10 @@ export default function TripHistory() {
     };
     setSavedFilters((current) => [preset, ...current.filter((item) => item.name.toLowerCase() !== name.toLowerCase())].slice(0, 8));
     setPresetName('');
+    notifyUserSuccess('trip_history_filter_saved', {
+      title: 'Filter saved',
+      description: `"${name}" is available in saved filters.`,
+    });
   };
 
   const applySavedFilter = (preset) => {
@@ -224,10 +326,39 @@ export default function TripHistory() {
     setSortBy(preset.sortBy || 'date_desc');
     setFilterBy(preset.filterBy || 'all');
     setSelectedTag(preset.selectedTag || 'all');
+    notifyUserSuccess('trip_history_filter_applied', {
+      title: 'Filter applied',
+      description: `"${preset.name || 'Saved filter'}" is active now.`,
+    });
   };
 
   const removeSavedFilter = (id) => {
+    const removed = savedFilters.find((item) => item.id === id);
     setSavedFilters((current) => current.filter((item) => item.id !== id));
+    notifyUserSuccess('trip_history_filter_removed', {
+      title: 'Filter removed',
+      description: removed?.name ? `"${removed.name}" was deleted from saved filters.` : 'Saved filter was deleted.',
+    });
+  };
+
+  const handleRescoreStaleTrips = async () => {
+    setIsRescoring(true);
+    try {
+      await tripService.markCompletedForRescore({ onlyProvenanceMismatch: true });
+      await qc.invalidateQueries({ queryKey: ['all-trips'] });
+      await qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      notifyUserSuccess('trip_history_rescore_stale', {
+        title: 'Re-score queued',
+        description: 'Older trips were marked for scoring refresh.',
+      });
+    } catch (error) {
+      notifyUserError('trip_history_rescore_stale', error, {
+        title: 'Could not queue re-score',
+        description: 'Road Sage could not mark older trips for re-scoring. Try again from Settings.',
+      });
+    } finally {
+      setIsRescoring(false);
+    }
   };
 
   return (
@@ -254,6 +385,12 @@ export default function TripHistory() {
           <span className="font-semibold">{improvement.message}</span>
         </div>
       )}
+
+      <StaleTripsPrompt
+        staleCount={staleTripIds.length}
+        onRescore={handleRescoreStaleTrips}
+        isRescoring={isRescoring}
+      />
 
       {sparklineData.length > 1 && (
         <div className="grid grid-cols-2 gap-2">
@@ -428,20 +565,45 @@ export default function TripHistory() {
       )}
 
       {!isLoading && sorted.length > 0 && (
-        <div className="space-y-3">
-          {sorted.map((trip, index) => (
-            <TripCard
-              key={trip.id}
-              trip={trip}
-              units={units}
-              index={index}
-              scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
-              onToggleFavorite={(target) => updateTripMut.mutate({
-                id: target.id,
-                patch: { is_favorite: target.is_favorite !== true },
-              })}
-            />
-          ))}
+        <div
+          ref={tripListRef}
+          className="relative overflow-auto pr-1 thin-scrollbar"
+          style={{
+            height: `min(${rowVirtualizer.getTotalSize()}px, calc(100vh - 8rem))`,
+          }}
+        >
+          <div
+            className="relative w-full"
+            style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const trip = sorted[virtualRow.index];
+              if (!trip) return null;
+              return (
+                <div
+                  key={virtualRow.key}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className="absolute left-0 top-0 w-full pb-3"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <TripCard
+                    trip={trip}
+                    units={units}
+                    index={virtualRow.index}
+                    animateEntry={virtualRow.index < 8}
+                    tripCount={completed.length}
+                    scoreDelta={scoreDeltaByTripId.get(String(trip.id))}
+                    onToggleFavorite={(target) => updateTripMut.mutate({
+                      id: target.id,
+                      patch: { is_favorite: target.is_favorite !== true },
+                    })}
+                    onCalibrationLabelSaved={() => qc.invalidateQueries({ queryKey: ['calibration-survey-markers'] })}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

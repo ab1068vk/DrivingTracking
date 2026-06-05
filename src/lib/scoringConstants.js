@@ -1,4 +1,5 @@
 import { SCORING_VERSION } from './scoringVersion.generated.js';
+import { PERSONAL_BASELINE_MIN_TRIPS } from './personalBaselineConstants.js';
 
 export const CALIBRATION_STATUSES = Object.freeze({
   PROVISIONAL: 'provisional',
@@ -16,7 +17,19 @@ export { SCORING_VERSION };
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness', 'score_eco'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];
 const ubiMetrics = ['ubi_score'];
-export const LANE_CHANGING_SAFETY_WEIGHT = 0.05;
+
+/**
+ * @calibration PROVISIONAL
+ * @currentValue 0
+ * @affects score_safety, score_overall
+ * @mathRole Sets the share of lane_changing_score admitted into the Safety blend when the lane-changing feature is enabled.
+ * @calibrationRequirement Dashcam-reviewed lane-change labels with maneuver timing, road curvature, braking context, and manual-review agreement outcomes.
+ * @calibrationMethod Threshold search and cross-validation across labeled lane-change detections, false positives, and Safety score deltas.
+ * @externalReference none
+ * @promotionBlocker true
+ */
+export const LANE_CHANGING_SAFETY_WEIGHT = 0;
+const PHONE_USE_SAFETY_BLEND_WEIGHT = 0.05;
 
 export const PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS = Object.freeze({
   process_id: 'penalty-scale-factor-outcome-calibration-v1',
@@ -149,6 +162,16 @@ export const SCORING_CONSTANTS = Object.freeze({
   DEFAULT_HOURLY_RISK_PROFILE,
   NIGHT_START_HOUR: constant(22, { label: 'Fallback night start hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
   NIGHT_END_HOUR: constant(5, { label: 'Fallback night end hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 40
+   * @affects score_overall, score_safety, score_smoothness, score_eco
+   * @mathRole Multiplies severity-weighted penalty points per km before subtracting from the 100-point base score.
+   * @calibrationRequirement At least 2000 eligible labeled trips with distance, penalty-rate features, quality flags, and target outcome or risk labels.
+   * @calibrationMethod Regression fit with deterministic train/validation split and confidence intervals from fitCalibrationDataset.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   PENALTY_SCALE_FACTOR: constant(40, {
     label: 'Trip penalty scale factor',
     domain: 'trip_score',
@@ -160,6 +183,17 @@ export const SCORING_CONSTANTS = Object.freeze({
       calibration_process: PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS,
     }),
   }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 0.15
+   * @affects score_safety, score_overall
+   * @mathRole Converts the normalized fatigue proxy into raw Safety deduction points before the fatigue cap is applied.
+   * @calibrationRequirement Labeled trips with fatigue exposure features, post-trip fatigue labels, time-on-task context, and safety outcome or expert risk labels.
+   * @calibrationMethod Regression against labeled Safety risk with cross-validation and subgroup error checks by drive duration and time of day.
+   * @externalReference Williamson & Feyer, Occupational and Environmental Medicine, 2000
+   * @literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655): 18-hour wakefulness → impairment equivalent to BAC 0.05%. Current deduction rate maps maximum fatigue to ~15 Safety points assuming a proportional linear relationship (not validated by the original study). Recalibration against fatigue self-reports may update this anchor.
+   * @promotionBlocker true
+   */
   FATIGUE_SAFETY_PENALTY_SCALE: constant(0.15, {
     label: 'Fatigue to Safety penalty scale',
     domain: 'trip_score',
@@ -168,6 +202,17 @@ export const SCORING_CONSTANTS = Object.freeze({
     affected_metrics: ['score_safety', 'score_overall'],
     calibration_metadata: pendingCalibrationMetadata,
   }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 15
+   * @affects score_safety, score_overall
+   * @mathRole Caps the fatigue-derived Safety deduction so the fatigue proxy cannot subtract more than 15 points.
+   * @calibrationRequirement Labeled trips spanning low to extreme fatigue proxy values with Safety outcome labels and enough high-fatigue examples to estimate saturation.
+   * @calibrationMethod Threshold search over cap candidates with cross-validation and calibration-curve inspection.
+   * @externalReference Williamson & Feyer, Occupational and Environmental Medicine, 2000
+   * @literatureAnchor Williamson & Feyer (Occup Environ Med 2000;57:649-655): 18-hour wakefulness → impairment equivalent to BAC 0.05%. Current deduction rate maps maximum fatigue to ~15 Safety points assuming a proportional linear relationship (not validated by the original study). Recalibration against fatigue self-reports may update this anchor.
+   * @promotionBlocker true
+   */
   FATIGUE_SAFETY_MAX_PENALTY: constant(15, {
     label: 'Fatigue Safety deduction cap',
     domain: 'trip_score',
@@ -185,11 +230,31 @@ export const SCORING_CONSTANTS = Object.freeze({
   STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT: constant(3, { label: 'Stop-start defensive sample minimum', domain: 'trip_score', calibration_note: 'Minimum events before the GPS-only score participates in a blend.', affected_metrics: ['defensive_driving_score'] }),
   STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY: constant(3, { label: 'Stop-start highway defensive sample minimum', domain: 'trip_score', calibration_note: 'Minimum highway events before the highway GPS-only score participates in a defensive blend.', affected_metrics: ['defensive_driving_score'] }),
   STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN: constant(1, { label: 'Stop-start urban defensive sample minimum', domain: 'trip_score', calibration_note: 'Minimum city-speed events before the urban GPS-only score participates in a defensive blend.', affected_metrics: ['defensive_driving_score'] }),
-  PHONE_USE_SAFETY_WEIGHT: constant(0.05, { label: 'Phone-use Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional share of confirmed phone-use evidence in Safety.', affected_metrics: ['score_safety', 'score_overall'] }),
+  PHONE_USE_SAFETY_WEIGHT: constant(PHONE_USE_SAFETY_BLEND_WEIGHT, { label: 'Phone-use Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional share of confirmed phone-use evidence in Safety.', affected_metrics: ['score_safety', 'score_overall'] }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 0.60
+   * @affects close_proximity_score
+   * @mathRole Applies exponential decay to the brake-turn alert score for each detected GPS maneuver proxy event.
+   * @calibrationRequirement Labeled brake-turn or proximity-risk events with object-distance evidence, route context, and false-positive review outcomes.
+   * @calibrationMethod Regression or threshold search over decay candidates with cross-validation against labeled proximity-risk severity.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   CLOSE_PROXIMITY_DECAY_BASE: constant(0.60, { label: 'Brake-turn alert score decay', domain: 'trip_score', calibration_note: 'GPS maneuver diagnostic only; object proximity is not measured.', affected_metrics: ['close_proximity_score'] }),
   TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH: constant(50, { label: 'Tire wear harsh-brake reference speed', domain: 'maintenance', calibration_note: 'Diagnostic wear reference speed.', affected_metrics: ['trip_tire_wear_units'] }),
   TIRE_WEAR_DEFAULT_SPEED_TURN_KMH: constant(40, { label: 'Tire wear turn reference speed', domain: 'maintenance', calibration_note: 'Diagnostic wear reference speed.', affected_metrics: ['trip_tire_wear_units'] }),
-  HEADING_DRIFT_CIRCADIAN_MULTIPLIER: constant(2.5, { label: 'Late-night heading-drift multiplier', domain: 'trip_score', calibration_note: 'Circadian weighting informed by drowsy-driving context, not outcome-calibrated.', affected_metrics: ['heading_drift_beta_score'] }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 1
+   * @affects heading_drift_beta_score
+   * @mathRole Retains the retired 02:00-05:00 circadian multiplier as a neutral factor so heading drift is not amplified by clock time.
+   * @calibrationRequirement Labeled highway attention-drift windows with time-of-day, sleep/fatigue context, GPS quality, and expert-reviewed attention-risk labels.
+   * @calibrationMethod Threshold search and cross-validation over time-window multipliers after validating heading drift as an attention proxy.
+   * @externalReference none
+   * @promotionBlocker true
+   */
+  HEADING_DRIFT_CIRCADIAN_MULTIPLIER: constant(1, { label: 'Retired heading-drift circadian multiplier', domain: 'trip_score', calibration_note: 'No circadian multiplier is applied. Heading drift is a GPS attention signal only, not a fatigue measurement.', affected_metrics: ['heading_drift_beta_score'] }),
   EVENT_PENALTY_POINTS: constant(Object.freeze({
     harsh_brake: { low: 3, medium: 6, high: 12 },
     rapid_acceleration: { low: 2, medium: 5, high: 10 },
@@ -206,8 +271,18 @@ export const SCORING_CONSTANTS = Object.freeze({
     phone_use: { low: 5, medium: 12, high: 20 },
   }), { label: 'Driving event penalty points', domain: 'trip_score', calibration_note: 'Event deductions are product heuristics pending outcome calibration.', affected_metrics: scoreMetrics }),
   OVERALL_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ safety: 0.35, smoothness: 0.30, eco: 0.20, intersection: 0.15 }), { label: 'Overall score blend weights', domain: 'trip_score', calibration_note: 'Composite score weighting policy.', affected_metrics: ['score_overall'] }),
-  LANE_CHANGING_SAFETY_WEIGHT: constant(LANE_CHANGING_SAFETY_WEIGHT, { label: 'Lane-changing Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional Safety blend share for lane-changing rate and simultaneous-braking evidence. GPS-only confidence applies a 0.7 weight multiplier.', affected_metrics: ['score_safety', 'score_overall'] }),
-  SAFETY_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.52, stopStart: 0.05, braking: 0.15, compliance: 0.10, laneChanging: LANE_CHANGING_SAFETY_WEIGHT }), { label: 'Safety score blend weights', domain: 'trip_score', calibration_note: 'Composite Safety weighting policy; phone-use share is recorded separately.', affected_metrics: ['score_safety', 'score_overall'] }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 0
+   * @affects score_safety, score_overall
+   * @mathRole Mirrors the exported lane-changing blend weight inside the registry used to assemble Safety score weights.
+   * @calibrationRequirement Dashcam-reviewed lane-change labels with maneuver timing, road curvature, braking context, and manual-review agreement outcomes.
+   * @calibrationMethod Threshold search and cross-validation across labeled lane-change detections, false positives, and Safety score deltas.
+   * @externalReference none
+   * @promotionBlocker true
+   */
+  LANE_CHANGING_SAFETY_WEIGHT: constant(LANE_CHANGING_SAFETY_WEIGHT, { label: 'Lane-changing Safety blend weight', domain: 'trip_score', calibration_note: 'Diagnostic-only until 200 dashcam-reviewed labeled trips reach at least 85% manual-review agreement and curved-road false positives stay below 10%.', affected_metrics: ['score_safety', 'score_overall'] }),
+  SAFETY_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.65, stopStart: 0.05, braking: 0.15, compliance: 0.10, phoneUse: PHONE_USE_SAFETY_BLEND_WEIGHT, laneChanging: LANE_CHANGING_SAFETY_WEIGHT }), { label: 'Safety score blend weights', domain: 'trip_score', calibration_note: 'Composite Safety weighting policy; phone-use share is mirrored by PHONE_USE_SAFETY_WEIGHT for legacy UI calculations.', affected_metrics: ['score_safety', 'score_overall'] }),
   SMOOTHNESS_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.45, jerk: 0.25, speedVariability: 0.10, brakeOnset: 0.10, cornering: 0.10 }), { label: 'Smoothness score blend weights', domain: 'trip_score', calibration_note: 'Composite Smoothness weighting policy.', affected_metrics: ['score_smoothness', 'score_overall'] }),
   ECO_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.40, ecoDriving: 0.40, fuelBand: 0.20 }), { label: 'Eco score blend weights', domain: 'trip_score', calibration_note: 'Composite Eco weighting policy.', affected_metrics: ['score_eco', 'score_overall'] }),
   DEFENSIVE_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ smoothBraking: 0.30, intersection: 0.20, speedVariability: 0.20, stopStart: 0.30 }), { label: 'Defensive-driving blend weights', domain: 'trip_score', calibration_note: 'GPS behavior estimate weighting policy.', affected_metrics: ['defensive_driving_score'] }),
@@ -247,8 +322,28 @@ export const SCORING_CONSTANTS = Object.freeze({
   MAX_ALTITUDE_ACCURACY_M: constant(40, { label: 'Altitude accuracy filter', domain: 'trip_threshold', calibration_note: 'Hill-score GPS altitude quality gate.', affected_metrics: ['hill_driving_score'] }),
   MIN_HILL_SEGMENT_DISTANCE_M: constant(5, { label: 'Hill minimum segment distance', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring proxy.', affected_metrics: ['hill_driving_score'] }),
   HILL_GRADE_THRESHOLD_PCT: constant(5, { label: 'Hill grade threshold', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring proxy.', affected_metrics: ['hill_driving_score'] }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 2.5
+   * @affects hill_driving_score
+   * @mathRole Defines the acceleration threshold above which a hill-driving segment is counted as an infraction.
+   * @calibrationRequirement Labeled hill-driving segments with altitude quality, road grade, acceleration traces, vehicle context, and expert smoothness/risk labels.
+   * @calibrationMethod Threshold search with cross-validation by grade bucket, speed bucket, and altitude accuracy.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   HILL_ACCEL_THRESHOLD_MS2: constant(2.5, { label: 'Hill acceleration threshold', domain: 'trip_threshold', calibration_note: 'Altitude-derived hill scoring proxy.', affected_metrics: ['hill_driving_score'] }),
   HILL_INFRACTION_PENALTY_POINTS: constant(10, { label: 'Legacy hill infraction deduction', domain: 'trip_threshold', calibration_note: 'Legacy absolute-count hill scoring deduction retained for provenance comparison only.', affected_metrics: ['hill_driving_score'] }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 8
+   * @affects hill_driving_score, score_safety
+   * @mathRole Converts each inferred hill infraction per hill-driving km into score deduction points.
+   * @calibrationRequirement Labeled hill-driving trips with inferred infraction counts, hill-route distance, grade, altitude quality, and expert hill-control labels.
+   * @calibrationMethod Regression over per-km infraction rates with cross-validation and residual checks by terrain grade.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   HILL_INFRACTION_PENALTY_POINTS_PER_KM: constant(8, {
     label: 'Hill driving penalty per infraction per km',
     domain: 'trip_score',
@@ -266,13 +361,13 @@ export const SCORING_CONSTANTS = Object.freeze({
   STOP_START_URBAN_MIN_SPEED_KMH: constant(25, { label: 'Urban stop-start minimum speed', domain: 'trip_threshold', calibration_note: 'City-speed GPS-only pattern detector minimum.', affected_metrics: ['defensive_driving_score'] }),
   STOP_START_URBAN_CRUISE_SECONDS: constant(2, { label: 'Urban stop-start cruise period', domain: 'trip_threshold', calibration_note: 'Shorter city-speed cruise period before a stop-start pattern can be detected.', affected_metrics: ['defensive_driving_score'] }),
   STOP_START_URBAN_SPEED_DROP_KMH: constant(6, { label: 'Urban stop-start speed drop', domain: 'trip_threshold', calibration_note: 'Smaller city-speed drop needed for a GPS-only stop-start pattern.', affected_metrics: ['defensive_driving_score'] }),
-  HEADING_DEVIATION_MIN_SPEED_KMH: constant(50, { label: 'Heading event minimum speed', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
-  HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH: constant(80, { label: 'Heading event highway speed', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
-  HEADING_DEVIATION_MIN_TURN_RATE_DEG_S: constant(3, { label: 'Heading event minimum turn rate', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
-  HEADING_DEVIATION_MAX_TURN_RATE_DEG_S: constant(20, { label: 'Heading event maximum turn rate', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
-  HEADING_DEVIATION_MIN_WINDOW_SECONDS: constant(6, { label: 'Heading event minimum window', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
-  HEADING_DEVIATION_STRAIGHT_STD_MAX_DEG: constant(4, { label: 'Heading straight-road deviation cap', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
-  HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS: constant(200, { label: 'Heading event context suppression distance', domain: 'trip_threshold', calibration_note: 'GPS heading-event beta detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_MIN_SPEED_KMH: constant(50, { label: 'Heading event minimum speed', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH: constant(80, { label: 'Heading event highway speed', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_MIN_TURN_RATE_DEG_S: constant(3, { label: 'Heading event minimum turn rate', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_MAX_TURN_RATE_DEG_S: constant(20, { label: 'Heading event maximum turn rate', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_MIN_WINDOW_SECONDS: constant(6, { label: 'Heading event minimum window', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_STRAIGHT_STD_MAX_DEG: constant(4, { label: 'Heading straight-road deviation cap', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
+  HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS: constant(200, { label: 'Heading event context suppression distance', domain: 'trip_threshold', calibration_note: 'GPS heading-event diagnostic detector.', affected_metrics: ['score_smoothness'] }),
   CORNERING_MIN_SPEED_KMH: constant(25, { label: 'Cornering minimum speed', domain: 'trip_threshold', calibration_note: 'GPS cornering estimate quality gate.', affected_metrics: ['cornering_consistency_score', 'score_smoothness'] }),
   MERGE_ENTRY_SPEED_KMH: constant(65, { label: 'Merge entry speed', domain: 'trip_threshold', calibration_note: 'GPS merge estimate.', affected_metrics: ['merge_score'] }),
   MERGE_EXIT_SPEED_KMH: constant(85, { label: 'Merge exit speed', domain: 'trip_threshold', calibration_note: 'GPS merge estimate.', affected_metrics: ['merge_score'] }),
@@ -280,7 +375,7 @@ export const SCORING_CONSTANTS = Object.freeze({
   MAX_TERMINAL_IDLE_SECONDS: constant(1800, { label: 'Terminal idle maximum', domain: 'trip_threshold', calibration_note: 'Trip-ending idle cap.', affected_metrics: ['score_eco'] }),
   MANOEUVRE_ALERT_BRAKE_MS2: constant(4.0, { label: 'Brake-turn alert braking threshold', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; not object proximity.', affected_metrics: ['close_proximity_score'], setting_key: 'threshold_manoeuvre_alert_brake_ms2' }),
   MANOEUVRE_ALERT_TURN_DEG_S: constant(25, { label: 'Brake-turn alert heading threshold', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; not object proximity.', affected_metrics: ['close_proximity_score'], setting_key: 'threshold_manoeuvre_alert_turn_degs' }),
-  HEADING_DRIFT_STD_DEG: constant(8, { label: 'Heading-drift threshold', domain: 'trip_threshold', calibration_note: 'GPS attention-pattern beta diagnostic only.', affected_metrics: ['heading_drift_beta_score'], setting_key: 'threshold_heading_drift_std_degs' }),
+  HEADING_DRIFT_STD_DEG: constant(8, { label: 'GPS attention signal threshold', domain: 'trip_threshold', calibration_note: 'GPS attention signal only - not a fatigue measurement.', affected_metrics: ['heading_drift_beta_score'], setting_key: 'threshold_heading_drift_std_degs' }),
   PHONE_MICRO_STEER_COUNT: constant(6, { label: 'Phone proxy oscillation count', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'threshold_phone_proxy_oscillations' }),
   PHONE_MICRO_STEER_WINDOW_S: constant(15, { label: 'Phone proxy window', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'phone_micro_steer_window_s' }),
   PHONE_PROXY_MAX_ACCURACY_M: constant(20, { label: 'Phone proxy GPS accuracy gate', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'phone_proxy_max_accuracy_m' }),
@@ -292,10 +387,15 @@ export const SCORING_CONSTANTS = Object.freeze({
   PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD: constant(0.25, { label: 'Phone proxy high-sensitivity confidence', domain: 'trip_threshold', calibration_note: 'GPS diagnostic sensitivity preset only.', affected_metrics: [] }),
   PHONE_MIN_WINDOW_S: constant(4, { label: 'Phone proxy minimum window', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; confirmed scoring requires Usage Access.', affected_metrics: [], setting_key: 'phone_min_window_s' }),
   SPEED_CREEP_THRESHOLD_KMH: constant(5, { label: 'Speed-creep threshold', domain: 'trip_threshold', calibration_note: 'GPS diagnostic behavior trigger.', affected_metrics: ['score_eco'], setting_key: 'threshold_speed_creep_kmh' }),
-  OVERTAKE_ACCEL_THRESHOLD_MS2: constant(3.0, { label: 'Overtake beta acceleration threshold', domain: 'trip_threshold', calibration_note: 'Beta diagnostic only; excluded from composite scores.', affected_metrics: [], setting_key: 'threshold_overtake_accel_ms2' }),
-  OVERTAKE_MIN_BASELINE_SPEED_KMH: constant(80, { label: 'Overtake beta baseline speed', domain: 'trip_threshold', calibration_note: 'Beta diagnostic only; excluded from composite scores.', affected_metrics: [] }),
-  OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: constant(1, { label: 'Overtake beta straight distance', domain: 'trip_threshold', calibration_note: 'Beta diagnostic only; excluded from composite scores.', affected_metrics: [] }),
-  OVERTAKE_STRAIGHT_STD_MAX_DEG: constant(4, { label: 'Overtake beta straight heading deviation', domain: 'trip_threshold', calibration_note: 'Beta diagnostic only; excluded from composite scores.', affected_metrics: [] }),
+  LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M: constant(12, { label: 'Lane-change curved-road suppression', domain: 'trip_threshold', calibration_note: 'Suppresses lane-change detections while route curvature remains above this deg/100m threshold.', affected_metrics: ['lane_changing_score'] }),
+  LANE_CHANGE_CURVE_SUPPRESSION_SECONDS: constant(6, { label: 'Lane-change curve suppression window', domain: 'trip_threshold', calibration_note: 'Minimum continuous curved-road duration before lane-change detections are suppressed.', affected_metrics: ['lane_changing_score'] }),
+  LANE_CHANGE_REGIONAL_YAW_DEG_S: constant(2.4, { label: 'Lane-change regional-road yaw threshold', domain: 'trip_threshold', calibration_note: 'Diagnostic IMU yaw threshold for lane-change detection below highway speed.', affected_metrics: ['lane_changing_score'] }),
+  LANE_CHANGE_HIGHWAY_YAW_DEG_S: constant(1.8, { label: 'Lane-change highway yaw threshold', domain: 'trip_threshold', calibration_note: 'Diagnostic IMU yaw threshold for lane-change detection above 100 km/h.', affected_metrics: ['lane_changing_score'] }),
+  LANE_CHANGE_HIGHWAY_SPEED_KMH: constant(100, { label: 'Lane-change highway speed split', domain: 'trip_threshold', calibration_note: 'Speed split for applying highway vs regional-road IMU yaw thresholds.', affected_metrics: ['lane_changing_score'] }),
+  OVERTAKE_ACCEL_THRESHOLD_MS2: constant(3.0, { label: 'Overtake development acceleration threshold', domain: 'trip_threshold', calibration_note: 'Development diagnostic only; hidden from user-facing Trip Detail and excluded from scores.', affected_metrics: [], setting_key: 'threshold_overtake_accel_ms2' }),
+  OVERTAKE_MIN_BASELINE_SPEED_KMH: constant(80, { label: 'Overtake development baseline speed', domain: 'trip_threshold', calibration_note: 'Development diagnostic only; hidden from user-facing Trip Detail and excluded from scores.', affected_metrics: [] }),
+  OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: constant(1, { label: 'Overtake development straight distance', domain: 'trip_threshold', calibration_note: 'Development diagnostic only; hidden from user-facing Trip Detail and excluded from scores.', affected_metrics: [] }),
+  OVERTAKE_STRAIGHT_STD_MAX_DEG: constant(4, { label: 'Overtake development straight heading deviation', domain: 'trip_threshold', calibration_note: 'Development diagnostic only; hidden from user-facing Trip Detail and excluded from scores.', affected_metrics: [] }),
   CALIBRATION_FALLBACK_HARSH_BRAKE_MS2: constant(4.5, { label: 'Calibration fallback harsh brake threshold', domain: 'threshold_calibration', calibration_note: 'Fallback only when a calibration profile has no current threshold.', affected_metrics: [] }),
   CALIBRATION_FALLBACK_RAPID_ACCEL_MS2: constant(3.5, { label: 'Calibration fallback rapid acceleration threshold', domain: 'threshold_calibration', calibration_note: 'Fallback only when a calibration profile has no current threshold.', affected_metrics: [] }),
   CALIBRATION_FALLBACK_SHARP_TURN_G_LOW: constant(0.3, { label: 'Calibration fallback low turn threshold', domain: 'threshold_calibration', calibration_note: 'Fallback only when a calibration profile has no current threshold.', affected_metrics: [] }),
@@ -313,12 +413,52 @@ export const SCORING_CONSTANTS = Object.freeze({
   DAILY_FULL_RECOVERY_BREAK_MINUTES: constant(180, { label: 'Daily full-recovery cap', domain: 'fatigue', calibration_note: 'Product interpolation cap, not a recovery guarantee.', affected_metrics: ['fatigue_risk_score'] }),
   DAILY_FATIGUE_SCORE_AT_ONSET: constant(5, { label: 'Daily fatigue onset score', domain: 'fatigue', calibration_note: 'Heuristic score step.', affected_metrics: ['fatigue_risk_score'] }),
 
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 20
+   * @affects route_risk_score, pre_trip_readiness_score
+   * @mathRole Weights verified historical driving-event density when converting route segment context into risk points.
+   * @calibrationRequirement Route segments with historical event summaries, exposure distance, weather/time context, and collision, claim, or reviewed route-risk labels.
+   * @calibrationMethod Regression over segment-level route-risk features with cross-validation and calibration curves by route class.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   ROUTE_RISK_EVENT_WEIGHT: constant(20, { label: 'Route event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics, calibration_metadata: pendingCalibrationMetadata }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 40
+   * @affects route_risk_score, pre_trip_readiness_score
+   * @mathRole Weights historical harsh-event density more heavily than ordinary verified events in route-risk scoring.
+   * @calibrationRequirement Route segments with harsh-event summaries, exposure distance, weather/time context, and collision, claim, or reviewed route-risk labels.
+   * @calibrationMethod Regression over segment-level route-risk features with cross-validation and calibration curves by route class.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   ROUTE_RISK_HARSH_WEIGHT: constant(40, { label: 'Route harsh-event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics, calibration_metadata: pendingCalibrationMetadata }),
   ROUTE_RISK_SPEED_START_KMH: constant(100, { label: 'Route speed-risk start', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
   ROUTE_RISK_SPEED_FULL_KMH: constant(160, { label: 'Route speed-risk saturation speed', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
   ROUTE_RISK_SPEED_MAX_POINTS: constant(15, { label: 'Route speed-risk maximum points', domain: 'route_risk', calibration_note: 'Segment risk heuristic.', affected_metrics: routeRiskMetrics }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 5
+   * @affects route_risk_score, pre_trip_readiness_score
+   * @mathRole Saturates the normalized historical event-density contribution once a route reaches five verified events per km.
+   * @calibrationRequirement Route exposure datasets with verified event density, distance normalization, repeated-route coverage, and route-risk or incident labels.
+   * @calibrationMethod Threshold search with cross-validation over density saturation candidates and route-class subgroup checks.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   PREDICTIVE_EVENT_DENSITY_MAX_PER_KM: constant(5, { label: 'Historical context event-density saturation', domain: 'historical_context', calibration_note: 'Not calibrated to collision or casualty outcomes.', affected_metrics: routeRiskMetrics }),
+  /**
+   * @calibration PROVISIONAL
+   * @currentValue 5
+   * @affects route_risk_score, pre_trip_readiness_score
+   * @mathRole Saturates repeated-event area risk once five nearby danger zones are found around the candidate route.
+   * @calibrationRequirement Route exposure datasets with spatially indexed repeated-event areas, matched route segments, and incident or reviewed route-risk labels.
+   * @calibrationMethod Threshold search with spatial cross-validation and sensitivity checks for GPS cell snapping radius.
+   * @externalReference none
+   * @promotionBlocker true
+   */
   PREDICTIVE_DANGER_ZONE_SATURATION_COUNT: constant(5, { label: 'Historical context repeated-area saturation', domain: 'historical_context', calibration_note: 'Not calibrated to collision or casualty outcomes.', affected_metrics: routeRiskMetrics }),
   PREDICTIVE_ROUTE_RISK_POLICY: constant(Object.freeze({
     RECENT_TRIP_WINDOW: 20,
@@ -356,12 +496,142 @@ export const SCORING_CONSTANTS = Object.freeze({
     MODERATE_RISK_FLOOR: 40,
     GATE_ADJUSTMENT_MAX: 5,
     TREND_WINDOW: 20,
+    PRE_TRIP_TREND_MIN_BASELINE_TRIPS: PERSONAL_BASELINE_MIN_TRIPS,
+    SIGNAL_DECAY_HALF_LIFE_DAYS: 21,
+    SIGNAL_DECAY_MIN_HALF_LIFE_DAYS: 7,
+    SIGNAL_DECAY_MAX_HALF_LIFE_DAYS: 60,
+    SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS: 21,
+    SIGNAL_DECAY_AUTOCORR_THRESHOLD: 0.5,
+    SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR: 20,
+    READINESS_MIN_CORRELATION_THRESHOLD: 0.15,
+    READINESS_HISTORY_MIN_FOR_CORRELATION: 20,
+    READINESS_CORRELATION_DISCOUNT: 0.6,
+    VIF_CORRELATION_FLOOR: 0.65,
+    VIF_DAMP_FACTOR: 0.7,
+    FALLBACK_VARIANCE_TIME: 64,
+    FALLBACK_VARIANCE_DAY: 64,
+    FALLBACK_VARIANCE_TREND: 81,
+    FALLBACK_VARIANCE_FATIGUE: 36,
+    FALLBACK_VARIANCE_LAST_TRIP: 100,
+    FALLBACK_VARIANCE_WEATHER: 25,
+    FALLBACK_VARIANCE_DANGER: 81,
+    FALLBACK_VARIANCE_ROUTE: 64,
+    FALLBACK_VARIANCE_REST: 36,
+    PRE_TRIP_REST_DEFAULT_BREAK_MINUTES: 30,
+    PRE_TRIP_REST_MIN_THRESHOLD_MINUTES: 10,
+    CALIBRATED_SIGNAL_THRESHOLD: 5,
+    DEVELOPING_SIGNAL_THRESHOLD: 2,
     RECENT_TRIP_DAYS: 90,
-  }), { label: 'Pre-trip readiness policy', domain: 'pre_trip_risk', calibration_note: 'Readiness thresholds are product heuristics.', affected_metrics: ['pre_trip_readiness_score'] }),
+  }), { label: 'Pre-trip readiness policy', domain: 'pre_trip_risk', calibration_note: 'Subjective readiness accuracy feedback supplements objective calibration.', affected_metrics: ['pre_trip_readiness_score'] }),
+  PRE_TRIP_TREND_MIN_BASELINE_TRIPS: constant(PERSONAL_BASELINE_MIN_TRIPS, {
+    label: 'Pre-trip trend minimum baseline trips',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Trend signal requires the same minimum as personalBaseline.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_HALF_LIFE_DAYS: constant(21, {
+    label: 'Pre-trip signal temporal half-life',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Exponential decay applied to time/day bucket averaging; heuristic.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_MIN_HALF_LIFE_DAYS: constant(7, {
+    label: 'Pre-trip adaptive half-life minimum',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Lower bound for per-driver temporal decay estimated from score autocorrelation.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_MAX_HALF_LIFE_DAYS: constant(60, {
+    label: 'Pre-trip adaptive half-life maximum',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Upper bound for per-driver temporal decay estimated from score autocorrelation.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_DEFAULT_HALF_LIFE_DAYS: constant(21, {
+    label: 'Pre-trip adaptive half-life default',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Fallback temporal decay half-life until enough scored trips exist for autocorrelation.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_AUTOCORR_THRESHOLD: constant(0.5, {
+    label: 'Pre-trip adaptive half-life autocorrelation threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Score autocorrelation target used to estimate per-driver temporal persistence.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  SIGNAL_DECAY_MIN_TRIPS_FOR_AUTOCORR: constant(20, {
+    label: 'Pre-trip adaptive half-life trip minimum',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Minimum scored trips required before estimating temporal persistence from autocorrelation.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  READINESS_MIN_CORRELATION_THRESHOLD: constant(0.15, {
+    label: 'Readiness signal minimum correlation',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Signals below this absolute Pearson r threshold receive the non-predictive signal discount once enough paired history exists.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  READINESS_HISTORY_MIN_FOR_CORRELATION: constant(20, {
+    label: 'Readiness history records needed for correlation',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Minimum readiness snapshot and outcome pairs required before per-signal correlation affects weights.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  READINESS_CORRELATION_DISCOUNT: constant(0.6, {
+    label: 'Non-predictive signal weight floor',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Weight multiplier for signals whose paired readiness history is available but below the predictive correlation threshold.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  VIF_CORRELATION_FLOOR: constant(0.65, {
+    label: 'Readiness VIF correlation floor',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Pairwise signal-correlation threshold above which readiness weights are damped to reduce double-counting.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  VIF_DAMP_FACTOR: constant(0.7, {
+    label: 'Readiness VIF damping factor',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Weight multiplier applied to both members of a highly correlated readiness-signal pair before re-normalization.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  FALLBACK_VARIANCE_TIME: constant(64, { label: 'Readiness time fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance when the current time bucket lacks direct score variance.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_DAY: constant(64, { label: 'Readiness day fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance when the current day bucket lacks direct score variance.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_TREND: constant(81, { label: 'Readiness trend fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for the recent trend signal in the readiness prediction interval.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_FATIGUE: constant(36, { label: 'Readiness fatigue fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for fatigue-derived readiness risk.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_LAST_TRIP: constant(100, { label: 'Readiness last-trip fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for last-trip outcome risk.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_WEATHER: constant(25, { label: 'Readiness weather fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for weather context readiness risk.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_DANGER: constant(81, { label: 'Readiness danger-zone fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for repeated-event-area readiness risk.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_ROUTE: constant(64, { label: 'Readiness route forecast fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for historical-context route readiness risk.', affected_metrics: ['pre_trip_readiness_score'] }),
+  FALLBACK_VARIANCE_REST: constant(36, { label: 'Readiness rest fallback variance', domain: 'pre_trip_risk', calibration_note: 'Fallback variance for recent-rest readiness risk.', affected_metrics: ['pre_trip_readiness_score'] }),
+  PRE_TRIP_REST_DEFAULT_BREAK_MINUTES: constant(30, {
+    label: 'Pre-trip rest default break threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Rest-risk threshold when fatigue state is unavailable.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  PRE_TRIP_REST_MIN_THRESHOLD_MINUTES: constant(10, {
+    label: 'Pre-trip rest minimum threshold floor',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Prevents threshold from collapsing below a reasonable minimum.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  CALIBRATED_SIGNAL_THRESHOLD: constant(5, {
+    label: 'Pre-trip calibrated evidence signal threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Minimum actual-user signals before readiness is presented as calibrated.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
+  DEVELOPING_SIGNAL_THRESHOLD: constant(2, {
+    label: 'Pre-trip developing evidence signal threshold',
+    domain: 'pre_trip_risk',
+    calibration_note: 'Minimum actual-user signals before full readiness is shown with limited confidence.',
+    affected_metrics: ['pre_trip_readiness_score'],
+  }),
   PRE_TRIP_RISK_WEIGHTS: constant(Object.freeze({
     timeOfDay: 0.14, dayOfWeek: 0.10, recentTrend: 0.18, dailyFatigue: 0.20, lastTripOutcome: 0.12,
     weather: 0.08, dangerZones: 0.06, routeForecast: 0.08, recentRest: 0.04,
-  }), { label: 'Pre-trip risk signal weights', domain: 'pre_trip_risk', calibration_note: 'Readiness blend is not outcome-calibrated.', affected_metrics: ['pre_trip_readiness_score'] }),
+  }), { label: 'Pre-trip risk signal weights', domain: 'pre_trip_risk', calibration_note: 'Subjective readiness accuracy feedback supplements objective calibration.', affected_metrics: ['pre_trip_readiness_score'] }),
   PRE_TRIP_WEIGHT_REDISTRIBUTION_RATIO: constant(0.5, { label: 'Pre-trip signal redistribution ratio', domain: 'pre_trip_risk', calibration_note: 'Insufficient-evidence fallback weighting.', affected_metrics: ['pre_trip_readiness_score'] }),
   PRE_TRIP_REDISTRIBUTION_TARGETS: constant(Object.freeze({ recentTrend: 0.6, dailyFatigue: 0.4 }), { label: 'Pre-trip redistribution targets', domain: 'pre_trip_risk', calibration_note: 'Insufficient-evidence fallback weighting.', affected_metrics: ['pre_trip_readiness_score'] }),
   PRE_TRIP_SIGNAL_GATES: constant(Object.freeze({
@@ -402,6 +672,8 @@ const thresholdKeys = [
   'MAX_TERMINAL_IDLE_SECONDS', 'MANOEUVRE_ALERT_BRAKE_MS2', 'MANOEUVRE_ALERT_TURN_DEG_S',
   'HEADING_DRIFT_STD_DEG', 'PHONE_MICRO_STEER_COUNT', 'PHONE_MICRO_STEER_WINDOW_S', 'PHONE_PROXY_MAX_ACCURACY_M',
   'PHONE_CREEP_RATE_KMH_S', 'PHONE_LANE_DRIFT_DEG', 'PHONE_COUPLING_THRESHOLD', 'PHONE_CONFIDENCE_THRESHOLD', 'PHONE_MIN_WINDOW_S',
+  'LANE_CHANGE_CURVE_SUPPRESSION_DEG_PER_100M', 'LANE_CHANGE_CURVE_SUPPRESSION_SECONDS', 'LANE_CHANGE_REGIONAL_YAW_DEG_S',
+  'LANE_CHANGE_HIGHWAY_YAW_DEG_S', 'LANE_CHANGE_HIGHWAY_SPEED_KMH',
 ];
 
 export const TRIP_THRESHOLD_DEFAULTS = Object.freeze({
@@ -432,7 +704,7 @@ export function calibrationEntryForSetting(settingKey) {
 
 export function hasProvisionalCalibration(metricKeys = [], constants = SCORING_CONSTANTS) {
   const metrics = new Set(Array.isArray(metricKeys) ? metricKeys : [metricKeys]);
-  if (metrics.size === 0) return false;
+  if (metrics.size === 0) return getProvisionalScoringConstants(constants).length > 0;
   return getProvisionalScoringConstants(constants).some((entry) => (
     Array.isArray(entry.affected_metrics) && entry.affected_metrics.some((metric) => metrics.has(metric))
   ));

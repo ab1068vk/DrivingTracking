@@ -209,16 +209,14 @@ describe('trip engine calculation coverage', () => {
     );
   });
 
-  it('applies the documented circadian multiplier to heading drift beta contribution', () => {
+  it('does not apply a circadian multiplier to GPS attention signal contribution', () => {
     const daytime = detectHeadingDriftBeta(headingDriftPointsAtHour(12), 300, DEFAULT_THRESHOLDS);
     const circadian = detectHeadingDriftBeta(headingDriftPointsAtHour(3), 300, DEFAULT_THRESHOLDS);
 
     expect(daytime.heading_drift_beta_window_count).toBe(1);
     expect(circadian.heading_drift_beta_window_count).toBe(1);
-    expect(circadian.heading_drift_beta_weighted_contribution).toBeCloseTo(
-      daytime.heading_drift_beta_weighted_contribution * HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
-      5
-    );
+    expect(HEADING_DRIFT_CIRCADIAN_MULTIPLIER).toBe(1);
+    expect(circadian.heading_drift_beta_weighted_contribution).toBeCloseTo(daytime.heading_drift_beta_weighted_contribution, 5);
   });
 
   it('classifies route types and speed zones from observed speeds', () => {

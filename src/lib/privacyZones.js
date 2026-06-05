@@ -56,8 +56,10 @@ const privacyMetadata = (zone, boundary = false) => ({
 export function getPrivacyZones(settings = localSettings.get()) {
   return Array.isArray(settings.privacy_zones)
     ? settings.privacy_zones.filter((zone) => (
+      zone?._coordinate_stripped !== true &&
       Number.isFinite(Number(zone.lat)) &&
       Number.isFinite(Number(zone.lng)) &&
+      (Number(zone.lat) !== 0 || Number(zone.lng) !== 0) &&
       Number(zone.radius_m) > 0
     ))
     : [];
@@ -192,6 +194,26 @@ export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
 }
 
 export function upsertPrivacyZone(zone, settings = localSettings.get()) {
+  const next = buildPrivacyZonesWithUpsert(zone, settings);
+  return localSettings.update({ privacy_zones: next });
+}
+
+export async function upsertPrivacyZoneAsync(zone, settings = localSettings.get()) {
+  const next = buildPrivacyZonesWithUpsert(zone, settings);
+  return localSettings.updateAsync({ privacy_zones: next });
+}
+
+export function removePrivacyZone(id, settings = localSettings.get()) {
+  const next = getPrivacyZones(settings).filter((zone) => zone.id !== id);
+  return localSettings.update({ privacy_zones: next });
+}
+
+export async function removePrivacyZoneAsync(id, settings = localSettings.get()) {
+  const next = getPrivacyZones(settings).filter((zone) => zone.id !== id);
+  return localSettings.updateAsync({ privacy_zones: next });
+}
+
+function buildPrivacyZonesWithUpsert(zone, settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   const normalized = {
     id: zone.id || `pz_${Date.now().toString(36)}`,
@@ -200,11 +222,5 @@ export function upsertPrivacyZone(zone, settings = localSettings.get()) {
     lng: Number(zone.lng),
     radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
   };
-  const next = zones.filter((item) => item.id !== normalized.id).concat(normalized);
-  return localSettings.update({ privacy_zones: next });
-}
-
-export function removePrivacyZone(id, settings = localSettings.get()) {
-  const next = getPrivacyZones(settings).filter((zone) => zone.id !== id);
-  return localSettings.update({ privacy_zones: next });
+  return zones.filter((item) => item.id !== normalized.id).concat(normalized);
 }

@@ -1,7 +1,7 @@
-import { getJson, setJson } from '@/lib/mobileStorage';
-import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripInsights';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/vehicleEconomyConstants';
 
-const VEHICLES_KEY = 'drivesense_vehicles';
+const VEHICLES_KEY = 'road_sage_vehicles';
 
 const mergeMaintenanceItems = (items = []) => {
   const byId = new Map((Array.isArray(items) ? items : []).map((item) => [item.id, item]));
@@ -97,6 +97,11 @@ export const localVehicleRepository = {
   async delete(id) {
     const current = await readVehicles();
     await writeVehicles(current.filter((vehicle) => String(vehicle.id) !== String(id)));
+    return { success: true };
+  },
+
+  async deleteAll() {
+    await removeJson(VEHICLES_KEY);
     return { success: true };
   },
 

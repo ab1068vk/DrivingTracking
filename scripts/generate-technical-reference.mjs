@@ -5,17 +5,40 @@ import traverseModule from '@babel/traverse';
 
 const traverse = traverseModule.default || traverseModule;
 const ROOT = process.cwd();
-const now = new Date().toISOString();
+const DOCS_DIR = path.join(ROOT, 'docs');
+const TECHNICAL_REFERENCE_RELATIVE = 'docs/TECHNICAL_REFERENCE.md';
+const TECHNICAL_REFERENCE_PATH = path.join(ROOT, TECHNICAL_REFERENCE_RELATIVE);
+const README_PATH = path.join(ROOT, 'README.md');
+const checkOnly = process.argv.includes('--check');
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.gradle-home', '.codex-smoke', '.idea', 'test-results', 'playwright-report']);
-const MACHINE_LOCAL_FILES = new Set(['android/local.properties']);
+const SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  '.gradle',
+  '.gradle-home',
+  '.gradle-package-rename-check',
+  '.kotlin',
+  'capacitor-cordova-android-plugins',
+  '.codex-smoke',
+  '.idea',
+  'test-results',
+  'playwright-report',
+]);
+const MACHINE_LOCAL_FILES = new Set(['android/local.properties', 'roadsage-window.xml']);
 const TEXT_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.java', '.gradle', '.xml', '.json', '.css', '.html',
   '.properties', '.md', '.yml', '.yaml', '.config', '.txt',
 ]);
 const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.java']);
 const APP_CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs']);
-const EXCLUDE_GENERATED_DOCS = new Set(['TECHNICAL_REFERENCE.md']);
+const EXCLUDE_GENERATED_DOCS = new Set([
+  'README.md',
+  'docs/ANDROID_SECURITY_REFERENCE.md',
+  'docs/APP_STATE.md',
+  TECHNICAL_REFERENCE_RELATIVE,
+]);
 
 function rel(file) {
   return path.relative(ROOT, file).replaceAll(path.sep, '/');
@@ -48,8 +71,11 @@ const productionBehaviorFiles = appSourceFiles.filter((file) => {
 const testFiles = sourceFiles.filter((file) => {
   const relative = rel(file);
   return relative.startsWith('e2e/')
+    || relative.startsWith('tests/')
     || relative.includes('__tests__/')
     || relative.endsWith('.test.js')
+    || relative.endsWith('.test.mjs')
+    || relative.endsWith('.spec.mjs')
     || relative.endsWith('.spec.js')
     || relative.includes('/test/');
 });
@@ -440,12 +466,16 @@ function packageFacts() {
 function purposeFor(file) {
   const name = path.basename(file);
   if (file.startsWith('src/pages/')) return 'Routed React page/view with data loading, derived presentation metrics, and user actions.';
+  if (file.startsWith('src/engine/')) return 'Focused domain engine module for scoring, detection, calibration, routing, export, or shared math.';
+  if (file.startsWith('src/settings/')) return 'Modular Settings screen section, navigator, or shared Settings UI component.';
+  if (file.startsWith('src/features/')) return 'Feature-scoped React component or hook.';
   if (file.startsWith('src/components/ui/')) return 'Reusable shadcn/Radix UI wrapper component.';
   if (file.startsWith('src/components/')) return 'Feature UI component for trips, maps, playback, cards, overlays, or layout.';
   if (file.startsWith('src/api/')) return 'API service adapter with local-first fallback behavior.';
   if (file.startsWith('src/lib/')) return 'Domain/service library for scoring, tracking, storage, reports, context, or native integration.';
   if (file.startsWith('src/hooks/')) return 'Reusable React hook.';
   if (file.startsWith('e2e/')) return 'Playwright browser smoke test for the built application shell.';
+  if (file.startsWith('tests/')) return 'Standalone Node test or connected-device smoke test.';
   if (file.startsWith('android/')) return 'Android Capacitor shell, native service, resource, Gradle, or manifest file.';
   if (file.startsWith('scripts/')) return 'Repository automation script.';
   if (name === 'package.json') return 'Node package metadata, scripts, and dependency declarations.';
@@ -488,16 +518,47 @@ function renderCalcIndex(rows) {
 }
 
 function moduleMap() {
-  const rows = files.map((file) => {
+  const importantPatterns = [
+    /^package\.json$/,
+    /^capacitor\.config\.ts$/,
+    /^vite\.config\.js$/,
+    /^src\/App\.jsx$/,
+    /^src\/main\.jsx$/,
+    /^src\/api\//,
+    /^src\/engine\//,
+    /^src\/lib\/(trackingStore|localTripRepository|dataBackup|tripFieldEncryption|mobileStorage|permissions|permissionStateMachine|errorReporting|userFeedback|query-client|nativePlatform|nativeDownloads|nativeSecureKey|nativeBiometricGate|activityRecognition|scoringConstants|scoreDisplay|metricRegistry|appConstants|preTripRisk|dailyFatigueEngine|predictiveRouteRisk|routeRiskIndex)\./,
+    /^src\/lib\/permissions\//,
+    /^src\/lib\/scoring\//,
+    /^src\/lib\/routeRisk\//,
+    /^src\/pages\/(Dashboard|TripHistory|TripDetail|MapScreen|Settings|Report|Vehicles|Onboarding)\.jsx$/,
+    /^src\/settings\//,
+    /^android\/app\/src\/main\/java\/com\/roadsage\/app\/(MainActivity|RoadSageAutoTrackingService|DriveSenseActivityRecognitionPlugin|DriveSenseNativeTripStore|EncryptedPreferenceStore|SecureKeyPlugin|BiometricGatePlugin|NativeSettingsStore|ParkedCarWidgetProvider|MapTileFetchWorker|RuntimeIntegrityCheck|PlayIntegrityPlugin)\.java$/,
+    /^android\/app\/src\/main\/res\/xml\//,
+    /^tests\/android-uiautomator-backup-import\.mjs$/,
+    /^scripts\/generate-technical-reference\.mjs$/,
+  ];
+  const importantFiles = files.filter((file) => importantPatterns.some((pattern) => pattern.test(rel(file))));
+  const rows = importantFiles.map((file) => {
     const relative = rel(file);
     const facts = allFacts.get(relative) || { imports: [], exports: [], functions: [] };
     const calcCount = productionCalculations.filter((row) => row.file === relative).length;
-    const literalCount = literals.filter((row) => row.file === relative).length;
     const imports = (facts.imports || []).map((i) => i.source).slice(0, 8).join(', ');
     const exports = (facts.exports || []).map((e) => e.name).slice(0, 10).join(', ');
-    return [relative, purposeFor(relative), imports || 'none', exports || 'none', facts.functions?.length || 0, calcCount, literalCount];
+    return [relative, purposeFor(relative), imports || 'none', exports || 'none', facts.functions?.length || 0, calcCount];
   });
-  return table(['File', 'Responsibility', 'Imports', 'Exports', 'Functions/methods', 'Calc lines', 'Hard-coded values'], rows);
+  const grouped = Map.groupBy(files, (file) => rel(file).split('/')[0]);
+  const summaryRows = [...grouped.entries()].map(([group, groupFiles]) => [
+    group,
+    groupFiles.length,
+    groupFiles.filter((file) => CODE_EXTENSIONS.has(path.extname(file))).length,
+  ]);
+  return [
+    table(['Important file', 'Responsibility', 'Key imports', 'Exports', 'Functions/methods', 'Calc lines'], rows),
+    '',
+    'Scanned repository size by top-level area:',
+    '',
+    table(['Area', 'Files scanned', 'Code files'], summaryRows),
+  ].join('\n');
 }
 
 function importExportMap() {
@@ -584,6 +645,122 @@ function constantsRegistry() {
   return table(['Source', 'Name', 'Value', 'Reason', 'Exact code'], [...namedRows, ...derivedRows]);
 }
 
+function importantConstantsRegistry() {
+  const importantFilePattern = /(^src\/lib\/(appConstants|scoringConstants|metricRegistry|trackingStore|dataBackup|tripFieldEncryption|permissionStateMachine|permissions|preTripRisk|dailyFatigueEngine|predictiveRouteRisk|routeRiskIndex)\.|^src\/engine\/|^src\/lib\/routeRisk\/|^android\/app\/src\/main\/java\/com\/roadsage\/app\/(RoadSageAutoTrackingService|DriveSenseActivityRecognitionPlugin|EncryptedPreferenceStore|SecureKeyPlugin|BiometricGatePlugin|MainActivity)\.java$)/;
+  const importantNamePattern = /(SCORE|SCORING|THRESHOLD|LIMIT|MAX|MIN|TIMEOUT|INTERVAL|RETENTION|BACKUP|ENCRYPT|KEY|PERMISSION|PRIVACY|ROUTE_RISK|FATIGUE|UBI|OSRM|NOTIFICATION|BIOMETRIC|STEALTH|CACHE|GAP|TTS|SPLASH|POLL|RADIUS|DISTANCE|DURATION|VERSION|HMAC|AES|GCM)/i;
+  const namedLiteralRows = literals
+    .filter((row) => importantFilePattern.test(row.file) && importantNamePattern.test(row.semanticName))
+    .slice(0, 140)
+    .map((row) => [
+      `${row.file}:${row.line}`,
+      row.semanticName,
+      `\`${row.value}\``,
+      reasonForLiteral(row),
+    ]);
+  const derivedRows = collectDerivedNamedConstants()
+    .filter((row) => importantFilePattern.test(row.source) && importantNamePattern.test(row.name))
+    .slice(0, 80)
+    .map((row) => [
+      row.source,
+      row.name,
+      `\`${row.expression}\``,
+      'Named derived policy/configuration value used by scoring, storage, privacy, Android, or integration behavior.',
+    ]);
+  return table(['Source', 'Name', 'Value / expression', 'Why it matters'], [...namedLiteralRows, ...derivedRows]);
+}
+
+function calculationSummary() {
+  return table(
+    ['Domain', 'Production lines found', 'Important files'],
+    ['scoring', 'risk/prediction', 'map/route', 'driving physics', 'economics', 'timing/control', 'general calculation'].map((kind) => {
+      const rows = calcRowsByKind(kind);
+      const fileCounts = [...Map.groupBy(rows, (row) => row.file).entries()]
+        .map(([file, fileRows]) => [file, fileRows.length])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([file, count]) => `${file} (${count})`)
+        .join(', ');
+      return [kind, rows.length, fileCounts || 'none'];
+    }),
+  );
+}
+
+function storageSummary() {
+  const rows = [];
+  const surfaces = [
+    ['IndexedDB trips/vehicles/local UI state', 'src/lib/localTripRepository.js, src/lib/localVehicleRepository.js, src/lib/trackingStore.js', 'Primary local-first browser storage; database-name migration copies and verifies before deleting old DBs.'],
+    ['Encrypted Android key-value bridge', 'src/lib/encryptedCapacitorStorage.js, src/lib/mobileStorage.js, EncryptedPreferenceStore.java', 'Native settings and UI values use encrypted storage; legacy plaintext Capacitor Preferences are migration/delete-only inputs.'],
+    ['Sensitive trip fields', 'src/lib/tripFieldEncryption.js, SecureKeyPlugin.java', 'Route points, events, notes, tags, and addresses encrypt before persistence; Android uses rotated Keystore AES-GCM key aliases.'],
+    ['Native tracking records', 'DriveSenseNativeTripStore.java, RoadSageAutoTrackingService.java', 'Android service records compact trip evidence and native motion samples for later JS import/scoring.'],
+    ['Backups and exports', 'src/lib/dataBackup.js, src/engine/export/*, src/lib/nativeDownloads.js', 'Reports use encrypted `.rsexport`; full backups use password-protected AES-GCM `.rsbackup`.'],
+    ['Parked-car widget cache', 'ParkedCarWidgetProvider.java, MapTileFetchWorker.java', 'Map tile previews are cached only after privacy-zone checks and are cleared for private coordinates.'],
+    ['Diagnostics', 'src/lib/errorReporting.js, src/lib/trackingDiagnostics.js, src/lib/userFeedback.js', 'Handled failures and React section crashes are sanitized before diagnostic persistence and user toasts.'],
+  ];
+  rows.push(...surfaces);
+  return table(['Surface', 'Main implementation', 'Contract'], rows);
+}
+
+function errorHandlingSummary() {
+  const contexts = [
+    ['Central user-visible failure path', '`notifyUserError(context, error, options)` logs sanitized diagnostics and emits deduplicated toasts.'],
+    ['Query failures', '`src/lib/query-client.js` reads query meta titles/descriptions and shows bounded, deduped user feedback.'],
+    ['React section failures', '`SectionErrorBoundary` reports through `notifyUserError` and renders a local reloadable fallback.'],
+    ['App bootstrap', 'Notification setup, reminder sync, OSRM reverify, export open, native settings hydration, and native auto-start use handled diagnostics/toasts.'],
+    ['Imports/exports', 'Backup import/export and report export failures show actionable messages while preserving encrypted-file requirements.'],
+    ['Map/tracking actions', 'Start/end trip, current-location lookup, road-data fetches, map overlays, and parked-location reads fail locally without blanking pages.'],
+  ];
+  const total = errorCatalogue().split('\n').filter((line) => line.startsWith('| ') && !line.includes('---')).length - 1;
+  return [
+    table(['Area', 'Behavior'], contexts),
+    '',
+    `Scanner found ${Math.max(total, 0)} try/catch/throw/logging lines; the generated document keeps the strategy summary instead of listing each low-level handler.`,
+  ].join('\n');
+}
+
+function testCoverageSummary() {
+  const tests = collectTests();
+  const byArea = Map.groupBy(tests, (row) => {
+    if (row.file.startsWith('android/')) return 'Android instrumentation';
+    if (row.file.startsWith('tests/android-uiautomator')) return 'Connected-device UIAutomator smoke';
+    if (row.file.startsWith('e2e/')) return 'Playwright browser smoke';
+    if (row.file.includes('__tests__/')) return 'Vitest unit/component';
+    if (row.file.startsWith('scripts/')) return 'Script/CI checks';
+    if (row.file.startsWith('tests/')) return 'Standalone Node suite';
+    return 'Other';
+  });
+  return table(
+    ['Area', 'Scenarios indexed', 'Representative files'],
+    [...byArea.entries()].map(([area, rows]) => [
+      area,
+      rows.length,
+      [...new Set(rows.map((row) => row.file))].slice(0, 8).join(', '),
+    ]),
+  );
+}
+
+function dependencySummary() {
+  const important = new Set([
+    'react', 'react-dom', 'react-router-dom', '@tanstack/react-query', 'vite', '@capacitor/core',
+    '@capacitor/android', '@capacitor/app', '@capacitor/geolocation', '@capacitor/local-notifications',
+    '@capacitor/preferences', '@capacitor/filesystem', '@capacitor-community/background-geolocation',
+    'leaflet', 'react-leaflet', 'jspdf', 'html2canvas', 'vitest', '@playwright/test', 'typescript',
+  ]);
+  return table(
+    ['Package', 'package.json spec', 'Lockfile version', 'Scope', 'Why it matters'],
+    packageFacts().filter((dep) => important.has(dep.name)).map((dep) => [
+      dep.name,
+      dep.spec,
+      dep.installed,
+      dep.scope,
+      dep.name === 'html2canvas' ? 'PDF/report capture dependency with exact override and audit monitoring.'
+        : dep.name.includes('capacitor') ? 'Native Android bridge/runtime capability.'
+          : dep.name.includes('leaflet') ? 'Bundled map rendering without CDN script injection.'
+            : dep.name.includes('vitest') || dep.name.includes('playwright') || dep.name.includes('typescript') ? 'Verification/build quality gate.'
+              : 'Core application runtime.',
+    ]),
+  );
+}
+
 function collectDerivedNamedConstants() {
   const rows = [];
   for (const file of productionBehaviorFiles) {
@@ -620,7 +797,9 @@ function dependencyTable() {
           : dep.name.includes('react') ? 'React runtime, routing, forms, charts, or UI integration.'
             : dep.name.includes('vite') || dep.name.includes('eslint') || dep.name.includes('typescript') || dep.name.includes('vitest') ? 'Build, lint, typecheck, or test tool.'
               : 'Application feature dependency.',
-      'No live CVE lookup performed; lockfile pins the installed version for audit tooling.',
+      dep.name === 'html2canvas' ? 'Pinned exactly with a package override while SECURITY-HOLD tracks upgrade/replacement; monitored by npm audit and Dependabot.'
+        : dep.name === 'react-markdown' ? 'Monitored by npm audit and Dependabot; raw-HTML plugin `rehype-raw` is banned by ESLint.'
+          : 'Monitored by CI npm audit gates and weekly Dependabot update PRs; lockfile pins the installed version for reproducible audit results.',
     ]),
   );
 }
@@ -635,23 +814,30 @@ function testCoverage() {
 function envTable() {
   const env = collectEnv();
   const envDefaults = {
-    VITE_API_URL: 'empty means local-first storage',
-    VITE_DB_NAME: 'drivesense_mobile',
+    VITE_API_URL: 'blank means local-first storage',
+    VITE_TRUSTED_BACKEND_ORIGINS: 'blank allowlist',
+    VITE_DB_NAME: 'road_sage_mobile',
     VITE_DEFAULT_MAP_LAT: '43.6532',
     VITE_DEFAULT_MAP_LNG: '-79.3832',
     VITE_DEFAULT_OSRM_URL: 'blank',
+    VITE_TRUSTED_OSRM_ORIGINS: 'blank allowlist',
     VITE_OSRM_TIMEOUT_MS: '12000',
+    VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY: 'false',
+    VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER: 'undefined',
   };
   const envDescriptions = {
-    VITE_API_URL: 'Optional backend API base URL.',
+    VITE_API_URL: 'Optional backend API base URL; must be a trusted HTTPS public-domain URL with no credentials, query string, localhost/private-network host, or IP literal.',
+    VITE_TRUSTED_BACKEND_ORIGINS: 'Optional comma/space-separated HTTPS origin allowlist for managed backend deployments; configured `VITE_API_URL` must match when this is set.',
     VITE_DB_NAME: 'IndexedDB database name for local trip storage; changed names trigger a one-time copy-and-delete migration.',
-    VITE_DEFAULT_MAP_LAT: 'Absolute last fallback latitude for map playback before any trip or user context exists.',
-    VITE_DEFAULT_MAP_LNG: 'Absolute last fallback longitude for map playback before any trip or user context exists.',
-    VITE_DEFAULT_OSRM_URL: 'Optional self-hosted OSRM endpoint for deployments that operate a trusted routing server.',
+    VITE_DEFAULT_MAP_LAT: 'Optional last fallback latitude for the TripPlayback review surface when no trip, settings, privacy-zone, parked, or device context exists.',
+    VITE_DEFAULT_MAP_LNG: 'Optional last fallback longitude for the TripPlayback review surface when no trip, settings, privacy-zone, parked, or device context exists.',
+    VITE_DEFAULT_OSRM_URL: 'Optional self-hosted OSRM endpoint for deployments that operate a trusted HTTPS public-domain routing server.',
+    VITE_TRUSTED_OSRM_ORIGINS: 'Optional comma/space-separated HTTPS origin allowlist for managed OSRM deployments; saved/default OSRM endpoints must match when this is set.',
     VITE_OSRM_TIMEOUT_MS: 'Default OSRM map-matching request timeout in milliseconds; user Settings can override it with a 5-30 second slider.',
+    VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY: 'Development/test-only override that permits raw Play Integrity tokens without a backend-verified verdict; production native sensitive actions should leave this unset.',
+    VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER: 'Optional Google Cloud project number passed to the native Play Integrity request.',
     CI: 'Continuous-integration switch for test/reporting behavior.',
     DEV: 'Vite development-mode boolean used for debug-only routes and actions.',
-    VITE_SHOW_DEBUG_ROUTES: 'Debug-route switch for non-production diagnostics access.',
     LIVE_EXTERNAL_CONTRACTS: 'Manual opt-in for tests that call public external services.',
   };
   return table(
@@ -701,14 +887,16 @@ function functionSnippet(title, file, functionName, lang = 'js') {
 
 function topCalculationSnippets() {
   const snippets = [
-    functionSnippet('Score evidence envelopes and export-facing component contract', 'src/lib/tripEngine.js', 'createComponentScore'),
-    functionSnippet('Score provenance snapshot and version checks', 'src/lib/tripEngine.js', 'buildScoreProvenance'),
-    functionSnippet('Trip scoring weights, confidence, diagnostic gates, and final score', 'src/lib/tripEngine.js', 'calculateTripScores'),
-    functionSnippet('Eco score, cruise band, idle penalty', 'src/lib/tripEngine.js', 'calculateEcoDrivingScore'),
+    functionSnippet('Score evidence envelopes and export-facing component contract', 'src/engine/calibration/baseline.js', 'createComponentScore'),
+    functionSnippet('Score provenance snapshot and version checks', 'src/engine/calibration/baseline.js', 'buildScoreProvenance'),
+    functionSnippet('Trip scoring weights, confidence, diagnostic gates, and final score', 'src/engine/scoring/pipeline.ts', 'calculateTripScores', 'ts'),
+    functionSnippet('Trip stats and gap-corrected duration', 'src/engine/scoring/pipeline.ts', 'calculateTripStats', 'ts'),
+    functionSnippet('Eco score, cruise band, idle penalty', 'src/engine/scoring/ecoScore.ts', 'calculateEcoDrivingScore', 'ts'),
+    functionSnippet('Driving-event detection pipeline', 'src/engine/detection/harshBraking.js', 'detectDrivingEvents'),
     functionSnippet('Historical context estimate', 'src/lib/predictiveRouteRisk.js', 'estimatePredictiveRouteRisk'),
     functionSnippet('Pre-trip readiness risk', 'src/lib/preTripRisk.js', 'computePreTripRisk'),
     functionSnippet('Daily fatigue readiness accumulation', 'src/lib/dailyFatigueEngine.js', 'computeDailyFatigue'),
-    functionSnippet('Route risk segment index and GPS snapping', 'src/lib/routeRiskIndex.js', 'buildRouteRiskIndex'),
+    functionSnippet('Route risk geohash index and privacy-preserving lookup', 'src/lib/routeRiskIndex.js', 'buildRouteRiskIndex'),
     functionSnippet('Phone-use Usage Access scoring', 'src/lib/phoneUsageAccess.js', 'buildPhoneUseFromAndroidUsage'),
     functionSnippet('Phone-use signal merge and diagnostic gate', 'src/lib/phoneUsageAccess.js', 'mergePhoneUseSignals'),
     functionSnippet('Estimated score display formatting', 'src/lib/scoreDisplay.js', 'formatScoreWithProvenance'),
@@ -716,7 +904,7 @@ function topCalculationSnippets() {
     functionSnippet('UBI report category scoring and minimum-distance gate', 'src/lib/ubiReport.js', 'computeUBIReport'),
     functionSnippet('Threshold calibration suggestions', 'src/lib/thresholdCalibration.js', 'computeCalibrationProfile'),
   ];
-  const androidFile = 'android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java';
+  const androidFile = 'android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java';
   if (fs.existsSync(path.join(ROOT, androidFile))) {
     snippets.push(`### Android native distance, gap-corrected duration, and speed service math\n\nSource: \`${androidFile}:921-1115\`\n\n${codeBlock(extractSnippet(androidFile, 921, 1115), 'java')}`);
   }
@@ -763,28 +951,26 @@ function buildDoc() {
     'Coverage And Reading Guide',
     'System Overview',
     'Architecture And Module Map',
-    'Import Export Map',
-    'Function And Method Catalogue',
     'Calculation Deep Dives With Actual Code',
-    'Complete Calculation Snippet Index',
-    'Hard-Coded Values And Constants Registry',
+    'Calculation Surface Summary',
+    'Important Constants And Policies',
     'Data Models State And Storage',
     'Routes And API Reference',
     'Configuration And Environment',
-    'Error Handling Catalogue',
+    'Operational Diagnostics',
     'Security Analysis',
     'Performance Characteristics',
-    'Testing Coverage Map',
-    'Dependency Audit',
+    'Testing Coverage Summary',
+    'Dependency Summary',
     'Deployment And Infra',
   ];
 
   const doc = [];
   doc.push('# Road Sage Technical Reference');
   doc.push('');
-  doc.push(`Updated: ${now}`);
+  doc.push('Generated from the current repository state.');
   doc.push('');
-  doc.push('This document is generated from the current repository. It keeps the reference readable by using tables and collapsible indexes, while still including actual code snippets for the calculation-heavy parts of the app.');
+  doc.push('This document is generated from the current repository. It is intentionally high-signal: architecture, security, storage, routes, major calculations, test coverage, and deployment notes are kept; exhaustive import/export, function, literal, and handler dumps are omitted.');
   doc.push('');
   doc.push('## Table Of Contents');
   doc.push('');
@@ -797,14 +983,14 @@ function buildDoc() {
   doc.push(`- Text/code files scanned: ${files.length}`);
   doc.push(`- App/source files scanned: ${sourceFiles.length}`);
   doc.push(`- Machine-local files excluded from scanning: ${[...MACHINE_LOCAL_FILES].map((file) => `\`${file}\``).join(', ')}`);
-  doc.push(`- Production calculation lines indexed: ${productionCalculations.length}`);
-  doc.push(`- Test calculation/assertion lines indexed separately: ${testCalculations.length}`);
-  doc.push(`- Hard-coded production literals indexed: ${literals.length}`);
-  doc.push(`- Functions/methods catalogued: ${[...allFacts.values()].flatMap((f) => f.functions || []).length}`);
+  doc.push(`- Production calculation lines scanned for summary: ${productionCalculations.length}`);
+  doc.push(`- Test calculation/assertion lines scanned separately: ${testCalculations.length}`);
+  doc.push(`- Hard-coded production literals scanned for policy constants: ${literals.length}`);
+  doc.push(`- Functions/methods scanned for targeted snippets: ${[...allFacts.values()].flatMap((f) => f.functions || []).length}`);
   doc.push('');
   doc.push('> WARNING - ASSUMPTION: There is no server code in this repository. REST endpoints documented here are the optional backend contract called by the client when `VITE_API_URL` is configured; otherwise the app uses local repositories.');
   doc.push('');
-  doc.push('> NOTE: Scoring thresholds and domain-significant constants now live in named registries such as `DEFAULT_THRESHOLDS`, `ECO_DEFAULTS`, `SVI_DEFAULTS`, `src/lib/appConstants.js` clock/display/storage/score-normalization constants, historical-context `ROUTE_RISK_CONSTANTS`, repeated-event-area `RISK_CONSTANTS`, `PRE_TRIP_RISK_SIGNAL_GATES`, `HABIT_CONSTANTS`, and `DAILY_FATIGUE_THRESHOLDS`. The literal registry below remains useful for auditing labels, keys, Android IDs, and remaining inline policy values.');
+  doc.push('> NOTE: Scoring thresholds and domain-significant constants live in named registries such as `DEFAULT_THRESHOLDS`, `ECO_DEFAULTS`, `SVI_DEFAULTS`, `src/lib/appConstants.js`, `ROUTE_RISK_CONSTANTS`, `PRE_TRIP_RISK_SIGNAL_GATES`, `HABIT_CONSTANTS`, and `DAILY_FATIGUE_THRESHOLDS`. The generated constants table keeps only policy/security/storage/tracking values that reviewers are likely to need.');
   doc.push('');
   doc.push('---');
 
@@ -816,19 +1002,24 @@ function buildDoc() {
       ['Application', 'Road Sage (`drivesense-app`)'],
       ['Version', JSON.parse(read(path.join(ROOT, 'package.json'))).version],
       ['Purpose', 'Local-first driving tracker for trip recording, scoring, playback, reports, evidence-aware context estimates, coaching, backup/import, and Android background auto tracking.'],
-      ['Architecture', 'React/Vite single-page app plus Capacitor Android shell and native background services. Domain logic is concentrated in `src/lib/*`, API adapters in `src/api/*`, UI in `src/pages/*` and `src/components/*`.'],
-      ['Primary storage', 'IndexedDB/localStorage/sessionStorage/Capacitor Preferences/Android SharedPreferences.'],
-      ['Optional backend', '`VITE_API_URL`; absent by default.'],
-      ['Local trip database name', '`VITE_DB_NAME`; defaults to `drivesense_mobile` and triggers an IndexedDB copy/delete rename migration when changed.'],
-      ['Shared numeric clamp', '`src/lib/mathUtils.js` exports the canonical `clamp(value, min, max)` helper. Invalid numeric input returns `min`, preventing NaN from leaking through score, risk, report, and playback calculations.'],
+      ['Architecture', 'React/Vite single-page app plus Capacitor Android shell, native background services, and a parked-car widget. Domain logic is split between focused `src/engine/*` modules and `src/lib/*` services, with `src/lib/tripEngine.js` retained as a compatibility export layer. API adapters live in `src/api/*`; routed UI and feature surfaces live in `src/pages/*`, `src/components/*`, `src/settings/*`, and `src/features/*`.'],
+      ['Primary storage', 'IndexedDB/localStorage for browser UI state, encrypted Android key-value storage for native UI values, cached-first plus deferred native settings hydration on Android, Android Keystore-backed encrypted trip fields for sensitive route/event/note payloads on native Android, in-memory session-key encrypted trip fields on web/test surfaces, encrypted Android SharedPreferences for native tracking, native settings, native notification state, privacy zones, and parked-location data, coarse route-risk geohash cells, native motion samples, native download/import files, Android widget map cache files, and an app-private WebView settings recovery mirror used only to keep stale native/default settings from winning on relaunch. Android production paths migrate legacy plaintext Capacitor Preferences into encrypted storage where applicable, avoid legacy plaintext `SharedPreferences`/Capacitor Preferences as the source of truth for native settings, privacy zones, tracking, notifications, or parked locations, and warm encrypted preference keys shortly after launch; legacy native plaintext preference files are delete-only cleanup targets. Completed-trip retention defaults to 24 months and can be changed in Privacy & Data settings. Backup import preserves restored trips outside an imported retention window by setting retention to Never for that import. Stealth Trip Mode bypasses trip, active-trip, map-center, parked-location, and diagnostic persistence while the ephemeral trip is active.'],
+      ['Privacy session and ephemeral trips', 'Privacy & Data settings expose a configurable biometric auto-lock timeout and Stealth Trip Mode. Stealth mode arms the next manual trip, pauses Android background auto tracking first, scores the trip in memory only, wipes route points/events when the trip ends or the app backgrounds, and leaves only a dismissible session-local score summary.'],
+      ['Optional backend', '`VITE_API_URL`; absent by default. When configured it must normalize through `src/lib/externalEndpointTrust.js` as a trusted HTTPS public-domain URL, and `VITE_TRUSTED_BACKEND_ORIGINS` can restrict managed deployments to a comma/space-separated origin allowlist. Invalid backend URLs fail clearly instead of falling back to localhost.'],
+      ['Local trip database name', '`VITE_DB_NAME`; defaults to `road_sage_mobile` and triggers an IndexedDB copy/delete rename migration when changed.'],
+      ['Shared numeric clamp', '`src/lib/mathUtils.ts` exports the canonical `clamp(value, min, max)` helper. Invalid numeric input returns `min`, preventing NaN from leaking through score, risk, report, and playback calculations.'],
       ['Weighted evidence scoring', '`weightedBlend` is the canonical composite helper: null or blank component scores are omitted from the denominator instead of being converted to perfect 100s. Safety, Smoothness, Eco, Overall, Defensive, weather-adjusted Overall, merge summaries, peak stress, and compliance paths use unavailable evidence as neutral rather than a bonus.'],
+      ['Voice alert TTS contract', '`src/lib/voiceAlerts.js` is an on-device-only audio output helper: no speed data, GPS coordinates, route payloads, or network calls are passed through it. It normalizes corrupted stored `voice_alerts_enabled` values so literal `"undefined"`, `"null"`, blank, null, or undefined settings fall back to the enabled default, while explicit false/off values disable speech. Browser speech cancels queued utterances before each alert and waits up to 1.5 seconds for Chrome/Android WebView voices to load before using the default voice. Native Android speech routes through `NativeSpeech.speak` when present or the current `speakText` bridge otherwise, with rate/volume/language payloads kept local.'],
+      ['Scoring module split', '`src/engine/scoring/*`, `src/engine/detection/*`, `src/engine/route/*`, `src/engine/export/*`, and `src/engine/calibration/*` now hold the calculation-heavy implementation. Compatibility wrappers under `src/lib/scoring`, `src/lib/detection`, and `src/lib/gps` keep existing imports working while pages migrate to focused modules.'],
       ['Metric and confidence contract', '`src/lib/metricRegistry.js` defines display names, human-readable data-source labels, evidence minimums, permission requirements, and calibration notes for component/report metrics. `component_scores` envelopes carry value, internal evidence (`high`, `developing`, `low`, or `unavailable`), data sources, and sample counts; public score surfaces render `developing` as "limited evidence", suppress `high` evidence badges, and suppress unavailable values rather than rendering zero. CSV exports add a metric-metadata row and monthly/UBI PDFs add metric-reference pages.'],
       ['Score display and insurance limitation', '`src/lib/scoreDisplay.js` centralizes estimated-score formatting. Approximate score surfaces use a leading `~`, monthly PDFs include "Scores are estimates - not validated against real-world crash data", and UBI score-card UI/PDF output is visibly labelled `NOT AN INSURANCE RATING` so internal coaching estimates are not presented as underwriting, pricing, or eligibility decisions.'],
-      ['Scoring calibration and provenance', '`src/lib/scoringConstants.js` owns provisional scoring/risk/UBI constants and their affected metrics. Stored score output is versioned with a generated content-hash `SCORING_VERSION`, and each newly scored trip stores `score_provenance` with its component evidence and scoring-input snapshot. Settings lists provenance/input mismatches for explicit re-score actions and marks provisional output as approximate. `PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS` documents the labeled-dataset requirements, fitting command, validation outputs, and promotion checklist before penalty-rate scaling can be treated as calibrated.'],
-      ['Post-trip calibration labels', 'Trip Detail offers a dismissible optional survey after scored trips. Feedback remains local unless the user enables calibration sharing in Settings, and upload payloads are summary-only records for `/trip_calibration_labels`: anonymous install hash, scoring model version, trip feature summary, score output, survey label, data-quality flags, and hour-rounded timestamp. Raw GPS points, addresses, route polylines, personal identifiers, and free-text notes are excluded. `npm run calibration:fit` refuses calibrated constants until at least 2,000 eligible labeled trips are available.'],
+      ['Scoring calibration, provenance, and explanation', '`src/lib/scoringConstants.js` owns provisional scoring/risk/UBI constants and their affected metrics. Stored score output is versioned with a generated content-hash `SCORING_VERSION`, and each newly scored trip stores `component_scores`, `score_provenance`, and `score_explanation` so UI surfaces can show why a score moved. `src/lib/scoring/pipeline.ts` and `src/lib/scoring/explainer.ts` formalize named scoring stages and top contributing factors. Settings lists provenance/input mismatches for explicit re-score actions and marks provisional output as approximate. `PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS` documents the labeled-dataset requirements, fitting command, validation outputs, and promotion checklist before penalty-rate scaling can be treated as calibrated.'],
+      ['Post-trip calibration labels', 'Trip Detail offers a dismissible optional survey after scored trips, including optional 1-5 drive ratings, score-accuracy feedback, driver/passenger confirmation, difficulty/context tags, and readiness-accuracy feedback when a pre-trip readiness context was captured. Feedback remains local unless the user enables calibration sharing in Settings, and upload payloads are summary-only records for `/trip_calibration_labels`: a 30-day rotating anonymous install hash, scoring model version, trip feature summary, score output, survey label, data-quality flags, and a trip-start timestamp protected with Laplace noise calibrated to epsilon=1.0 / 1-hour sensitivity before hour rounding. Raw GPS points, addresses, route polylines, personal identifiers, and free-text notes are excluded. `npm run calibration:fit` refuses calibrated constants until at least 2,000 eligible labeled trips are available.'],
+      ['Reviewed event feedback', 'Trip Detail event rows let drivers mark individual detected events as accurate or wrong. Wrong-event feedback is persisted through `tripService.markEventFeedback` and `localTripRepository.markEventFeedback`, stores the event type/timestamp/value plus the nearest route coordinate when available, immediately rescoring local completed trips so the event is removed from scoring and `feedback_adjusted_events_count` is updated. Removed events stay visible in a Reviewed Events section with a Removed badge and appear on TripMap as struck-through red markers/popup rows so users can audit what changed instead of losing the history. Ephemeral Stealth Trip Mode returns an in-memory feedback result and does not persist the review.'],
       ['Penalty-rate normalization policy', '`PENALTY_SCALE_FACTOR` is the named provisional base-score conversion constant. Its current value of 40 makes 2.5 severity-weighted penalty points per km reach a 100-point deduction and the zero-score floor. Recalibrate this value against a labeled driving dataset before treating it as empirically validated policy.'],
       ['Fatigue-to-Safety deduction policy', '`FATIGUE_SAFETY_PENALTY_SCALE = 0.15` is a cited conversion from the normalized 0-100 fatigue proxy into raw Safety penalty points, capped by `FATIGUE_SAFETY_MAX_PENALTY = 15` after event-rate normalization. Maximum reported fatigue therefore maps conservatively to the 0.05% BAC-equivalent impairment level reported by Williamson & Feyer (Occupational and Environmental Medicine, 2000); this coefficient is not calibrated against collision outcome data.'],
-      ['OBD-II optional evidence', '`src/lib/obdBluetooth.js` parses BLE OBD-II PID responses for speed, RPM, throttle, engine load, coolant temperature, and mass-air-flow. Route points annotated with OBD data can supply vehicle-speed sources when GPS accuracy is weak, refine eco/engine-stress signals, and appear in component provenance as `obd_bluetooth`; GPS remains the fallback and Classic Bluetooth still requires native support outside this helper.'],
+      ['Permission state model', '`src/lib/permissionStateMachine.js` defines canonical permission states (`unknown`, `requesting`, `granted`, `denied`, `needs_settings`, `not_requested`, and `unavailable`) and guards transitions. `src/lib/permissions/PermissionContext.jsx` wraps the app with a shared permission snapshot, refreshes it on load/focus/visibility, and lets consumers update one permission optimistically while native checks settle. `getPermissionStatus()` uses a short 10-second cache for bridge calls, invalidated by permission requests and app foreground returns, and cold-launch stored `false` / `unknown` values remain setup-required instead of being promoted to granted.'],
+      ['OBD-II optional evidence', '`src/lib/obdBluetooth.js` parses BLE OBD-II PID responses for speed, RPM, throttle, engine load, coolant temperature, and mass-air-flow. Route points annotated with OBD data can supply vehicle-speed sources when GPS accuracy is weak, refine eco/engine-stress signals, and appear in component provenance as `obd_bluetooth`; GPS remains the fallback. Android exposes `BLUETOOTH_CONNECT` through the first-party `DriveSenseActivityRecognition` bridge, `getPermissionStatus()` reports it as the Bluetooth/Nearby Devices state, and Settings requests it before opening the OBD pairing flow. Web Bluetooth must still be available for BLE pairing; Classic Bluetooth OBD-II still requires a separate native transport outside this helper.'],
       ['Sensor fusion and possible incident signals', '`src/lib/sensorFusionModel.js` normalizes browser and Android native IMU samples, summarizes peak linear/rotation motion, calibrates phone orientation from harsh-brake events, enriches event evidence, and can raise `possible_crash` incident signals only when impact-like motion is followed by stopped/still evidence. Diagnostics shows motion permission, sample quality, and crash-readiness state; these signals are emergency workflow cues, not crash diagnoses.'],
       ['Lane-changing score', '`detectLaneChanges` combines highway-speed GPS heading patterns with calibrated IMU yaw when available, otherwise using a lower-confidence GPS-only fallback. `lane_changing_score` requires at least 5 km and two detected lane-change manoeuvres, penalizes unsafe simultaneous-braking changes, contributes a provisional 5% Safety blend weight when enabled, and clearly states that it cannot detect turn signals, following gaps, slow-traffic changes, or curved-road context reliably.'],
       ['Jerk score reliability', '`calculateJerkScore` returns `null` with `jerk_score_confidence: insufficient_data` below 0.5 km or without usable movement samples. Trips from 0.5 km to under 3 km store the real 0-100 jerk score with low confidence, and low-confidence jerk evidence is suppressed from Smoothness blending.'],
@@ -850,21 +1041,29 @@ function buildDoc() {
       ['Context-aware score evidence', 'Braking-efficiency grades use urban or highway thresholds and display their driving context. Hill-driving uses named provisional GPS/altitude-derived assumptions (`HILL_ACCEL_THRESHOLD_MS2 = 2.5` and `HILL_INFRACTION_PENALTY_POINTS_PER_KM = 8`), returns `hill_route: false` with a null score when not applicable, and displays its measurement limitation in Trip Detail. Hill infractions are normalized per km of climb/descent distance instead of using an absolute route count; the rate should still be recalibrated against labelled hill-driving evidence. Null component evidence stays out of composite decisions and score confidence metadata supports low-data UI suppression.'],
       ['Fatigue and playback time integrity', '`calculateFatigueScore` stores a normalized 0-100 fatigue risk. Its contribution to Safety uses the cited named `FATIGUE_SAFETY_PENALTY_SCALE` and `FATIGUE_SAFETY_MAX_PENALTY`, not a crash-outcome calibrated impairment-risk model. Fatigue heatmaps use named 30-second segments and require 20 segments before display. Trip duration subtracts tracking gaps, including native Android stats, and map playback uses timestamp progress with index progress only as a missing-time fallback.'],
       ['Phone-use scoring policy', 'Phone-use scoring requires Android Usage Access evidence. GPS micro-steering windows are collected only as diagnostics with a six-oscillation, 15-second threshold and GPS-accuracy gate; unavailable Usage Access produces `phone_use_score: null` / `usage_access_required`, Trip Card and Trip Detail show a permission banner/action, and proxy events are excluded from Safety, coaching, live warnings, route risk, and normal trip events.'],
-      ['Weather context availability', '`fetchWeatherContext` returns source-attributed unavailable weather when weather is disabled, the route is empty, all weather points are private, or Open-Meteo has no matching hourly sample. `applyWeatherRiskToScores` distinguishes `open_meteo`, `gps_inference`, and `unavailable`; GPS stopping-distance context can label weather context for display but unavailable Open-Meteo risk remains neutral in scoring and historical-context weighting.'],
-      ['OSRM consent and health checks', 'OSRM route snapping is disabled until the user saves a private/trusted endpoint, explicitly consents to sending sampled GPS coordinates, and the app records endpoint health. The public demo endpoint is shown as an example but is rejected for saved settings; `VITE_DEFAULT_OSRM_URL` can prefill trusted deployments and `VITE_OSRM_TIMEOUT_MS` sets the build default timeout before the user overrides it.'],
+      ['Weather context availability', '`fetchWeatherContext` returns source-attributed unavailable weather when weather is disabled, the route is empty, all weather candidates are private, the origin/midpoint/destination is inside the expanded weather privacy guard, or Open-Meteo has no matching hourly sample. `applyWeatherRiskToScores` distinguishes `open_meteo`, `gps_inference`, and `unavailable`; GPS stopping-distance context can label weather context for display but unavailable Open-Meteo risk remains neutral in scoring and historical-context weighting.'],
+      ['OSRM consent and health checks', 'OSRM route snapping is disabled until the user saves a trusted HTTPS public-domain endpoint, explicitly consents to sending sampled GPS coordinates, and the endpoint passes a 200 OPTIONS verification with an exposed OSRM-specific response header. The app stores the verified endpoint, origin, domain, and verification time; the current endpoint must match that trust record before snapping can run. The public demo endpoint, HTTP URLs, localhost, private-network addresses, IP literals, credentials, query strings, and origins outside `VITE_TRUSTED_OSRM_ORIGINS` are rejected. `VITE_DEFAULT_OSRM_URL` can prefill trusted deployments and `VITE_OSRM_TIMEOUT_MS` sets the build default timeout before the user overrides it.'],
       ['Speed-limit fallback provenance', '`src/lib/speedLimitSource.js` supports global, Canada, United States, United Kingdom, Germany, Australia, and France fallback road-type profiles when OpenStreetMap supplies no posted `maxspeed` tag. Settings labels inferred values approximate, `fallback_country` is preserved through route points, events, context patches, backups, CSV exports, and Trip Detail, and inferred speed-limit scoring adds an explanatory note while half-weighting speeding penalties.'],
-      ['Historical context normalization', '`estimatePredictiveRouteRisk` normalizes and clamps scored personal baseline, verified driving-event density, repeated driving-event areas, available weather, and time inputs before applying fractional weights. `ROUTE_RISK_CONSTANTS.EVENT_DENSITY_MAX_EVENTS_PER_KM = 5` and `DANGER_ZONE_SATURATION_COUNT = 5` are named provisional saturation assumptions, not collision- or casualty-calibrated thresholds. Low-confidence proxy counts such as current `close_proximity_count` and legacy `near_miss_count` are excluded from context weighting. The dashboard labels this as an estimated historical-context signal, not route prediction, and exposes weighted signal contributions. Repeated-event route indexing snaps nearby GPS cells within 15 m to limit same-road fragmentation and excludes proxy events.'],
+      ['Historical context normalization', '`estimatePredictiveRouteRisk` normalizes and clamps scored personal baseline, verified driving-event density, repeated driving-event areas, available weather, and time inputs before applying fractional weights. `ROUTE_RISK_CONSTANTS.EVENT_DENSITY_MAX_EVENTS_PER_KM = 5` and `DANGER_ZONE_SATURATION_COUNT = 5` are named provisional saturation assumptions, not collision- or casualty-calibrated thresholds. Low-confidence proxy counts such as current `close_proximity_count` and legacy `near_miss_count` are excluded from context weighting. The dashboard labels this as an estimated historical-context signal, not route prediction, and exposes weighted signal contributions. Repeated-event route indexing persists coarse geohash cells instead of exact segment midpoints, uses prefix lookup for nearby matching, and excludes proxy events.'],
       ['Route risk segment weighting', '`buildRouteRiskIndex` applies named internal pattern weights through `ROUTE_RISK_CONSTANTS`: a general observed event adds `ROUTE_RISK_EVENT_WEIGHT = 20` points per traversal rate and a harsh-event classification adds `ROUTE_RISK_HARSH_WEIGHT = 40` additional points per traversal rate. These map and alert indicators are not calibrated to collision or casualty outcomes.'],
       ['UBI minimum evidence and weighting', '`computeUBIReport` returns null score, grade, tier, and category scores until 50 km is observed, uses actual distance for event rates, reduces GPS-heading-derived cornering weight to 5% while shifting weight toward braking, and uses configurable mileage assumptions that default to 10,000 km/year optimal mileage with an 8,000 km spread. Named night-driving and per-100-km event-rate deduction constants are explicitly internal approximations, not insurer-validated rates: `TIME_OF_DAY_NIGHT_MULTIPLIER = 150`, `BRAKING_PENALTY_PER_100KM = 8`, `ACCEL_PENALTY_PER_100KM = 8`, `CORNERING_PENALTY_PER_100KM = 6`, and `SPEED_PENALTY_PER_100KM = 10`. Report UI, tooltips, and UBI PDFs now repeat that the score card is not an insurance rating.'],
       ['Commute and coaching policy', '`COMMUTE_MATCH_RADIUS_M` documents the 225 m commute route-match radius shown in Settings. Weekly coaching is local/rules-based, returns unavailable when no valid scored distance exists, uses one focus metric, and requires a score delta greater than 3 points; score tips require at least 2 km and confidence of at least 0.5.'],
       ['Economics and carbon claims', '`estimateTripEconomics` labels cost/CO2 as estimates, caps eco-driving consumption adjustment to +/-8%, and withholds fuel/CO2 savings until an assigned vehicle baseline is available. Carbon impact and achievement badges use the same vehicle-aware economics source so badges and reports do not disagree.'],
       ['Legacy and native score provenance', 'Legacy completed trips without current provenance are tagged `unknown_legacy_unrescored` rather than being marked as current scoring output. If more than 20% of recent completed trips in the 28-day window have outdated provenance, local storage auto-re-scores the affected recent trips and broadcasts progress through `road-sage:rescore-progress`; Android native completed trips write null score fields with `score_status: pending_javascript_scoring` until JavaScript scoring calculates evidence-backed values.'],
-      ['Map fallback center policy', 'Trip playback no longer hard-codes a London map view for empty routes. It prefers the saved last map center, then last parked location, privacy-zone context, device location, and finally `VITE_DEFAULT_MAP_LAT`/`VITE_DEFAULT_MAP_LNG`; valid trip playback persists a new contextual center for later empty-state maps.'],
-      ['Trip readiness display honesty', '`computePreTripRisk` no longer fills missing personal time/trend history with generic clock-risk defaults. It records signal provenance, fallback and missing-core signal keys, and actual-user signal counts; Dashboard displays "Not enough data yet" or limited-data copy unless evidence is high and withholds a confident readiness number when the input signal set is too thin.'],
+      ['Visible stale-score recovery', '`useSettingsVersion` hashes current scoring inputs, `useStaleTripDetection` identifies completed trips scored with older inputs, Trip History shows an Update now prompt, and Dashboard can surface a sticky re-score banner from `tripService.getScoreMigrationSummary()` so users can deliberately refresh stale history.'],
+      ['Tracking health and permission monitoring', '`usePermissionMonitor` reads through `PermissionContext` when the provider is present and falls back to direct `getPermissionStatus()` for isolated render/test mounts. It checks foreground/background location, activity recognition, notifications, and Android battery optimization on load, focus, visibility change, and a 60-second cadence. Permission rows now distinguish first-run setup, denied, unavailable, granted, and `needs_settings` states; repeated Android denials are stored as `needs_settings` so badges can direct users to OS Settings instead of implying another dialog will appear. Dashboard displays `PermissionWarningBanner` and `TrackingHealthChip` when background auto tracking is degraded or cannot be verified.'],
+      ['Settings modular navigation', 'Settings uses a searchable grouped navigator and lazy-loaded section modules for Tracking, Scoring, Privacy & Data, Notifications, Appearance, UBI Coaching, and Advanced features. Legacy section anchors still map into the new grouped UI.'],
+      ['Road-data prompting and compliance display', '`RoadDataPrompt` nudges users when automatic road-data lookup is disabled, and `ComplianceScore` marks inferred GPS speed-limit scoring as half weight with an inline Fetch road data action. OSM speed-limit lookup sends route-area boxes, while OSRM route snapping still requires a trusted endpoint and explicit raw-coordinate consent.'],
+      ['Android parked-car widget', '`ParkedCarWidgetProvider` reads the last parked location from encrypted native trip storage, shows a dashboard deep link, provides a geo navigation intent, and schedules `MapTileFetchWorker` to cache a pinned OpenStreetMap tile preview per widget. `MapTileFetchWorker` names cache files by rounded parked coordinate, checks privacy zones before serving or fetching a tile, deletes stale private-coordinate cache files, and shows the local privacy placeholder without sending coordinates to external map/geocoding services. Saving privacy zones clears widget map caches and forces a widget refresh so newly private locations stop displaying old tiles.'],
+      ['Android release hardening', '`AndroidManifest.xml` disables backup and references backup/data-extraction exclusion rules plus `network_security_config.xml`. `MainActivity` registers first-party `SecureKey`, `EncryptedCapacitorPlugin`, `BiometricGate`, and `PlayIntegrity` bridges, sets `FLAG_SECURE`, validates deep links before Capacitor sees them, hardens WebView file/content/geolocation/cache/autofill behavior, injects CSP and security headers into Capacitor WebView responses, and suspends tracking when local runtime checks flag a compromised release environment. Debug builds still log ADB-only runtime-integrity warnings but do not suspend tracking for the exact `adb;` development signal, so connected-device testing does not disable native tracking. Release builds enable R8/resource shrinking/obfuscation with `android.util.Log` calls stripped while keeping Capacitor reflection entry points and native JSON model members. `capacitor.config.ts` disables bridge logging, disables `CapacitorHttp`, keeps WebView navigation allowlisted to the app origin, and syncs only the explicit Capacitor plugin allowlist used by Road Sage. `PendingIntentCompat` centralizes immutable flags for app-owned PendingIntents and mutable flags only for Play Services activity-recognition callbacks.'],
+      ['Android network pinning', '`network_security_config.xml` denies cleartext traffic, trusts only system public CAs, and pins every built-in third-party external host used for maps, geocoding, weather, and Overpass. Each pin-set carries an expiration date, and `scripts/check_pin_expiry.py` fails CI when a pin is missing, malformed, placeholder-like, has fewer than two SHA-256 pins, or expires within the configured 60-day window.'],
+      ['Backup confidentiality and integrity', '`src/lib/backupEncryption.js` encrypts backups with PBKDF2-HMAC-SHA256 and AES-256-GCM. Settings exports always produce password-protected `.rsbackup` files with a 12-128 character password contract, strong-password or 3+ word passphrase checks, confirmation field, strength meter, wrong-password messaging, and corrupted encrypted-backup error copy. Legacy plaintext backups remain import-only compatibility inputs and must pass install-bound HMAC verification before merge.'],
+      ['Map fallback center policy', 'Trip playback never hard-codes a city for empty routes. It prefers the trip route midpoint, last parked location, last stored map center, or explicit live device location when available; otherwise it renders a no-location state instead of showing an unrelated city.'],
+      ['Trip readiness calibration', '`computePreTripRisk` now uses a progressive, per-driver readiness calibration path. It captures pre-trip signal snapshots, pairs them with completed-trip outcomes, learns per-signal weight offsets after 30 paired trips, discounts non-predictive signals, dampens highly correlated signal pairs such as time-of-day/day-of-week, uses adaptive habit half-life, reports a readiness interval from signal variance, and can classify risk with fitted moderate/high thresholds once enough paired records exist. Dashboard exposes bootstrapping/developing/calibrated evidence states instead of treating the estimate as a validated crash, insurance, medical, or traffic prediction.'],
       ['UI section recovery', '`src/components/SectionErrorBoundary.jsx` isolates calculation-heavy route maps, trip playback, Trip Detail score summaries, the Trip Detail page shell, and the Dashboard readiness/context panel. Caught render errors are logged through `logError` and show a reloadable fallback instead of blanking the app.'],
-      ['Handled operation failures', '`src/lib/errorReporting.js` exports `logError(context, error, extra)` for critical async failures. Post-trip notifications, achievement sync, odometer sync, and driver-signature persistence now write tracking diagnostics instead of disappearing behind bare catches.'],
+      ['Handled operation failures', '`src/lib/errorReporting.js` exports `logError(context, error, extra)` for critical async failures. Post-trip notifications, achievement sync, odometer sync, and driver-signature persistence now write tracking diagnostics instead of disappearing behind bare catches. Sanitization redacts coordinate-bearing URL parameters, bare GPS-like coordinates, and sensitive `extra` keys before diagnostics are stored.'],
       ['Shared time-risk windows', '`src/lib/appConstants.js` owns night (22:00-04:59), morning-rush (07:00-09:59 by hourly bucket), and evening-rush (16:00-18:59) boundaries used by habit, pre-trip, historical context risk, automatic trip tagging, and fixed-hour trip-engine fallback behavior. Android fixed-hour night classification now evaluates that same 22:00-04:59 boundary in the device local timezone, matching JavaScript `Date#getHours()` semantics for native and JS rescoring agreement. Legacy sunset-mode settings migrate to this fallback; custom night hours remain configurable.'],
-      ['Backup migrations', '`src/lib/dataBackup.js` migrates schema versions 1 through 6 before import, accepts trip notes up to 10,000 characters, counts affected truncated notes, and requires explicit confirmation in Settings before completing a truncating import. v6 relabels retired `lane_change` records as `heading_deviation_legacy`, refreshes modern/legacy heading counts, and preserves the legacy marker through backup import/export.'],
+      ['Backup migrations', '`src/lib/dataBackup.js` migrates schema versions 1 through 6 through the exported `BACKUP_MIGRATIONS` registry before import, accepts trip notes up to 10,000 characters, counts affected truncated notes, and requires explicit confirmation in Settings before completing a truncating import. v6 relabels retired `lane_change` records as `heading_deviation_legacy`, refreshes modern/legacy heading counts, preserves the legacy marker through backup import/export, and newer backup versions produce an actionable update-required error.'],
       ['Development verification fixtures', 'Development Diagnostics can seed and remove twelve local synthetic completed trips only in development builds with the explicit `allowSyntheticTestData` guard. Production calls throw instead of creating fake trips. Human-verified scoring golden fixtures lock the generated scoring-version contract, while shared Android/JavaScript parity and advanced-feature fixtures exercise native stats, local-time night classification, conservative GPS noise-floor behavior, OBD parsing, sensor fusion, lane-change scoring, and crash-readiness diagnostics.'],
       ['Bounded UI lists', 'Risk hotspots initially show 6 and route history stretches initially show 3 through named constants, with a show-all control and hidden-item count.'],
     ],
@@ -872,14 +1071,14 @@ function buildDoc() {
   doc.push('');
   doc.push('> SAFETY LIMITATION: Road Sage has no hazard-stimulus timestamp, lead-vehicle ranging sensor, lane camera/HD-lane geometry, turn-signal state, or driver-monitoring sensor. Brake onset smoothness, stop-start patterns, estimated brake-turn manoeuvre alerts, heading events, heading drift Beta, GPS phone-use proxy, OBD-refined powertrain signals, IMU-assisted lane-changing, and overtake-pattern outputs are behavior proxies rather than validated safety outcomes. Estimated brake-turn alerts, overtake patterns, and GPS phone-use proxy outputs are excluded from trip Safety scoring; lane-changing remains provisional and evidence-weighted. Legacy stored identifiers remain readable for older trip records only.');
   doc.push('');
-  doc.push('```mermaid\nflowchart TD\n  UI[React pages/components] --> Services[src/api services]\n  UI --> Domain[src/lib scoring, tracking, reports]\n  Domain --> Local[(localStorage / IndexedDB / Preferences)]\n  Services -->|VITE_API_URL set| Backend[Optional REST API]\n  Services -->|VITE_API_URL empty| LocalRepo[local repositories]\n  Android[Capacitor Android services] --> NativePrefs[(SharedPreferences)]\n  Android --> Domain\n  Domain --> External[OSM / Open-Meteo / optional OSRM]\n  Domain --> Reports[CSV/PDF/backup exports]\n```');
+  doc.push('```mermaid\nflowchart TD\n  UI[React pages/components] --> Services[src/api services]\n  UI --> Engine[src/engine scoring, detection, route, export]\n  UI --> Domain[src/lib storage, tracking, reports, native bridges]\n  Engine --> Domain\n  Domain --> Local[(IndexedDB / browser localStorage / encrypted native key-value storage / native runtime settings cache)]\n  Services -->|VITE_API_URL set| Backend[Optional REST API]\n  Services -->|VITE_API_URL empty| LocalRepo[local repositories]\n  Android[Capacitor Android services] --> NativePrefs[(Encrypted SharedPreferences only)]\n  Android --> SecureBridge[SecureKey / BiometricGate / PlayIntegrity]\n  SecureBridge --> Domain\n  Android --> Domain\n  Widget[Android parked-car widget] --> NativePrefs\n  Widget -->|privacy-zone gate first| OsmTiles[OpenStreetMap tile hosts]\n  Domain --> External[OSM / Open-Meteo / optional OSRM]\n  Domain --> Reports[password-encrypted .rsexport / .rsbackup exports]\n```');
   doc.push('');
   doc.push(table(
     ['Technology', 'Exact project version'],
     packageFacts().filter((d) => ['react', 'react-dom', 'vite', '@capacitor/core', '@capacitor/android', 'leaflet', 'react-leaflet', 'vitest', 'typescript'].includes(d.name)).map((d) => [d.name, d.installed]),
   ));
   doc.push('');
-  doc.push('Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app routes and bootstraps theme, notifications, onboarding, and Android auto tracking; `android/app/src/main/java/com/drivesense/app/MainActivity.java` hosts the Capacitor app; `android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java` handles native tracking.');
+  doc.push('Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app routes and bootstraps theme, notifications, onboarding, and Android auto tracking; `android/app/src/main/java/com/roadsage/app/MainActivity.java` hosts the Capacitor app; `android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java` handles native tracking; `android/app/src/main/java/com/roadsage/app/ParkedCarWidgetProvider.java` and `MapTileFetchWorker.java` power the Android parked-car widget.');
   doc.push('');
   doc.push('---');
 
@@ -889,56 +1088,35 @@ function buildDoc() {
   doc.push('');
   doc.push('---');
 
-  doc.push('## Import Export Map');
-  doc.push('');
-  doc.push(importExportMap());
-  doc.push('');
-  doc.push('---');
-
-  doc.push('## Function And Method Catalogue');
-  doc.push('');
-  doc.push(functionCatalog());
-  doc.push('');
-  doc.push('---');
-
   doc.push('## Calculation Deep Dives With Actual Code');
   doc.push('');
-  doc.push('These are the main production calculations that drive trip physics, scoring, route playback, prediction, reports, and Android tracking. The complete line-by-line index follows in the next section.');
+  doc.push('These are the main production calculations that drive trip physics, scoring, route playback, prediction, reports, and Android tracking.');
   doc.push('');
   doc.push(topCalculationSnippets());
   doc.push('');
   doc.push('---');
 
-  doc.push('## Complete Calculation Snippet Index');
+  doc.push('## Calculation Surface Summary');
   doc.push('');
-  doc.push('Every production calculation-like line found by the scanner is grouped by domain below. Each row includes the exact line of code. Test calculations are listed at the end so expected-value math is not mixed with production behavior.');
+  doc.push('The scanner still counts calculation-like lines so reviewers can spot large math surfaces, but the generated reference keeps only domain counts and important files rather than every expression.');
   doc.push('');
-  for (const kind of ['scoring', 'risk/prediction', 'map/route', 'driving physics', 'economics', 'timing/control', 'general calculation']) {
-    const rows = calcRowsByKind(kind);
-    doc.push(groupedDetails(`${kind} calculations`, rows, renderCalcIndex));
-    doc.push('');
-  }
-  doc.push(groupedDetails('test calculation/assertion lines', testCalculations, renderCalcIndex));
+  doc.push(calculationSummary());
   doc.push('');
   doc.push('---');
 
-  doc.push('## Hard-Coded Values And Constants Registry');
+  doc.push('## Important Constants And Policies');
   doc.push('');
-  doc.push('Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAULT_THRESHOLDS`, `ECO_DEFAULTS`, `SVI_DEFAULTS`, `PENALTY_SCALE_FACTOR`, `FATIGUE_SAFETY_PENALTY_SCALE`, `src/lib/appConstants.js`, `PERSONAL_BASELINE_MIN_TRIPS`, `PERSONAL_PERCENTILE_MIN_WEEKS`, `BEST_WINDOW_MIN_TRIPS`, `FATIGUE_HEATMAP_SEGMENT_SECONDS`, `COMMUTE_MATCH_RADIUS_M`, `MIN_UBI_REPORT_DISTANCE_KM`, `TIME_OF_DAY_NIGHT_MULTIPLIER`, UBI per-100-km rate deduction constants, historical-context and segment-index `ROUTE_RISK_CONSTANTS`, pre-trip-risk, habit-profile, daily-fatigue, and repeated-event-area constants. `METRIC_REGISTRY` supplies exported metric descriptions, evidence minimums, sources, and calibration notes. The app also contains intentional literals for route labels, feature flags, UI labels, named Android notification IDs, and tests; these are grouped by file so reviewers can see why each value exists.');
+  doc.push('Named thresholds and policies are centralized around scoring, route-risk, privacy, retention, backup/import, permission, Android native, and app timing registries. UI copy and ordinary string literals are deliberately excluded from this table.');
   doc.push('');
-  doc.push(literalRegistry());
-  doc.push('');
-  doc.push('### Generated Named Constants Index');
-  doc.push('');
-  doc.push(constantsRegistry());
+  doc.push(importantConstantsRegistry());
   doc.push('');
   doc.push('---');
 
   doc.push('## Data Models State And Storage');
   doc.push('');
-  doc.push('Core persisted models are plain JSON trip, vehicle, settings, backup, diagnostic, route-risk-index, privacy-zone, motion-sample, OBD-annotated route-point, and Android native event records. Completed trips now include canonical `component_scores` evidence envelopes and `score_provenance` for scoring version/input auditing. Local trip reads run a one-time retired-event migration that converts legacy `lane_change` records to diagnostic `heading_deviation_legacy` records and remaps matching event-feedback keys. There is no ORM schema in this repo; IndexedDB schema creation lives in `src/lib/localTripRepository.js`, local/mobile storage helpers live in `src/lib/mobileStorage.js` and `src/lib/trackingStore.js`, and Android SharedPreferences records live in `DriveSenseNativeTripStore.java` and `DriveSenseAutoTrackingService.java`.');
+  doc.push('Core persisted models are plain JSON trip, vehicle, settings, diagnostic, route-risk-index, OBD-annotated route-point, Android native event records, saved parked-location records, encrypted backup records, legacy HMAC-sealed plaintext backup import records, and widget map cache files. Sensitive trip fields such as route points, events, notes, tags, and addresses are encrypted before storage and decrypted on repository reads: native Android uses the `SecureKey` bridge with the rotated `road_sage_js_enc_key_v4` Android Keystore alias and Keystore-generated AES-GCM IVs; browser/test surfaces use a non-persistent in-memory session key. Native `SecureKey` encryption/decryption fails closed on Android instead of falling back to web session encryption. Route-risk storage keeps coarse geohash cells rather than exact segment midpoints, and completed trips are pruned by the configurable data-retention setting, defaulting to 24 months, except backup import explicitly skips immediate pruning and sets retention to Never when imported settings would hide older restored trips. Android native trip, settings, notification, privacy-zone, parked-location, and native key-value data use encrypted storage backed by the rotated `road_sage_master_key_v3` alias; native settings writes use committed encrypted storage off the UI thread, JavaScript native storage migrates legacy plaintext Capacitor Preferences into the encrypted bridge when found, and native settings hydrate into memory instead of WebView localStorage. Legacy native plaintext preference files are removed by name without reading them, stale encrypted preference files/keysets can be wiped and recreated when encrypted preferences cannot be opened, and the encrypted preference master key is warmed shortly after launch. Sensitive Android files are best-effort overwritten before deletion, delete-all invokes native file wiping, and native motion samples are zeroed before completed native trip persistence; legacy stored motion samples are stripped on repository rewrite. Completed trips include canonical `component_scores` evidence envelopes, `score_provenance`, `score_explanation`, `event_feedback`, `feedback_reviewed_at`, and `feedback_adjusted_events_count` for scoring version/input auditing, reviewed-event rescoring, and plain-language score contributors. `src/lib/schema/tripSchema.js` documents the canonical v23 trip shape and required fields. Local trip reads run a one-time retired-event migration that converts legacy `lane_change` records to diagnostic `heading_deviation_legacy` records and remaps matching event-feedback keys. There is no ORM schema in this repo; IndexedDB schema creation lives in `src/lib/localTripRepository.js`, local/mobile storage helpers live in `src/lib/mobileStorage.js` and `src/lib/trackingStore.js`, encrypted Android preference helpers live in `EncryptedPreferenceStore.java`, native trip storage lives in `DriveSenseNativeTripStore.java`, native settings live in `NativeSettingsStore.java`, Android backup picking lives on the `DriveSenseActivityRecognition` bridge, and parked-widget image cache files are stored under Android app files by `MapTileFetchWorker.java`.');
   doc.push('');
-  doc.push(storageCatalogue());
+  doc.push(storageSummary());
   doc.push('');
   doc.push('---');
 
@@ -952,36 +1130,59 @@ function buildDoc() {
   doc.push('');
   doc.push(apiReference());
   doc.push('');
+  doc.push('When `VITE_API_URL` is configured, event review uses the optional trip backend contract by reading the current trip, PATCHing `event_feedback`, `needs_rescore`, and `feedback_reviewed_at`, and returning the updated trip. Without a backend, `tripService.markEventFeedback` delegates to the local repository, which stores the review and recomputes completed-trip scoring immediately. In Stealth Trip Mode the service returns an ephemeral feedback result without writing to IndexedDB or native storage.');
+  doc.push('');
   doc.push('---');
 
   doc.push('## Configuration And Environment');
   doc.push('');
   doc.push(envTable());
   doc.push('');
-  doc.push('App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.');
+  doc.push('App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run test:settings-contract`, `npm run test:standalone`, `npm run docs:check`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.');
   doc.push('');
   doc.push('Android SDK location is intentionally machine-local. `android/local.properties` is ignored by `android/.gitignore`, excluded from this generator, and checked by `npm run check:repo-hygiene` so local `sdk.dir` paths are not committed.');
   doc.push('');
   doc.push('---');
 
-  doc.push('## Error Handling Catalogue');
+  doc.push('## Operational Diagnostics');
   doc.push('');
-  doc.push('Critical async operations should call `logError(context, error, extra)` when a failure is handled locally. This records an `operation_error` diagnostic with sanitized message and stack preview so Diagnostics can explain missing notifications, stale odometers, failed coaching persistence, or isolated React section crashes without surfacing an unhandled rejection.');
+  doc.push('Critical async operations should call `logError(context, error, extra)` when a failure is handled locally. This records an `operation_error` diagnostic with sanitized message and stack preview so Diagnostics can explain missing notifications, stale odometers, failed coaching persistence, or isolated React section crashes without surfacing an unhandled rejection. Error sanitization redacts coordinate-bearing query parameters, bare GPS-like coordinate values, and sensitive `extra` keys such as latitude, longitude, route points, addresses, and geocode payloads before diagnostics are persisted.');
   doc.push('');
-  doc.push(errorCatalogue());
+  doc.push(errorHandlingSummary());
   doc.push('');
   doc.push('---');
 
   doc.push('## Security Analysis');
   doc.push('');
-  doc.push('- Auth: optional backend bearer token is read from `sessionStorage`; legacy `localStorage` tokens are migrated and removed.');
+  doc.push('- Auth: optional backend auth relies on an httpOnly, Secure, SameSite=Strict `token` cookie set by POST `/auth/token`; frontend API calls use `credentials: "include"` and do not attach browser-readable bearer tokens.');
+  doc.push('- Legacy auth migration: old `localStorage` token keys are cleared at startup and backend users are forced to re-login instead of copying tokens into readable browser storage.');
+  doc.push('- Content Security Policy: Vite injects a CSP meta tag and dev/preview HTTP header with `default-src \'self\'`, `script-src \'self\'` with no `unsafe-inline`, restricted `connect-src` entries for self, Overpass, Open-Meteo, Nominatim, and only a trusted HTTPS public-domain `VITE_API_URL` when configured and allowed by `VITE_TRUSTED_BACKEND_ORIGINS`. Android `MainActivity` also injects a CSP HTTP response header plus `X-Content-Type-Options`, `X-Frame-Options`, and `Referrer-Policy` into Capacitor WebView local responses so header-only directives such as `frame-ancestors` are enforced. Remote Google Fonts imports have been removed; Tailwind font aliases use system font stacks so no font CDN is required.');
+  doc.push('- Android platform hardening: app backup is disabled and backed by backup/data-extraction exclusion XML, cleartext traffic is denied by `network_security_config.xml`, system CAs are the only trusted anchors, `FLAG_SECURE` blocks task-switcher screenshots and screen recording, Android Keystore field encryption uses the rotated `road_sage_js_enc_key_v4` alias with randomized AES-GCM encryption and Keystore-provided IVs, Capacitor bridge logging is disabled, `CapacitorHttp` is disabled, WebView navigation is restricted with `server.allowNavigation: []`, release builds run R8/resource shrinking and obfuscation with `android.util.Log` calls stripped, ProGuard keeps only Capacitor reflection entry points and native JSON model members needed at runtime, and app-owned PendingIntents use `FLAG_IMMUTABLE` through `PendingIntentCompat`.');
+  doc.push('- Capacitor plugin surface: `capacitor.config.ts` uses `includePlugins` allowlists for the Capacitor and background-geolocation plugins Road Sage actually syncs, while custom first-party bridge names such as `SecureClipboard`, `DriveSenseActivityRecognition`, `SecureKey`, `EncryptedCapacitorPlugin`, `BiometricGate`, and `PlayIntegrity` are explicitly documented in plugin config. Native `MainActivity` registers only the Road Sage Java plugins it owns.');
+  doc.push('- Android deep-link hardening: external deep links and app-owned deeplink extras are validated in `MainActivity` before Capacitor sees them; only allowlisted routes and safe query values are passed through.');
+  doc.push('- Android WebView hardening: the Capacitor WebView disables file/content URI access, WebView geolocation, saved form/password data, mixed content, third-party cookies, and persistent cache use; cache, history, and form data are cleared on startup and backgrounding.');
+  doc.push('- Permission state integrity: `src/lib/permissionStateMachine.js` prevents loose permission strings from drifting into invalid UI states, `PermissionProvider` centralizes refresh/update state for app surfaces, and `getPermissionStatus()` preserves cold-launch `unknown` values rather than treating default `false` settings as granted. Repeated Android denials can persist as `needs_settings`, permission requests invalidate the 10-second status cache, and app focus/visibility refreshes force a fresh native read after users return from OS Settings.');
+  doc.push('- Biometric session lock: `src/lib/biometricLock.js` centralizes the unlocked session state. Privacy & Data settings store `lock_timeout_minutes` with a 5-minute default and a 0-30 minute validated range; `src/App.jsx` protects routes with the native `BiometricGate` device-credential prompt on Android, rechecks when the app becomes visible, and locks immediately on document visibility loss or Capacitor inactive app state. Devices without a configured secure credential report unavailable and keep the app unlocked instead of faking a weaker challenge.');
+  doc.push('- Stealth Trip Mode: `src/lib/ephemeralTripMode.js` arms the next trip from Privacy & Data settings, consumes that flag when Dashboard starts tracking, disables background auto tracking for that trip, suppresses trip/active-trip/map-center/parked-location/diagnostic writes while active, wipes coordinate-bearing route/event arrays when the trip ends or the app backgrounds, and keeps the post-trip score summary session-local until dismissed.');
+  doc.push('- Calibration timestamp privacy: shared calibration labels use summary-only payloads, rotate the anonymous upload hash every 30 days, and protect the trip-start timestamp with Laplace noise calibrated to epsilon=1.0 and one-hour sensitivity before hour rounding, limiting correlation between upload logs, model version, trip features, and exact trip time.');
+  doc.push('- GPS coordinate minimization: route points, parked-location coordinates, and last-map-center coordinates are rounded to 5 decimal places before local or native storage; altitude is rounded to whole meters.');
+  doc.push('- Android certificate pinning: `network_security_config.xml` pins the built-in OpenStreetMap/Nominatim, Open-Meteo, and Overpass hosts with at least two SHA-256 SPKI pins per host. Security CI runs `scripts/check_pin_expiry.py android/app/src/main/res/xml/network_security_config.xml 60` so expired, soon-expiring, missing, placeholder, or malformed pins fail before release.');
+  doc.push('- OSRM endpoint validation: saved route-snapping endpoints must first normalize as trusted HTTPS public-domain URLs with no credentials, query strings, localhost/private-network hosts, IP literals, public OSRM demo origin, or allowlist mismatch. They must then pass a 200 OPTIONS check with an exposed `X-OSRM-*` or OSRM-valued response header; Road Sage records the verified endpoint/origin/domain/time, requires the current setting to match that record before snapping, and disables snapping plus notifies the user if launch re-verification fails.');
   doc.push('- Authorization: no in-repo backend role matrix exists. The local app is single-user local-first; backend authorization must be enforced by the external API if configured.');
-  doc.push('- User-controlled data surfaces: backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, CSV/PDF export content, and Android native intent extras.');
+  doc.push('- Runtime integrity: `RuntimeIntegrityCheck` detects local root, debugger, emulator, and ADB-enabled signals. `MainActivity` suspends active tracking when a compromised release status is reported. In debug builds, the exact ADB-only status `adb;` is logged but does not suspend tracking so normal connected-device development remains testable. The `PlayIntegrity` bridge requests Play Integrity API tokens with per-action nonces so native calibration uploads and encrypted exports can be gated before sensitive data leaves the app. Calibration uploads and encrypted exports require backend-verified Play Integrity verdicts by default; `VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER` can be passed to native token requests, and raw-token-only acceptance is limited to explicit development/test override via `VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY=true`.');
+  doc.push('- User-controlled data surfaces: encrypted backup import JSON, settings import, trip/vehicle forms, route points, privacy zones, OSRM endpoint input, external context fetches, password-protected CSV/PDF/UBI export content, and Android native intent extras.');
+  doc.push('- Leaflet maps: `TripMap.jsx` and `TripPlayback.jsx` statically import Leaflet and `leaflet/dist/leaflet.css` from the bundled npm dependency. They do not dynamically inject Leaflet `<script>` tags or load Leaflet from a CDN, removing a third-party script execution path over decrypted trip state.');
   doc.push('- Leaflet popups: route labels, event metadata, speed-limit road/source data, repeated-event route segments, repeated driving-event areas, privacy labels, and parked addresses are HTML-escaped before insertion into popup template strings.');
-  doc.push('- External data sharing: Overpass gets route-area boxes, Open-Meteo gets midpoint/date, and OSRM receives sampled raw GPS coordinate pairs only when route snapping is explicitly enabled, a trusted endpoint is saved, data sharing has been consented to, and the user requests road data. Settings rejects saving the public OSRM demo endpoint, stores endpoint health, and shows the raw-coordinate warning beside the custom endpoint input because user-provided endpoints can be untrusted external servers.');
-  doc.push('- Backup restore: schema versions 1 through 6 are migrated before merge; retired `lane_change` events are relabelled as diagnostic `heading_deviation_legacy` records; untrusted records are whitelisted and field-limited, and any note truncation reports the affected trip count and requires explicit user confirmation before completion.');
-  doc.push('- Secrets: no secrets are checked into this repo by the scanner; `VITE_API_URL` is configuration, not a secret.');
-  doc.push('- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can receive sampled raw coordinate pairs by design after explicit consent; OBD and IMU signals improve provenance but do not create a validated crash/claims model.');
+  doc.push('- Markdown/PDF XSS guardrails: trip notes render as React text without raw-HTML markdown plugins, ESLint bans `rehype-raw`, and `src/lib/pdfSanitize.js` provides a cloned-DOM capture sanitizer that removes `script`, `iframe`, `object`, `embed`, `foreignObject`, event handlers, and `javascript:` URLs before any HTML-to-canvas export path is introduced or re-enabled.');
+  doc.push('- External data sharing: Overpass gets route-area boxes, Open-Meteo gets a privacy-safe route point/date only when all weather candidates and the trip origin/midpoint/destination are outside the expanded weather privacy guard, and OSRM receives sampled raw GPS coordinate pairs only when route snapping is explicitly enabled, a trusted endpoint is saved, data sharing has been consented to, and the user requests road data. Android widget OpenStreetMap tile and Nominatim reverse-geocoding requests are blocked for coordinates inside privacy zones; private parked locations use local placeholder/label behavior instead of external coordinate disclosure. Settings rejects saving the public OSRM demo endpoint, stores endpoint health, and shows the raw-coordinate warning beside the custom endpoint input because user-provided endpoints can be untrusted external servers.');
+  doc.push('- Notification privacy: Android notification channels set explicit lock-screen visibility. Active tracking foreground notifications use secret visibility and generic text; post-trip, coaching, fatigue, achievement, and export notifications use private visibility so bodies are hidden on the lock screen.');
+  doc.push('- Clipboard privacy: app-initiated clipboard writes go through `SecureClipboard`, mark native Android clips as sensitive where supported, and auto-clear the clipboard after 60 seconds if the copied value is still present.');
+  doc.push('- Dependency and pin monitoring: security CI runs production `npm audit --audit-level=high --omit=dev`, all-dependency critical audit, Android certificate-pin expiry checks, lint, tests, Android instrumentation, build checks, and production-bundle debug-route scans. Dependabot is configured for npm and Gradle update PRs, with security-sensitive package grouping.');
+  doc.push('- Export confidentiality: report CSV, monthly PDF, and UBI score-card exports require a 12+ character password and are saved as encrypted `.rsexport` wrappers. Full backups always export as password-protected AES-GCM `.rsbackup` files; plaintext backup export opt-out has been removed.');
+  doc.push('- Secure deletion and volatile samples: Android plaintext preference cleanup, parked-widget cache deletion, native export/cache cleanup, and delete-all flows use best-effort overwrite-before-unlink through `SecureDelete`, and native motion samples are zeroed after trip handoff or when native completed trips are cleared.');
+  doc.push('- Backup restore: schema versions 1 through 6 are migrated through `BACKUP_MIGRATIONS` before merge; retired `lane_change` events are relabelled as diagnostic `heading_deviation_legacy` records; encrypted backups require a password and use AES-GCM authentication, legacy plaintext backups are import-only compatibility inputs that must pass install-bound HMAC verification before merge, untrusted records are whitelisted and field-limited, newer-backup errors tell users to update Road Sage, and any note truncation reports the affected trip count and requires explicit user confirmation before completion.');
+  doc.push('- Secrets: no secrets are checked into this repo by the scanner; endpoint URLs, origin allowlists, and the Play Integrity cloud project number are deployment configuration, not secrets.');
+  doc.push('- Main residual risks: remaining literals outside domain constant groups still need review before scoring policy changes; optional backend API security is outside this repo; user-provided OSRM endpoint can receive sampled raw coordinate pairs by design after explicit consent; non-private Android parked-car widget map refreshes disclose the parked coordinate to OpenStreetMap tile hosts; OBD and IMU signals improve provenance but do not create a validated crash/claims model.');
   doc.push('');
   doc.push('---');
 
@@ -993,22 +1194,22 @@ function buildDoc() {
   doc.push('- Frontend bundle splitting: `vite.config.js` manually chunks React, charts, html2canvas, jsPDF, and Capacitor vendors.');
   doc.push('- Map rendering: `prepareMapRoutePoints`, `downsampleRoutePoints`, route smoothing, and privacy masking constrain heavy routes before Leaflet/SVG playback rendering.');
   doc.push('- Render fault isolation: TripMap, TripPlayback, the Trip Detail score overview, the Trip Detail page shell, and the Dashboard readiness/context panel are wrapped with `SectionErrorBoundary` so malformed trip data can fail one section with a reload prompt instead of unmounting the full app tree.');
-  doc.push('- Native background tracking: Android service filters noisy points, caps native motion samples at 5,000, records compact trip/motion records, and leaves JavaScript scoring/rescoring to compute evidence-backed scores after import.');
-  doc.push('- Bottleneck candidates are visible in the calculation index: repeated `sort`, `map`, `filter`, route-window scans, and report aggregation loops.');
+  doc.push('- Native background tracking: Android service filters noisy points, caps native motion samples at 5,000, records compact trip/motion records, refreshes the parked-car widget after parked-location changes, and leaves JavaScript scoring/rescoring to compute evidence-backed scores after import.');
+  doc.push('- Bottleneck candidates are visible from the calculation summary and snippet set: repeated `sort`, `map`, `filter`, route-window scans, and report aggregation loops.');
   doc.push('');
   doc.push('---');
 
-  doc.push('## Testing Coverage Map');
+  doc.push('## Testing Coverage Summary');
   doc.push('');
-  doc.push(testCoverage());
+  doc.push(testCoverageSummary());
   doc.push('');
   doc.push('Coverage boundaries inferred from source shape: browser e2e covers smoke navigation; Android tests cover native trip-store persistence plus shared JavaScript/native trip-stat and noise-floor fixtures; Vitest locks the scoring contract with human-verified golden fixtures, metric-registry coverage, and local synthetic test-trip construction; deterministic tests mock Overpass/Open-Meteo/OSRM contracts; opt-in live contract tests call all three public services through `npm run test:contracts:live`.');
   doc.push('');
   doc.push('---');
 
-  doc.push('## Dependency Audit');
+  doc.push('## Dependency Summary');
   doc.push('');
-  doc.push(dependencyTable());
+  doc.push(dependencySummary());
   doc.push('');
   doc.push('---');
 
@@ -1017,7 +1218,7 @@ function buildDoc() {
   doc.push('- Web build: `npm run build` runs Vite and emits `dist/`.');
   doc.push('- Android sync: `npm run android:sync` builds web assets, runs Capacitor sync, and reapplies the tracked AGP 9 compatibility patch for generated/plugin Gradle scripts.');
   doc.push('- Android debug build: run `android/gradlew.bat assembleDebug` from the repository root or Android directory as configured.');
-  doc.push('- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene checks, unit/component tests, Playwright browser smoke e2e, Android instrumentation on an emulator, builds, and scans the production bundle for localhost API fallback on pushes and pull requests. Live public-service contracts run on the weekly schedule or manual workflow dispatch so third-party outages do not block ordinary changes.');
+  doc.push('- CI/CD: `.github/workflows/security-ci.yml` installs dependencies, audits packages, blocks forbidden source imports, runs repository hygiene and Android certificate-pin expiry checks, unit/component tests, Playwright browser smoke e2e, Android instrumentation on an emulator, builds, and scans the production bundle for localhost API fallback on pushes and pull requests. Live public-service contracts run on the weekly schedule or manual workflow dispatch so third-party outages do not block ordinary changes.');
   doc.push('- Docker/container setup: no Dockerfile found in the scanned repository.');
   doc.push('- Rollback: deploy previous web artifact or Android build; local data is stored client-side and should not require backend rollback unless `VITE_API_URL` points at a managed API.');
   doc.push('');
@@ -1033,16 +1234,21 @@ function buildReadme() {
     '',
     'Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, scores driving behavior, generates reports, and keeps trip history on the device unless an optional backend is configured.',
     '',
+    'The generated current-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). It lists the app version, Android versioning, scoring engine hash, settings schema, trip schema, backup format, encrypted backup format, and default privacy/network state from source. Closeout history is tracked in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md).',
+    '',
     '## Current App Surface',
     '',
-    '- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, diagnostics, settings, and vehicles pages.',
-    '- Manual trip capture, foreground auto-detect, and Android native background auto tracking with activity recognition, GPS fallback, quick settings tile support, pause/resume controls, and native trip import.',
+    '- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, development-only diagnostics, searchable modular settings, and vehicles pages.',
+    '- Manual trip capture, foreground auto-detect, Android native background auto tracking with activity recognition, GPS fallback, quick settings tile support, pause/resume controls, deferred native settings hydration, centralized permission-state monitoring, native trip import, Stealth Trip Mode for in-memory next-trip scoring, and Android parked-car widget support.',
+    '- Live voice alerts are local TTS only. The web path uses Web Speech synthesis, flushes stale queued utterances before each new alert, waits for Chrome/Android WebView voice loading, and treats corrupted missing-setting strings such as `"undefined"` as the enabled default rather than permanently silencing alerts. The Android path uses the first-party native speech bridge without sending speed data, GPS data, routes, or network requests through the voice helper.',
     '- Trip scoring for safety, GPS/OBD motion smoothness, eco driving estimates, confirmed Android Usage Access phone-use evidence, speed compliance with posted-or-inferred limit provenance, road-type segments, brake onset smoothness, cornering, braking efficiency, optional IMU-assisted lane-changing, contextual urban/highway stop-start patterns, fatigue exposure, heading drift Beta, source-attributed weather context, estimated brake-turn manoeuvre alerts, historical context signals, and diagnostic-only GPS phone/overtake pattern counts.',
-    '- Map playback with route simplification, stop handling, privacy-masked coordinate handling, HTML-escaped Leaflet popups, speed-limit coloring, fatigue overlays, event markers, repeated-route comparison support, persisted fallback map centers, last-parked context, and deployment-configurable default coordinates.',
+    '- Trip readiness estimates with progressive evidence tiers, adaptive habit half-life, per-driver calibration offsets, signal/outcome correlation checks, pairwise signal decorrelation, fitted risk thresholds, readiness intervals, bootstrap-only fallback display, and optional post-trip readiness-accuracy feedback.',
+    '- Map surfaces with bundled Leaflet rendering, route simplification, stop handling, privacy-masked coordinate handling, HTML-escaped Leaflet popups, speed-limit coloring, inferred-limit compliance caveats, fatigue overlays, active and removed event markers, repeated-route comparison support, road-data prompts, last-parked and last-known context, and TripMap no-location empty states instead of hardcoded city defaults.',
     '- Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, localized per-car cost, CO2 estimate metadata, and engine-health summaries, default vehicle handling, and vehicle comparison.',
-    '- Reports with CSV export carrying metric provenance metadata, monthly and UBI PDF metric-reference pages, estimated-score notation, UBI score-card PDF export gated until 50 km of evidence and visibly marked not an insurance rating, confidence-aware rolling baseline comparison, carbon impact, configurable-currency estimated fuel cost, and vehicle-backed CO2/fuel savings estimates that stay unavailable without an assigned vehicle baseline.',
-    '- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, reviewed event feedback, fallback speed-limit provenance, and legacy heading-event migration, with confirmation required before importing truncated notes.',
-    '- Diagnostics capture unhandled app errors, handled critical operation failures, isolated React section crashes, OBD/Web Bluetooth readiness, motion-sensor readiness, possible incident-signal readiness, and native sensor evidence with sanitized messages and stack previews; development builds can seed and remove local synthetic trips only behind the explicit synthetic-test-data guard.',
+    '- Reports with password-encrypted `.rsexport` CSV/PDF/UBI exports carrying metric provenance metadata, monthly and UBI PDF metric-reference pages, estimated-score notation, UBI score-card PDF export gated until 50 km of evidence and visibly marked not an insurance rating, confidence-aware rolling baseline comparison, carbon impact, configurable-currency estimated fuel cost, and vehicle-backed CO2/fuel savings estimates that stay unavailable without an assigned vehicle baseline.',
+    '- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, reviewed event feedback, score explanations, lane-changing evidence, fallback speed-limit provenance, and legacy heading-event migration. Exports always produce password-protected AES-GCM `.rsbackup` files, Android import uses a native document picker when available, legacy plaintext backups are import-only compatibility inputs that must pass HMAC verification, imports require confirmation before truncating notes, and restored trips outside an imported retention window are preserved by switching retention to Never for that import. Stealth trips are intentionally excluded from persistence and backup history.',
+    '- Trip history and dashboard identify completed trips scored with older settings/provenance and offer deliberate re-score flows so historical cards, baselines, and reports can be refreshed after scoring input changes. Trip Detail also lets drivers review individual event detections; events marked wrong are persisted as reviewed feedback, removed from scoring on rescore, counted in feedback-adjusted event totals, kept visible in a Reviewed Events section, and shown on the map as removed markers for auditability.',
+    '- Diagnostics capture unhandled app errors, handled critical operation failures, isolated React section crashes, OBD/Web Bluetooth readiness, motion-sensor readiness, possible incident-signal readiness, background tracking health, and native sensor evidence with coordinate-scrubbed messages, stacks, and extra metadata; the diagnostics route and synthetic test-trip tools are development-only.',
     '',
     '## GPS-Derived Safety Proxy Limits',
     '',
@@ -1062,22 +1268,35 @@ function buildReadme() {
     '',
     '## Recent Update Coverage',
     '',
-    'The markdown is regenerated from the current source tree and reflects the latest vehicle-health, tracking, scoring, privacy, storage, and documentation behavior.',
+    'The markdown is regenerated from the current source tree and reflects the latest engine modularization, settings navigation, vehicle-health, tracking, scoring, privacy, storage, Android widget, and documentation behavior.',
     '',
+    '- The calculation-heavy trip engine is now split into focused modules under `src/engine` for scoring, detection, route, export, calibration, and shared utilities. `src/lib/tripEngine.js` remains a compatibility export layer, and the technical-reference snippet mapping now points at the actual implementation modules.',
+    '- Settings now uses a grouped, searchable, lazy-loaded navigator backed by section modules for Tracking, Scoring, Privacy & Data, Notifications, Appearance, UBI Coaching, and Advanced settings. Legacy section anchors still route into the right grouped surface.',
+    '- Permission handling now uses a canonical state machine plus `PermissionProvider`: cold-launch defaults remain `unknown` / "Needs setup" until a real native/browser grant is observed, repeated Android denials can become `needs_settings` / "Open Settings", and a short permission-status cache reduces native bridge calls while focus/visibility and request flows invalidate stale results.',
+    '- Dashboard now monitors background tracking requirements with `usePermissionMonitor`, reads the shared permission context when available, shows permission and battery-optimization warnings, surfaces degraded native tracking via `TrackingHealthChip`, and logs native start/stop, notification, road-data, voice-alert, and sensor-fusion failures through diagnostics.',
+    '- Voice alerts now use a dedicated on-device TTS helper. It normalizes `voice_alerts_enabled` storage values, so literal `"undefined"` / `"null"` / blank missing-setting strings keep the default enabled behavior while explicit false/off values disable speech. Web Speech cancels queued utterances before speaking and waits for `voiceschanged` with a 1.5-second fallback, and Android TTS uses the native `speak`/`speakText` bridge with local rate, volume, and language options only.',
+    '- Dashboard and Trip History now surface scoring-version drift. `useSettingsVersion` hashes current scoring inputs, `useStaleTripDetection` finds completed trips with old settings/provenance, and users can re-score stale trips from visible prompts instead of silently mixing score versions.',
+    '- The Android parked-car widget reads the last parked location from encrypted native storage, opens Road Sage on widget tap, launches geo navigation from its Navigate button, and uses `MapTileFetchWorker` to cache a pinned OpenStreetMap tile preview per widget. Privacy zones are checked before cached tiles are served or tile/Nominatim requests are made; private parked locations delete stale coordinate-keyed cache files and show a local placeholder instead of sending coordinates externally.',
+    '- Privacy & Data settings now include Stealth Trip Mode and biometric auto-lock controls. Stealth mode arms the next manual trip, pauses Android background auto tracking first, suppresses trip/active-trip/map-center/parked-location/diagnostic writes while active, erases route points and events when the trip ends or the app backgrounds, and shows only a dismissible in-session score summary.',
+    '- Road-data UX is more explicit: `RoadDataPrompt` explains when speed limits are estimated, `ComplianceScore` marks inferred GPS speed-limit scoring as half weight, and Trip Detail provides a Fetch road data action beside provisional compliance values.',
+    '- Trip Detail now uses `TripEventList` to separate scored driving events, reviewed removed events, and diagnostic/Beta data. Marking an event wrong persists through `tripService.markEventFeedback`, stores the event metadata and nearest route location when available, disables duplicate review clicks while saving, immediately recomputes local completed trips, updates `feedback_adjusted_events_count`, keeps removed rows visible with a Removed badge, and sends removed markers to `TripMap` with struck-through red icons and popup review context.',
+    '- App routes are lazy-loaded behind shared skeleton fallbacks, while trip detail remains protected by a section error boundary so calculation/render failures do not blank the whole app.',
     '- Documentation was converted into a source-generated technical reference with module inventory, imports/exports, function catalogue, calculation snippets, constants, storage, routes, error handling, tests, dependencies, and deployment notes.',
     '- Shared application policy now lives in `src/lib/appConstants.js`: fallback night and rush-hour boundaries are consistent across habit, predictive-route, pre-trip, trip-tagging, trip-engine fallback, settings defaults, and Android fixed-hour classification. Android evaluates the fixed 22:00-04:59 night window in the device local timezone, matching JavaScript `Date#getHours()` when native trips are later rescored. Legacy sunset-mode defaults migrate from 06:00 to the shared 05:00 end; deliberately custom night hours remain configurable. Saved UI preference keys, initial display limits, and provisional base-score and fatigue-to-Safety penalty scales are named in one place.',
     '- Calculation-heavy UI is isolated with `SectionErrorBoundary`: TripMap, TripPlayback, the Trip Detail score summary, the Trip Detail page shell, and the Dashboard readiness/context panel now show a friendly reloadable fallback and log the caught error instead of blanking the whole app.',
-    '- Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, confirmed phone-use alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed.',
+    '- Critical post-trip and persistence operations now log handled failures through `logError`: completed-trip notifications, confirmed phone-use alerts, style-shift alerts, achievement notification sync, daily fatigue warnings, vehicle odometer sync, and driver-signature saves all write diagnostic events instead of being silently swallowed. Diagnostic sanitization redacts coordinate query parameters, bare GPS-like coordinates, and sensitive extra fields before persistence.',
     '- Vehicle odometer sync still retries on the next vehicle/trip refresh, and repeated failures in a session show a non-blocking toast so stale odometer estimates are visible without blocking the Vehicles page.',
-    '- Numeric clamping is centralized in `src/lib/mathUtils.js`; score, historical-context risk, repeated-event route layers, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
+    '- Numeric clamping is centralized in `src/lib/mathUtils.ts`; score, historical-context risk, repeated-event route layers, fatigue, weather, report, playback, calibration, and import sanitization paths now share the same NaN-safe boundary behavior.',
     '- Daily fatigue readiness now uses break-corrected active driving minutes instead of a hard 60-minute day total. The default onset is 90 active minutes, learned habit-profile onset is honored by dashboard and post-trip warnings, and breaks over 30 minutes reduce accumulated fatigue on a 180-minute recovery curve.',
-    '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, Android phone-use source gating, diagnostic proxy separation, finite anomaly/sensor scores, reviewed-event rescoring, and weighted evidence blends that omit unavailable components instead of filling them with 100.',
+    '- Trip readiness now captures pre-trip signal snapshots and pairs them with completed-trip outcomes. After enough paired records, it applies local per-signal calibration offsets, discounts signals that do not correlate with actual outcomes, dampens highly correlated signal pairs so commuter schedule signals do not double-count the same evidence, fits moderate/high risk floors from readiness history, and shows a readiness interval from signal variance. Before enough evidence exists, Dashboard distinguishes bootstrapping, developing, and calibrated states instead of presenting the estimate as fully proven.',
+    '- Scoring was stabilized around explicit defaults: noisy-signal filtering, rate-normalized scoring, traffic-stop grace periods, privacy-masked coordinate exclusion, Android phone-use source gating, diagnostic proxy separation, finite anomaly/sensor scores, persisted reviewed-event rescoring, and weighted evidence blends that omit unavailable components instead of filling them with 100.',
     '- Score display is centralized in `src/lib/scoreDisplay.js`: approximate score surfaces use a leading `~`, monthly PDFs state that scores are estimates not validated against crash data, and UBI score-card UI/PDF output is visibly labelled `NOT AN INSURANCE RATING`.',
-    '- Scoring and calibration policy is centralized in `src/lib/scoringConstants.js`: provisional thresholds, blends, risk assumptions, UBI assumptions, and `PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS` declare affected metrics, labeled-dataset requirements, fitting steps, and promotion criteria. New score records carry a generated content-hash `SCORING_VERSION`, `component_scores` evidence envelopes, and `score_provenance`; Trip Detail and Settings expose provenance and approximate calibration status instead of presenting provisional output as validated.',
-    '- Trip Detail includes a dismissible post-trip calibration survey for optional 1-5 drive ratings, score-accuracy feedback, driver/passenger confirmation, difficulty, and context tags. Feedback stays local unless the user opts into calibration sharing in Settings; shared records go to `/trip_calibration_labels` as summary-only payloads with anonymous install hash, score output, trip feature summary, survey label, quality flags, and an hour-rounded timestamp. Raw GPS, exact addresses, route polylines, personal identifiers, and free-text notes are never included. Passenger, short, low-quality GPS, heavily privacy-masked, test/debug, incomplete, or crash-recovered trips are excluded from calibration.',
+    '- Scoring and calibration policy is centralized in `src/lib/scoringConstants.js`: provisional thresholds, normalized blend weights, risk assumptions, UBI assumptions, and `PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS` declare affected metrics, labeled-dataset requirements, fitting steps, and promotion criteria. New score records carry a generated content-hash `SCORING_VERSION`, `component_scores` evidence envelopes, `score_provenance`, and `score_explanation`; Trip Detail and Settings expose provenance and approximate calibration status instead of presenting provisional output as validated.',
+    '- Scoring now has named pipeline/explanation helpers in `src/lib/scoring/pipeline.ts` and `src/lib/scoring/explainer.ts`. Tests validate stage audit trails, top score contributors, non-negative normalized blend weights, and the Safety phone-use weight mirror used by legacy UI impact calculations.',
+    '- Trip Detail includes a dismissible post-trip calibration survey for optional 1-5 drive ratings, score-accuracy feedback, driver/passenger confirmation, difficulty, context tags, and readiness-accuracy feedback when a pre-trip readiness estimate was captured. Feedback stays local unless the user opts into calibration sharing in Settings; shared records go to `/trip_calibration_labels` as summary-only payloads with a 30-day rotating anonymous install hash, score output, trip feature summary, survey label, quality flags, and a trip-start timestamp protected with Laplace noise calibrated to epsilon=1.0 / 1-hour sensitivity before hour rounding. Raw GPS, exact addresses, route polylines, personal identifiers, and free-text notes are never included. Passenger, short, low-quality GPS, heavily privacy-masked, test/debug, incomplete, or crash-recovered trips are excluded from calibration.',
     '- Base score penalty normalization now uses named `PENALTY_SCALE_FACTOR = 40`: under the current provisional calibration, 2.5 severity-weighted penalty points per km reaches the score floor. This factor must be recalibrated against a labeled driving dataset before being treated as validated.',
     '- Fatigue contribution to Safety now uses named `FATIGUE_SAFETY_PENALTY_SCALE = 0.15` and `FATIGUE_SAFETY_MAX_PENALTY = 15`: maximum normalized fatigue adds a capped 15-point Safety deduction after event-rate normalization. This cited coefficient maps the maximum fatigue proxy to a conservative 0.05% BAC-equivalent impairment assumption from Williamson & Feyer (Occupational and Environmental Medicine, 2000); it is not crash-outcome calibrated.',
-    '- Optional OBD-II Bluetooth support parses RPM, throttle, engine load, vehicle speed, coolant temperature, and mass-air-flow PID responses. OBD speed can replace weak GPS speed for calculations, OBD RPM/throttle refine eco and engine-stress evidence, and score provenance displays `OBD-II Bluetooth` as a source when those samples are present.',
+    '- Optional OBD-II Bluetooth support parses RPM, throttle, engine load, vehicle speed, coolant temperature, and mass-air-flow PID responses. OBD speed can replace weak GPS speed for calculations, OBD RPM/throttle refine eco and engine-stress evidence, and score provenance displays `OBD-II Bluetooth` as a source when those samples are present. Android now exposes `BLUETOOTH_CONNECT` through the native bridge, reports it through the shared Bluetooth/Nearby Devices permission state, and Settings requests it before opening the OBD pairing flow; BLE pairing still depends on Web Bluetooth availability, while Classic Bluetooth OBD-II still needs a separate native transport.',
     '- Sensor fusion now records browser or Android native motion samples, summarizes IMU quality, calibrates phone orientation from harsh-brake evidence, enriches event confirmation, and supports possible incident signals. Diagnostics exposes motion permission/readiness; possible incident signals are not crash diagnoses.',
     '- Lane-changing scoring is now a first-class provisional metric. It uses calibrated IMU yaw with GPS validation when available, falls back to lower-confidence GPS heading at highway speed, requires 5 km and two manoeuvres before scoring, and can be disabled in Detection Features. It is limited to a provisional 5% Safety blend weight.',
     '- Jerk scoring now returns `null` with `jerk_score_confidence: insufficient_data` for trips under 0.5 km or without usable movement samples. Trips from 0.5 km to under 3 km keep the real 0-100 jerk score with low confidence, and low-confidence jerk evidence is suppressed from Smoothness blending.',
@@ -1088,7 +1307,7 @@ function buildReadme() {
     '- GPS heading-deviation detection emits low-confidence `heading_deviation` / Heading Event (Beta) records as diagnostic evidence even when Advanced Safety scoring is off. It requires a straight approach above 50 km/h, suppresses common context windows, and no longer affects Safety scoring.',
     '- Estimated brake-turn manoeuvre alerts require at least 1.5 seconds of concurrent braking and heading change at 30+ km/h with default thresholds of 4.0 m/s2 and 25 deg/s. They remain low-confidence advisory signals and are excluded from Safety, weather score adjustment, historical-context risk weighting, repeated-event areas, and repeated-event route layers.',
     '- Heading drift Beta evaluates GPS-only drift patterns over sustained five-minute highway-speed windows, remains low confidence, and applies circadian weighting between 02:00 and 05:00. Public wording presents it as an attention pattern signal rather than a fatigue measurement, and it no longer feeds the trip fatigue Safety penalty.',
-    '- Monthly PDF exports include estimated-score and GPS-only proxy limitations alongside Safety and Smoothness results; GPS phone, heading-event, and overtake patterns are described as diagnostics only, while Heading Drift Beta is shown only when advanced detection was enabled for the rescored trip. The central metric registry now supplies evidence/source/calibration metadata to CSV exports and metric-reference pages in monthly and UBI PDFs.',
+    '- Monthly PDF exports include estimated-score and GPS-only proxy limitations alongside Safety and Smoothness results; GPS phone, heading-event, and overtake patterns are described as diagnostics only, while Heading Drift Beta is shown only when advanced detection was enabled for the rescored trip. The central metric registry now supplies evidence/source/calibration metadata to encrypted CSV exports and metric-reference pages in monthly and UBI PDFs.',
     '- Multi-trip score summaries use distance-weighted averages for weekly summaries, goals, route/day/vehicle/report comparisons, historical context estimates, PDF summaries, and dashboard rollups. The personal baseline is intentionally different: it appears only after 10 completed recent trips and uses exponential recency weighting with a displayed confidence interval. Personal percentile is labelled as percentile among your recorded weeks and is hidden until at least four recorded weeks exist.',
     '- Braking-efficiency grades are contextual: urban and highway driving use separate thresholds, and the displayed grade identifies its context. Hill control now names its provisional GPS/altitude-derived threshold and rate penalty assumptions (`2.5 m/s2` and `8` points per inferred infraction per hill-driving km), stores flat or altitude-insufficient routes as not applicable, and displays its GPS-only limitation in Trip Detail.',
     '- Score confidence is evidence-aware rather than distance-only. Safety, Smoothness, Eco, and Distraction still store internal `high`, `developing`, `low`, or `unavailable` evidence based on contributing signals; the UI renders `developing` as "limited evidence", hides redundant `high evidence` badges, and repeats badges only for low or unavailable component evidence. Unavailable phone-use or intersection evidence prevents a long trip from appearing fully evidenced, and coaching remains suppressed when overall evidence is low.',
@@ -1098,72 +1317,109 @@ function buildReadme() {
     '- Speed variability scoring now ignores stopped traffic samples, requires sufficient moving evidence, scores city and highway variability separately through `SVI_DEFAULTS`, distance-weights mixed routes, and omits unavailable SVI from coaching/report trend comparisons.',
     '- Phone-use scoring now requires Android Usage Access evidence. Without Usage Access, `phone_use_score` is unavailable, Trip Card and Trip Detail show a permission-required state, and the UI asks for permission instead of showing a proxy score. GPS micro-steering detections are stored as `phone_proxy_*` diagnostics only, require at least six oscillations in a 15-second window with acceptable GPS accuracy, and do not affect Safety, coaching, live warnings, route risk, or ordinary trip-event lists.',
     '- Overtake detection is marked Beta and diagnostic-only. It now requires at least 1 km of prior straight highway driving above 80 km/h, a minimum 3.0 m/s2 acceleration threshold, and a bilateral out-and-back heading signature within 15 seconds. Overtake quality/counts are exported and displayed as diagnostics but excluded from Safety, Aggression, route risk, coaching, achievements, and UBI-style scoring.',
-    '- Historical context wording replaces route-prediction/risk wording unless a real planned route is supplied. It requires observed completed-trip distance and a scored-distance baseline; without either, the dashboard shows Not enough driving history / Not enough scored driving history and no context number. Once evidence exists, it sorts completed trips newest-first, excludes unscored trips and tiny-trip event-density distortion, normalizes all weighted components to 0-100, and clamps available weather/baseline input before scoring. Its named saturation assumptions remain provisional: five eligible verified driving events per km or five nearby repeated driving-event areas each saturate their respective signal without a collision-outcome calibration claim. Low-confidence proxy events such as current brake-turn alerts and ambiguous legacy `near_miss` counts are excluded from context weighting. The dashboard labels the value as estimated and exposes weighted signal contributions. Repeated-event route index cells are coarser, merge nearby segment midpoints within 15 m to reduce GPS fragmentation, and exclude proxy events.',
+    '- Historical context wording replaces route-prediction/risk wording unless a real planned route is supplied. It requires observed completed-trip distance and a scored-distance baseline; without either, the dashboard shows Not enough driving history / Not enough scored driving history and no context number. Once evidence exists, it sorts completed trips newest-first, excludes unscored trips and tiny-trip event-density distortion, normalizes all weighted components to 0-100, and clamps available weather/baseline input before scoring. Its named saturation assumptions remain provisional: five eligible verified driving events per km or five nearby repeated driving-event areas each saturate their respective signal without a collision-outcome calibration claim. Low-confidence proxy events such as current brake-turn alerts and ambiguous legacy `near_miss` counts are excluded from context weighting. The dashboard labels the value as estimated and exposes weighted signal contributions. Repeated-event route index cells are stored as coarse geohashes instead of exact GPS coordinates, use prefix lookup for nearby matching, and exclude proxy events.',
     '- UBI reports require at least 50 km before generating a score, use actual distance in per-100-km rates, score time-of-day exposure by night driving minutes, reduce noisy GPS-derived cornering to a 5% weight, and use configurable mileage assumptions that default to an optimal 10,000 km/year with an 8,000 km spread. The named night-exposure and category-rate penalty constants remain internal, uncalibrated approximations rather than insurer-validated rates; the score-card UI/PDF now presents that limitation and states that it is not an insurance rating alongside any displayed score.',
     '- Vehicle engine-health summaries now average only finite stored engine stress scores. Trips without a usable score are excluded, and vehicles with no scored samples show `N/A` instead of a misleading maximum-stress fallback.',
     '- Predictive maintenance no longer treats trips without braking evidence as perfectly gentle braking. Brake stress is averaged only from observed braking-efficiency scores and remains unavailable until at least five completed trips include three scored braking samples; unavailable braking evidence is neutral when adjusting service intervals. Tire-wear events without recorded speed use a neutral factor and are flagged in maintenance and vehicle health summaries rather than silently treated as fully measured.',
     '- Currency and economics baselines are configurable in Settings, including cost symbol, average vehicle CO2 per 100 km, EV kWh per 100 km, grid CO2 intensity, and tree-year equivalents. Vehicle fuel type is used for trip CO2 estimates; ICE economy below 3 L/100km is rejected and unusually high values receive a confirmation warning.',
     '- Fuel and CO2 estimates now cap eco-driving consumption adjustment to +/-8%. Missing eco-driving evidence applies no adjustment, Trip Detail marks values as estimates with confidence bands, fuel/CO2 savings show unavailable until a vehicle is assigned, and EV CO2 savings remain unavailable unless grid CO2 intensity is configured.',
-    '- Backup import is hardened and versioned: v1-v6 backups migrate before merge, retired `lane_change` events become diagnostic `heading_deviation_legacy` events, files over 50 MB are rejected before reading, records are sanitized, trip notes allow 10,000 characters, and any truncation reports the affected trip count and requires explicit user acknowledgement before import completes.',
-    '- Native-safe UI preferences now use the mobile storage layer for saved trip filters, dismissed tag suggestions, and first-launch permission prompting. Backup export/import reads and writes saved filters through that same layer on Android.',
-    '- Local trip storage uses IndexedDB when available, with a migration runner and localStorage fallback. `VITE_DB_NAME` can rename the local database with a copy/count-verify/delete migration. Legacy/schema-upgrade refreshes populate current component evidence and score provenance; Settings identifies current scoring-input/version mismatches, auto-re-scores recent trips when more than 20% of the 28-day window is stale, and lets the user deliberately queue affected completed trips for re-score.',
-    '- API behavior is local-first by default. Trips and vehicles use local repositories when `VITE_API_URL` is absent or the app is running natively; configured backends fail clearly instead of silently falling back to localhost.',
-    '- Auth tokens are session-scoped. Legacy `localStorage` tokens are migrated into `sessionStorage` and removed, and logout clears both token names from browser storage.',
-    '- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. When weather is disabled, unavailable, privacy-skipped, or has no matching hourly sample, the app stores weather risk as null with source attribution and displays it as unavailable instead of defaulting to low risk; GPS stopping-distance context can be shown separately as a weather-context fallback. When a posted map speed limit is absent, Settings can choose Global, Canada, United States, United Kingdom, Germany, Australia, or France approximate road-type defaults, with the chosen fallback provenance preserved in reports, backups, Trip Detail, and context metadata. OSRM route snapping requires a trusted custom endpoint, explicit raw-coordinate data-sharing consent, endpoint health metadata, and a manual Get Road Data action; the public demo endpoint is rejected for saved settings.',
-    '- Trip Detail and Map no longer silently hide additional repeated-event route stretches or repeated driving-event areas: initial lists remain compact, and show-all controls report hidden counts. Trip Detail separates scored driving events from diagnostic-only events, shows feedback-adjusted event counts, shows inferred speed-limit scoring notes, and displays a Usage Access banner when phone-use evidence is unavailable. Heading drift Beta color and fatigue critical markers now follow actual levels and exported thresholds, and compliance bars use the canonical score color tiers.',
-    '- Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, detection features, currency/economics, advanced models, and data controls with searchable sections, safer validation, OSRM endpoint health checks, OBD connection actions, motion-sensor permission actions, and rescore progress.',
-    '- Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, named notification identifiers, device-local fixed-hour night classification aligned to the shared 22:00-04:59 window, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, native IMU motion samples capped at 5,000 per trip, and native diagnostics surfaced in the app. Android Gradle setup now removes obsolete AGP flags and reapplies clean AGP 9-compatible plugin DSL patches after install or sync.',
-    '- Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
-    '- Calculation fixes keep map-matching confidence and snapped coverage numeric even when OSRM sends invalid confidence, omit invalid speed limits from popups, preserve Android `ON_BICYCLE` as `on_bicycle` while retaining legacy `cycling`, and make native platform checks module-level constants.',
+    '- Backup import is hardened and versioned: v1-v6 backups migrate through an exported migration registry before merge, encrypted backups require a password, legacy plaintext backups must pass an install-bound HMAC integrity check before import, retired `lane_change` events become diagnostic `heading_deviation_legacy` events, newer-backup errors tell users to update Road Sage, files over 50 MB are rejected before reading, records are sanitized, score explanations and lane-changing evidence survive import, trip notes allow 10,000 characters, and any truncation reports the affected trip count and requires explicit user acknowledgement before import completes.',
+    '- Native-safe UI preferences now use the mobile storage layer for saved trip filters and dismissed tag suggestions. Permission prompting is tracked through canonical stored permission states and denial counters, so setup, denied, and OS-settings-required states survive refreshes without auto-granting defaults. Backup export/import reads and writes saved filters through that same layer on Android.',
+    '- Local trip storage uses IndexedDB when available, with a migration runner and localStorage fallback. Sensitive trip fields are encrypted at rest with fail-closed Android Keystore-backed native keys on Android and a non-persistent in-memory session key only on web/test surfaces; backups omit encrypted repository payloads in favor of sanitized export records, and completed trips older than the configurable retention period are pruned automatically; the default retention is 24 months. `VITE_DB_NAME` can rename the local database with a copy/count-verify/delete migration. `src/lib/schema/tripSchema.js` is the canonical v23 trip-record reference for required current fields. Legacy/schema-upgrade refreshes populate current component evidence, score provenance, score explanations, event feedback, and feedback-adjusted event counts; Settings and dashboard identify current scoring-input/version mismatches, auto-re-score recent trips when more than 20% of the 28-day window is stale, and Trip History lets the user deliberately queue affected completed trips for re-score.',
+    '- API behavior is local-first by default. Trips and vehicles use local repositories when `VITE_API_URL` is absent or the app is running natively; configured backends fail clearly instead of silently falling back to localhost. Event review uses the same local-first path: local trips are updated and rescored through `markEventFeedback`, while optional backends receive a PATCH with `event_feedback`, `needs_rescore`, and `feedback_reviewed_at`.',
+    '- Optional backend auth uses httpOnly, Secure, SameSite=Strict cookies. The frontend no longer stores bearer tokens in browser-readable auth storage; legacy `localStorage` token keys are cleared and backend users must sign in again.',
+    '- Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. When weather is disabled, unavailable, privacy-skipped, or has no matching hourly sample, the app stores weather risk as null with source attribution and displays it as unavailable instead of defaulting to low risk; GPS stopping-distance context can be shown separately as a weather-context fallback. When a posted map speed limit is absent, Settings can choose Global, Canada, United States, United Kingdom, Germany, Australia, or France approximate road-type defaults, with the chosen fallback provenance preserved in reports, backups, Trip Detail, and context metadata. OSRM route snapping requires a trusted custom HTTPS domain, explicit raw-coordinate data-sharing consent, a successful 200 OPTIONS verification with an exposed OSRM-specific response header, matching endpoint/domain trust records, endpoint health metadata, and a manual Get Road Data action; the public demo endpoint, HTTP URLs, localhost, private-network addresses, and IP literals are rejected for saved settings.',
+    '- Trip Detail and Map no longer silently hide additional repeated-event route stretches or repeated driving-event areas: initial lists remain compact, and show-all controls report hidden counts. Trip Detail separates scored driving events from diagnostic-only and reviewed-removed events, shows feedback-adjusted event counts, preserves removed wrong-event rows for review, shows inferred speed-limit scoring notes with half-weight compliance display, and displays a Usage Access banner when phone-use evidence is unavailable. Removed events with coordinates remain visible on TripMap as struck-through red markers with review popup context. Heading drift Beta color and fatigue critical markers now follow actual levels and exported thresholds, and compliance bars use the canonical score color tiers.',
+    '- Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, detection features, currency/economics, advanced models, and data controls with grouped searchable sections, safer validation, explicit "Needs setup" / "Denied" / "Open Settings" permission badges, OSRM endpoint health checks and trust records, OBD connection actions, motion-sensor permission actions, and rescore progress.',
+    '- Android tracking updates include immediate native notification state, lock-screen visibility controls with generic secret active-tracking notifications and private post-trip/coaching bodies, route-level native device-credential gating when biometric lock is enabled, quick settings tile sync, clearer off/paused handling, named notification identifiers, device-local fixed-hour night classification aligned to the shared 22:00-04:59 window, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, native IMU motion samples capped at 5,000 per trip and zeroed after handoff, parked-car widget refresh hooks, encrypted native trip/privacy/settings storage, Android Keystore field encryption with randomized AES-GCM IVs, secure overwrite-before-delete cleanup, local runtime-integrity checks, secure WebView/window/backup/network defaults, immutable app-owned PendingIntents, release log stripping, and native diagnostics surfaced in the app. Debug builds log an ADB-only runtime-integrity warning without suspending tracking, while release compromised states still disable active tracking. Android Gradle setup now removes obsolete AGP flags and reapplies clean AGP 9-compatible plugin DSL patches after install or sync.',
+    '- Privacy-zone and map fixes keep private locations masked, block Android widget tile and reverse-geocoding requests for private parked coordinates, clear stale widget map cache files whenever zones change, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, bundle Leaflet through npm instead of dynamic script/CDN loading, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.',
+    '- Remote Google Fonts imports were removed; the app now uses system font stacks for the Inter and Grotesk aliases so web and Android builds do not depend on a font CDN.',
+    '- Capacitor hardening now disables bridge logging, disables `CapacitorHttp`, restricts WebView navigation to the app origin with an empty `allowNavigation` list, validates Android deep links before Capacitor sees them, hardens WebView storage/navigation/autofill behavior, registers only first-party native plugins, and syncs only the explicit plugin allowlist needed by Road Sage.',
+    '- Android network security now pins the built-in OpenStreetMap/Nominatim, Open-Meteo, and Overpass hosts in `network_security_config.xml`; CI runs `scripts/check_pin_expiry.py` with a 60-day threshold so stale, missing, placeholder, or malformed pin-sets block release.',
+    '- Calculation fixes keep map-matching confidence and snapped coverage numeric even when OSRM sends invalid confidence, omit invalid speed limits from popups, preserve Android `ON_BICYCLE` as `on_bicycle` while retaining legacy `cycling`, make native platform checks module-level constants, keep GPS candidate-trip validation safe for nullish input, and clamp distance/duration/speed formatting to finite non-negative values.',
     '- Repeated-event route layers and fatigue are more graduated: repeated-route speed contribution scales above 100 km/h instead of using a binary bonus, and route segment event-rate weights are now named internal approximations (`20` for any observed event and an additional `40` for a harsh classification), not collision-outcome calibrated coefficients. Fatigue is normalized on a 0-100 scale, its Safety conversion is explicitly provisional, and heatmaps use documented 30-second segments with a 20-segment minimum for display.',
-    '- Recorded trip duration now excludes long background tracking gaps in both JavaScript and Android native statistics. Map playback progress is timestamp-based, with index-based progress retained only as a fallback when timestamps are unavailable. Empty playback maps no longer default to London; they use last map center, last parked location, privacy-zone context, device location, or deployment-configured coordinates.',
+    '- Recorded trip duration now excludes long background tracking gaps in both JavaScript and Android native statistics. Map playback progress is timestamp-based, with index-based progress retained only as a fallback when timestamps are unavailable. TripMap empty states no longer default to a hardcoded city; they use trip route midpoint, last parked location, last stored map center, or explicit live device location when available, and otherwise render a no-location state.',
     '- Commute matching uses the named `COMMUTE_MATCH_RADIUS_M` 225 m threshold exposed in Advanced settings. Weekly coaching is a local rules-based summary, stays unavailable without valid scored distance, avoids duplicate metric advice, and only comments on score changes larger than 3 points. Best-window coaching requires at least three trips in a time bucket and shows the sample size.',
     '- Achievement notifications display up to six labels and keep every earned achievement ID in notification extras when a larger batch is condensed.',
     '- CO2 and fuel savings are treated as vehicle-backed estimates rather than exact facts. Carbon reports and achievements recalculate savings through the same assigned-vehicle economics source, label comparisons with confidence bands, show unavailable without assigned vehicle context, and avoid positive EV savings claims without known grid carbon intensity.',
     '- Score rings and aggregate score surfaces now use canonical score color and estimated-score formatting policy, including SVG stroke colors and score provenance, so score labels, fills, circular rings, reports, notifications, vehicle comparisons, maps, insights, and coaching surfaces share one display contract. They render developing internal evidence as "limited evidence" and omit high-evidence labels to reduce repetitive confidence copy.',
     '- Vehicle fuel/energy price validation now uses a currency-neutral 100-per-unit cap instead of a narrow 20-per-litre cap.',
     '- Android native tracking constants now name the 120-second stats gap, 2-minute Usage Access lookback, sustained-turn heading threshold, TTS speech rate, and 30-minute terminal idle cap; the stats loop uses one explicit duration guard and an else branch for moving vs idle time.',
-    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, settings import security, IndexedDB rename/provenance migrations, notifications, currency formatting, vehicle economy validation and empty-score handling, generated scoring-version checks, score-provenance and metric-registry behavior, human-verified scoring golden fixtures, local synthetic test-trip fixtures, OBD parsing, sensor fusion, lane-change scoring, shared JavaScript/Android trip-stat and noise-floor parity, shared time-risk boundaries, native/JS local-time night classification agreement, scoring consistency, privacy zones, route risk, tracking diagnostics, deterministic and opt-in live external service contract tests, core page render smoke tests, Playwright browser smoke navigation, Android native trip-store instrumentation, and release-blocker regressions.',
-    '- CI runs stable unit/component, Playwright browser smoke, and Android emulator instrumentation checks on pushes and pull requests. Live Overpass, Open-Meteo, and OSRM checks are manual or weekly because they depend on public external services.',
+    '- Test coverage now includes backend fallback, auth migration, backup schema migration and note truncation disclosure, canonical trip-schema migration preservation, migration smoke tests, settings import security, IndexedDB encryption/rename/provenance migrations, data retention, notification lock-screen visibility, PDF capture sanitization, diagnostics redaction, currency formatting, vehicle economy validation and empty-score handling, generated scoring-version checks, permission-state transitions, score-provenance and metric-registry behavior, score explanation/pipeline helpers, reviewed-event feedback persistence and rescoring, human-verified scoring golden fixtures, local synthetic test-trip fixtures, OBD parsing, sensor fusion, lane-change scoring, shared JavaScript/Android trip-stat and noise-floor parity, shared time-risk boundaries, native/JS local-time night classification agreement, scoring consistency, privacy zones, route risk geohash storage, tracking diagnostics, deterministic and opt-in live external service contract tests, core page render smoke tests, Playwright browser smoke navigation, the standalone Node `.mjs` full-suite runner, the connected-device UIAutomator/WebView `.mjs` smoke test, Android native trip-store instrumentation, and release-blocker regressions.',
+    '- CI runs npm audit gates for high/critical production CVEs and critical all-dependency CVEs, Android certificate-pin expiry checks, stable unit/component tests, Playwright browser smoke, Android emulator instrumentation, production build checks, and debug-route bundle scans on pushes and pull requests. Dependabot opens weekly npm and Gradle update PRs, while live Overpass, Open-Meteo, and OSRM checks remain manual or weekly because they depend on public external services.',
     '- Repository hygiene now blocks machine-local Android SDK files from the tracked tree: `android/local.properties` remains ignored, is excluded from generated technical-reference scans, and is checked in CI with `npm run check:repo-hygiene`.',
+    '- App launch now uses cached settings immediately, then hydrates encrypted native settings after the first paint. Background auto tracking only starts if the native status says it is not already enabled, startup notification/reminder failures show sanitized user feedback, and the Android splash duration is shortened.',
+    '- Android App lock now prompts with the platform device-credential flow when enabling the setting and exposes an explicit Unlock button if a route guard is locked. Devices without a secure credential keep App lock unavailable instead of pretending a weaker challenge exists.',
+    '- Android secure storage now warms the encrypted preference master key after launch, commits native settings writes off the UI thread, caches encrypted preference handles safely, and uses Android Keystore-generated AES-GCM IVs with the rotated `road_sage_js_enc_key_v4` alias.',
+    '- Permission refreshes are deduplicated and force-refreshable. Settings reads permission, native tracking, and battery-optimization status together; notification toggles stay disabled until Android notification permission is granted, and repeated user-facing failures are deduped through the toast layer.',
+    '- Optional backend responses now fail clearly for unreadable successful JSON, failed response-body reads, invalid request URLs, and network failures instead of silently treating malformed data as success.',
+    '- Technical reference generation now keeps the important architecture, storage, security, calculation, route, test, and dependency sections while dropping exhaustive import/export, function, literal, calculation-line, storage-line, and error-line dumps.',
     '',
     '## Documentation',
     '',
-    'The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:',
+    'The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). The compact generated app-state manifest is [docs/APP_STATE.md](docs/APP_STATE.md). Closeout history lives in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md). The generated docs are built from the repository and include:',
     '',
-    '- source/module inventory, import/export map, and function/method catalogue',
-    '- actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking',
-    '- grouped calculation index with file/line references',
-    '- named constants, hard-coded values, and literal rationale for scoring and integration review',
-    '- routes, optional REST/external calls, storage surfaces, security analysis, performance notes, test coverage, dependencies, and deployment notes',
+    '- current app version, Android versioning, scoring engine, schema versions, backup format, and default privacy/network state',
+    '- concise source/module inventory focused on app-critical files and top-level scan counts',
+    '- actual calculation snippets for scoring, trip physics, route risk, predictions, reports, imports/exports, and Android native tracking',
+    '- calculation surface summary by domain and important files',
+    '- important policy constants for scoring, privacy, storage, permissions, backup/import, and Android behavior',
+    '- routes, optional REST/external calls, storage surfaces, operational diagnostics, security analysis, performance notes, test coverage, dependencies, and deployment notes',
     '',
     'Regenerate it after meaningful code or README changes:',
     '',
     '```bash',
-    'node scripts/generate-technical-reference.mjs',
+    'npm run docs:generate',
     '```',
+    '',
+    'Verify all generated docs and Markdown links without rewriting files:',
+    '',
+    '```bash',
+    'npm run docs:check',
+    '```',
+    '',
+    'Version closeout history is kept in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md). Update it when a version is declared complete and before starting the next version.',
     '',
     '## Architecture And Data',
     '',
     '- Package: `drivesense-app`',
     `- Version: \`${version}\``,
     '- Web stack: React 18, Vite 6, React Router, TanStack Query, Tailwind, Radix UI, Leaflet, Recharts, jsPDF, Vitest, ESLint',
-    '- Native stack: Capacitor 8 Android shell plus custom Java services/plugins for activity recognition, background tracking, phone usage evidence, native IMU motion sampling, native downloads, notifications, quick settings tile, and SharedPreferences storage',
-    '- Optional device evidence: Android Usage Access for confirmed phone use, Web Bluetooth OBD-II for speed/RPM/throttle/engine-load evidence where available, and browser/native motion sensors for IMU summaries, lane-changing confidence, and possible incident signals.',
-    '- Primary storage: IndexedDB, localStorage, sessionStorage, Capacitor Preferences, Android SharedPreferences, native motion samples on trips, and native download files',
-    '- Optional backend: set `VITE_API_URL`; when it is absent, trips and vehicles use local repositories',
-    '- Local trip database: set `VITE_DB_NAME` to override the IndexedDB name. The default is `drivesense_mobile`; when the configured name changes, startup copies trips from the previously recorded database name and then removes the old database after count verification.',
-    '- Optional external services: OpenStreetMap Overpass for speed limits, Open-Meteo for weather context, and trusted user-configured OSRM for route snapping after explicit consent. Set `VITE_OSRM_TIMEOUT_MS` to tune the build default OSRM timeout; users can override it in Settings from 5 to 30 seconds.',
+    '- Native stack: Capacitor 8 Android shell plus custom Java services/plugins for activity recognition, background tracking, phone usage evidence, native IMU motion sampling, native downloads/import picker, notifications, quick settings tile, parked-car widget, WorkManager tile-preview cache, secure clipboard, Android Keystore-backed field encryption, encrypted native key-value storage, biometric/device-credential gating, local runtime-integrity checks, encrypted SharedPreferences storage, and Android security hardening',
+    '- Optional device evidence: Android Usage Access for confirmed phone use, optional OBD-II BLE evidence where Web Bluetooth is available, Android Nearby Devices/Bluetooth permission through the native `BLUETOOTH_CONNECT` bridge, and browser/native motion sensors for IMU summaries, lane-changing confidence, and possible incident signals. Permission status is centralized in `PermissionProvider`, normalized through `permissionStateMachine`, and cached briefly between native bridge checks.',
+    '- Voice alerts: local TTS only. `src/lib/voiceAlerts.js` sends no GPS, speed, route, or network payloads; it only receives alert text and settings, normalizes the voice-alerts flag, flushes stale Web Speech queues, waits for voice loading in browser/WebView, and uses the first-party native speech bridge on Android.',
+    '- Primary storage: IndexedDB and localStorage for browser UI state, encrypted native key-value storage for Android UI values, cached-first and deferred native settings hydration on Android, Android Keystore-backed encrypted trip fields for sensitive route/event/note payloads on native Android, session-only encrypted trip fields on web/test surfaces, encrypted Android SharedPreferences for native tracking, native settings, native notification state, privacy zones, and parked-location data, coarse route-risk geohash cells, native motion samples on trips, native download/import files, Android widget map cache files, and an app-private WebView settings recovery mirror used only to prevent stale native/default settings from winning on relaunch. Android production paths migrate legacy plaintext Capacitor Preferences when possible, avoid legacy plaintext `SharedPreferences`/Capacitor Preferences as the source of truth for native settings, privacy zones, tracking, notifications, or parked locations, and warm encrypted preference keys after launch; legacy native plaintext preference files are delete-only cleanup targets.',
+    '- Optional backend: set `VITE_API_URL` to a trusted HTTPS public-domain URL; when it is absent, trips and vehicles use local repositories. Set `VITE_TRUSTED_BACKEND_ORIGINS` to a comma-separated HTTPS origin allowlist for managed deployments.',
+    '- Local trip database: set `VITE_DB_NAME` to override the IndexedDB name. The default is `road_sage_mobile`; when the configured name changes, startup copies trips from the previously recorded database name and then removes the old database after count verification.',
+    '- Optional external services: OpenStreetMap Overpass for speed limits, Open-Meteo for weather context, Nominatim reverse geocoding outside privacy zones, trusted user-configured OSRM for route snapping after explicit consent, and pinned OpenStreetMap tile hosts for non-private Android parked-car widget map previews. Set `VITE_TRUSTED_OSRM_ORIGINS` to a comma-separated HTTPS origin allowlist for managed OSRM deployments. Set `VITE_OSRM_TIMEOUT_MS` to tune the build default OSRM timeout; users can override it in Settings from 5 to 30 seconds.',
     '',
     '## Privacy And Security Defaults',
     '',
-    '- Trips, vehicles, settings, diagnostics, and reports stay local by default.',
-    '- No ads are implemented. Calibration-label sharing is opt-in only; without that setting, survey feedback stays local and raw GPS, exact addresses, route polylines, personal identifiers, and trip notes are never included in calibration payloads.',
-    '- OSRM route snapping is disabled until the user saves a trusted endpoint, consents to raw sampled GPS coordinate sharing, and requests road data. The public demo endpoint is rejected for saved settings.',
+    '- Trips, vehicles, settings, diagnostics, and reports stay local by default. Sensitive trip fields are encrypted at rest with fail-closed Android Keystore-backed native keys on Android and a non-persistent in-memory session key only on web/test surfaces, and completed trips older than the configured retention window are automatically deleted unless retention is set to Never.',
+    '- No ads are implemented. Calibration-label sharing is opt-in only; without that setting, survey feedback stays local. Shared calibration payloads are summary-only, rotate the anonymous upload hash every 30 days, and protect the trip-start timestamp with Laplace noise before hour rounding; raw GPS, exact addresses, route polylines, personal identifiers, and trip notes are never included.',
+    '- The generated CSP allows app code from `self`, disallows inline scripts, restricts network connections to `self`, Overpass, Open-Meteo, Nominatim, and only a trusted HTTPS `VITE_API_URL` when configured, and reports violations to `/csp-report` when served as an HTTP header. Android also injects CSP and security headers into Capacitor WebView local responses. Remote font imports have been removed; UI font aliases resolve to local system stacks.',
+    '- Android release builds disable app backup, exclude sensitive storage from backup/data extraction, deny cleartext traffic through network security config, trust only system public CAs, run R8/resource shrinking and obfuscation, strip `android.util.Log` calls with R8, mark the main window `FLAG_SECURE`, use rotated Android Keystore aliases, rely on Keystore-generated AES-GCM IVs for field encryption, keep Capacitor reflection entry points and native JSON model members in ProGuard, disable Capacitor bridge logging and `CapacitorHttp`, sync only allowlisted plugins, and use explicit immutable PendingIntent flags for app-owned intents.',
+    '- The Android Capacitor WebView disables file/content URI access, WebView geolocation, saved form/password data, mixed content, third-party cookies, persistent cache use, and external navigation outside the app origin; cache, history, and form data are cleared on startup and backgrounding.',
+    '- Android deep links and app-owned deeplink extras are validated in `MainActivity` before Capacitor sees them; only allowlisted routes and safe query values are passed through.',
+    '- Biometric unlock state uses a configurable auto-lock timeout stored as `lock_timeout_minutes` with a 5-minute default; on Android, enabling App lock first checks device-credential availability and asks the user to authenticate, protected routes prompt through the native device-credential gate, recheck when the app becomes visible, and show an explicit Unlock action after cancellation. The app also locks immediately when it backgrounds, loses visibility, or the screen turns off; devices without a configured secure credential keep App lock unavailable rather than falling back to a weaker app-only prompt.',
+    '- Stealth Trip Mode arms the next manual trip from Privacy & Data settings, runs it without background auto tracking, blocks active-trip/trip/map-center/parked-location/diagnostic persistence while active, wipes coordinate-bearing route and event arrays at trip end or backgrounding, and keeps any score summary only in the current UI session until dismissed.',
+    '- GPS route points, parked-location coordinates, and last-map-center coordinates are rounded to 5 decimal places before local or native storage; altitude is rounded to whole meters.',
+    '- Android network security pins the built-in map, geocoding, weather, and Overpass hosts and CI fails if pin-sets are missing, malformed, placeholder-like, or within 60 days of expiration.',
+    '- OSRM route snapping is disabled until the user saves a trusted HTTPS public-domain endpoint, consents to raw sampled GPS coordinate sharing, and the endpoint passes a 200 OPTIONS check with an exposed `X-OSRM-*` response header. Road Sage stores the verified endpoint, origin, domain, and verification time; the current endpoint must match that trust record before route snapping can run. The endpoint domain is shown prominently in Settings, health is re-verified at app launch, and snapping is disabled if verification fails.',
     '- Automatic road/weather context fetch is off by default; manual Get Road Data prompts before sending route context to external services.',
-    '- Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones.',
-    '- Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and require confirmation before any note-truncating import completes.',
-    '- Leaflet popup values from trips, routes, events, repeated driving-event areas, privacy zones, and parked locations are escaped before rendering as HTML.',
+    '- Live voice alerts are on-device-only audio output: alert text goes to Web Speech or the first-party Android TTS bridge, while speed data, GPS data, routes, and external network calls stay outside the voice-alert helper.',
+    '- Android notification channels set explicit lock-screen visibility: active tracking uses a generic secret foreground notification, while post-trip/coaching/fatigue/export notifications keep bodies private on the lock screen.',
+    '- App-initiated clipboard writes go through `SecureClipboard`, mark native Android clips as sensitive where supported, and auto-clear the clipboard after 60 seconds if the copied value is still present.',
+    '- The Android parked-car widget can fetch an OpenStreetMap tile preview for the saved parked coordinate only when the coordinate is outside privacy zones, a widget is present, and the cached preview is stale. Private parked coordinates show a local placeholder, stale cached map tiles are cleared when privacy zones change, and private coordinates are not sent to tile or Nominatim services. Tapping the widget opens Road Sage; tapping Navigate uses an Android geo intent.',
+    '- Privacy zones mask route points and events around private places; native privacy zones are stored encrypted, and backups do not restore private coordinates for privacy zones.',
+    '- Historical route-risk storage persists coarse geohash cells instead of exact segment midpoints, reducing the precision of long-term route fingerprints in IndexedDB.',
+    '- Diagnostics are available only in development builds. Stored diagnostic errors redact coordinate-bearing URLs, bare GPS-like coordinates, and sensitive extra fields before display.',
+    '- Trip notes render without raw HTML markdown plugins, ESLint bans `rehype-raw`, and the PDF capture sanitizer strips script-capable DOM/SVG nodes from cloned export content before any HTML-to-canvas path is used.',
+    '- Report CSV, monthly PDF, and UBI score-card exports require a 12+ character password and are saved as encrypted `.rsexport` wrappers. Full backups always export as AES-GCM `.rsbackup` files with a Settings strength meter and confirmation field; plaintext backup export opt-out has been removed.',
+    '- Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and require confirmation before any note-truncating import completes. Android can read backup files through the native document picker, a UTF-8 BOM is stripped before parsing, restored trips skip immediate retention pruning, and imports that would otherwise hide old trips switch retention to Never with an explicit completion note. Legacy plaintext backups remain import-only compatibility inputs and are rejected unless their install-bound HMAC seal verifies.',
+    '- Android cleanup paths use best-effort overwrite-before-unlink for plaintext preference cleanup, widget/cache/export files, and delete-all native wipes; native motion samples are zeroed after trip handoff or native completed-trip clearing.',
+    '- `RuntimeIntegrityCheck` flags local root, debugger, emulator, and ADB-enabled signals; compromised release status suspends active tracking, while debug builds log the exact ADB-only `adb;` development signal without disabling tracking. The `PlayIntegrity` bridge requests nonce-bound Play Integrity tokens for sensitive native actions. Calibration uploads and encrypted exports require backend-verified Play Integrity verdicts by default; `VITE_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER` can be supplied for native token requests, and raw-token-only local acceptance is limited to explicit development/test override via `VITE_ALLOW_UNVERIFIED_PLAY_INTEGRITY=true`.',
+    '- Leaflet is bundled through npm static imports rather than injected dynamically from a script tag or CDN, and popup values from trips, routes, events, repeated driving-event areas, privacy zones, and parked locations are escaped before rendering as HTML.',
     '',
     '## Local Setup',
     '',
@@ -1186,13 +1442,29 @@ function buildReadme() {
     'npm run test',
     '```',
     '',
-    '`npm run build` regenerates `src/lib/scoringVersion.generated.js`; `npm run test` checks that the generated scoring version matches the scoring constants before running Vitest.',
+    '`npm run build` regenerates the scoring version plus README/current-state/security references; `npm run test` checks all generated docs and Markdown links before running Vitest.',
     '',
     'Run browser smoke e2e tests:',
     '',
     '```bash',
     'npm run test:e2e',
     '```',
+    '',
+    'Release-readiness local gate:',
+    '',
+    '```bash',
+    'npm run check:repo-hygiene',
+    'npm run docs:check',
+    'npm run lint',
+    'npm run typecheck',
+    'npm run test:settings-contract',
+    'npm run test:standalone',
+    'npm run test',
+    'npm run build',
+    'npm run test:e2e',
+    '```',
+    '',
+    'Android device and emulator closeout commands are listed in [docs/E2E_TESTING_PLAN.md](docs/E2E_TESTING_PLAN.md). They require a booted emulator or attached device with the debug APK installable.',
     '',
     'Run live external contract tests (hits Overpass, Open-Meteo, and OSRM):',
     '',
@@ -1203,8 +1475,12 @@ function buildReadme() {
     '### Test Strategy',
     '',
     '- `npm run test` runs deterministic Vitest coverage for calculations, repositories, security safeguards, page rendering, and mocked Overpass/Open-Meteo/OSRM request-response contracts. The live external-service file is skipped in this fast default suite.',
-    '- `npm run test:e2e` builds the app, starts a local preview server, and drives Chromium through core Dashboard, Settings, and Trips navigation flows.',
+    '- `npm run test:settings-contract` runs the broad settings migration, validation, security, persistence, backup, and lifecycle contract audit.',
+    '- `npm run test:standalone` runs the standalone Node `.mjs` application contract suite. It intentionally skips modules that cannot be imported outside Vite/alias resolution and reports those skips in the TAP output.',
+    '- `npm run test:e2e` builds the app, serves the generated `dist/` bundle with `scripts/serve-dist-for-playwright.mjs`, and drives Chromium through the app shell, onboarding redirect, desktop/mobile navigation, 404 recovery, Dashboard, Settings, and Trips smoke flows.',
     '- `npm run test:contracts:live` makes real network requests to Open-Meteo forecast, Overpass interpreter, and the public OSRM matching endpoint to detect upstream response-contract changes.',
+    '- `e2e/fixtures/seedRoadSage.js` and `e2e/helpers/globalAssert.js` provide shared browser seeding and runtime assertions for Playwright coverage.',
+    '- `node tests/android-uiautomator-onboarding.mjs`, `node tests/android-uiautomator-full-app.mjs`, `node tests/android-uiautomator-settings-full.mjs`, and `node tests/android-uiautomator-backup-import.mjs` target a connected Android device: UIAutomator verifies the focused Road Sage WebView shell, Chrome DevTools Protocol verifies rendered React content inside the Capacitor WebView, and logcat is checked for app crashes or JavaScript exceptions.',
     '- Android instrumentation tests exercise native trip-store persistence and malformed-storage recovery; compile them with `android/gradlew.bat assembleDebugAndroidTest` and execute them on an emulator or device with `connectedDebugAndroidTest`.',
     '- CI runs deterministic tests, browser smoke e2e, and Android instrumentation on an emulator for pushes and pull requests. Live external checks run weekly or by manual dispatch because public service availability is outside the app release boundary.',
     '',
@@ -1237,14 +1513,32 @@ function buildReadme() {
     '',
     '`android/local.properties` is generated locally by Android tooling and contains your Android SDK path. Keep it untracked; `android/.gitignore` ignores it and CI fails if it is ever committed.',
     '',
-    'Android tracking needs Location, Background Location, Physical Activity, Notifications, and background tracking permissions. Disable or relax battery optimization for best background reliability.',
+    'Android tracking needs Location, Background Location, Physical Activity, Notifications, and background tracking permissions. The app distinguishes first-run setup, denied permissions, and repeated-denial `needs_settings` cases that require OS Settings. Optional OBD-II BLE pairing may also prompt for Nearby Devices/Bluetooth on Android 12+. Disable or relax battery optimization for best background reliability.',
     '',
   ].join('\n');
 }
 
-fs.writeFileSync(path.join(ROOT, 'TECHNICAL_REFERENCE.md'), buildDoc(), 'utf8');
-fs.writeFileSync(path.join(ROOT, 'README.md'), buildReadme(), 'utf8');
+const technicalReference = buildDoc();
+const readme = buildReadme();
 
-console.log(`Wrote TECHNICAL_REFERENCE.md and README.md`);
+if (checkOnly) {
+  const stale = [];
+  if (!fs.existsSync(TECHNICAL_REFERENCE_PATH) || read(TECHNICAL_REFERENCE_PATH) !== technicalReference) {
+    stale.push(TECHNICAL_REFERENCE_RELATIVE);
+  }
+  if (!fs.existsSync(README_PATH) || read(README_PATH) !== readme) {
+    stale.push('README.md');
+  }
+  if (stale.length > 0) {
+    console.error(`${stale.join(' and ')} ${stale.length === 1 ? 'is' : 'are'} stale. Run npm run docs:technical.`);
+    process.exit(1);
+  }
+  console.log(`${TECHNICAL_REFERENCE_RELATIVE} and README.md are current.`);
+} else {
+  fs.mkdirSync(DOCS_DIR, { recursive: true });
+  fs.writeFileSync(TECHNICAL_REFERENCE_PATH, technicalReference, 'utf8');
+  fs.writeFileSync(README_PATH, readme, 'utf8');
+  console.log(`Wrote ${TECHNICAL_REFERENCE_RELATIVE} and README.md`);
+}
 console.log(`Production calculations indexed: ${productionCalculations.length}`);
 console.log(`Hard-coded literals indexed: ${literals.length}`);

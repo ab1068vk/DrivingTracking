@@ -81,4 +81,33 @@ describe('trackingService web geolocation watcher', () => {
       code: 1,
     });
   });
+
+  it('truncates one-shot current location before returning it', async () => {
+    const { getCurrentLocation } = await import('@/lib/trackingService');
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        geolocation: {
+          getCurrentPosition: vi.fn((success) => success({
+            coords: {
+              latitude: 43.65123456789,
+              longitude: -79.38329876543,
+              altitude: 184.72,
+              speed: 0,
+              accuracy: 8,
+            },
+            timestamp: Date.UTC(2026, 0, 1, 12, 0, 0),
+          })),
+        },
+      },
+      configurable: true,
+    });
+
+    const point = await getCurrentLocation();
+
+    expect(point).toMatchObject({
+      lat: 43.65123,
+      lng: -79.3833,
+      altitude: 185,
+    });
+  });
 });

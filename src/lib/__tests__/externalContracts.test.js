@@ -48,6 +48,7 @@ describe('external service contracts', () => {
     })));
 
     const result = await annotateRouteSpeedLimits(route, {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
     });
 
@@ -83,6 +84,7 @@ describe('external service contracts', () => {
     })));
 
     const result = await annotateRouteSpeedLimits(route, {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       configurable_country_defaults: 'gb',
     });
@@ -105,6 +107,7 @@ describe('external service contracts', () => {
     const boundaryPoint = { lat: 43, lng: -79.00123, privacy_boundary: true };
     const publicPoint = { lat: 43.005, lng: -79 };
     await loadOsmSpeedLimitWays([boundaryPoint, publicPoint], {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
     });
@@ -127,6 +130,7 @@ describe('external service contracts', () => {
       { lat: 43, lng: -79, masked_for_privacy: true },
       { lat: 43, lng: -79.00123, privacy_boundary: true },
     ], {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
     });
@@ -148,6 +152,7 @@ describe('external service contracts', () => {
     ];
 
     const result = await annotateRouteSpeedLimits(maskedRoute, {
+      speed_limit_lookup_enabled: true,
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
     });
@@ -178,7 +183,9 @@ describe('external service contracts', () => {
       }),
     })));
 
-    const result = await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {});
+    const result = await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {
+      weather_context_enabled: true,
+    });
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [rawUrl] = fetch.mock.calls[0];
@@ -199,37 +206,26 @@ describe('external service contracts', () => {
     });
   });
 
-  it('uses a privacy-safe route point for Open-Meteo instead of a private midpoint', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url) => ({
-      ok: true,
-      json: async () => ({
-        utc_offset_seconds: -14400,
-        hourly: {
-          time: ['2026-05-23T10:00'],
-          temperature_2m: [5],
-          precipitation: [0],
-          rain: [0],
-          snowfall: [0],
-          weather_code: [1],
-          visibility: [10000],
-        },
-      }),
-    })));
+  it('skips Open-Meteo when the trip origin is inside the expanded weather privacy guard', async () => {
+    vi.stubGlobal('fetch', vi.fn());
 
     const result = await fetchWeatherContextForTrip([
       { lat: 43, lng: -79, timestamp: '2026-05-23T14:00:00.000Z' },
       { lat: 43.0005, lng: -79, timestamp: '2026-05-23T14:05:00.000Z' },
       { lat: 43.01, lng: -79, timestamp: '2026-05-23T14:10:00.000Z' },
     ], '2026-05-23T14:00:00.000Z', '2026-05-23T14:10:00.000Z', {
+      weather_context_enabled: true,
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 200 }],
     });
 
-    expect(fetch).toHaveBeenCalledTimes(1);
-    const [rawUrl] = fetch.mock.calls[0];
-    const url = new URL(String(rawUrl));
-    expect(url.searchParams.get('latitude')).toBe('43.0100');
-    expect(url.searchParams.get('longitude')).toBe('-79.0000');
-    expect(result.status).toBe('fetched');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: 'open-meteo',
+      source: 'unavailable',
+      status: 'skipped_privacy',
+      weather_context: null,
+      weather_skipped_reason: 'all_points_within_privacy_zones',
+    });
   });
 
   it('skips Open-Meteo when every weather candidate is inside a privacy zone buffer', async () => {
@@ -239,6 +235,7 @@ describe('external service contracts', () => {
       { lat: 43, lng: -79, timestamp: '2026-05-23T14:00:00.000Z' },
       { lat: 43.0005, lng: -79, timestamp: '2026-05-23T14:05:00.000Z' },
     ], '2026-05-23T14:00:00.000Z', '2026-05-23T14:05:00.000Z', {
+      weather_context_enabled: true,
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 200 }],
     });
 
@@ -272,8 +269,14 @@ describe('external service contracts', () => {
     })));
 
     const result = await mapMatchRoute(route, {
+      map_matching_enabled: true,
       osrm_map_matching_url: 'https://osrm.example',
       osrm_data_sharing_consented: true,
+      osrm_health_status: 'connected',
+      osrm_last_reachable_at: '2026-05-23T16:00:00.000Z',
+      osrm_verified_endpoint: 'https://osrm.example',
+      osrm_verified_origin: 'https://osrm.example',
+      osrm_verified_domain: 'osrm.example',
     });
 
     expect(fetch).toHaveBeenCalledTimes(1);
