@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
+import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -180,6 +181,9 @@ export default function Layout() {
       <main className="flex-1 container max-w-6xl mx-auto px-4 py-6">
         <Outlet />
       </main>
+      <footer className="border-t border-border/50 px-4 py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+        {LEGAL_DISCLAIMER_SHORT} Obey posted signs and local laws.
+      </footer>
     </div>
   );
 }

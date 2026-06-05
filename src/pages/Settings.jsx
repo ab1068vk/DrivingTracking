@@ -84,6 +84,7 @@ import {
   scoringValue,
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
+import { LEGAL_DISCLAIMER_SHORT, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -588,9 +589,9 @@ export default function Settings() {
 
   const showPrivacyPolicy = () => {
     toast({
-      title: 'Privacy and local data',
-      description: 'Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent.',
-      duration: 9000,
+      title: 'Privacy, data, and responsible use',
+      description: `Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent. ${LEGAL_DISCLAIMER_SUMMARY}`,
+      duration: 14000,
     });
   };
 
@@ -2771,6 +2772,7 @@ export default function Settings() {
         <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
         <div>Data: Stored locally by default · No ads · Calibration sharing is opt-in</div>
+        <div>{LEGAL_DISCLAIMER_SHORT}</div>
       </div>
     </div>
   );

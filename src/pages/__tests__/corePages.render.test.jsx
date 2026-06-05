@@ -432,6 +432,7 @@ describe('core page component renders', () => {
     expect(html).toContain('Status: Provisional');
     expect(html).toContain('Affects score_overall, score_safety');
     expect(html).toContain('approximate');
+    expect(html).toContain('Personal-use estimates only');
   });
 
   it('shows tire-life estimate calibration warning on Vehicles', async () => {
