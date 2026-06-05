@@ -53,7 +53,7 @@ describe('overtake quality', () => {
     expect(result.overtake_quality_score).toBeNull();
   });
 
-  it('reports beta overtake diagnostics without reducing safety or aggression scores', () => {
+  it('reports development-only overtake diagnostics without reducing safety or aggression scores', () => {
     const points = Array.from({ length: 12 }, (_, index) => p(index, 95 + Math.min(index, 3) * 5, index));
     const stats = { distance_km: 5, fatigue_risk_score: 0, intersection_score: 100 };
     const base = calculateTripScores([], stats, points, DEFAULT_THRESHOLDS, 60, {}, { includeRoadTypeSegments: false });
@@ -67,7 +67,8 @@ describe('overtake quality', () => {
 
     expect(diagnostic.overtake_event_count).toBe(1);
     expect(diagnostic.overtake_score).toBeNull();
-    expect(diagnostic.overtake_quality_beta).toBe(true);
+    expect(diagnostic.overtake_quality_beta).toBe(false);
+    expect(diagnostic.overtake_quality_status).toBe('development_diagnostic_only');
     expect(diagnostic.score_safety).toBe(base.score_safety);
     expect(diagnostic.aggressive_driving_score).toBe(base.aggressive_driving_score);
   });

@@ -1,4 +1,4 @@
-import { calculateBearing, haversineDistance } from '@/lib/tripEngine';
+import { calculateBearing, haversineDistance } from '@/lib/gps/math';
 
 const IDLE_SPEED_KMH = 5;
 const MIN_STOP_SECONDS = 60;

@@ -324,8 +324,9 @@ describe('core page component renders', () => {
   it('labels inferred speed-limit scoring at score level on TripDetail', async () => {
     queryData.set(JSON.stringify(['trip', 'trip-1']), {
       ...sampleTrip,
-      route_points: sampleTrip.route_points.map((point) => ({
+      route_points: sampleTrip.route_points.map((point, index) => ({
         ...point,
+        timestamp: `2026-01-01T12:0${index}:00.000Z`,
         speed_limit_source: 'inferred',
       })),
       urban_compliance: {
@@ -346,6 +347,9 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<TripDetail />);
 
     expect(html).toContain('Speed-limit score uses inferred limits');
+    expect(html).toContain('1/2 weight');
+    expect(html).toContain('Speed limits were estimated from GPS');
+    expect(html).toContain('Fetch road data');
     expect(html).toContain('half-weighted');
     expect(html).toContain('Sources');
     expect(html).toContain('GPS-inferred speed limit');
@@ -379,9 +383,10 @@ describe('core page component renders', () => {
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const html = renderToStaticMarkup(<TripDetail />);
 
-    expect(html).toContain('Heading Events (Beta)');
+    expect(html).toContain('Heading Events (Diagnostic)');
     expect(html).toContain('Enable Advanced Safety to include this in your score');
-    expect(html).toContain('Diagnostic-Only Events (Not Scored)');
+    expect(html).toContain('Diagnostic Data');
+    expect(html).toContain('not scored');
   });
 
   it('shows public OSRM demo provenance on TripDetail', async () => {
@@ -416,22 +421,21 @@ describe('core page component renders', () => {
     expect(parkingSlice).not.toContain('>100<');
   });
 
-  it('renders Settings tracking, permission, and external-context controls', async () => {
+  it('renders Settings navigator and lazy panel fallback with shared disclosure surfaces', async () => {
     const { default: Settings } = await import('@/pages/Settings');
     const html = renderToStaticMarkup(<Settings />);
 
     expect(html).toContain('Settings');
-    expect(html).toContain('Tracking Mode');
-    expect(html).toContain('Android Permissions');
-    expect(html).toContain('Snap route to roads');
+    expect(html).toContain('Tracking');
+    expect(html).toContain('Tracking mode and Android setup');
+    expect(html).toContain('Scoring');
+    expect(html).toContain('Privacy &amp; Data');
+    expect(html).toContain('Appearance');
+    expect(html).toContain('UBI Coaching');
+    expect(html).toContain('animate-pulse');
+    expect(html).not.toContain('Enable all notifications');
+    expect(html).not.toContain('Detection Features');
     expect(html).toContain('Share route samples with OSRM?');
-    expect(html).toContain('Automatic road-data fetching');
-    expect(html).toContain('Calibration registry');
-    expect(html).toContain('Trip penalty scale factor');
-    expect(html).toContain('Uncalibrated - scores are self-consistent');
-    expect(html).toContain('Status: Provisional');
-    expect(html).toContain('Affects score_overall, score_safety');
-    expect(html).toContain('approximate');
   });
 
   it('shows tire-life estimate calibration warning on Vehicles', async () => {
@@ -486,8 +490,8 @@ describe('core page component renders', () => {
     const { default: Reports } = await import('@/pages/Report');
     const html = renderToStaticMarkup(<Reports />);
 
-    expect(html).toContain('Scores are estimates');
-    expect(html).toContain('not validated against real-world crash data');
+    expect(html).toContain('Scores are personal driving estimates based on GPS patterns');
+    expect(html).toContain('insurance, legal, or safety-critical decisions');
     expect(html).toContain('NOT AN INSURANCE RATING');
     expect(html).toContain('Not insurance');
     expect(html).toContain('Visible limitation');

@@ -39,7 +39,13 @@ describe('open-source trip context', () => {
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: '' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: false, osrm_map_matching_url: 'https://example.test' })).toBe(false);
     expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test' })).toBe(false);
-    expect(isOsrmMapMatchingConfigured({ map_matching_enabled: true, osrm_map_matching_url: 'https://example.test', osrm_data_sharing_consented: true })).toBe(true);
+    expect(isOsrmMapMatchingConfigured({
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+      osrm_health_status: 'connected',
+      osrm_last_reachable_at: '2026-01-01T12:00:00.000Z',
+    })).toBe(true);
     expect(describeMapMatchingStatus({ status: 'disabled' })).toContain('sampled GPS points');
     expect(describeMapMatchingStatus({ status: 'needs_endpoint' })).toContain('OSRM endpoint');
     expect(describeMapMatchingStatus({ status: 'needs_consent' })).toContain('consent');
@@ -57,6 +63,8 @@ describe('open-source trip context', () => {
       map_matching_enabled: true,
       osrm_map_matching_url: 'https://example.test',
       osrm_data_sharing_consented: true,
+      osrm_health_status: 'connected',
+      osrm_last_reachable_at: '2026-01-01T12:00:00.000Z',
     });
     expect(message).toContain('OpenStreetMap Overpass');
     expect(message).toContain('Open-Meteo');

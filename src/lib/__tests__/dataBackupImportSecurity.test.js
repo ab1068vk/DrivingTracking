@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKUP_INTEGRITY_ERROR,
   importDriveSenseBackup,
   BACKUP_VERSION,
   MAX_BACKUP_BYTES,
@@ -8,7 +9,10 @@ import {
   MAX_IMPORTED_TRIP_ROUTE_POINTS,
   migrateBackup,
   parseDriveSenseBackup,
+  sealPlaintextBackup,
+  verifyPlaintextBackupIntegrity,
 } from '@/lib/dataBackup';
+import { encryptBackup } from '@/lib/backupEncryption';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 vi.mock('@/api/trips', () => ({
@@ -265,6 +269,9 @@ describe('backup trip import sanitization', () => {
         reason: 'scoring_inputs_changed',
         changed_constants: ['PENALTY_SCALE_FACTOR'],
       },
+      score_explanation: {
+        safety: [{ factor: 'phone_use', label: 'Phone use detected while driving', impact: -10 }],
+      },
     }]);
 
     expect(trip.component_scores.safety).toEqual({
@@ -279,6 +286,10 @@ describe('backup trip import sanitization', () => {
       constants_snapshot: { PENALTY_SCALE_FACTOR: 40 },
     });
     expect(trip.score_provenance_change.changed_constants).toEqual(['PENALTY_SCALE_FACTOR']);
+    expect(trip.score_explanation.safety[0]).toMatchObject({
+      factor: 'phone_use',
+      impact: -10,
+    });
   });
 
   it('rejects imported trips without a non-empty string id', () => {
@@ -314,6 +325,76 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
     expect(imported.trips).toBe(1);
+  });
+
+  it('prompts for a password before importing encrypted backups', async () => {
+    const encrypted = await encryptBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [],
+    }), 'correct horse battery');
+    const file = {
+      size: encrypted.length,
+      text: vi.fn(async () => encrypted),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: 'password_required' });
+    await expect(importDriveSenseBackup(file, { password: 'wrong horse battery' })).resolves.toEqual({ error: 'wrong_password' });
+    await expect(importDriveSenseBackup(file, { password: 'correct horse battery' })).resolves.toMatchObject({
+      trips: 0,
+      vehicles: 0,
+    });
+  });
+
+  it('seals plaintext backups with a device-bound HMAC', async () => {
+    const backup = {
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-sealed', status: 'completed' }],
+    };
+
+    const sealed = await sealPlaintextBackup(backup);
+    expect(sealed._integrity).toMatch(/^[0-9a-f]{64}$/);
+
+    const verified = await verifyPlaintextBackupIntegrity(JSON.stringify(sealed));
+    expect(verified).toEqual({
+      text: JSON.stringify(backup),
+      sealed: true,
+    });
+  });
+
+  it('rejects tampered sealed plaintext backup imports before merging records', async () => {
+    const sealed = await sealPlaintextBackup({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-clean', status: 'completed' }],
+    });
+    const tampered = {
+      ...sealed,
+      trips: [{ id: 'trip-tampered', status: 'completed' }],
+    };
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify(tampered)),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toEqual({ error: BACKUP_INTEGRITY_ERROR });
+  });
+
+  it('does not treat the plaintext integrity field as backup content', async () => {
+    const sealed = await sealPlaintextBackup({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-strip-integrity', status: 'completed' }],
+    });
+
+    const parsed = parseDriveSenseBackup(JSON.stringify(sealed));
+    expect(parsed.trips).toHaveLength(1);
+    expect(parsed._integrity).toBeUndefined();
   });
 });
 
@@ -368,5 +449,13 @@ describe('backup schema migrations', () => {
     expect(parsed.sourceVersion).toBe(1);
     expect(parsed.version).toBe(BACKUP_VERSION);
     expect(parsed.trips[0].needs_rescore).toBe(true);
+  });
+
+  it('gives an actionable error for backups from newer app versions', () => {
+    expect(() => parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION + 1,
+      trips: [],
+    }))).toThrow(`backup v${BACKUP_VERSION + 1}, this app supports up to v${BACKUP_VERSION}`);
   });
 });
