@@ -523,6 +523,27 @@ describe('core page component renders', () => {
     expect(html).toContain('Estimated Fuel Saved');
     expect(html).toContain('Unavailable');
     expect(html).toContain('Assign vehicles to trips to unlock CO2 savings estimates.');
+    expect(html).toContain('Export package');
+    expect(html).toContain('CSV trip table');
+    expect(html).toContain('Monthly PDF');
+    expect(html).toContain('Driver score card PDF');
+    expect(html).toContain('do not modify trips, settings, backups, storage names, or permissions');
+  });
+
+  it('summarizes report export scope without changing export formats', async () => {
+    const { buildReportExportSummary } = await import('@/pages/Report');
+    const summary = buildReportExportSummary([
+      { start_time: '2026-01-02T12:00:00.000Z' },
+      { start_time: '2026-01-01T12:00:00.000Z' },
+    ], 'month');
+
+    expect(summary).toMatchObject({
+      periodLabel: 'This Month',
+      tripCount: 2,
+      description: '2 completed trips included',
+      formats: ['CSV trip table', 'Monthly PDF', 'Driver score card PDF'],
+    });
+    expect(summary.dateRangeLabel).toContain('to');
   });
 
   it('gates trip-history score deltas until three prior trips exist', async () => {

@@ -46,6 +46,28 @@ const PERIODS = [
   { id: 'all', label: 'All Time', days: Infinity },
 ];
 
+export function buildReportExportSummary(trips = [], period = 'week') {
+  const safeTrips = Array.isArray(trips) ? trips : [];
+  const validTimes = safeTrips
+    .map((trip) => new Date(trip?.start_time).getTime())
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const periodLabel = PERIODS.find((item) => item.id === period)?.label || 'Selected Period';
+  const dateRangeLabel = validTimes.length
+    ? `${formatDate(new Date(validTimes[0]).toISOString())} to ${formatDate(new Date(validTimes[validTimes.length - 1]).toISOString())}`
+    : 'No completed trips in this period';
+
+  return {
+    periodLabel,
+    tripCount: safeTrips.length,
+    dateRangeLabel,
+    formats: ['CSV trip table', 'Monthly PDF', 'Driver score card PDF'],
+    description: safeTrips.length
+      ? `${safeTrips.length} completed trip${safeTrips.length === 1 ? '' : 's'} included`
+      : 'Exports unlock after a completed trip matches the selected period.',
+  };
+}
+
 export default function Reports() {
   const [period, setPeriod] = useState('week');
   const [ubiLoading, setUbiLoading] = useState(false);
@@ -70,6 +92,7 @@ export default function Reports() {
   const periodDays = PERIODS.find(p => p.id === period)?.days || 7;
   const cutoff = period === 'all' ? 0 : now - periodDays * 24 * 3600 * 1000;
   const trips = completed.filter(t => new Date(t.start_time).getTime() >= cutoff);
+  const exportSummary = buildReportExportSummary(trips, period);
 
   const summary = generateReportSummary(trips);
   const economics = trips.reduce((totals, trip) => {
@@ -347,6 +370,29 @@ export default function Reports() {
           </button>
         ))}
       </div>
+
+      <section aria-label="Report export package" className="rounded-3xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Export package</div>
+            <h2 className="mt-1 font-semibold">{exportSummary.periodLabel}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{exportSummary.description}</p>
+          </div>
+          <div className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold text-muted-foreground">
+            {exportSummary.dateRangeLabel}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {exportSummary.formats.map((format) => (
+            <span key={format} className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground">
+              {format}
+            </span>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Generated exports are presentation files only; they do not modify trips, settings, backups, storage names, or permissions.
+        </p>
+      </section>
 
       {isLoading ? (
         <div className="space-y-4">
