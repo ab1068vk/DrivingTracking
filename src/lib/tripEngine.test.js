@@ -1967,28 +1967,9 @@ describe('tripEngine', () => {
     expect(loaded.address).toBe('Toronto City Hall, Toronto');
   });
 
-  it('reverse-geocodes a web-originated parked location when no address is supplied', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ display_name: 'Queen Street West, Toronto, Ontario, Canada' }),
-    })));
-
-    const saved = await saveLastParkedLocation({
-      lat: 43.6532,
-      lng: -79.3832,
-      timestamp: '2026-01-01T12:00:00.000Z',
-      tripId: 'park-geocode-test',
-    });
-    const loaded = await getLastParkedLocation();
-
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(saved.address).toBe('Queen Street West, Toronto');
-    expect(loaded.address).toBe('Queen Street West, Toronto');
-  });
-
-  it('keeps saving parked locations when reverse geocoding fails', async () => {
+  it('keeps saving parked locations without external reverse geocoding', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
-      throw new Error('offline');
+      throw new Error('network should not be used');
     }));
 
     const saved = await saveLastParkedLocation({
@@ -1998,6 +1979,7 @@ describe('tripEngine', () => {
       tripId: 'park-offline-test',
     });
 
+    expect(fetch).not.toHaveBeenCalled();
     expect(saved).toMatchObject({
       lat: 43.6532,
       lng: -79.3832,
