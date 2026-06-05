@@ -55,6 +55,7 @@ import {
   getTripTagOption,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
+import { explainTripScoreDrivers } from '@/lib/scoring/scoreExplainer';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -2348,6 +2349,7 @@ function TripScoreOverview({ trip }) {
   const lowScoreConfidence = !unavailableOverallScore && overallScore.evidence !== 'high';
   const inferredSpeedLimitScoring = usesInferredSpeedLimitScoring(trip);
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
+  const scoreDrivers = explainTripScoreDrivers(trip);
   const componentSummaryRows = [
     { label: 'Aggression', metricKey: 'aggressive_driving_score', component: getTripComponentScore(trip, 'aggressive_driving'), grade: trip.aggressive_grade },
     { label: 'Defensive Driving Estimate', metricKey: 'defensive_driving_score', component: getTripComponentScore(trip, 'defensive_driving'), grade: trip.defensive_grade, qualifier: 'GPS + stop-behaviour proxy' },
@@ -2431,6 +2433,39 @@ function TripScoreOverview({ trip }) {
       {phoneUsePermissionRequired && (
         <PhoneUsePermissionBanner className="mt-3" />
       )}
+      <div className="mt-4 rounded-2xl border border-border bg-secondary/30 p-4">
+        <div className="flex items-start gap-2">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div>
+            <h3 className="text-sm font-semibold">What shaped this score</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Read-only explanation based on stored component scores and recorded events. This ranks weaker evidence; it does not reconstruct exact point deductions.
+            </p>
+          </div>
+        </div>
+        {scoreDrivers.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {scoreDrivers.map((driver) => (
+              <div key={driver.factor} className="flex items-center justify-between gap-3 rounded-xl bg-background/70 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <div className="font-semibold text-foreground">{driver.label}</div>
+                  <div className="text-muted-foreground">
+                    {driver.category}
+                    {['low', 'developing'].includes(driver.evidence) ? ' - limited evidence' : ''}
+                  </div>
+                </div>
+                <div className="shrink-0 font-grotesk text-sm font-bold text-foreground">
+                  {driver.kind === 'component' ? `~${driver.score}` : `${driver.count}x`}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            No stored component or event evidence is available for an explanation yet.
+          </p>
+        )}
+      </div>
       {scoreProvenance && (
         <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
           <div className="flex flex-wrap items-center justify-between gap-2">

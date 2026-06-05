@@ -38,6 +38,11 @@ const sampleTrip = {
   score_smoothness_confidence: 'low',
   score_eco: 84,
   score_eco_confidence: 'high',
+  component_scores: {
+    braking_efficiency: { value: 68, evidence: 'developing', dataSource: ['gps'] },
+    speed_limit_compliance: { value: 79, evidence: 'developing', dataSource: ['osm_speed_limit'] },
+    eco_driving: { value: 84, evidence: 'high', dataSource: ['gps'] },
+  },
   score_provenance: {
     computed_at: '2026-05-24T17:23:44.000Z',
     scoring_version: SCORING_VERSION,
@@ -318,6 +323,9 @@ describe('core page component renders', () => {
     expect(html).toContain('traveled within privacy zones (estimated)');
     expect(html).toContain('legitimate uphill manoeuvre');
     expect(html).toContain('attention-pattern estimate');
+    expect(html).toContain('What shaped this score');
+    expect(html).toContain('does not reconstruct exact point deductions');
+    expect(html).toContain('Braking efficiency');
     expect(html).not.toContain('Focus Score');
   });
 
