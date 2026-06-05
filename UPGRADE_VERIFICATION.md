@@ -58,3 +58,7 @@ This verified a same-version debug replacement using version code 1. A distribut
 - Existing database names and backup compatibility
 
 The version-code increment must be tested with this same in-place procedure before merging to `main`.
+
+## Version code 2 follow-up
+
+Version code 2 is the first verified release-style upgrade on the recovery branch. Its physical-device result is recorded in `VERSION_CODE_2_VERIFICATION.md`.

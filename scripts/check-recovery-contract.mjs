@@ -37,6 +37,10 @@ requireMatch(
   /applicationId\s+["']com\.drivesense\.app["']/,
   'applicationId must remain com.drivesense.app.'
 );
+const versionCodeMatch = files.gradle.match(/versionCode\s*=\s*(\d+)\b/);
+if (!versionCodeMatch || Number(versionCodeMatch[1]) < 2) {
+  failures.push('Gradle: versionCode must remain at least the verified recovery release value of 2.');
+}
 requireMatch(
   'MainActivity',
   files.mainActivity,

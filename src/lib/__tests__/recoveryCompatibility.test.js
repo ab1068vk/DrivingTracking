@@ -84,6 +84,8 @@ describe('recovery compatibility', () => {
     expect(capacitor).toContain(`appId: '${ANDROID_APP_ID}'`);
     expect(gradle).toContain(`namespace = "${ANDROID_APP_ID}"`);
     expect(gradle).toContain(`applicationId "${ANDROID_APP_ID}"`);
+    const versionCode = Number(gradle.match(/versionCode\s*=\s*(\d+)\b/)?.[1]);
+    expect(versionCode).toBeGreaterThanOrEqual(2);
     expect(mainActivity).toContain(`package ${ANDROID_APP_ID};`);
     expect(tile).toContain(`private static final String SETTINGS_KEY = "${SETTINGS_KEY}"`);
     expect(trackingStore).toContain(`const SETTINGS_KEY = '${SETTINGS_KEY}'`);
