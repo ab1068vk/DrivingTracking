@@ -1,0 +1,56 @@
+import {
+  CONFIDENCE_LEVELS as BASE_CONFIDENCE_LEVELS,
+  CLOSE_PROXIMITY_DECAY_BASE as BASE_CLOSE_PROXIMITY_DECAY_BASE,
+  DEFAULT_THRESHOLDS as BASE_DEFAULT_THRESHOLDS,
+  ECO_DEFAULTS as BASE_ECO_DEFAULTS,
+  ECO_SPEED_STABILITY_CV_MULTIPLIER as BASE_ECO_SPEED_STABILITY_CV_MULTIPLIER,
+  EVENT_TYPES as BASE_EVENT_TYPES,
+  HEADING_DRIFT_CIRCADIAN_MULTIPLIER as BASE_HEADING_DRIFT_CIRCADIAN_MULTIPLIER,
+  PHONE_USE_SAFETY_WEIGHT as BASE_PHONE_USE_SAFETY_WEIGHT,
+  SCORING_VERSION as BASE_SCORING_VERSION,
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT as BASE_STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT,
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY as BASE_STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY,
+  STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN as BASE_STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN,
+  STOP_START_NORMALISATION_WINDOW_KM as BASE_STOP_START_NORMALISATION_WINDOW_KM,
+  SVI_DEFAULTS as BASE_SVI_DEFAULTS,
+  TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH as BASE_TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH,
+  TIRE_WEAR_DEFAULT_SPEED_TURN_KMH as BASE_TIRE_WEAR_DEFAULT_SPEED_TURN_KMH,
+  buildDrivingThresholds as baseBuildDrivingThresholds,
+  buildScoreConstantsSnapshot as baseBuildScoreConstantsSnapshot,
+  buildScoreProvenance as baseBuildScoreProvenance,
+  componentConfidence as baseComponentConfidence,
+  createComponentScore as baseCreateComponentScore,
+  getScoreProvenanceStatus as baseGetScoreProvenanceStatus,
+  getTripComponentScore as baseGetTripComponentScore,
+  weightedBlend as baseWeightedBlend,
+} from '../../engine/calibration/baseline.js';
+import {
+  calculateTripScores as baseCalculateTripScores,
+} from '../../engine/scoring/pipeline.js';
+
+export const CONFIDENCE_LEVELS = BASE_CONFIDENCE_LEVELS;
+export const CLOSE_PROXIMITY_DECAY_BASE = BASE_CLOSE_PROXIMITY_DECAY_BASE;
+export const DEFAULT_THRESHOLDS = BASE_DEFAULT_THRESHOLDS;
+export const ECO_DEFAULTS = BASE_ECO_DEFAULTS;
+export const ECO_SPEED_STABILITY_CV_MULTIPLIER = BASE_ECO_SPEED_STABILITY_CV_MULTIPLIER;
+export const EVENT_TYPES = BASE_EVENT_TYPES;
+export const HEADING_DRIFT_CIRCADIAN_MULTIPLIER = BASE_HEADING_DRIFT_CIRCADIAN_MULTIPLIER;
+export const PHONE_USE_SAFETY_WEIGHT = BASE_PHONE_USE_SAFETY_WEIGHT;
+export const SCORING_VERSION = BASE_SCORING_VERSION;
+export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT = BASE_STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT;
+export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY = BASE_STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY;
+export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN = BASE_STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN;
+export const STOP_START_NORMALISATION_WINDOW_KM = BASE_STOP_START_NORMALISATION_WINDOW_KM;
+export const SVI_DEFAULTS = BASE_SVI_DEFAULTS;
+export const TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH = BASE_TIRE_WEAR_DEFAULT_SPEED_HARSH_KMH;
+export const TIRE_WEAR_DEFAULT_SPEED_TURN_KMH = BASE_TIRE_WEAR_DEFAULT_SPEED_TURN_KMH;
+
+export const buildDrivingThresholds = baseBuildDrivingThresholds;
+export const buildScoreConstantsSnapshot = baseBuildScoreConstantsSnapshot;
+export const buildScoreProvenance = baseBuildScoreProvenance;
+export const calculateTripScores = baseCalculateTripScores;
+export const componentConfidence = baseComponentConfidence;
+export const createComponentScore = baseCreateComponentScore;
+export const getScoreProvenanceStatus = baseGetScoreProvenanceStatus;
+export const getTripComponentScore = baseGetTripComponentScore;
+export const weightedBlend = baseWeightedBlend;

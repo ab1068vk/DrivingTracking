@@ -1,16 +1,19 @@
 /**
  * Road Sage Tracking Store
- * Manages active trip state in memory and persists to sessionStorage for crash recovery.
+ * Manages active trip state in memory and persists to localStorage for crash recovery.
  * This is a singleton store used by the tracking service.
  */
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { legacyStorageKeysFor, resolveStorageKey } from '@/lib/storageKeyMigration';
+import { isValidLatLng } from '@/lib/mapDefaults';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { scoringValue } from '@/lib/scoringConstants';
-import { ECO_DEFAULTS } from '@/lib/tripEngine';
+import { ECO_DEFAULTS } from '@/lib/scoring/componentScores';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { reverseGeocodeParkedLocation, shortenParkedAddress } from '@/lib/parkedLocationAddress';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -21,10 +24,17 @@ import {
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+const PRIVACY_ZONES_KEY = 'road_sage_privacy_zones';
+const ACTIVE_TRIP_STORAGE_KEY = resolveStorageKey(ACTIVE_TRIP_KEY);
+const SETTINGS_STORAGE_KEY = resolveStorageKey(SETTINGS_KEY);
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
+const PRIVACY_ZONE_RADIUS_DEFAULT_M = 200;
+const PRIVACY_ZONE_RADIUS_MIN_M = 50;
+const PRIVACY_ZONE_RADIUS_MAX_M = 500;
+const EARTH_RADIUS_M = 6371000;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
 
 const settingsStorage = () => {
   try {
@@ -34,10 +44,104 @@ const settingsStorage = () => {
   }
 };
 
+const readStorageWithLegacyFallback = (storage, key) => {
+  const currentKey = resolveStorageKey(key);
+  let raw = storage?.getItem(currentKey);
+  if (raw != null) return raw;
+
+  for (const legacyKey of legacyStorageKeysFor(key)) {
+    raw = storage?.getItem(legacyKey);
+    if (raw != null) {
+      storage?.setItem(currentKey, raw);
+      return raw;
+    }
+  }
+
+  return null;
+};
+
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+};
+
+const isPrivacyZoneLatLng = (lat, lng) => {
+  const parsedLat = Number(lat);
+  const parsedLng = Number(lng);
+  return Number.isFinite(parsedLat) &&
+    Number.isFinite(parsedLng) &&
+    parsedLat >= -90 &&
+    parsedLat <= 90 &&
+    parsedLng >= -180 &&
+    parsedLng <= 180;
+};
+
+const clampPrivacyZoneRadius = (radius) => {
+  const value = Number(radius);
+  if (!Number.isFinite(value)) return PRIVACY_ZONE_RADIUS_DEFAULT_M;
+  return clampNumber(Math.round(value), PRIVACY_ZONE_RADIUS_MIN_M, PRIVACY_ZONE_RADIUS_MAX_M);
+};
+
+const normalizePreferencePrivacyZone = (zone) => {
+  if (!zone || typeof zone !== 'object' || Array.isArray(zone)) return null;
+  const lat = Number(zone.lat);
+  const lng = Number(zone.lng);
+  if (!isPrivacyZoneLatLng(lat, lng)) return null;
+
+  return {
+    name: String(zone.name || 'Private zone').trim().slice(0, 80) || 'Private zone',
+    lat,
+    lng,
+    radius: clampPrivacyZoneRadius(zone.radius),
+  };
+};
+
+const normalizePreferencePrivacyZones = (zones) => (
+  Array.isArray(zones)
+    ? zones.map(normalizePreferencePrivacyZone).filter(Boolean).slice(0, 20)
+    : []
+);
+
+const preferencesModule = async () => {
+  const { Preferences } = await import('@capacitor/preferences');
+  return { Preferences };
+};
+
+const androidNativeDriveSensePlugin = async () => {
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor.getPlatform?.() !== 'android') return null;
+    const { default: DriveSenseActivityRecognition } = await import('@/lib/driveSenseNativePlugin');
+    return DriveSenseActivityRecognition;
+  } catch {
+    return null;
+  }
+};
+
+const isAndroidNativePlatform = async () => {
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    return Capacitor.getPlatform?.() === 'android';
+  } catch {
+    return false;
+  }
+};
+
+const distanceMetersBetweenLatLng = (lat, lng, zone) => {
+  const zoneLat = Number(zone?.lat);
+  const zoneLng = Number(zone?.lng);
+  if (!isPrivacyZoneLatLng(lat, lng) || !isPrivacyZoneLatLng(zoneLat, zoneLng)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const phi1 = lat * Math.PI / 180;
+  const phi2 = zoneLat * Math.PI / 180;
+  const deltaPhi = (zoneLat - lat) * Math.PI / 180;
+  const deltaLambda = (zoneLng - lng) * Math.PI / 180;
+  const a = Math.sin(deltaPhi / 2) ** 2 +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
 };
 
 const defaultOsrmEndpoint = () => {
@@ -107,6 +211,57 @@ const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
   });
 };
 
+export async function getPrivacyZones() {
+  const nativePrivacyZones = await androidNativeDriveSensePlugin();
+  if (nativePrivacyZones?.getPrivacyZones) {
+    try {
+      const result = await nativePrivacyZones.getPrivacyZones();
+      return normalizePreferencePrivacyZones(JSON.parse(result?.zonesJson || '[]'));
+    } catch {
+      return [];
+    }
+  }
+
+  if (await isAndroidNativePlatform()) return [];
+
+  try {
+    const { Preferences } = await preferencesModule();
+    const { value } = await Preferences.get({ key: PRIVACY_ZONES_KEY });
+    return normalizePreferencePrivacyZones(value ? JSON.parse(value) : []);
+  } catch {
+    return [];
+  }
+}
+
+export async function savePrivacyZones(zones) {
+  const normalizedZones = normalizePreferencePrivacyZones(zones);
+  const nativePrivacyZones = await androidNativeDriveSensePlugin();
+  if (nativePrivacyZones?.savePrivacyZones) {
+    await nativePrivacyZones.savePrivacyZones({
+      zonesJson: JSON.stringify(normalizedZones),
+    });
+    return;
+  }
+
+  if (await isAndroidNativePlatform()) return;
+
+  const { Preferences } = await preferencesModule();
+  await Preferences.set({
+    key: PRIVACY_ZONES_KEY,
+    value: JSON.stringify(normalizedZones),
+  });
+}
+
+export async function isInPrivacyZone(lat, lng, zones = null) {
+  const privacyZones = Array.isArray(zones) ? zones : await getPrivacyZones();
+  for (const zone of privacyZones) {
+    if (distanceMetersBetweenLatLng(lat, lng, zone) <= zone.radius) {
+      return { inZone: true, zoneName: zone.name };
+    }
+  }
+  return { inZone: false, zoneName: null };
+}
+
 const syncSettingsForNative = (settings) => {
   if (typeof window === 'undefined') return;
   const serialized = JSON.stringify(settings);
@@ -115,13 +270,17 @@ const syncSettingsForNative = (settings) => {
   import('@capacitor/core')
     .then(({ Capacitor }) => {
       if (!Capacitor.isNativePlatform()) return null;
-      return import('@capacitor/preferences');
+      return androidNativeDriveSensePlugin();
     })
-    .then((module) => {
-      if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch(() => {});
+    .then((nativePlugin) => {
+      if (!nativePlugin?.saveSettings) return;
+      nativePlugin.saveSettings({ settingsJson: serialized }).catch((err) => {
+        logError('native_settings_sync', err, { key: SETTINGS_STORAGE_KEY });
+      });
     })
-    .catch(() => {});
+    .catch((err) => {
+      logError('native_settings_sync_module_load', err);
+    });
 };
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
@@ -141,7 +300,9 @@ export const DEFAULT_SETTINGS = {
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
   activity_permission_granted: false,
-  data_retention_days: 365,
+  // PRIVACY: auto-delete completed trips older than this many months.
+  // 0 = never delete automatically.
+  data_retention_months: 24,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -221,6 +382,7 @@ export const DEFAULT_SETTINGS = {
   osrm_timeout_ms: defaultOsrmTimeoutMs(),
   last_map_center: null,
   predictive_route_risk_enabled: true,
+  route_risk_disclaimer_seen_count: 0,
   obd_bluetooth_enabled: false,
   notif_safety_alerts_enabled: true,
   notif_phone_use_alert_enabled: true,
@@ -303,18 +465,28 @@ export function migrateDefaultSettings(parsed = {}) {
   if (parsed.notif_heading_drift_alert_enabled == null && parsed.notif_drowsy_alert_enabled != null) {
     merged.notif_heading_drift_alert_enabled = parsed.notif_drowsy_alert_enabled;
   }
+  if (parsed.data_retention_months == null && parsed.data_retention_days != null) {
+    const days = Number(parsed.data_retention_days);
+    merged.data_retention_months = Number.isFinite(days) && days > 0
+      ? Math.max(1, Math.round(days / 30.44))
+      : 0;
+  }
+  delete merged.data_retention_days;
   legacyProxyKeys.forEach((key) => delete merged[key]);
   const ecoSettingsRepaired = repairEcoScoringSettings(merged, 'default_settings_migration');
 
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: ecoSettingsRepaired ||
+      version < CURRENT_SETTINGS_DEFAULTS_VERSION ||
+      Object.prototype.hasOwnProperty.call(parsed, 'data_retention_days') ||
+      legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
 const IMPORT_NUMBER_RANGES = {
-  data_retention_days: [1, 3650],
+  data_retention_months: [0, 120],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_stop_start_decel_ms2: [0.5, 15],
@@ -420,7 +592,7 @@ const sanitizeMapCenter = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const lat = Number(value.lat);
   const lng = Number(value.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  if (!isValidLatLng(lat, lng)) return null;
 
   return {
     lat,
@@ -452,6 +624,12 @@ export function sanitizeImportedSettings(raw = {}) {
   }
   if (normalizedRaw.notif_heading_drift_alert_enabled == null) {
     normalizedRaw.notif_heading_drift_alert_enabled = raw.notif_drowsy_alert_enabled;
+  }
+  if (normalizedRaw.data_retention_months == null && raw.data_retention_days != null) {
+    const days = Number(raw.data_retention_days);
+    normalizedRaw.data_retention_months = Number.isFinite(days) && days > 0
+      ? Math.max(1, Math.round(days / 30.44))
+      : 0;
   }
 
   const sanitized = {};
@@ -544,6 +722,21 @@ export function validateSettingsPatch(patch = {}) {
 }
 
 export async function getLastParkedLocation() {
+  const nativeDriveSense = await androidNativeDriveSensePlugin();
+  if (nativeDriveSense?.getLastParkedLocation) {
+    try {
+      const result = await nativeDriveSense.getLastParkedLocation();
+      const parkedLocation = result?.parkedJson ? JSON.parse(result.parkedJson) : null;
+      if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
+        await nativeDriveSense.clearLastParkedLocation?.();
+        return null;
+      }
+      return parkedLocation;
+    } catch {
+      return null;
+    }
+  }
+
   const parkedLocation = await getJson(LAST_PARKED_KEY, null);
   if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
     await removeJson(LAST_PARKED_KEY);
@@ -556,21 +749,58 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
-  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
-    await removeJson(LAST_PARKED_KEY);
+  const settings = localSettings.get();
+  const preferenceZones = await getPrivacyZones();
+  const preferenceZoneMatch = await isInPrivacyZone(parsedLat, parsedLng, preferenceZones);
+  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng }, settings) || preferenceZoneMatch.inZone) {
+    const nativeDriveSense = await androidNativeDriveSensePlugin();
+    if (nativeDriveSense?.clearLastParkedLocation) await nativeDriveSense.clearLastParkedLocation();
+    else await removeJson(LAST_PARKED_KEY);
     return null;
   }
+
+  const resolvedAddress = shortenParkedAddress(address) ||
+    await reverseGeocodeParkedLocation(parsedLat, parsedLng, {
+      guardM: PARKED_LOCATION_PRIVACY_GUARD_M,
+      privacyZones: [
+        ...(Array.isArray(settings?.privacy_zones) ? settings.privacy_zones : []),
+        ...preferenceZones,
+      ],
+    });
 
   const parkedLocation = {
     lat: parsedLat,
     lng: parsedLng,
     timestamp: timestamp || new Date().toISOString(),
     tripId: tripId ?? null,
-    address,
+    address: resolvedAddress,
     source,
   };
+  const nativeDriveSense = await androidNativeDriveSensePlugin();
+  if (nativeDriveSense?.saveLastParkedLocation) {
+    await nativeDriveSense.saveLastParkedLocation({
+      parkedJson: JSON.stringify(parkedLocation),
+    });
+    return parkedLocation;
+  }
+
   await setJson(LAST_PARKED_KEY, parkedLocation);
   return parkedLocation;
+}
+
+export function saveLastMapCenter({ lat, lng, tripId = null, source = 'tracking', updated_at = new Date().toISOString() } = {}) {
+  const settings = localSettings.get();
+  if (settings.store_last_map_center === false || !isValidLatLng(lat, lng)) return null;
+
+  const center = {
+    lat: Number(lat),
+    lng: Number(lng),
+    tripId,
+    source,
+    updated_at,
+  };
+  localSettings.update({ last_map_center: center });
+  return center;
 }
 
 // ─── Local Settings Store ──────────────────────────────────────────────────────
@@ -580,16 +810,43 @@ export const localSettings = {
       const { Capacitor } = await import('@capacitor/core');
       if (!Capacitor.isNativePlatform()) return this.get();
 
+      const nativePlugin = await androidNativeDriveSensePlugin();
+      if (nativePlugin?.getSettings) {
+        const native = await nativePlugin.getSettings();
+        if (native?.settingsJson) {
+          const parsed = JSON.parse(native.settingsJson);
+          const { settings: merged, changed } = migrateDefaultSettings(parsed);
+          const serialized = JSON.stringify(merged);
+          localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+          if (changed && nativePlugin.saveSettings) {
+            await nativePlugin.saveSettings({ settingsJson: serialized });
+          }
+          lastNativeSettingsSync = serialized;
+          return merged;
+        }
+      }
+
+      if (await isAndroidNativePlatform()) return this.get();
+
       const { Preferences } = await import('@capacitor/preferences');
-      const { value } = await Preferences.get({ key: SETTINGS_KEY });
+      let { value } = await Preferences.get({ key: SETTINGS_STORAGE_KEY });
+      for (const legacyKey of legacyStorageKeysFor(SETTINGS_KEY)) {
+        if (value !== null) break;
+        const legacy = await Preferences.get({ key: legacyKey });
+        value = legacy.value;
+        if (value !== null) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value });
+      }
       if (!value) return this.get();
 
       const parsed = JSON.parse(value);
       const { settings: merged, changed } = migrateDefaultSettings(parsed);
       const serialized = JSON.stringify(merged);
-      localStorage.setItem(SETTINGS_KEY, serialized);
-      if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
+      localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+      if (changed) await Preferences.set({ key: SETTINGS_STORAGE_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
+      if (nativePlugin?.saveSettings) {
+        await nativePlugin.saveSettings({ settingsJson: serialized });
+      }
       return merged;
     } catch {
       return this.get();
@@ -598,12 +855,12 @@ export const localSettings = {
   get() {
     try {
       const storage = settingsStorage();
-      const raw = storage?.getItem(SETTINGS_KEY);
+      const raw = readStorageWithLegacyFallback(storage, SETTINGS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         const { settings: merged, changed } = migrateDefaultSettings(parsed);
         if (changed) {
-          storage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+          storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
           syncSettingsForNative(merged);
         }
         syncSettingsForNative(merged);
@@ -616,7 +873,7 @@ export const localSettings = {
       }
       // New user: save defaults immediately so we can detect returning users
       const defaults = { ...DEFAULT_SETTINGS };
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
+      if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults));
       else memorySettings = defaults;
       syncSettingsForNative(defaults);
       return defaults;
@@ -627,10 +884,12 @@ export const localSettings = {
   set(data) {
     try {
       const storage = settingsStorage();
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(data));
+      if (storage) storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(data));
       else memorySettings = data;
       syncSettingsForNative(data);
-    } catch {}
+    } catch (err) {
+      logError('settings_save', err);
+    }
   },
   update(patch) {
     const current = this.get();
@@ -662,7 +921,7 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 export const activeTripStore = {
   get() {
     try {
-      const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
+      const raw = readStorageWithLegacyFallback(localStorage, ACTIVE_TRIP_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -670,11 +929,14 @@ export const activeTripStore = {
   },
   set(trip) {
     try {
-      localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip));
-    } catch {}
+      localStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, JSON.stringify(trip));
+    } catch (err) {
+      logError('active_trip_save', err, { trip_state: trip?.trip_state, point_count: trip?.route_points?.length || 0 });
+    }
   },
   clear() {
-    localStorage.removeItem(ACTIVE_TRIP_KEY);
+    localStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+    legacyStorageKeysFor(ACTIVE_TRIP_KEY).forEach((key) => localStorage.removeItem(key));
   },
   addPoint(point) {
     const trip = this.get();

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  ANDROID_NOTIFICATION_VISIBILITY,
   MAX_ACHIEVEMENT_NOTIF_IDS,
   NOTIFICATION_IDS,
   achievementNotificationId,
@@ -99,6 +100,14 @@ describe('advanced notifications', () => {
     expect(notification.id).toBe(NOTIFICATION_IDS.TRIP_MANOEUVRE_ALERT_SUMMARY);
   });
 
+  it('marks returned local notifications private on Android lock screens', async () => {
+    const notification = await dispatchPostTripNotification(trip({
+      driving_events: [{ type: 'close_proximity' }, { type: 'close_proximity' }],
+    }), [], settings);
+
+    expect(notification.visibility).toBe(ANDROID_NOTIFICATION_VISIBILITY.PRIVATE);
+  });
+
   it('fires nothing when master notifications are disabled', async () => {
     const notification = await dispatchPostTripNotification(trip({
       driving_events: [{ type: 'close_proximity' }, { type: 'close_proximity' }],
@@ -164,6 +173,23 @@ describe('advanced notifications', () => {
 
     expect(titleIndex).toBeGreaterThan(-1);
     expect(fuelSavingsBranch).not.toContain('1.65');
+  });
+
+  it('does not configure public lock-screen notification channels', () => {
+    const source = readFileSync(new URL('../notificationService.js', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('visibility: 1');
+    expect(source).toContain('visibility: ANDROID_NOTIFICATION_VISIBILITY.SECRET');
+    expect(source).toContain('visibility: ANDROID_NOTIFICATION_VISIBILITY.PRIVATE');
+  });
+
+  it('hides native foreground notification content on Android lock screens', () => {
+    const source = readFileSync(new URL('../../../android/app/src/main/java/com/roadsage/app/RoadSageAutoTrackingService.java', import.meta.url), 'utf8');
+
+    expect(source).toContain('.setVisibility(NotificationCompat.VISIBILITY_SECRET)');
+    expect(source).toContain('channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET)');
+    expect(source).toContain('.setVisibility(NotificationCompat.VISIBILITY_PRIVATE)');
+    expect(source).toContain('channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE)');
   });
 
   it('formats fuel-savings notifications from the user settings fuel price', async () => {
