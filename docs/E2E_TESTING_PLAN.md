@@ -49,7 +49,7 @@ Seed data must include:
 - High-risk trip with speeding, harsh braking, acceleration, cornering, heading/phone diagnostic events, low confidence, and score provenance.
 - Active trip for recording banners, live tracking controls, and stale-trip prompts.
 - Gas/hybrid vehicle and EV vehicle with maintenance, renewal, cost, odometer, fuel, and default-vehicle fields.
-- Backup payloads: valid unencrypted JSON, valid encrypted `.rsbackup`, wrong-password payload, corrupted payload, oversized payload, and legacy payload.
+- Backup payloads: valid encrypted `.rsbackup`, valid legacy HMAC-sealed plaintext JSON, wrong-password payload, corrupted payload, oversized payload, and supported older-schema payloads.
 - Privacy-zone payload with masked route/event data to prove coordinates are not leaked.
 
 Every E2E test should reset browser storage and IndexedDB before seeding. Tests that mutate data must assert both the UI result and the stored record.
@@ -167,6 +167,8 @@ npm.cmd run check:repo-hygiene
 npm.cmd run lint
 npm.cmd run typecheck
 npm.cmd test
+npm.cmd run test:settings-contract
+npm.cmd run test:standalone
 npm.cmd run build
 npm.cmd run test:e2e
 ```

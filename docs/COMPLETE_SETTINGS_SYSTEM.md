@@ -1176,7 +1176,7 @@ Launch logs have no fatal Android or JavaScript exceptions.
 Use it when a change is too broad for one targeted unit test:
 
 ```powershell
-node --experimental-vm-modules scripts/settingsFullTest.mjs
+npm.cmd run test:settings-contract
 ```
 
 The important settings-effect checks in that script are:
@@ -1194,42 +1194,23 @@ Biometric lock state stays connected to settings.
 
 ## Current Local Audit Findings
 
-Last local audit command:
+Current local audit command:
 
 ```powershell
-node --experimental-vm-modules scripts/settingsFullTest.mjs
+npm.cmd run test:settings-contract
 ```
 
-Result on 2026-06-04:
+Result on 2026-06-05:
 
 ```text
-243 passed
-10 failed
-4 skipped
+277 passed
+0 failed
+0 skipped
 ```
 
-Known failures to investigate before claiming the whole settings system is fully verified:
+The current contract suite covers defaults, migrations, import sanitization, prototype-pollution defenses, settings validation, threshold bounds, voice-setting corruption recovery, themes, privacy zones, biometric timeout handling, Stealth Trip Mode, retention, currencies, speed-limit country fallback, OSRM trust, calibration profiles, settings navigation/search, scoring-version hashing, backup encryption/integrity, UBI settings, notification gates, clamp utilities, privacy-zone formatting, and a full settings lifecycle.
 
-```text
-migrateDefaultSettings(null) throws instead of falling back.
-migrateDefaultSettings can transfer dangerous unknown keys such as __proto__.
-Biometric timeout calculation can become NaN for a malformed setting.
-Currency import/normalization currently rejects or fails euro/yen cases expected by the audit.
-Backup encryption test passwords no longer satisfy the current stronger password policy.
-sanitize/import security audit reports constructor surviving.
-privacyZoneFormatting.zoneKey(null) throws.
-Some imports fail because TypeScript/JS modules are not consumable by the settings audit script: calibrationBaseline, useSettingsVersion, and localTripRepository.
-```
-
-Known skips:
-
-```text
-enforceDataRetention checks skip because localTripRepository import fails in this script.
-buildDrivingThresholds checks skip because the requested module export is unavailable.
-settings version lifecycle checks skip because useSettingsVersion import fails.
-```
-
-Reviewer instruction: treat these as open issues in the current code or audit harness. They do not invalidate this documentation update, but they do mean the settings system should not be called fully proven until these failures are fixed or intentionally reclassified with tests.
+This script is a deterministic contract audit, not a replacement for Vitest, Playwright, Android instrumentation, or connected-device persistence checks.
 
 ## Manual Device Checks
 

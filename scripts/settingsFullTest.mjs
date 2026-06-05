@@ -1,5 +1,5 @@
 // Road Sage full settings integration test.
-// Run: node --experimental-vm-modules scripts/settingsFullTest.mjs
+// Run: npm run test:settings-contract
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';

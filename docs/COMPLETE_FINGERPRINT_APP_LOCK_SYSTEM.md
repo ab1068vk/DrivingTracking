@@ -545,7 +545,7 @@ const attemptUnlock = async () => {
 };
 ```
 
-Security note: when auth is unavailable or times out, the current implementation disables the in-memory lock for the session and unlocks the app. It does not immediately persist `biometric_lock_enabled=false`; the saved setting can still be true for a later launch.
+Security note: an authentication timeout returns to the opaque locked overlay and requires an explicit retry. A cancelled prompt also remains locked. Only an `unavailable` result disables the in-memory lock for the current session and unlocks the app; it does not persist `biometric_lock_enabled=false`, so the saved setting can be checked again on a later launch.
 
 ## Auto-Lock and Activity
 
@@ -575,38 +575,25 @@ The auto-lock timer uses `msUntilAutoLock(localSettings.get())`. When the timer 
 The app listens to web visibility and Capacitor app state:
 
 ```js
-const lockIfIdle = () => {
-  if (isBiometricLockEnabled() && isLocked(localSettings.get())) lock();
-};
+const lockWhenEnabled = () => lockWhenBiometricEnabled();
 
 const lockOnHidden = () => {
-  if (document.visibilityState === 'hidden') lockIfIdle();
+  if (document.visibilityState === 'hidden') lockWhenEnabled();
 };
 
 document.addEventListener('visibilitychange', lockOnHidden);
 
 CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-  if (!isActive) lockIfIdle();
+  if (!isActive) lockWhenEnabled();
 });
 ```
 
 Current implementation note:
 
 ```text
-The Settings UI copy and existing docs say backgrounding locks immediately.
-The current code calls lock() only when isLocked(localSettings.get()) is already true.
-That means a recently unlocked session with remaining timeout may not be cleared immediately
-on background unless the timeout has already elapsed.
-```
-
-If the intended behavior is truly "backgrounding always locks", change `lockIfIdle()` to call `lock()` whenever App lock is enabled, then update tests to cover it.
-
-Suggested target shape:
-
-```js
-const lockWhenEnabled = () => {
-  if (isBiometricLockEnabled()) lock();
-};
+When App lock is enabled, hiding or backgrounding the app locks immediately.
+Returning to the app triggers the route guard and device-credential prompt.
+The inactivity timer remains a separate lock path while the app stays visible.
 ```
 
 ## Non-Android Behavior

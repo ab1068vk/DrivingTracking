@@ -137,8 +137,13 @@ The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNIC
 Regenerate it after meaningful code or README changes:
 
 ```bash
-node scripts/generate-technical-reference.mjs
-npm run docs:state
+npm run docs:generate
+```
+
+Verify all generated docs and Markdown links without rewriting files:
+
+```bash
+npm run docs:check
 ```
 
 Version closeout history is kept in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md). Update it when a version is declared complete and before starting the next version.
@@ -205,7 +210,7 @@ Run tests:
 npm run test
 ```
 
-`npm run build` regenerates `src/lib/scoringVersion.generated.js` and refreshes `docs/APP_STATE.md`; `npm run test` checks both generated artifacts before running Vitest.
+`npm run build` regenerates the scoring version plus README/current-state/security references; `npm run test` checks all generated docs and Markdown links before running Vitest.
 
 Run browser smoke e2e tests:
 
@@ -217,8 +222,11 @@ Release-readiness local gate:
 
 ```bash
 npm run check:repo-hygiene
+npm run docs:check
 npm run lint
 npm run typecheck
+npm run test:settings-contract
+npm run test:standalone
 npm run test
 npm run build
 npm run test:e2e
@@ -235,7 +243,8 @@ npm run test:contracts:live
 ### Test Strategy
 
 - `npm run test` runs deterministic Vitest coverage for calculations, repositories, security safeguards, page rendering, and mocked Overpass/Open-Meteo/OSRM request-response contracts. The live external-service file is skipped in this fast default suite.
-- `node tests/full-suite.test.mjs` runs the standalone Node `.mjs` application contract suite. It intentionally skips modules that cannot be imported outside Vite/alias resolution and reports those skips in the TAP output.
+- `npm run test:settings-contract` runs the broad settings migration, validation, security, persistence, backup, and lifecycle contract audit.
+- `npm run test:standalone` runs the standalone Node `.mjs` application contract suite. It intentionally skips modules that cannot be imported outside Vite/alias resolution and reports those skips in the TAP output.
 - `npm run test:e2e` builds the app, serves the generated `dist/` bundle with `scripts/serve-dist-for-playwright.mjs`, and drives Chromium through the app shell, onboarding redirect, desktop/mobile navigation, 404 recovery, Dashboard, Settings, and Trips smoke flows.
 - `npm run test:contracts:live` makes real network requests to Open-Meteo forecast, Overpass interpreter, and the public OSRM matching endpoint to detect upstream response-contract changes.
 - `e2e/fixtures/seedRoadSage.js` and `e2e/helpers/globalAssert.js` provide shared browser seeding and runtime assertions for Playwright coverage.

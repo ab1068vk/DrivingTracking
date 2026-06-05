@@ -19,7 +19,7 @@ Run `npm run calibration:fit` and consider promotion when any of these triggers 
 
 ### Mandatory Trigger
 
-- **A developer changes any `@promotionBlocker` constant without running `calibration:promote`.** The CI validation gate added in Sub-Phase 5.4 must block this. A promotion-blocking constant change is not complete until the calibration audit log, fit report, and generated scoring version are updated together.
+- **A developer changes any `@promotionBlocker` constant without running `calibration:promote`.** The CI calibration gate must block this. A promotion-blocking constant change is not complete until the calibration audit log, fit report, and generated scoring version are updated together.
 
 ## 2. Promotion Review Checklist
 

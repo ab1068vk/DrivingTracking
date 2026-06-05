@@ -65,8 +65,8 @@ AuthenticatedApp mounts
 
 Important launch details:
 
-- Android marker read timeout is intentionally short: `LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS = 500`.
-- Android native settings hydration happens once quickly, then again after a delay.
+- Android marker read timeout is `LAUNCH_ONBOARDING_MARKER_TIMEOUT_MS = 2_000`.
+- Android native settings hydration starts with a 1.5-second launch budget, retries after 2.5 seconds with a 10-second budget, and then polls every 2 seconds after onboarding so Quick Settings tile changes reach React.
 - If hydrated settings show `tracking_mode === 'background_auto'` and tracking is not paused, `ensureNativeAutoTrackingStarted()` tries to arm native auto tracking.
 - The entire app is wrapped in `<PermissionProvider>` after auth/query providers.
 

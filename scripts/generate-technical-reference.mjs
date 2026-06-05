@@ -8,7 +8,8 @@ const ROOT = process.cwd();
 const DOCS_DIR = path.join(ROOT, 'docs');
 const TECHNICAL_REFERENCE_RELATIVE = 'docs/TECHNICAL_REFERENCE.md';
 const TECHNICAL_REFERENCE_PATH = path.join(ROOT, TECHNICAL_REFERENCE_RELATIVE);
-const now = new Date().toISOString();
+const README_PATH = path.join(ROOT, 'README.md');
+const checkOnly = process.argv.includes('--check');
 
 const SKIP_DIRS = new Set([
   '.git',
@@ -32,7 +33,12 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.java']);
 const APP_CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs']);
-const EXCLUDE_GENERATED_DOCS = new Set(['TECHNICAL_REFERENCE.md', TECHNICAL_REFERENCE_RELATIVE]);
+const EXCLUDE_GENERATED_DOCS = new Set([
+  'README.md',
+  'docs/ANDROID_SECURITY_REFERENCE.md',
+  'docs/APP_STATE.md',
+  TECHNICAL_REFERENCE_RELATIVE,
+]);
 
 function rel(file) {
   return path.relative(ROOT, file).replaceAll(path.sep, '/');
@@ -962,7 +968,7 @@ function buildDoc() {
   const doc = [];
   doc.push('# Road Sage Technical Reference');
   doc.push('');
-  doc.push(`Updated: ${now}`);
+  doc.push('Generated from the current repository state.');
   doc.push('');
   doc.push('This document is generated from the current repository. It is intentionally high-signal: architecture, security, storage, routes, major calculations, test coverage, and deployment notes are kept; exhaustive import/export, function, literal, and handler dumps are omitted.');
   doc.push('');
@@ -1132,7 +1138,7 @@ function buildDoc() {
   doc.push('');
   doc.push(envTable());
   doc.push('');
-  doc.push('App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.');
+  doc.push('App commands: `npm run dev`, `npm run build`, `npm run test`, `npm run test:settings-contract`, `npm run test:standalone`, `npm run docs:check`, `npm run lint`, `npm run typecheck`, `npm run android:sync`, `android/gradlew.bat assembleDebug`.');
   doc.push('');
   doc.push('Android SDK location is intentionally machine-local. `android/local.properties` is ignored by `android/.gitignore`, excluded from this generator, and checked by `npm run check:repo-hygiene` so local `sdk.dir` paths are not committed.');
   doc.push('');
@@ -1363,8 +1369,13 @@ function buildReadme() {
     'Regenerate it after meaningful code or README changes:',
     '',
     '```bash',
-    'node scripts/generate-technical-reference.mjs',
-    'npm run docs:state',
+    'npm run docs:generate',
+    '```',
+    '',
+    'Verify all generated docs and Markdown links without rewriting files:',
+    '',
+    '```bash',
+    'npm run docs:check',
     '```',
     '',
     'Version closeout history is kept in [docs/VERSION_HISTORY.md](docs/VERSION_HISTORY.md). Update it when a version is declared complete and before starting the next version.',
@@ -1431,7 +1442,7 @@ function buildReadme() {
     'npm run test',
     '```',
     '',
-    '`npm run build` regenerates `src/lib/scoringVersion.generated.js` and refreshes `docs/APP_STATE.md`; `npm run test` checks both generated artifacts before running Vitest.',
+    '`npm run build` regenerates the scoring version plus README/current-state/security references; `npm run test` checks all generated docs and Markdown links before running Vitest.',
     '',
     'Run browser smoke e2e tests:',
     '',
@@ -1443,8 +1454,11 @@ function buildReadme() {
     '',
     '```bash',
     'npm run check:repo-hygiene',
+    'npm run docs:check',
     'npm run lint',
     'npm run typecheck',
+    'npm run test:settings-contract',
+    'npm run test:standalone',
     'npm run test',
     'npm run build',
     'npm run test:e2e',
@@ -1461,7 +1475,8 @@ function buildReadme() {
     '### Test Strategy',
     '',
     '- `npm run test` runs deterministic Vitest coverage for calculations, repositories, security safeguards, page rendering, and mocked Overpass/Open-Meteo/OSRM request-response contracts. The live external-service file is skipped in this fast default suite.',
-    '- `node tests/full-suite.test.mjs` runs the standalone Node `.mjs` application contract suite. It intentionally skips modules that cannot be imported outside Vite/alias resolution and reports those skips in the TAP output.',
+    '- `npm run test:settings-contract` runs the broad settings migration, validation, security, persistence, backup, and lifecycle contract audit.',
+    '- `npm run test:standalone` runs the standalone Node `.mjs` application contract suite. It intentionally skips modules that cannot be imported outside Vite/alias resolution and reports those skips in the TAP output.',
     '- `npm run test:e2e` builds the app, serves the generated `dist/` bundle with `scripts/serve-dist-for-playwright.mjs`, and drives Chromium through the app shell, onboarding redirect, desktop/mobile navigation, 404 recovery, Dashboard, Settings, and Trips smoke flows.',
     '- `npm run test:contracts:live` makes real network requests to Open-Meteo forecast, Overpass interpreter, and the public OSRM matching endpoint to detect upstream response-contract changes.',
     '- `e2e/fixtures/seedRoadSage.js` and `e2e/helpers/globalAssert.js` provide shared browser seeding and runtime assertions for Playwright coverage.',
@@ -1503,10 +1518,27 @@ function buildReadme() {
   ].join('\n');
 }
 
-fs.mkdirSync(DOCS_DIR, { recursive: true });
-fs.writeFileSync(TECHNICAL_REFERENCE_PATH, buildDoc(), 'utf8');
-fs.writeFileSync(path.join(ROOT, 'README.md'), buildReadme(), 'utf8');
+const technicalReference = buildDoc();
+const readme = buildReadme();
 
-console.log(`Wrote ${TECHNICAL_REFERENCE_RELATIVE} and README.md`);
+if (checkOnly) {
+  const stale = [];
+  if (!fs.existsSync(TECHNICAL_REFERENCE_PATH) || read(TECHNICAL_REFERENCE_PATH) !== technicalReference) {
+    stale.push(TECHNICAL_REFERENCE_RELATIVE);
+  }
+  if (!fs.existsSync(README_PATH) || read(README_PATH) !== readme) {
+    stale.push('README.md');
+  }
+  if (stale.length > 0) {
+    console.error(`${stale.join(' and ')} ${stale.length === 1 ? 'is' : 'are'} stale. Run npm run docs:technical.`);
+    process.exit(1);
+  }
+  console.log(`${TECHNICAL_REFERENCE_RELATIVE} and README.md are current.`);
+} else {
+  fs.mkdirSync(DOCS_DIR, { recursive: true });
+  fs.writeFileSync(TECHNICAL_REFERENCE_PATH, technicalReference, 'utf8');
+  fs.writeFileSync(README_PATH, readme, 'utf8');
+  console.log(`Wrote ${TECHNICAL_REFERENCE_RELATIVE} and README.md`);
+}
 console.log(`Production calculations indexed: ${productionCalculations.length}`);
 console.log(`Hard-coded literals indexed: ${literals.length}`);

@@ -24,7 +24,7 @@ test('navigates the core dashboard and settings flow', async ({ page }) => {
 
   await expect(page.getByRole('banner')).toContainText('Road Sage');
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-  await expect(page.getByText(/Tracking is ready|tracking setup/i)).toBeVisible();
+  await expect(page.getByText(/^(Tracking is ready|Check tracking setup)$/i)).toBeVisible();
 
   await page.getByRole('link', { name: /Settings/ }).click();
   await expect(page).toHaveURL(/\/settings$/);
