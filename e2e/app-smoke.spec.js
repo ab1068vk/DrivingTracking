@@ -19,6 +19,7 @@ test('navigates the core dashboard and settings flow', async ({ page }) => {
   await expect(page.getByRole('banner')).toContainText('Road Sage');
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
   await expect(page.getByText(/Tracking is ready|tracking setup/i)).toBeVisible();
+  await expect(page.getByText('Why tracking did or did not start')).toBeVisible();
 
   await page.getByRole('link', { name: /Settings/ }).click();
   await expect(page).toHaveURL(/\/settings$/);
@@ -34,4 +35,22 @@ test('opens empty trip history without leaving the app shell', async ({ page }) 
   await expect(page.getByRole('banner')).toContainText('Road Sage');
   await expect(page.getByRole('heading', { name: /Trip/i })).toBeVisible();
   await expect(page.getByText(/No trips|Start tracking|record/i).first()).toBeVisible();
+});
+
+test('opens reports export scope without mutating app data', async ({ page }) => {
+  await page.goto('/reports');
+
+  await expect(page.getByRole('banner')).toContainText('Road Sage');
+  await expect(page.getByRole('heading', { name: 'Reports' })).toBeVisible();
+  await expect(page.getByLabel('Report export package')).toContainText('Export package');
+  await expect(page.getByText('Generated exports are presentation files only')).toBeVisible();
+});
+
+test('opens diagnostics recovery compatibility as read-only facts', async ({ page }) => {
+  await page.goto('/diagnostics');
+
+  await expect(page.getByRole('banner')).toContainText('Road Sage');
+  await expect(page.getByRole('heading', { name: 'Tracking Diagnostics' })).toBeVisible();
+  await expect(page.getByLabel('Recovery compatibility snapshot')).toContainText('Recovery Compatibility');
+  await expect(page.getByLabel('Recovery compatibility snapshot')).toContainText('No writes');
 });
