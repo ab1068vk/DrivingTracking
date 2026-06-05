@@ -35,16 +35,22 @@ export default function TripCard({
   const tags = normalizeTripTags(trip);
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
   const title = getTripDisplayName(trip);
+  const openTrip = () => navigate(`/trips/${trip.id}`);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05 }}
-      onClick={() => navigate(`/trips/${trip.id}`)}
-      className="bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group"
+      className="relative bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all group"
     >
-      <div className="flex items-start justify-between gap-3">
+      <button
+        type="button"
+        onClick={openTrip}
+        aria-label={`Open trip: ${title}`}
+        className="absolute inset-0 rounded-2xl cursor-pointer"
+      />
+      <div className="pointer-events-none relative flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="mb-2 flex items-center gap-2">
             <div className="min-w-0 flex-1">
@@ -63,7 +69,8 @@ export default function TripCard({
                 onToggleFavorite?.(trip);
               }}
               title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
-              className={`rounded-lg p-1.5 transition-colors ${
+              aria-label={trip.is_favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`}
+              className={`pointer-events-auto relative z-10 min-h-11 min-w-11 rounded-lg p-1.5 transition-colors ${
                 trip.is_favorite ? 'text-amber-500' : 'text-muted-foreground hover:bg-secondary'
               }`}
             >

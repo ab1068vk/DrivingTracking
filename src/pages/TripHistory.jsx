@@ -241,6 +241,7 @@ export default function TripHistory() {
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <input
           type="text"
+          aria-label="Search trip history"
           placeholder="Search location, vehicle, tag, note, score, or date"
           value={search}
           onChange={event => setSearch(event.target.value)}
@@ -294,7 +295,7 @@ export default function TripHistory() {
         </div>
       )}
 
-      <div className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
+      <div role="toolbar" aria-label="Trip history filters" className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
           <button
             onClick={() => setShowFilters(!showFilters)}
             aria-expanded={showFilters}
@@ -307,6 +308,7 @@ export default function TripHistory() {
         </button>
 
         <select
+          aria-label="Sort trips"
           value={sortBy}
           onChange={event => setSortBy(event.target.value)}
           className="flex-shrink-0 bg-card border border-border rounded-xl text-xs font-medium px-3 py-2 text-muted-foreground outline-none"
@@ -320,6 +322,7 @@ export default function TripHistory() {
           <button
             key={option.id}
             onClick={() => setFilterBy(option.id)}
+            aria-pressed={filterBy === option.id}
             className={`flex-shrink-0 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
               filterBy === option.id
                 ? 'bg-primary text-primary-foreground border-primary'
@@ -340,6 +343,7 @@ export default function TripHistory() {
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setSelectedTag('all')}
+              aria-pressed={selectedTag === 'all'}
               className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
                 selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
               }`}
@@ -350,6 +354,7 @@ export default function TripHistory() {
               <button
                 key={option.id}
                 onClick={() => setSelectedTag(option.id)}
+                aria-pressed={selectedTag === option.id}
                 className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
                   selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
                 }`}
@@ -387,7 +392,7 @@ export default function TripHistory() {
                     <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">
                       {preset.name}
                     </button>
-                    <button type="button" onClick={() => removeSavedFilter(preset.id)} className="text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
+                    <button type="button" onClick={() => removeSavedFilter(preset.id)} className="min-h-9 min-w-9 text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
                       x
                     </button>
                   </span>
@@ -426,6 +431,10 @@ export default function TripHistory() {
           </button>
         </div>
       )}
+
+      <div className="sr-only" aria-live="polite">
+        {isLoading ? 'Loading trip history' : `${sorted.length} trips shown`}
+      </div>
 
       {!isLoading && sorted.length > 0 && (
         <div className="space-y-3">

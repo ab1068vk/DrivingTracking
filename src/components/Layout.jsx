@@ -68,12 +68,18 @@ export default function Layout() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen min-w-0 bg-background flex flex-col">
+      <a
+        href="#main-content"
+        className="sr-only fixed left-3 top-3 z-[70] rounded-lg bg-primary px-4 py-3 font-semibold text-primary-foreground shadow-lg focus:not-sr-only"
+      >
+        Skip to main content
+      </a>
       {/* Top Header */}
-      <header className="bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
-        <div className="flex items-center gap-3">
+      <header className="min-w-0 bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
+        <div className="flex min-w-0 items-center gap-3">
           <BrandMark className="h-8 w-8" />
-          <span className="font-grotesk font-bold text-lg tracking-tight">Road Sage</span>
+          <span className="truncate font-grotesk font-bold text-lg tracking-tight">Road Sage</span>
           {trackingActive && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
@@ -99,7 +105,7 @@ export default function Layout() {
         </div>
 
         {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-1">
+        <nav aria-label="Primary navigation" className="hidden md:flex items-center gap-1">
           {navItems.map(item => {
             const Icon = item.icon;
             return (
@@ -124,9 +130,11 @@ export default function Layout() {
 
         {/* Mobile menu toggle */}
         <button
-          className="md:hidden p-2 rounded-lg hover:bg-secondary transition-colors"
+          className="min-h-11 min-w-11 rounded-lg p-2 hover:bg-secondary transition-colors md:hidden"
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-navigation"
         >
           {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
@@ -148,9 +156,13 @@ export default function Layout() {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              id="mobile-navigation"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Navigation menu"
               className="fixed top-0 right-0 bottom-0 z-50 w-64 bg-card border-l border-border shadow-2xl md:hidden flex flex-col pt-16"
             >
-              <nav className="flex flex-col p-4 gap-1">
+              <nav aria-label="Mobile navigation" className="flex flex-col p-4 gap-1">
                 {navItems.map(item => {
                   const Icon = item.icon;
                   return (
@@ -178,7 +190,7 @@ export default function Layout() {
       </AnimatePresence>
 
       {/* Main Content */}
-      <main className="flex-1 container max-w-6xl mx-auto px-4 py-6">
+      <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 container max-w-6xl mx-auto px-4 py-6">
         <Outlet />
       </main>
       <footer className="border-t border-border/50 px-4 py-3 text-center text-[11px] leading-relaxed text-muted-foreground">

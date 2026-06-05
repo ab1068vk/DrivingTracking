@@ -40,4 +40,12 @@ describe('TripCard score provenance display', () => {
     expect(html).toContain('>88</span>');
     expect(html).not.toContain('~88');
   });
+
+  it('uses separate labeled buttons for opening and favoriting a trip', () => {
+    const html = renderToStaticMarkup(<TripCard trip={trip('approximate')} />);
+
+    expect(html).toContain('<button type="button"');
+    expect(html).toContain('aria-label="Open trip: Untitled trip"');
+    expect(html).toContain('aria-label="Add Untitled trip to favorites"');
+  });
 });
