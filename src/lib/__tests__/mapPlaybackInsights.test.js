@@ -121,6 +121,23 @@ describe('mapPlaybackInsights', () => {
     expect(timeline.stats.distanceKm).toBeLessThan(0.2);
   });
 
+  it('drops out-of-range coordinates before map and playback math', () => {
+    const route = [
+      point(0, 20),
+      { lat: 512, lng: -79.38, speed_kmh: 20, timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 10)).toISOString() },
+      { lat: 43.652, lng: -724, speed_kmh: 20, timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 20)).toISOString() },
+      point(3, 20),
+    ];
+
+    const prepared = prepareMapRoutePoints(route, { maxPoints: null, smooth: false });
+    const timeline = buildPlaybackTimeline(route, []);
+
+    expect(prepared).toHaveLength(2);
+    expect(prepared.every((item) => item.lat >= -90 && item.lat <= 90 && item.lng >= -180 && item.lng <= 180)).toBe(true);
+    expect(timeline.stats.distanceKm).toBeGreaterThan(0);
+    expect(timeline.stats.distanceKm).toBeLessThan(0.5);
+  });
+
   it('recovers routes collapsed by old map-matching updates', () => {
     const damaged = [0, 1, 2].map((index) => ({
       lat: 43.7,

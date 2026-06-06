@@ -22,6 +22,9 @@ const finiteNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
+const validLatitude = (value) => value != null && value >= -90 && value <= 90;
+const validLongitude = (value) => value != null && value >= -180 && value <= 180;
+
 export const pointTimeMs = (point) => {
   const value = point?.timestamp ?? point?.time;
   if (value == null) return null;
@@ -50,7 +53,7 @@ const segmentImpliedSpeedKmh = (prev, curr) => {
 };
 
 const shouldKeepVisualPoint = (point, previous) => {
-  if (point.lat == null || point.lng == null) return false;
+  if (!validLatitude(point.lat) || !validLongitude(point.lng)) return false;
   if (point.accuracy != null && !point.map_matched && point.accuracy > MAX_VISUAL_ACCURACY_M) return false;
   if (Number.isFinite(point.speed_kmh) && point.speed_kmh > MAX_VISUAL_SPEED_KMH) return false;
   if (!previous) return true;

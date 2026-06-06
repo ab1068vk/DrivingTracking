@@ -30,6 +30,16 @@ const MAP_FILTERS = [
 ];
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
+const scheduleIdleWork = (callback) => {
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    const idleId = window.requestIdleCallback(callback, { timeout: 1000 });
+    return () => window.cancelIdleCallback?.(idleId);
+  }
+
+  const timer = setTimeout(callback, 120);
+  return () => clearTimeout(timer);
+};
+
 const relativeTime = (value) => {
   const elapsed = Date.now() - new Date(value).getTime();
   if (!Number.isFinite(elapsed)) return 'recently';
@@ -68,15 +78,15 @@ export default function MapScreen() {
   const [showLayerPanel, setShowLayerPanel] = useState(true);
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
-  const settings = localSettings.get();
+  const settings = useMemo(() => localSettings.get(), []);
   const units = settings.units || 'metric';
-  const privacyZones = getPrivacyZones(settings);
-  const privacyZonesKey = JSON.stringify(privacyZones.map((zone) => [
+  const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
+  const privacyZonesKey = useMemo(() => JSON.stringify(privacyZones.map((zone) => [
     zone.id,
     Number(zone.lat),
     Number(zone.lng),
     Number(zone.radius_m),
-  ]));
+  ])), [privacyZones]);
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
   const { data: trips = [] } = useQuery({
@@ -113,17 +123,28 @@ export default function MapScreen() {
     },
   });
 
-  const allCompleted = trips.filter(t => t.status === 'completed' && t.route_points?.length > 1);
-  const completed = allCompleted.filter(t => {
+  const allCompleted = useMemo(
+    () => trips.filter(t => t.status === 'completed' && t.route_points?.length > 1),
+    [trips]
+  );
+  const completed = useMemo(() => allCompleted.filter(t => {
     if (mapFilter === 'night') return t.night_driving;
     if (mapFilter === 'harsh_braking') return (t.harsh_brakes_count || 0) > 0;
     return true;
-  });
-  const selectedTrip = allCompleted.find(t => t.id === selectedTripId);
-  const secondaryTrip = allCompleted.find(t => String(t.id) === String(secondaryTripId));
-  const selectedEvents = settings.phone_use_show_on_map === false
-    ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
-    : (selectedTrip?.driving_events || []);
+  }), [allCompleted, mapFilter]);
+  const selectedTrip = useMemo(
+    () => allCompleted.find(t => t.id === selectedTripId),
+    [allCompleted, selectedTripId]
+  );
+  const secondaryTrip = useMemo(
+    () => allCompleted.find(t => String(t.id) === String(secondaryTripId)),
+    [allCompleted, secondaryTripId]
+  );
+  const selectedEvents = useMemo(() => (
+    settings.phone_use_show_on_map === false
+      ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
+      : (selectedTrip?.driving_events || [])
+  ), [selectedTrip, settings.phone_use_show_on_map]);
   const selectedSpeedLimitCoverage = selectedTrip?.speed_limit_context?.coverage ?? 0;
   const selectedHasSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
@@ -169,23 +190,25 @@ export default function MapScreen() {
         .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
     ].slice(0, 6);
   }, [allCompleted, commutePatterns, selectedTrip, units]);
-  const mapRoutes = selectedTrip
-    ? [{
-      id: selectedTrip.id,
-      route_points: selectedTrip.route_points,
-      rawPointCount: selectedTrip.route_points_raw_count,
-      selected: true,
-      color: '#3b82f6',
-      label: formatDate(selectedTrip.start_time),
-    }]
-    : completed.map((trip, index) => ({
-      id: trip.id,
-      route_points: trip.route_points,
-      rawPointCount: trip.route_points_raw_count,
-      selected: false,
-      color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
-      label: formatDate(trip.start_time),
-    }));
+  const mapRoutes = useMemo(() => (
+    selectedTrip
+      ? [{
+        id: selectedTrip.id,
+        route_points: selectedTrip.route_points,
+        rawPointCount: selectedTrip.route_points_raw_count,
+        selected: true,
+        color: '#3b82f6',
+        label: formatDate(selectedTrip.start_time),
+      }]
+      : completed.map((trip, index) => ({
+        id: trip.id,
+        route_points: trip.route_points,
+        rawPointCount: trip.route_points_raw_count,
+        selected: false,
+        color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
+        label: formatDate(trip.start_time),
+      }))
+  ), [completed, selectedTrip]);
 
   const confirmAndFetchRoadContext = () => {
     if (!selectedTrip) return;
@@ -235,11 +258,12 @@ export default function MapScreen() {
       }
     };
 
-    rebuildOverlays();
+    const cancelScheduledWork = scheduleIdleWork(rebuildOverlays);
     return () => {
       cancelled = true;
+      cancelScheduledWork();
     };
-  }, [allCompleted.length, trips, privacyZonesKey]);
+  }, [allCompleted, privacyZones, privacyZonesKey]);
 
   const handleWhereParked = async () => {
     const stored = await getLastParkedLocation();

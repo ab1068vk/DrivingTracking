@@ -38,12 +38,26 @@ export default function Layout() {
     const checkTracking = () => {
       try {
         const raw = localStorage.getItem('drivesense_active_trip');
-        setTrackingActive(!!raw);
+        const nextActive = !!raw;
+        setTrackingActive((current) => (current === nextActive ? current : nextActive));
       } catch {}
     };
+    const checkTrackingWhenVisible = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        checkTracking();
+      }
+    };
     checkTracking();
-    const interval = setInterval(checkTracking, 2000);
-    return () => clearInterval(interval);
+    const interval = setInterval(checkTrackingWhenVisible, 5000);
+    window.addEventListener('storage', checkTracking);
+    window.addEventListener('focus', checkTracking);
+    document.addEventListener('visibilitychange', checkTrackingWhenVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', checkTracking);
+      window.removeEventListener('focus', checkTracking);
+      document.removeEventListener('visibilitychange', checkTrackingWhenVisible);
+    };
   }, []);
 
   useEffect(() => {

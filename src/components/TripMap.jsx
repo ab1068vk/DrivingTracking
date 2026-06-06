@@ -49,6 +49,11 @@ const EVENT_COLORS = {
   phone_use: '#dc2626',
   possible_crash: '#991b1b',
 };
+const EMPTY_ROUTE_POINTS = [];
+const EMPTY_ROUTES = null;
+const EMPTY_EVENTS = [];
+const EMPTY_DANGER_ZONES = [];
+const EMPTY_ROUTE_RISK_SEGMENTS = [];
 
 const EVENT_LABELS = {
   harsh_brake: '!',
@@ -310,17 +315,17 @@ export default function TripMap(props) {
 }
 
 function TripMapContent({
-  routePoints = [],
-  routes = null,
-  events = [],
+  routePoints = EMPTY_ROUTE_POINTS,
+  routes = EMPTY_ROUTES,
+  events = EMPTY_EVENTS,
   showCurrentLocation = false,
   currentLocation = null,
   parkedLocation = null,
   showCorneringHeatmap = false,
   showDangerZones = false,
-  dangerZones = [],
+  dangerZones = EMPTY_DANGER_ZONES,
   showRouteRisk = false,
-  routeRiskSegments = [],
+  routeRiskSegments = EMPTY_ROUTE_RISK_SEGMENTS,
   showSpeedLimits = false,
   rawPointCount = null,
   smoothRoute = true,
@@ -917,7 +922,13 @@ function TripMapContent({
   );
 }
 
-function OfflineRoutePreview({ routePoints = [], routes = null, events = [], height = '350px', className = '' }) {
+function OfflineRoutePreview({
+  routePoints = EMPTY_ROUTE_POINTS,
+  routes = EMPTY_ROUTES,
+  events = EMPTY_EVENTS,
+  height = '350px',
+  className = '',
+}) {
   const settings = localSettings.get();
   const routeSets = Array.isArray(routes)
     ? routes

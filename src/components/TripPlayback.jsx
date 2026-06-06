@@ -14,6 +14,7 @@ import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const DEFAULT_MAP_ZOOM = 13;
+const DEFAULT_MAP_CENTER = { lat: 43.6532, lng: -79.3832 };
 const DEVICE_LOCATION_TIMEOUT_MS = 1800;
 
 const EVENT_COLORS = {
@@ -199,8 +200,19 @@ const resolveFallbackMapCenter = async (settings = {}) => {
   if (contextualCenter) return contextualCenter;
 
   const envCenter = envDefaultMapCenter();
-  return envCenter ? { ...envCenter, source: 'env_default' } : null;
+  return envCenter
+    ? { ...envCenter, source: 'env_default' }
+    : { ...DEFAULT_MAP_CENTER, source: 'safe_default' };
 };
+
+const resolveInitialMapCenter = (points = [], secondaryPoints = [], settings = {}) => (
+  validLatLng(points[0]?.lat, points[0]?.lng) ||
+  validLatLng(secondaryPoints[0]?.lat, secondaryPoints[0]?.lng) ||
+  settingMapCenter(settings.last_map_center) ||
+  privacyZoneMapCenter(settings) ||
+  envDefaultMapCenter() ||
+  DEFAULT_MAP_CENTER
+);
 
 const persistLastMapCenter = (point, tripId = null) => {
   const center = validLatLng(point?.lat, point?.lng);
@@ -277,8 +289,15 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], privacySettings),
     { maxPoints: 700 }
   ), [privacySettings, secondaryTrip?.route_points]);
-  const events = useMemo(() => maskEventsForPrivacy(trip?.driving_events || [], privacySettings), [privacySettings, trip?.driving_events]);
-  const visiblePrivacyZones = useMemo(() => getPrivacyZones(privacySettings), [privacySettings]);
+  const events = useMemo(
+    () => maskEventsForPrivacy(trip?.driving_events || [], privacySettings)
+      .filter((event) => validLatLng(event?.lat, event?.lng)),
+    [privacySettings, trip?.driving_events]
+  );
+  const visiblePrivacyZones = useMemo(
+    () => getPrivacyZones(privacySettings).filter((zone) => validLatLng(zone?.lat, zone?.lng)),
+    [privacySettings]
+  );
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
   const pointCountSummary = rawPointCount !== totalPoints
@@ -329,160 +348,184 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     let cancelled = false;
     loadLeaflet().then(() => {
       if (cancelled || !mapRef.current || leafletMapRef.current) return;
-      const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
-      leafletMapRef.current = map;
-      window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
-      map.whenReady(() => {
-        if (!cancelled) setTimeout(() => map.invalidateSize(), 50);
-      });
-
-      if (points.length === 1) {
-        const onlyPoint = validLatLng(points[0].lat, points[0].lng);
-        if (onlyPoint) {
-          persistLastMapCenter(onlyPoint, trip?.id);
-          map.setView([onlyPoint.lat, onlyPoint.lng], 15);
-        }
-      } else if (points.length > 1) {
-        const latLngs = points.map(p => [p.lat, p.lng]);
-
-        window.L.polyline(latLngs, {
-          color: '#0f172a',
-          weight: 10,
-          opacity: 0.18,
-          smoothFactor: 1.5,
-          lineCap: 'round',
-          lineJoin: 'round',
-        }).addTo(map);
-
-        speedSegments.forEach((segment) => {
-          window.L.polyline(
-            [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-            {
-              color: segment.color,
-              weight: 6,
-              opacity: 0.62,
-              smoothFactor: 1.5,
-              lineCap: 'round',
-              lineJoin: 'round',
-            }
-          )
-            .bindPopup(buildSpeedSegmentPopupHtml({
-              label: segment.band.label,
-              speedKmh: segment.speedKmh,
-              speedLimitKmh: segment.speedLimitKmh,
-            }))
-            .on('click', () => setSelectedSegmentId(segment.id))
-            .addTo(map);
+      try {
+        const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
+        leafletMapRef.current = map;
+        const initialCenter = resolveInitialMapCenter(points, secondaryPoints, privacySettings);
+        map.setView([initialCenter.lat, initialCenter.lng], DEFAULT_MAP_ZOOM);
+        window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+        map.whenReady(() => {
+          if (!cancelled) setTimeout(() => map.invalidateSize(), 50);
         });
 
-        if (secondaryPoints.length > 1) {
-          window.L.polyline(secondaryPoints.map((point) => [point.lat, point.lng]), {
+        if (points.length === 1) {
+          const onlyPoint = validLatLng(points[0].lat, points[0].lng);
+          if (onlyPoint) {
+            persistLastMapCenter(onlyPoint, trip?.id);
+            map.setView([onlyPoint.lat, onlyPoint.lng], 15);
+          }
+        } else if (points.length > 1) {
+          const latLngs = points.map(p => [p.lat, p.lng]);
+
+          window.L.polyline(latLngs, {
             color: '#0f172a',
-            weight: 8,
-            opacity: 0.12,
+            weight: 10,
+            opacity: 0.18,
             smoothFactor: 1.5,
             lineCap: 'round',
             lineJoin: 'round',
           }).addTo(map);
-          secondarySegments.forEach((segment) => {
+
+          speedSegments.forEach((segment) => {
             window.L.polyline(
-            [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-            {
-              color: '#f97316',
-              weight: 5,
-              opacity: 0.55,
-              dashArray: '7 7',
+              [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+              {
+                color: segment.color,
+                weight: 6,
+                opacity: 0.62,
+                smoothFactor: 1.5,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }
+            )
+              .bindPopup(buildSpeedSegmentPopupHtml({
+                label: segment.band.label,
+                speedKmh: segment.speedKmh,
+                speedLimitKmh: segment.speedLimitKmh,
+              }))
+              .on('click', () => setSelectedSegmentId(segment.id))
+              .addTo(map);
+          });
+
+          if (secondaryPoints.length > 1) {
+            window.L.polyline(secondaryPoints.map((point) => [point.lat, point.lng]), {
+              color: '#0f172a',
+              weight: 8,
+              opacity: 0.12,
               smoothFactor: 1.5,
               lineCap: 'round',
               lineJoin: 'round',
-            }
-          )
-              .bindPopup(`Comparison: ${Math.round(segment.speedKmh)} km/h`)
+            }).addTo(map);
+            secondarySegments.forEach((segment) => {
+              window.L.polyline(
+                [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+                {
+                  color: '#f97316',
+                  weight: 5,
+                  opacity: 0.55,
+                  dashArray: '7 7',
+                  smoothFactor: 1.5,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }
+              )
+                .bindPopup(`Comparison: ${Math.round(segment.speedKmh)} km/h`)
+                .addTo(map);
+            });
+            secondaryPoints.forEach((point) => {
+              if (validLatLng(point.lat, point.lng)) latLngs.push([point.lat, point.lng]);
+            });
+          }
+
+          progressLayersRef.current = window.L.layerGroup().addTo(map);
+
+          const startIcon = window.L.divIcon({
+            html: endpointIconHtml('S', '#16a34a'),
+            className: '',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+          });
+          const endIcon = window.L.divIcon({
+            html: endpointIconHtml('E', '#ef4444'),
+            className: '',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+          });
+          window.L.marker(latLngs[0], { icon: startIcon }).bindPopup('<b>Start</b>').addTo(map);
+          window.L.marker(latLngs[points.length - 1], { icon: endIcon }).bindPopup('<b>End</b>').addTo(map);
+
+          events.forEach(evt => {
+            const eventPoint = validLatLng(evt.lat, evt.lng);
+            if (!eventPoint) return;
+            const color = EVENT_COLORS[evt.type] || '#6b7280';
+            const icon = window.L.divIcon({
+              html: eventMarkerHtml(evt, color),
+              className: '', iconSize: [32, 32], iconAnchor: [16, 16],
+            });
+            window.L.marker([eventPoint.lat, eventPoint.lng], { icon })
+              .bindPopup(eventPopupHtml(evt))
               .addTo(map);
           });
-          secondaryPoints.forEach((point) => {
-            if (Number.isFinite(point.lat) && Number.isFinite(point.lng)) latLngs.push([point.lat, point.lng]);
-          });
-        }
 
-        progressLayersRef.current = window.L.layerGroup().addTo(map);
-
-        const startIcon = window.L.divIcon({
-          html: endpointIconHtml('S', '#16a34a'),
-          className: '',
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        });
-        const endIcon = window.L.divIcon({
-          html: endpointIconHtml('E', '#ef4444'),
-          className: '',
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        });
-        window.L.marker(latLngs[0], { icon: startIcon }).bindPopup('<b>Start</b>').addTo(map);
-        window.L.marker(latLngs[points.length - 1], { icon: endIcon }).bindPopup('<b>End</b>').addTo(map);
-
-        events.forEach(evt => {
-          if (!evt.lat || !evt.lng) return;
-          const color = EVENT_COLORS[evt.type] || '#6b7280';
-          const icon = window.L.divIcon({
-            html: eventMarkerHtml(evt, color),
-            className: '', iconSize: [32, 32], iconAnchor: [16, 16],
-          });
-          window.L.marker([evt.lat, evt.lng], { icon })
-            .bindPopup(eventPopupHtml(evt))
-            .addTo(map);
-        });
-
-        const carIcon = window.L.divIcon({
-          html: carIconHtml('#2563eb', 0),
-          className: '', iconSize: [34, 34], iconAnchor: [17, 17],
-        });
-        markerRef.current = window.L.marker(latLngs[0], { icon: carIcon }).addTo(map);
-
-        if (secondaryPoints.length > 0) {
-          const secondaryIcon = window.L.divIcon({
-            html: carIconHtml('#f97316', 0, '2'),
+          const carIcon = window.L.divIcon({
+            html: carIconHtml('#2563eb', 0),
             className: '', iconSize: [34, 34], iconAnchor: [17, 17],
           });
-          secondaryMarkerRef.current = window.L.marker([secondaryPoints[0].lat, secondaryPoints[0].lng], { icon: secondaryIcon }).addTo(map);
+          markerRef.current = window.L.marker(latLngs[0], { icon: carIcon }).addTo(map);
+
+          if (secondaryPoints.length > 0) {
+            const secondaryIcon = window.L.divIcon({
+              html: carIconHtml('#f97316', 0, '2'),
+              className: '', iconSize: [34, 34], iconAnchor: [17, 17],
+            });
+            secondaryMarkerRef.current = window.L.marker([secondaryPoints[0].lat, secondaryPoints[0].lng], { icon: secondaryIcon }).addTo(map);
+          }
+
+          const bounds = window.L.latLngBounds(latLngs);
+          const midpoint = points[Math.floor((points.length - 1) / 2)];
+          persistLastMapCenter(midpoint, trip?.id);
+          visiblePrivacyZones.forEach((zone) => {
+            const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
+            const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
+              radius,
+              color: '#2563eb',
+              fillColor: '#3b82f6',
+              fillOpacity: 0.08,
+              opacity: 0.72,
+              weight: 2,
+              dashArray: '8 6',
+            })
+              .bindPopup(privacyZonePopupHtml(zone))
+              .addTo(map);
+            bounds.extend(circle.getBounds());
+          });
+
+          map.fitBounds(bounds, { padding: [24, 24] });
+          setTimeout(() => map.invalidateSize(), 50);
+        } else {
+          resolveFallbackMapCenter(privacySettings).then((center) => {
+            if (cancelled || !center || !leafletMapRef.current) return;
+            map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM);
+          });
         }
-
-        const bounds = window.L.latLngBounds(latLngs);
-        const midpoint = points[Math.floor((points.length - 1) / 2)];
-        persistLastMapCenter(midpoint, trip?.id);
-        visiblePrivacyZones.forEach((zone) => {
-          const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
-          const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
-            radius,
-            color: '#2563eb',
-            fillColor: '#3b82f6',
-            fillOpacity: 0.08,
-            opacity: 0.72,
-            weight: 2,
-            dashArray: '8 6',
-          })
-            .bindPopup(privacyZonePopupHtml(zone))
-            .addTo(map);
-          bounds.extend(circle.getBounds());
-        });
-
-        map.fitBounds(bounds, { padding: [24, 24] });
-        setTimeout(() => map.invalidateSize(), 50);
-      } else {
-        resolveFallbackMapCenter(privacySettings).then((center) => {
-          if (cancelled || !center || !leafletMapRef.current) return;
-          map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM);
-        });
+      } catch (error) {
+        console.error('Playback map failed to initialize', error);
+        if (!cancelled) setMapFailed(true);
+        try {
+          leafletMapRef.current?.remove();
+        } catch {
+          // Ignore Leaflet cleanup failures from partially initialized maps.
+        }
+        leafletMapRef.current = null;
+        markerRef.current = null;
+        secondaryMarkerRef.current = null;
+        progressLayersRef.current = null;
       }
     }).catch((error) => {
       console.error('Playback map failed to initialize', error);
-      if (!cancelled && !leafletMapRef.current) setMapFailed(true);
+      if (!cancelled) setMapFailed(true);
     });
     return () => {
       cancelled = true;
       cancelAnimationFrame(animRef.current);
-      if (leafletMapRef.current) { leafletMapRef.current.remove(); leafletMapRef.current = null; }
+      if (leafletMapRef.current) {
+        try {
+          leafletMapRef.current.remove();
+        } catch {
+          // Ignore Leaflet cleanup failures from partially initialized maps.
+        }
+        leafletMapRef.current = null;
+      }
       markerRef.current = null;
       secondaryMarkerRef.current = null;
       progressLayersRef.current = null;

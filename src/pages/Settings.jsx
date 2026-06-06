@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -205,6 +205,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
 const PRIVACY_RADIUS_MIN_M = 50;
 const PRIVACY_RADIUS_MAX_M = 1000;
 const PRIVACY_RADIUS_DEFAULT_M = 180;
+const SETTINGS_HEAVY_QUERY_STALE_MS = 30_000;
 const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
 const PENALTY_SCALE_CALIBRATION = Object.freeze({
   key: 'PENALTY_SCALE_FACTOR',
@@ -263,11 +264,7 @@ export default function Settings() {
   // Load settings from local storage
   const [cfg, setCfg] = useState(() => localSettings.get());
   const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
-
-  const { data: allTrips = [] } = useQuery({
-    queryKey: ['settings-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
-  });
+  const [deferredDataEnabled, setDeferredDataEnabled] = useState(false);
 
   const { data: scoreMigrationSummary = {
     scoring_version: SCORING_VERSION,
@@ -285,11 +282,20 @@ export default function Settings() {
   } } = useQuery({
     queryKey: ['score-migration-summary'],
     queryFn: () => tripService.getScoreMigrationSummary(),
+    enabled: deferredDataEnabled,
+    staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
 
-  const { data: allVehicles = [] } = useQuery({
+  const getSettingsTrips = () => qc.fetchQuery({
+    queryKey: ['settings-trips'],
+    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
+  });
+
+  const getSettingsVehicles = () => qc.fetchQuery({
     queryKey: ['settings-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 200 }),
+    staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
 
   const updateCfg = (patch) => {
@@ -323,6 +329,27 @@ export default function Settings() {
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
   }, [cfg.osrm_map_matching_url]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const enable = () => {
+      if (!cancelled) setDeferredDataEnabled(true);
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(enable, { timeout: 1200 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timer = setTimeout(enable, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -928,7 +955,7 @@ export default function Settings() {
 
   const handleDeleteAllTrips = async () => {
     if (!confirm('Delete ALL trips? This cannot be undone.')) return;
-    const trips = allTrips;
+    const trips = await getSettingsTrips();
     for (const t of trips) {
       await tripService.delete(t.id);
     }
@@ -940,7 +967,8 @@ export default function Settings() {
   };
 
   const handleExportAll = async () => {
-    const completed = allTrips.filter(t => t.status === 'completed');
+    const trips = await getSettingsTrips();
+    const completed = trips.filter(t => t.status === 'completed');
     const csv = tripsToCSV(completed);
     const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
     toast({
@@ -952,9 +980,13 @@ export default function Settings() {
   };
 
   const handleExportBackup = async () => {
+    const [trips, vehicles] = await Promise.all([
+      getSettingsTrips(),
+      getSettingsVehicles(),
+    ]);
     const result = await exportDriveSenseBackup({
-      trips: allTrips,
-      vehicles: allVehicles,
+      trips,
+      vehicles,
       settings: cfg,
     });
     toast({
@@ -1018,7 +1050,7 @@ export default function Settings() {
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
   const settingsSearchQuery = settingsSearch.trim().toLowerCase();
-  const settingSearchResults = [
+  const settingSearchResults = useMemo(() => [
     { label: 'Tracking mode', section: 'Tracking', sectionId: 'settings-tracking', detail: 'Manual, foreground auto-detect, background auto, and pause controls.', keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement' },
     { label: 'Android permissions', section: 'Android Permissions', sectionId: 'settings-android-permissions', detail: 'Location, background location, activity, battery, and native auto service setup.', keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt' },
     { label: 'Feature permissions', section: 'Feature Permissions', sectionId: 'settings-feature-permissions', detail: 'See which features are blocked by missing permissions.', keywords: 'blocked unavailable permission feature status' },
@@ -1040,7 +1072,7 @@ export default function Settings() {
       + (haystack.includes(term) ? 1 : 0)
     ), 0);
     return { ...item, score };
-  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6);
+  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6), [settingsSearchQuery]);
   const scrollSettingSection = (sectionId) => {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setSettingsSearch('');
