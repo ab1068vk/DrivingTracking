@@ -603,6 +603,8 @@ describe('release blocker regressions', () => {
     expect(systemLogsPageSource).toContain('saveExportToDownloads');
     expect(systemLogsPageSource).toContain('All operations');
     expect(systemLogsPageSource).toContain('Last 24 hours');
+    expect(systemLogsPageSource).toContain('Next deletion');
+    expect(systemLogsPageSource).toContain('Decision logs appear here and in exports');
     expect(systemLogsPageSource).toContain('LOG_PAGE_SIZE');
     expect(systemLogsPageSource).toContain('visibleLogs');
     expect(systemLogsPageSource).toContain("storage: 'Storage'");

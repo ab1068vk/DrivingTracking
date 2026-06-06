@@ -21,6 +21,7 @@ import {
   logSystemFailure,
   recordSystemEvent,
   SYSTEM_LOG_EVENT,
+  SYSTEM_LOG_RETENTION_MS,
 } from '@/lib/systemLog';
 import { getNativeDiagnostics } from '@/lib/activityRecognition';
 import { isAndroid, isNativePlatform } from '@/lib/nativePlatform';
@@ -57,6 +58,7 @@ const categoryLabels = {
 
 const categoryOptions = Object.keys(categoryLabels);
 const LOG_PAGE_SIZE = 50;
+const DIAGNOSTIC_DECISION_LIMIT = 120;
 const timeRangeOptions = [
   { id: 'all', label: 'Any time', ms: Infinity },
   { id: '15m', label: 'Last 15 min', ms: 15 * 60 * 1000 },
@@ -203,6 +205,33 @@ function searchableDetailText(details = {}) {
 function safeEventTime(event) {
   const ms = new Date(event?.timestamp || 0).getTime();
   return Number.isFinite(ms) ? ms : 0;
+}
+
+function isDiagnosticSnapshotLog(event = {}) {
+  const id = String(event.id || '');
+  return id.startsWith('web_diagnostic_') || id.startsWith('native_diagnostic_');
+}
+
+function formatRelativeDuration(ms) {
+  if (!Number.isFinite(ms)) return 'soon';
+  if (ms <= 0) return 'now';
+  const minutes = Math.ceil(ms / (60 * 1000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 48) return `${hours} hr`;
+  return `${Math.ceil(hours / 24)} days`;
+}
+
+function formatDeletionTime(timestamp) {
+  const logTime = safeEventTime({ timestamp });
+  if (!logTime) return null;
+  const deleteAt = logTime + SYSTEM_LOG_RETENTION_MS;
+  const date = new Date(deleteAt);
+  if (!Number.isFinite(date.getTime())) return null;
+  return {
+    relative: formatRelativeDuration(deleteAt - Date.now()),
+    absolute: date.toLocaleString(),
+  };
 }
 
 function normalizeOptionValue(value) {
@@ -365,6 +394,19 @@ export default function SystemLogs() {
     actions: logs.filter((event) => event.category === 'user_action').length,
   }), [logs]);
 
+  const retentionSummary = useMemo(() => {
+    const systemStoredLogs = logs.filter((event) => !isDiagnosticSnapshotLog(event));
+    const diagnosticsLogs = logs.filter((event) => event.category === 'diagnostics' || isDiagnosticSnapshotLog(event));
+    const oldestSystemLog = systemStoredLogs
+      .filter((event) => safeEventTime(event))
+      .sort((a, b) => safeEventTime(a) - safeEventTime(b))[0];
+    return {
+      systemCount: systemStoredLogs.length,
+      diagnosticsCount: diagnosticsLogs.length,
+      nextDeletion: oldestSystemLog ? formatDeletionTime(oldestSystemLog.timestamp) : null,
+    };
+  }, [logs]);
+
   const activeFilterCount = [
     query.trim(),
     category !== 'all',
@@ -480,6 +522,40 @@ export default function SystemLogs() {
             </div>
           </div>
         ))}
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <div className="text-xs font-bold uppercase text-muted-foreground">Auto delete</div>
+            <div className="mt-1 text-sm font-semibold">
+              System logs expire after {Math.round(SYSTEM_LOG_RETENTION_MS / (24 * 60 * 60 * 1000))} days
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Expired entries are removed when logs load, refresh, or export.
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase text-muted-foreground">Next deletion</div>
+            <div className="mt-1 text-sm font-semibold">
+              {retentionSummary.nextDeletion
+                ? `${retentionSummary.nextDeletion.relative} (${retentionSummary.nextDeletion.absolute})`
+                : 'No stored system logs yet'}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {retentionSummary.systemCount} stored system entries are currently inside the retention window.
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase text-muted-foreground">Diagnostics included</div>
+            <div className="mt-1 text-sm font-semibold">
+              Decision logs appear here and in exports
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {retentionSummary.diagnosticsCount} diagnostic entries are shown. The Diagnostics page keeps the latest {DIAGNOSTIC_DECISION_LIMIT} web decisions; Android diagnostics are loaded when available.
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="rounded-xl border border-border bg-card p-4">
