@@ -528,8 +528,11 @@ describe('release blocker regressions', () => {
     values.set('drivesense_system_logs_v1', JSON.stringify([expired, kept]));
 
     const logs = getSystemLogs();
+    const storedLogs = JSON.parse(values.get('drivesense_system_logs_v1'));
 
     expect(logs).toEqual([kept]);
+    expect(storedLogs).toEqual([kept]);
+    expect(storedLogs.some((event) => event.id === 'expired-log')).toBe(false);
     expect(dispatchEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: SYSTEM_LOG_EVENT }));
   });
 
