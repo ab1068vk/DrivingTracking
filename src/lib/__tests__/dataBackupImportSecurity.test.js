@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKUP_PASSWORD_REQUIRED_CODE,
   BACKUP_WRONG_PASSWORD_CODE,
+  buildDriveSenseBackup,
   importDriveSenseBackup,
   BACKUP_VERSION,
   MAX_BACKUP_BYTES,
@@ -16,6 +17,7 @@ import {
   isEncryptedBackupEnvelope,
 } from '@/lib/backupEnvelopeEncryption';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
+import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
 
 vi.mock('@/api/trips', () => ({
   tripService: {
@@ -322,7 +324,7 @@ describe('backup trip import sanitization', () => {
     expect(imported.trips).toBe(1);
   });
 
-  it('imports encrypted backups through the existing v6 sanitizer without leaking plaintext', async () => {
+  it('imports encrypted backups through the existing sanitizer without leaking plaintext', async () => {
     const passphrase = 'correct horse battery staple';
     const plaintext = JSON.stringify({
       app: 'Road Sage',
@@ -355,7 +357,7 @@ describe('backup trip import sanitization', () => {
 });
 
 describe('backup schema migrations', () => {
-  it('migrates a v3 trip through scoring refresh to v6', () => {
+  it('migrates a v3 trip through scoring refresh to the current backup version', () => {
     const parsed = parseDriveSenseBackup(JSON.stringify({
       app: 'Road Sage',
       version: 3,
@@ -391,9 +393,13 @@ describe('backup schema migrations', () => {
     expect(parsed.trips[0].heading_deviation_legacy_count).toBe(1);
   });
 
-  it('leaves current v6 content unchanged during migration', () => {
+  it('migrates v6 content to v7 with empty calibration payload', () => {
     const v6 = { app: 'Road Sage', version: 6, trips: [{ id: 'trip-v6', notes: 'kept' }] };
-    expect(migrateBackup(v6, 6)).toEqual(v6);
+    expect(migrateBackup(v6, 6)).toEqual({
+      ...v6,
+      version: BACKUP_VERSION,
+      calibration: { labels: [], survey_markers: {} },
+    });
   });
 
   it('treats a versionless backup as v1', () => {
@@ -405,5 +411,81 @@ describe('backup schema migrations', () => {
     expect(parsed.sourceVersion).toBe(1);
     expect(parsed.version).toBe(BACKUP_VERSION);
     expect(parsed.trips[0].needs_rescore).toBe(true);
+  });
+});
+
+describe('backup calibration labels', () => {
+  afterEach(async () => {
+    await localCalibrationLabelRepository.replaceAll([]);
+    await localCalibrationLabelRepository.replaceTripSurveyMarkers({});
+    vi.clearAllMocks();
+  });
+
+  it('exports and parses local survey labels and trip markers', () => {
+    const backup = buildDriveSenseBackup({
+      trips: [{ id: 'trip-calibration', status: 'completed' }],
+      vehicles: [],
+      calibrationLabels: [{
+        id: 'label-1',
+        upload_status: 'local_only',
+        scoreOutput: { overall: 82 },
+        surveyLabel: {
+          overallDriveRating: 4,
+          targetScore: 75,
+          wasDriver: 'yes',
+          contextTags: ['traffic'],
+        },
+        local_only_note: 'kept in user backup',
+      }],
+      calibrationSurveyMarkers: {
+        'trip-calibration': {
+          label_id: 'label-1',
+          rating: 4,
+          upload_status: 'local_only',
+        },
+      },
+    });
+
+    const parsed = parseDriveSenseBackup(JSON.stringify(backup));
+
+    expect(parsed.calibration.labels).toHaveLength(1);
+    expect(parsed.calibration.labels[0].surveyLabel.overallDriveRating).toBe(4);
+    expect(parsed.calibration.survey_markers['trip-calibration']).toMatchObject({
+      label_id: 'label-1',
+      rating: 4,
+    });
+  });
+
+  it('restores calibration labels during backup import', async () => {
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [],
+        trips: [],
+        calibration: {
+          labels: [{
+            id: 'label-imported',
+            scoreOutput: { overall: 70 },
+            surveyLabel: { overallDriveRating: 5, targetScore: 100, wasDriver: 'yes' },
+          }],
+          survey_markers: {
+            'trip-imported': { label_id: 'label-imported', rating: 5 },
+          },
+        },
+      })),
+    };
+
+    const imported = await importDriveSenseBackup(file);
+    const labels = await localCalibrationLabelRepository.list();
+    const marker = await localCalibrationLabelRepository.getTripSurveyStatus('trip-imported');
+
+    expect(imported).toMatchObject({
+      calibrationLabels: 1,
+      calibrationLabelsRestored: true,
+    });
+    expect(labels[0].id).toBe('label-imported');
+    expect(marker).toMatchObject({ label_id: 'label-imported', rating: 5 });
   });
 });

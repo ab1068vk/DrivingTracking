@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
+import { calibrationLabelService, canUploadCalibrationLabels } from '@/api/calibrationLabels';
 import {
   Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
 } from 'lucide-react';
@@ -64,6 +65,8 @@ import {
   computeCalibrationProfile,
   loadCalibrationProfile,
   saveCalibrationProfile,
+  summarizeCalibrationSurveyLabels,
+  summarizeSurveyCoverage,
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
@@ -220,6 +223,12 @@ function calibrationStatusLabel(status) {
   return status === CALIBRATION_STATUSES.PROVISIONAL ? 'Provisional' : status;
 }
 
+const calibrationLabelDate = (label = {}) => {
+  const value = label.createdAt || label.submitted_at || label.stored_at;
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : 'Saved label';
+};
+
 const yieldToPaint = () => new Promise((resolve) => {
   if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
     window.requestAnimationFrame(() => resolve());
@@ -270,6 +279,10 @@ export default function Settings() {
   const [patternGuideOpen, setPatternGuideOpen] = useState(false);
   const [calibProfile, setCalibProfile] = useState(null);
   const [calibLoading, setCalibLoading] = useState(false);
+  const [calibrationLabels, setCalibrationLabels] = useState([]);
+  const [calibrationMarkers, setCalibrationMarkers] = useState({});
+  const [calibrationLabelStatus, setCalibrationLabelStatus] = useState('');
+  const [calibrationRetrying, setCalibrationRetrying] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: String(PRIVACY_RADIUS_DEFAULT_M) });
   const [privacyRadiusDrafts, setPrivacyRadiusDrafts] = useState({});
@@ -591,11 +604,105 @@ export default function Settings() {
 
   const runCalibration = async () => {
     setCalibLoading(true);
-    const trips = await tripService.listAll({ sort: '-start_time' });
-    const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg));
-    await saveCalibrationProfile(profile);
-    setCalibProfile(profile);
-    setCalibLoading(false);
+    try {
+      const [trips, surveyLabels] = await Promise.all([
+        tripService.listAll({ sort: '-start_time' }),
+        calibrationLabelService.listLocalLabels(),
+      ]);
+      const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg), { surveyLabels });
+      await saveCalibrationProfile(profile);
+      setCalibProfile(profile);
+      recordSystemEvent('calibration_profile_analyzed', {
+        trip_count: Array.isArray(trips) ? trips.length : 0,
+        survey_label_count: Array.isArray(surveyLabels) ? surveyLabels.length : 0,
+        insufficient: profile.insufficient === true,
+        confidence: profile.confidence || profile.surveySummary?.confidence || null,
+      }, { category: 'calibration', title: 'Calibration profile analyzed' });
+    } catch (error) {
+      logSystemFailure('calibration_profile_analyze_failed', error, {
+        survey_label_count: calibrationLabels.length,
+      });
+      throw error;
+    } finally {
+      setCalibLoading(false);
+    }
+  };
+
+  const refreshCalibrationLabels = async () => {
+    try {
+      const [labels, markers] = await Promise.all([
+        calibrationLabelService.listLocalLabels(),
+        calibrationLabelService.listTripSurveyMarkers(),
+      ]);
+      setCalibrationLabels(labels);
+      setCalibrationMarkers(markers);
+      recordSystemEvent('calibration_labels_refreshed', {
+        label_count: Array.isArray(labels) ? labels.length : 0,
+        marker_count: markers && typeof markers === 'object' ? Object.keys(markers).length : 0,
+      }, { category: 'calibration', title: 'Survey labels refreshed' });
+      return { labels, markers };
+    } catch (error) {
+      logSystemFailure('calibration_labels_refresh_failed', error);
+      throw error;
+    }
+  };
+
+  const retryCalibrationUploads = async () => {
+    setCalibrationRetrying(true);
+    try {
+      const result = await calibrationLabelService.retryPendingUploads();
+      if (result.unavailable) {
+        setCalibrationLabelStatus('Remote calibration upload is not available in this build.');
+      } else {
+        setCalibrationLabelStatus(`Retry complete: ${result.uploaded} uploaded, ${result.failed} failed.`);
+      }
+      await refreshCalibrationLabels();
+    } catch (error) {
+      logSystemFailure('calibration_upload_retry_action_failed', error, {
+        pending_upload_count: pendingCalibrationUploads,
+      });
+      setCalibrationLabelStatus('Could not retry calibration uploads.');
+    } finally {
+      setCalibrationRetrying(false);
+      setTimeout(() => setCalibrationLabelStatus(''), 4000);
+    }
+  };
+
+  const deleteCalibrationLabel = async (labelId) => {
+    try {
+      await calibrationLabelService.deleteLocalLabel(labelId);
+      await refreshCalibrationLabels();
+      setCalibrationLabelStatus('Survey label deleted.');
+      setTimeout(() => setCalibrationLabelStatus(''), 2500);
+    } catch (error) {
+      logSystemFailure('calibration_label_delete_action_failed', error, {
+        label_id_present: Boolean(labelId),
+      });
+      setCalibrationLabelStatus('Could not delete survey label.');
+    }
+  };
+
+  const clearCalibrationLabels = async () => {
+    if (typeof window !== 'undefined' && !window.confirm('Delete all local survey labels and answered-trip markers?')) return;
+    try {
+      const deletedLabels = calibrationLabels.length;
+      const deletedMarkers = Object.keys(calibrationMarkers).length;
+      await calibrationLabelService.replaceLocalLabels([]);
+      await calibrationLabelService.replaceTripSurveyMarkers({});
+      await refreshCalibrationLabels();
+      recordSystemEvent('calibration_labels_cleared', {
+        deleted_label_count: deletedLabels,
+        deleted_marker_count: deletedMarkers,
+      }, { category: 'calibration', title: 'Survey labels cleared' });
+      setCalibrationLabelStatus('All local survey labels cleared.');
+      setTimeout(() => setCalibrationLabelStatus(''), 2500);
+    } catch (error) {
+      logSystemFailure('calibration_labels_clear_failed', error, {
+        label_count: calibrationLabels.length,
+        marker_count: Object.keys(calibrationMarkers).length,
+      });
+      setCalibrationLabelStatus('Could not clear survey labels.');
+    }
   };
 
   const applyCalibration = async () => {
@@ -827,10 +934,23 @@ export default function Settings() {
   useEffect(() => {
     refreshSettingsFromNative();
     loadCalibrationProfile().then(setCalibProfile);
+    refreshCalibrationLabels().catch((error) => {
+      logSystemFailure('settings_initial_calibration_labels_load_failed', error);
+    });
     getLastParkedLocation().then(setParkedLocation);
   }, []);
 
   const privacyZones = getPrivacyZones(cfg);
+  const calibrationSurveySummary = useMemo(
+    () => summarizeCalibrationSurveyLabels(calibrationLabels),
+    [calibrationLabels]
+  );
+  const calibrationSurveyCoverage = useMemo(
+    () => summarizeSurveyCoverage(calibrationLabels),
+    [calibrationLabels]
+  );
+  const pendingCalibrationUploads = calibrationLabels.filter((label) => label?.upload_status === 'pending_upload').length;
+  const recentCalibrationLabels = calibrationLabels.slice(0, 5);
 
   const commitPrivacyDraftRadius = () => {
     const validation = validatePrivacyRadius(privacyDraft.radius_m);
@@ -2032,6 +2152,29 @@ export default function Settings() {
                   Used {calibProfile.feedbackSummary.total} event review{calibProfile.feedbackSummary.total === 1 ? '' : 's'} to nudge thresholds away from events marked wrong.
                 </div>
               )}
+              {calibProfile.surveySummary?.total > 0 && (
+                <div className="rounded-xl bg-card p-3 text-xs text-muted-foreground">
+                  <div className="font-semibold text-foreground">Survey calibration signal</div>
+                  <div className="mt-1">
+                    Used {calibProfile.surveySummary.usable} usable survey label{calibProfile.surveySummary.usable === 1 ? '' : 's'}
+                    {calibProfile.surveySummary.averageScoreDelta != null && (
+                      <>. Driver target differs from app score by {calibProfile.surveySummary.averageScoreDelta > 0 ? '+' : ''}{calibProfile.surveySummary.averageScoreDelta} points on average</>
+                    )}.
+                  </div>
+                  <div className="mt-1">{calibProfile.surveySummary.recommendation}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold">Confidence: {calibProfile.surveySummary.confidence}</span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold">Accurate: {calibProfile.surveySummary.scoreAccuracy?.accurate || 0}</span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold">Too high: {calibProfile.surveySummary.scoreAccuracy?.tooHigh || 0}</span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold">Too low: {calibProfile.surveySummary.scoreAccuracy?.tooLow || 0}</span>
+                  </div>
+                  {calibProfile.surveySummary.topContextTags?.length > 0 && (
+                    <div className="mt-2">
+                      Common tags: {calibProfile.surveySummary.topContextTags.map((item) => item.tag.replace(/_/g, ' ')).join(', ')}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="overflow-hidden rounded-xl border border-border text-xs">
                 {Object.entries(calibProfile.suggested).filter(([, value]) => value != null).map(([key, value]) => (
                   <div key={key} className="grid grid-cols-4 gap-2 border-b border-border/50 p-2 last:border-0">
@@ -2719,13 +2862,120 @@ export default function Settings() {
           <SettingRow
             icon={Target}
             label="Share anonymized calibration labels"
-            sublabel="Uploads only summary features and survey labels. Raw GPS, addresses, trip notes, and route geometry stay local."
+            sublabel={canUploadCalibrationLabels()
+              ? 'Uploads only summary features and survey labels. Raw GPS, addresses, trip notes, and route geometry stay local.'
+              : 'Keeps survey labels local here because no remote calibration store is configured for this build.'}
           >
             <Checkbox
               checked={cfg.calibration_sharing_enabled === true}
               onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
             />
           </SettingRow>
+          <div className="my-3 rounded-xl border border-border bg-secondary/30 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold">Survey labels</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {calibrationLabels.length} saved label{calibrationLabels.length === 1 ? '' : 's'} · {Object.keys(calibrationMarkers).length} answered trip{Object.keys(calibrationMarkers).length === 1 ? '' : 's'}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={retryCalibrationUploads}
+                  disabled={calibrationRetrying || pendingCalibrationUploads === 0}
+                  className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground disabled:opacity-50"
+                >
+                  {calibrationRetrying ? 'Retrying...' : `Retry uploads (${pendingCalibrationUploads})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearCalibrationLabels}
+                  disabled={calibrationLabels.length === 0}
+                  className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground disabled:opacity-50"
+                >
+                  Clear labels
+                </button>
+              </div>
+            </div>
+
+            {calibrationLabels.length > 0 ? (
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-2 text-xs sm:grid-cols-4">
+                  <div className="rounded-lg bg-card p-2">
+                    <div className="font-semibold text-foreground">{calibrationSurveySummary.usable}</div>
+                    <div className="text-muted-foreground">Usable labels</div>
+                  </div>
+                  <div className="rounded-lg bg-card p-2">
+                    <div className="font-semibold text-foreground">
+                      {calibrationSurveySummary.averageScoreDelta != null
+                        ? `${calibrationSurveySummary.averageScoreDelta > 0 ? '+' : ''}${calibrationSurveySummary.averageScoreDelta}`
+                        : 'N/A'}
+                    </div>
+                    <div className="text-muted-foreground">Avg score delta</div>
+                  </div>
+                  <div className="rounded-lg bg-card p-2">
+                    <div className="font-semibold text-foreground">{calibrationSurveySummary.uploadStatus?.uploaded || 0}</div>
+                    <div className="text-muted-foreground">Uploaded</div>
+                  </div>
+                  <div className="rounded-lg bg-card p-2">
+                    <div className="font-semibold text-foreground">{pendingCalibrationUploads}</div>
+                    <div className="text-muted-foreground">Pending upload</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg bg-card p-3 text-xs text-muted-foreground">
+                  <div className="font-semibold text-foreground">Coverage</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {Object.entries(calibrationSurveyCoverage.buckets).map(([bucket, count]) => (
+                      <span key={bucket} className="rounded-full bg-secondary px-2 py-1 font-semibold capitalize">
+                        {bucket.replace(/([A-Z])/g, ' $1')}: {count}
+                      </span>
+                    ))}
+                  </div>
+                  {calibrationSurveyCoverage.missingCoreBuckets.length > 0 && (
+                    <div className="mt-2">
+                      Missing core coverage: {calibrationSurveyCoverage.missingCoreBuckets.join(', ')}.
+                    </div>
+                  )}
+                  {calibrationSurveyCoverage.weakBuckets.length > 0 && (
+                    <div className="mt-1">
+                      Thin coverage: {calibrationSurveyCoverage.weakBuckets.join(', ')}.
+                    </div>
+                  )}
+                </div>
+
+                <div className="overflow-hidden rounded-lg border border-border text-xs">
+                  {recentCalibrationLabels.map((label) => (
+                    <div key={label.id || label.labelId} className="grid grid-cols-[1fr_auto] gap-2 border-b border-border/50 p-2 last:border-0">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-foreground">
+                          Rating {label.surveyLabel?.overallDriveRating ?? 'N/A'} · {calibrationLabelDate(label)}
+                        </div>
+                        <div className="mt-0.5 truncate text-muted-foreground">
+                          {label.upload_status || 'local_only'} · {label.eligibleForCalibration === false ? 'excluded from calibration' : 'eligible'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => deleteCalibrationLabel(label.id)}
+                        className="rounded-lg border border-border px-2 py-1 font-semibold text-muted-foreground"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {calibrationLabelStatus && (
+                  <div className="text-xs font-medium text-muted-foreground">{calibrationLabelStatus}</div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-muted-foreground">
+                No survey labels saved yet. Quick ratings on Trip Detail will appear here.
+              </div>
+            )}
+          </div>
           <div className="my-3 rounded-2xl border border-border bg-secondary/30 p-3">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildCalibrationLabelPayload,
   dataQualityFlagsForCalibration,
@@ -46,6 +46,11 @@ const completedTrip = {
 };
 
 describe('calibration labeling pipeline', () => {
+  afterEach(async () => {
+    await localCalibrationLabelRepository.replaceAll([]);
+    await localCalibrationLabelRepository.replaceTripSurveyMarkers({});
+  });
+
   it('builds anonymized post-trip survey labels without route geometry or private trip fields', () => {
     const payload = buildCalibrationLabelPayload(completedTrip, 4, {
       submittedAt: '2026-05-26T18:00:00.000Z',
@@ -122,6 +127,23 @@ describe('calibration labeling pipeline', () => {
       skipped: true,
       upload_status: 'skipped',
     });
+  });
+
+  it('deletes edited local labels and clears the matching trip marker', async () => {
+    const record = await localCalibrationLabelRepository.create(
+      buildCalibrationLabelPayload(completedTrip, 4),
+      { tripId: 'trip-delete-me' }
+    );
+
+    expect(await localCalibrationLabelRepository.getTripSurveyStatus('trip-delete-me')).toMatchObject({
+      label_id: record.id,
+      rating: 4,
+    });
+
+    await localCalibrationLabelRepository.delete(record.id);
+
+    expect(await localCalibrationLabelRepository.list()).toEqual([]);
+    expect(await localCalibrationLabelRepository.getTripSurveyStatus('trip-delete-me')).toBeNull();
   });
 
   it('fits beta suggestions and keeps the calibrated gate closed below the target sample count', () => {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyCalibrationProfile, computeCalibrationProfile } from '@/lib/thresholdCalibration';
+import {
+  applyCalibrationProfile,
+  computeCalibrationProfile,
+  summarizeCalibrationSurveyLabels,
+  summarizeSurveyCoverage,
+} from '@/lib/thresholdCalibration';
 
 const point = (seconds, speedKmh) => ({
   lat: 43.6532 + seconds * 0.0001,
@@ -99,5 +104,94 @@ describe('thresholdCalibration', () => {
 
     expect(profile.suggested.threshold_sharp_turn_g_medium).toBe(0.58);
     expect(profile.delta.threshold_sharp_turn_g_medium).toBe(0.13);
+  });
+
+  it('summarizes survey labels as a score calibration signal', () => {
+    const labels = [
+      {
+        eligibleForCalibration: true,
+        upload_status: 'local_only',
+        scoreOutput: { overall: 62 },
+        surveyLabel: {
+          overallDriveRating: 4,
+          targetScore: 75,
+          scoreAccuracy: 'too_low',
+          wasDriver: 'yes',
+          contextTags: ['traffic', 'weather'],
+        },
+      },
+      {
+        eligibleForCalibration: true,
+        upload_status: 'uploaded',
+        scoreOutput: { overall: 70 },
+        surveyLabel: {
+          overallDriveRating: 5,
+          targetScore: 100,
+          scoreAccuracy: 'too_low',
+          wasDriver: 'yes',
+          contextTags: ['traffic'],
+        },
+      },
+    ];
+
+    const summary = summarizeCalibrationSurveyLabels(labels);
+
+    expect(summary).toMatchObject({
+      total: 2,
+      usable: 2,
+      averageScoreDelta: 21.5,
+      direction: 'scores_feel_too_harsh',
+      scoreAccuracy: { tooLow: 2 },
+      uploadStatus: { uploaded: 1, localOnly: 1 },
+    });
+    expect(summary.topContextTags[0]).toEqual({ tag: 'traffic', count: 2 });
+  });
+
+  it('includes survey summary in computed calibration profiles', () => {
+    const profile = computeCalibrationProfile(Array.from({ length: 15 }, (_, i) => trip(i, 20)), thresholds, {
+      surveyLabels: [{
+        eligibleForCalibration: true,
+        scoreOutput: { overall: 95 },
+        surveyLabel: { overallDriveRating: 2, targetScore: 25, scoreAccuracy: 'too_high', wasDriver: 'yes' },
+      }],
+    });
+
+    expect(profile.surveySummary).toMatchObject({
+      total: 1,
+      usable: 1,
+      direction: 'scores_feel_too_generous',
+    });
+  });
+
+  it('summarizes survey coverage by road type and context', () => {
+    const labels = [
+      {
+        tripFeatureSummary: { cityRoadRatio: 0.8, highwayRoadRatio: 0.1, nightDrive: false, distanceKm: 8 },
+        surveyLabel: { overallDriveRating: 4, contextTags: ['traffic'] },
+      },
+      {
+        tripFeatureSummary: { cityRoadRatio: 0.1, highwayRoadRatio: 0.7, nightDrive: true, distanceKm: 12 },
+        surveyLabel: { overallDriveRating: 3, contextTags: ['weather', 'gps_issue'] },
+      },
+      {
+        tripFeatureSummary: { cityRoadRatio: 0.2, highwayRoadRatio: 0.2, nightDrive: false, distanceKm: 1.2 },
+        surveyLabel: { overallDriveRating: 5, contextTags: [] },
+      },
+    ];
+
+    expect(summarizeSurveyCoverage(labels)).toMatchObject({
+      usable: 3,
+      buckets: {
+        city: 1,
+        highway: 1,
+        mixed: 1,
+        night: 1,
+        short: 1,
+        traffic: 1,
+        weather: 1,
+        gpsIssue: 1,
+      },
+      enoughBreadth: false,
+    });
   });
 });

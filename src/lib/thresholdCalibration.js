@@ -7,6 +7,11 @@ export const CALIBRATION_PROFILE_KEY = 'drivesense_calibration_profile';
 
 const round1 = (value) => Math.round(value * 10) / 10;
 const round2 = (value) => Math.round(value * 100) / 100;
+const finiteNumber = (value, fallback = null) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
 const DEFAULT_THRESHOLDS = {
   threshold_harsh_brake_ms2: scoringValue('CALIBRATION_FALLBACK_HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('CALIBRATION_FALLBACK_RAPID_ACCEL_MS2'),
@@ -65,11 +70,143 @@ const summarizeEventFeedback = (trips = []) => {
   return { total, byType };
 };
 
-export function computeCalibrationProfile(trips = [], /** @type {any} */ currentThresholds = {}) {
+export function summarizeCalibrationSurveyLabels(labels = []) {
+  const usable = (Array.isArray(labels) ? labels : [])
+    .map((label) => {
+      const survey = label?.surveyLabel || label?.survey || {};
+      const score = finiteNumber(label?.scoreOutput?.overall ?? label?.score_output?.overall ?? label?.score_overall);
+      const target = finiteNumber(survey.targetScore ?? survey.target_score ?? label?.target_score);
+      const rating = finiteNumber(survey.overallDriveRating ?? survey.rating ?? label?.survey_rating);
+      if (score == null || target == null || rating == null) return null;
+      return {
+        score,
+        target,
+        rating,
+        scoreAccuracy: survey.scoreAccuracy ?? survey.score_accuracy ?? null,
+        wasDriver: survey.wasDriver ?? survey.was_driver ?? 'unsure',
+        eligible: label?.eligibleForCalibration ?? label?.eligible_for_calibration ?? false,
+        uploadStatus: label?.upload_status ?? label?.uploadStatus ?? 'local_only',
+        contextTags: Array.isArray(survey.contextTags ?? survey.context_tags)
+          ? (survey.contextTags ?? survey.context_tags)
+          : [],
+      };
+    })
+    .filter(Boolean);
+
+  const eligible = usable.filter((label) => label.eligible !== false && label.wasDriver !== 'no');
+  const rows = eligible.length ? eligible : usable.filter((label) => label.wasDriver !== 'no');
+  const count = rows.length;
+  const averageScoreDelta = count
+    ? round1(rows.reduce((sum, label) => sum + (label.target - label.score), 0) / count)
+    : null;
+  const meanRating = count
+    ? round1(rows.reduce((sum, label) => sum + label.rating, 0) / count)
+    : null;
+  const tooHigh = rows.filter((label) => label.scoreAccuracy === 'too_high').length;
+  const tooLow = rows.filter((label) => label.scoreAccuracy === 'too_low').length;
+  const accurate = rows.filter((label) => label.scoreAccuracy === 'accurate').length;
+  const tagCounts = {};
+  for (const label of rows) {
+    for (const tag of label.contextTags) tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+  }
+  const topContextTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([tag, total]) => ({ tag, count: total }));
+  const pendingUploadCount = usable.filter((label) => label.uploadStatus === 'pending_upload').length;
+  const localOnlyCount = usable.filter((label) => label.uploadStatus === 'local_only').length;
+  const uploadedCount = usable.filter((label) => label.uploadStatus === 'uploaded').length;
+
+  let direction = 'aligned';
+  let recommendation = 'Survey labels are broadly aligned with the current score output.';
+  if (averageScoreDelta != null && averageScoreDelta >= 8) {
+    direction = 'scores_feel_too_harsh';
+    recommendation = 'Drivers are rating trips higher than the score output; review harsh-event false positives before tightening thresholds.';
+  } else if (averageScoreDelta != null && averageScoreDelta <= -8) {
+    direction = 'scores_feel_too_generous';
+    recommendation = 'Drivers are rating trips lower than the score output; review missed risky events before loosening thresholds.';
+  } else if (tooHigh > tooLow + 1) {
+    direction = 'scores_feel_too_generous';
+    recommendation = 'Score-accuracy feedback leans too high; inspect low-scored event coverage before applying looser thresholds.';
+  } else if (tooLow > tooHigh + 1) {
+    direction = 'scores_feel_too_harsh';
+    recommendation = 'Score-accuracy feedback leans too low; inspect false-positive event feedback before applying stricter thresholds.';
+  }
+
+  return {
+    total: usable.length,
+    usable: count,
+    eligible: eligible.length,
+    meanRating,
+    averageScoreDelta,
+    direction,
+    recommendation,
+    confidence: count >= 20 ? 'medium' : count >= 5 ? 'low' : 'very low',
+    scoreAccuracy: { accurate, tooHigh, tooLow },
+    topContextTags,
+    uploadStatus: { uploaded: uploadedCount, localOnly: localOnlyCount, pendingUpload: pendingUploadCount },
+  };
+}
+
+export function summarizeSurveyCoverage(labels = []) {
+  const buckets = {
+    city: 0,
+    highway: 0,
+    mixed: 0,
+    night: 0,
+    short: 0,
+    traffic: 0,
+    weather: 0,
+    gpsIssue: 0,
+  };
+  let usable = 0;
+
+  for (const label of Array.isArray(labels) ? labels : []) {
+    const survey = label?.surveyLabel || label?.survey || {};
+    const features = label?.tripFeatureSummary || label?.trip_feature_summary || {};
+    const rating = finiteNumber(survey.overallDriveRating ?? survey.rating ?? label?.survey_rating);
+    if (rating == null) continue;
+    usable += 1;
+
+    const cityRatio = finiteNumber(features.cityRoadRatio ?? features.city_road_ratio, 0);
+    const highwayRatio = finiteNumber(features.highwayRoadRatio ?? features.highway_road_ratio, 0);
+    if (highwayRatio >= 0.5) buckets.highway += 1;
+    else if (cityRatio >= 0.5) buckets.city += 1;
+    else buckets.mixed += 1;
+
+    if (features.nightDrive === true || features.night_drive === true) buckets.night += 1;
+    if (finiteNumber(features.distanceKm ?? features.distance_km, 0) < 2) buckets.short += 1;
+
+    const tags = Array.isArray(survey.contextTags ?? survey.context_tags)
+      ? (survey.contextTags ?? survey.context_tags)
+      : [];
+    if (tags.includes('traffic')) buckets.traffic += 1;
+    if (tags.includes('weather')) buckets.weather += 1;
+    if (tags.includes('gps_issue')) buckets.gpsIssue += 1;
+  }
+
+  const weakBuckets = Object.entries(buckets)
+    .filter(([, count]) => count > 0 && count < 3)
+    .map(([bucket]) => bucket);
+  const missingCoreBuckets = ['city', 'highway', 'night']
+    .filter((bucket) => buckets[bucket] === 0);
+
+  return {
+    usable,
+    buckets,
+    weakBuckets,
+    missingCoreBuckets,
+    enoughBreadth: usable >= 10 && missingCoreBuckets.length === 0,
+  };
+}
+
+export function computeCalibrationProfile(trips = [], /** @type {any} */ currentThresholds = {}, options = {}) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const tripsAnalyzed = completed.length;
   const kmAnalyzedRaw = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const feedbackSummary = summarizeEventFeedback(completed);
+  const surveySummary = summarizeCalibrationSurveyLabels(options.surveyLabels || []);
+  const surveyCoverage = summarizeSurveyCoverage(options.surveyLabels || []);
 
   if (tripsAnalyzed < 15 && kmAnalyzedRaw < 200 && feedbackSummary.total < 3) {
     return {
@@ -77,6 +214,8 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
       tripsNeeded: Math.max(0, 15 - tripsAnalyzed),
       kmNeeded: Math.max(0, Math.ceil(200 - kmAnalyzedRaw)),
       feedbackSummary,
+      surveySummary,
+      surveyCoverage,
     };
   }
 
@@ -159,6 +298,8 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     current,
     delta,
     feedbackSummary,
+    surveySummary,
+    surveyCoverage,
     appliedAt: null,
   };
 }

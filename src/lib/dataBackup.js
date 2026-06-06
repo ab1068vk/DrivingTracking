@@ -7,6 +7,11 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import {
+  CALIBRATION_LABELS_KEY,
+  CALIBRATION_SURVEY_MARKERS_KEY,
+  localCalibrationLabelRepository,
+} from '@/lib/localCalibrationLabelRepository';
+import {
   BACKUP_PASSWORD_REQUIRED_CODE,
   BACKUP_WRONG_PASSWORD_CODE,
   decryptBackupText,
@@ -24,17 +29,20 @@ import {
  * v4: scoring schema refresh; older imported trips require rescoring.
  * v5: privacy-safe zone metadata and hardened import sanitization.
  * v6: legacy lane_change events are relabelled as heading_deviation_legacy.
+ * v7: local post-trip calibration labels and survey markers are preserved.
  *
  * Every import is migrated one version at a time before it is sanitized and
  * merged. Coordinates omitted for privacy zones are intentionally not restored.
  */
-export const BACKUP_VERSION = 6;
+export const BACKUP_VERSION = 7;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage backup that is 50 MB or smaller.';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 export const MAX_IMPORTED_STRING_LENGTH = 5000;
 export const MAX_IMPORTED_TRIP_NOTES_LENGTH = 10000;
+export const MAX_IMPORTED_CALIBRATION_LABELS = 5000;
+export const MAX_IMPORTED_CALIBRATION_MARKERS = 10000;
 export { BACKUP_PASSWORD_REQUIRED_CODE, BACKUP_WRONG_PASSWORD_CODE };
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
@@ -431,6 +439,37 @@ export const sanitizeSavedTripFilters = (filters) => (
     : []
 );
 
+export const sanitizeCalibrationLabels = (labels, warnings = null) => (
+  Array.isArray(labels)
+    ? labels
+      .slice(0, MAX_IMPORTED_CALIBRATION_LABELS)
+      .map((label) => sanitizeJsonValue(label, 0, {
+        maxStringLength: 2000,
+        warnings,
+        field: 'calibration label',
+      }))
+      .filter(isPlainObject)
+    : []
+);
+
+export const sanitizeCalibrationSurveyMarkers = (markers, warnings = null) => {
+  if (!isPlainObject(markers)) return {};
+  return Object.fromEntries(
+    Object.entries(markers)
+      .filter(([, marker]) => isPlainObject(marker))
+      .slice(0, MAX_IMPORTED_CALIBRATION_MARKERS)
+      .map(([tripId, marker]) => [
+        filterString(tripId, 'trip').trim(),
+        sanitizeJsonValue(marker, 0, {
+          maxStringLength: 1000,
+          warnings,
+          field: 'calibration survey marker',
+        }),
+      ])
+      .filter(([tripId, marker]) => tripId && isPlainObject(marker))
+  );
+};
+
 const migrateLaneChangeEventType = (event) => (
   isPlainObject(event) && event.type === 'lane_change'
     ? { ...event, type: 'heading_deviation_legacy', legacy_renamed: true }
@@ -461,8 +500,17 @@ const migrateLegacyLaneChangeTrip = (trip) => {
   };
 };
 
-export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = localSettings.get(), savedFilters = [] } = {}) {
+export function buildDriveSenseBackup({
+  trips = [],
+  vehicles = [],
+  settings = localSettings.get(),
+  savedFilters = [],
+  calibrationLabels = [],
+  calibrationSurveyMarkers = {},
+} = {}) {
   const savedTripFilters = sanitizeSavedTripFilters(savedFilters);
+  const sanitizedCalibrationLabels = sanitizeCalibrationLabels(calibrationLabels);
+  const sanitizedCalibrationSurveyMarkers = sanitizeCalibrationSurveyMarkers(calibrationSurveyMarkers);
   const exportSettings = {
     ...settings,
     privacy_zones: getPrivacyZones(settings).map((zone) => ({
@@ -479,6 +527,10 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
     settings: exportSettings,
     ui: {
       saved_trip_filters: savedTripFilters,
+    },
+    calibration: {
+      labels: sanitizedCalibrationLabels,
+      survey_markers: sanitizedCalibrationSurveyMarkers,
     },
     vehicles,
     trips: trips.map((trip) => {
@@ -497,8 +549,19 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
  * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,passphrase?:string|null}} options
  */
 export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, passphrase = null } = {}) {
-  const savedFilters = await getJson(SAVED_FILTERS_KEY, []);
-  const backup = buildDriveSenseBackup({ trips, vehicles, settings, savedFilters });
+  const [savedFilters, calibrationLabels, calibrationSurveyMarkers] = await Promise.all([
+    getJson(SAVED_FILTERS_KEY, []),
+    getJson(CALIBRATION_LABELS_KEY, []),
+    getJson(CALIBRATION_SURVEY_MARKERS_KEY, {}),
+  ]);
+  const backup = buildDriveSenseBackup({
+    trips,
+    vehicles,
+    settings,
+    savedFilters,
+    calibrationLabels,
+    calibrationSurveyMarkers,
+  });
   const encrypted = typeof passphrase === 'string' && passphrase.length > 0;
   const requestedName = filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`;
   const encryptedName = /\.(json|drivesensebackup)$/i.test(requestedName)
@@ -642,6 +705,13 @@ export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
         ...migrated,
         trips: (migrated.trips || []).map(migrateLegacyLaneChangeTrip),
       };
+    } else if (version === 6) {
+      migrated = {
+        ...migrated,
+        calibration: isPlainObject(migrated.calibration)
+          ? migrated.calibration
+          : { labels: [], survey_markers: {} },
+      };
     }
     version += 1;
   }
@@ -673,6 +743,10 @@ export function parseDriveSenseBackup(text) {
     sourceVersion,
     settings: migrated.settings && typeof migrated.settings === 'object' ? migrated.settings : null,
     ui: migrated.ui && typeof migrated.ui === 'object' ? migrated.ui : null,
+    calibration: {
+      labels: sanitizeCalibrationLabels(migrated.calibration?.labels, warnings),
+      survey_markers: sanitizeCalibrationSurveyMarkers(migrated.calibration?.survey_markers, warnings),
+    },
     vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
     trips: migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings)),
     warnings,
@@ -802,12 +876,29 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     }
   }
 
+  let calibrationLabelsRestored = false;
+  if (backup.calibration.labels.length > 0 || Object.keys(backup.calibration.survey_markers).length > 0) {
+    try {
+      await localCalibrationLabelRepository.replaceAll(backup.calibration.labels);
+      await localCalibrationLabelRepository.replaceTripSurveyMarkers(backup.calibration.survey_markers);
+      calibrationLabelsRestored = true;
+    } catch (error) {
+      logSystemFailure('backup_import_calibration_labels_restore', error, {
+        calibration_label_count: backup.calibration.labels.length,
+        calibration_marker_count: Object.keys(backup.calibration.survey_markers).length,
+      });
+      console.warn('Could not restore calibration labels from backup.', error);
+    }
+  }
+
   recordSystemEvent('backup_import_completed', {
     trip_count: importedTrips.length,
     vehicle_count: importedVehicles.length,
     settings_imported: importedSettings,
     saved_filter_count: savedFilters.length,
     saved_filters_restored: savedFiltersRestored,
+    calibration_label_count: backup.calibration.labels.length,
+    calibration_labels_restored: calibrationLabelsRestored,
     warning_count: backup.warnings.length,
     truncated_note_trip_count: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
@@ -825,6 +916,8 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     settings: importedSettings,
     savedFilters: savedFilters.length,
     savedFiltersRestored,
+    calibrationLabels: backup.calibration.labels.length,
+    calibrationLabelsRestored,
     warnings: backup.warnings,
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,

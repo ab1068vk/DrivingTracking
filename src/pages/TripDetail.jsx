@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { calibrationLabelService } from '@/api/calibrationLabels';
+import { calibrationLabelService, canUploadCalibrationLabels } from '@/api/calibrationLabels';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
@@ -307,7 +307,9 @@ export default function TripDetail() {
     },
   });
   const calibrationSurveyMutation = useMutation({
-    mutationFn: (surveyInput) => calibrationLabelService.submitTripSurveyLabel(trip, surveyInput),
+    mutationFn: ({ surveyInput, replaceExisting = false }) => (
+      calibrationLabelService.submitTripSurveyLabel(trip, surveyInput, { replaceExisting })
+    ),
     onSuccess: async (record) => {
       const [marker, count] = await Promise.all([
         calibrationLabelService.getTripSurveyStatus(trip.id),
@@ -1432,13 +1434,15 @@ export default function TripDetail() {
         <TripScoreOverview trip={trip} />
       </SectionErrorBoundary>
       <PostTripCalibrationSurvey
+        tripId={trip.id}
         status={calibrationSurveyStatus}
         labelCount={calibrationLabelCount}
         sharingEnabled={settings.calibration_sharing_enabled === true}
+        uploadAvailable={canUploadCalibrationLabels()}
         isPending={calibrationSurveyMutation.isPending}
         isSkipping={skipCalibrationSurveyMutation.isPending}
         error={calibrationSurveyMutation.error}
-        onSubmit={(surveyInput) => calibrationSurveyMutation.mutate(surveyInput)}
+        onSubmit={(surveyInput, options) => calibrationSurveyMutation.mutate({ surveyInput, ...options })}
         onSkip={() => skipCalibrationSurveyMutation.mutate()}
       />
       {roadTypeScores.length > 0 && (
@@ -2127,7 +2131,16 @@ const CONTEXT_TAG_LABELS = {
   other: 'Other',
 };
 
-function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPending, isSkipping, error, onSubmit, onSkip }) {
+const shouldPromptForCalibrationSurvey = (tripId, labelCount, status) => {
+  if (status?.rating || status?.skipped) return true;
+  const count = Number(labelCount);
+  if (!Number.isFinite(count) || count < 20) return true;
+  const input = String(tripId || '');
+  const hash = [...input].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return hash % 3 === 0;
+};
+
+function PostTripCalibrationSurvey({ tripId, status, labelCount, sharingEnabled, uploadAvailable, isPending, isSkipping, error, onSubmit, onSkip }) {
   const [draft, setDraft] = useState({
     overallDriveRating: null,
     scoreAccuracy: '',
@@ -2136,13 +2149,25 @@ function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPendi
     contextTags: [],
     freeTextNote: '',
   });
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const submittedRating = Number(status?.rating);
   const submitted = Number.isInteger(submittedRating) && submittedRating >= 1 && submittedRating <= 5;
   const skipped = status?.skipped === true;
+  const shouldPrompt = shouldPromptForCalibrationSurvey(status?.trip_id || tripId, labelCount, status);
   const progressText = Number.isFinite(Number(labelCount))
     ? `${Math.min(Number(labelCount), CALIBRATION_LABEL_TARGET_COUNT).toLocaleString()} / ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`
     : `Target: ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`;
-  const disabled = isPending || isSkipping || submitted || skipped;
+  const statusText = submitted
+    ? 'Rating saved.'
+    : isPending
+      ? 'Saving rating...'
+      : sharingEnabled && uploadAvailable
+        ? 'Sharing on when quality checks pass.'
+        : sharingEnabled
+          ? 'Sharing on, local-only in this build.'
+          : 'Local only unless sharing is enabled.';
+  const disabled = isPending || isSkipping || (submitted && !editing) || skipped;
   const canSubmit = Number.isInteger(Number(draft.overallDriveRating)) &&
     Number(draft.overallDriveRating) >= 1 &&
     Number(draft.overallDriveRating) <= 5 &&
@@ -2165,52 +2190,101 @@ function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPendi
       tripDifficulty: draft.tripDifficulty ? Number(draft.tripDifficulty) : null,
       contextTags: draft.contextTags,
       freeTextNote: draft.freeTextNote,
+    }, {
+      replaceExisting: submitted && editing,
     });
+    setEditing(false);
   };
 
   if (skipped) return null;
+  if (!shouldPrompt) return null;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.16 }}
-      className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+      className="bg-card border border-border rounded-xl p-3 shadow-sm sm:p-4"
     >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="font-semibold">How did this drive feel?</h2>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Optional calibration label. It never blocks your trip results.
-          </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">How did this drive feel?</h2>
+          <div className="mt-0.5 text-xs text-muted-foreground">{statusText}</div>
         </div>
-        <div className="text-xs font-medium text-muted-foreground">{progressText}</div>
+        <div className="text-xs font-medium text-muted-foreground sm:text-right">{progressText}</div>
       </div>
 
-      <div className="mt-4 grid grid-cols-5 gap-2">
-        {SURVEY_RATING_OPTIONS.map((option) => {
-          const selected = submitted ? submittedRating === option.value : Number(draft.overallDriveRating) === option.value;
-          return (
+      <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="grid grid-cols-5 gap-1.5 sm:max-w-lg sm:gap-2">
+          {SURVEY_RATING_OPTIONS.map((option) => {
+            const selected = submitted ? submittedRating === option.value : Number(draft.overallDriveRating) === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                disabled={disabled}
+                onClick={() => setDraft((current) => ({ ...current, overallDriveRating: option.value }))}
+                title={`${option.value} - ${option.label}`}
+                aria-label={`${option.value} - ${option.label}`}
+                className={`min-h-11 rounded-lg border px-1.5 py-1.5 text-center transition-colors ${
+                  selected
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
+                }`}
+              >
+                <div className="text-base font-bold leading-none">{option.value}</div>
+                <div className="mt-0.5 text-[10px] font-medium leading-tight">{option.label}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {submitted && !editing && (
+          <div className="flex flex-wrap gap-2 lg:justify-end">
             <button
-              key={option.value}
+              type="button"
+              onClick={() => {
+                setDraft((current) => ({ ...current, overallDriveRating: submittedRating }));
+                setEditing(true);
+              }}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
+            >
+              Edit rating
+            </button>
+          </div>
+        )}
+
+        {(!submitted || editing) && (
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button
               type="button"
               disabled={disabled}
-              onClick={() => setDraft((current) => ({ ...current, overallDriveRating: option.value }))}
-              title={`${option.value} - ${option.label}`}
-              className={`min-h-16 rounded-xl border px-2 py-2 text-center transition-colors ${
-                selected
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
-              }`}
+              onClick={() => setDetailsOpen((open) => !open)}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
             >
-              <div className="text-lg font-bold leading-none">{option.value}</div>
-              <div className="mt-1 text-[11px] font-medium leading-tight">{option.label}</div>
+              {detailsOpen ? 'Hide details' : 'Details'}
             </button>
-          );
-        })}
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={onSkip}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
+            >
+              {isSkipping ? 'Skipping...' : 'Skip'}
+            </button>
+            <button
+              type="button"
+              disabled={!canSubmit}
+              onClick={submit}
+              className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
+        )}
       </div>
 
-      {!submitted && (
+      {(!submitted || editing) && detailsOpen && (
         <div className="mt-4 space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="text-xs font-medium text-muted-foreground">
@@ -2293,37 +2367,6 @@ function PostTripCalibrationSurvey({ status, labelCount, sharingEnabled, isPendi
         </div>
       )}
 
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-xs text-muted-foreground">
-          {submitted
-            ? 'Rating saved for the calibration dataset.'
-            : isPending
-              ? 'Saving rating...'
-              : sharingEnabled
-                ? 'Sharing is on. Only anonymized summary features are uploaded when quality checks pass.'
-                : 'Sharing is off. This label stays local unless you opt in from Settings.'}
-        </div>
-        {!submitted && (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onSkip}
-              className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
-            >
-              {isSkipping ? 'Skipping...' : 'Skip'}
-            </button>
-            <button
-              type="button"
-              disabled={!canSubmit}
-              onClick={submit}
-              className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              Save feedback
-            </button>
-          </div>
-        )}
-      </div>
       {error && (
         <div className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
           {error.message || 'Could not save this rating.'}

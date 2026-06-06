@@ -62,7 +62,7 @@ requireMatch(
 requireMatch(
   'Backup import',
   files.backup,
-  /export const BACKUP_VERSION\s*=\s*6\s*;/,
+  /export const BACKUP_VERSION\s*=\s*7\s*;/,
   'backup version changed; add explicit forward/backward migration tests before updating this contract.'
 );
 requireMatch(

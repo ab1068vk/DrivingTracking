@@ -53,6 +53,7 @@ const categoryLabels = {
   osrm: 'OSRM',
   storage: 'Storage',
   notification: 'Notifications',
+  calibration: 'Calibration',
   app: 'App',
 };
 
