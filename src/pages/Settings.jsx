@@ -85,6 +85,7 @@ import {
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
 import { LEGAL_DISCLAIMER_SHORT, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
+import { logSystemFailure } from '@/lib/systemLog';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -559,8 +560,12 @@ export default function Settings() {
 
   const applyCalibration = async () => {
     const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
-      localSettings.set(next);
-      setCfg(next);
+      const current = localSettings.get();
+      const patch = Object.fromEntries(
+        Object.entries(next).filter(([key, value]) => current[key] !== value)
+      );
+      const verified = Object.keys(patch).length ? localSettings.update(patch) : current;
+      setCfg(verified);
     });
     const count = await tripService.markCompletedForRescore().catch(() => 0);
     await qc.invalidateQueries();
@@ -842,6 +847,7 @@ export default function Settings() {
       const location = await getCurrentLocation();
       savePrivacyZone(location, 'Current location');
     } catch (error) {
+      logSystemFailure('settings_privacy_zone_current_location', error);
       toast({
         title: 'Could not get current location',
         description: error.message || 'Check location permission and GPS availability.',
@@ -919,6 +925,7 @@ export default function Settings() {
       await openAndroidBatteryOptimizationSettings();
       await refreshPermissions();
     } catch {
+      logSystemFailure('settings_battery_optimization_open', new Error('Battery optimization settings could not be opened.'));
       toast({
         title: 'Battery settings unavailable',
         description: 'Open Android Settings > Apps > Road Sage > Battery and choose Unrestricted.',
@@ -948,6 +955,7 @@ export default function Settings() {
       updateCfg({ obd_bluetooth_enabled: true });
       await refreshPermissions();
     } catch (error) {
+      logSystemFailure('obd_bluetooth_pairing', error);
       setObdPairingStatus(error?.message || 'Could not connect to the OBD-II adapter.');
       await refreshPermissions();
     }
@@ -1036,6 +1044,9 @@ export default function Settings() {
         variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
       });
     } catch (error) {
+      logSystemFailure('backup_import', error, {
+        byte_count: Number(file?.size) || 0,
+      });
       toast({
         title: 'Could not import backup',
         description: error.message || 'Make sure the file is a Road Sage backup JSON file.',

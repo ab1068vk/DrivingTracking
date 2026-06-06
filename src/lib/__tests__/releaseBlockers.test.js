@@ -465,6 +465,10 @@ describe('release blocker regressions', () => {
         lat: 43.65,
         lng: -79.38,
         address: '123 Private St',
+        email: 'driver@example.com',
+        phone: '416-555-0123',
+        callback: 'https://example.test/callback?token=abc123456789&email=driver@example.com&mode=ok',
+        native_platform: true,
         reason: 'Cannot read properties of undefined',
       }),
     };
@@ -479,6 +483,10 @@ describe('release blocker regressions', () => {
     expect(json).toContain('[redacted]');
     expect(json).not.toContain('43.65');
     expect(json).not.toContain('123 Private St');
+    expect(json).not.toContain('driver@example.com');
+    expect(json).not.toContain('416-555-0123');
+    expect(json).not.toContain('abc123456789');
+    expect(json).toContain('native_platform');
     expect(csv).toContain('Operation failed: trip_playback');
   });
 
@@ -494,6 +502,20 @@ describe('release blocker regressions', () => {
     expect(source).toContain("window.addEventListener('scroll', logScrollEvent, { passive: true })");
   });
 
+  it('captures runtime failures and navigation without leaking query values', () => {
+    const errorReportingSource = readFileSync(new URL('../errorReporting.js', import.meta.url), 'utf8');
+    const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
+    const systemLogSource = readFileSync(new URL('../systemLog.js', import.meta.url), 'utf8');
+
+    expect(errorReportingSource).toContain("window.addEventListener('error'");
+    expect(errorReportingSource).toContain("window.addEventListener('unhandledrejection'");
+    expect(appSource).toContain('search_param_keys');
+    expect(appSource).not.toContain('search: location.search');
+    expect(systemLogSource).toContain('EMAIL_PATTERN');
+    expect(systemLogSource).toContain('PHONE_PATTERN');
+    expect(systemLogSource).toContain('TOKEN_PAIR_PATTERN');
+  });
+
   it('verifies settings updates after writes so placeholder controls are visible', () => {
     const source = readFileSync(new URL('../trackingStore.js', import.meta.url), 'utf8');
 
@@ -502,6 +524,35 @@ describe('release blocker regressions', () => {
     expect(source).toContain('unchanged_requested_keys');
     expect(source).toContain('failed_keys');
     expect(source).toContain('no_effect');
+    const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const backupSource = readFileSync(new URL('../dataBackup.js', import.meta.url), 'utf8');
+    expect(settingsPageSource).not.toContain('localSettings.set(next)');
+    expect(backupSource).not.toContain('localSettings.set({ ...localSettings.get(), ...sanitizedSettings })');
+  });
+
+  it('logs background operations from native services, notifications, storage, imports, and exports', () => {
+    const activitySource = readFileSync(new URL('../activityRecognition.js', import.meta.url), 'utf8');
+    const trackingServiceSource = readFileSync(new URL('../trackingService.js', import.meta.url), 'utf8');
+    const notificationSource = readFileSync(new URL('../notificationService.js', import.meta.url), 'utf8');
+    const storageSource = readFileSync(new URL('../mobileStorage.js', import.meta.url), 'utf8');
+    const backupSource = readFileSync(new URL('../dataBackup.js', import.meta.url), 'utf8');
+    const nativeDownloadsSource = readFileSync(new URL('../nativeDownloads.js', import.meta.url), 'utf8');
+    const tripEngineSource = readFileSync(new URL('../tripEngine.js', import.meta.url), 'utf8');
+    const systemLogsPageSource = readFileSync(new URL('../../pages/SystemLogs.jsx', import.meta.url), 'utf8');
+
+    expect(activitySource).toContain('android_native_auto_tracking_started');
+    expect(activitySource).toContain('android_phone_usage_summary_loaded');
+    expect(trackingServiceSource).toContain('tracking_service_started');
+    expect(trackingServiceSource).toContain('background_location_watcher');
+    expect(notificationSource).toContain('notification_scheduled');
+    expect(notificationSource).toContain('notification_batch_scheduled');
+    expect(storageSource).toContain('storage_set_json');
+    expect(backupSource).toContain('backup_import_completed');
+    expect(backupSource).toContain('backup_export_completed');
+    expect(nativeDownloadsSource).toContain('native_export_saved');
+    expect(tripEngineSource).toContain('csv_export_completed');
+    expect(systemLogsPageSource).toContain("storage: 'Storage'");
+    expect(systemLogsPageSource).toContain("notification: 'Notifications'");
   });
 
   it('keeps critical post-trip, odometer, and coach persistence failures diagnostically logged', () => {

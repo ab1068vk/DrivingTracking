@@ -13,6 +13,36 @@ let lastScrollLogAt = 0;
 let lastLongTaskLogAt = 0;
 
 const safeNow = () => new Date().toISOString();
+const SENSITIVE_DETAIL_KEY = /(^|[_-])(token|password|secret|auth|email|phone|address|lat|lng|longitude|latitude|coordinate|coordinates|route_points|driving_events|search|query|returnTo)($|[_-])|phone_number|phoneNumber|contact_phone|mobile_number/i;
+const SENSITIVE_QUERY_KEY = /(^|[_-])(token|password|secret|auth|code|email|phone|address|lat|lng|longitude|latitude|coordinate|coordinates|returnTo)($|[_-])|phone_number|phoneNumber|contact_phone|mobile_number/i;
+const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const PHONE_PATTERN = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}\b/g;
+const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/g;
+const TOKEN_PAIR_PATTERN = /\b(access_token|refresh_token|id_token|token|password|secret|code)=([^&\s]+)/gi;
+
+const safeDecode = (value) => {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    return value || '';
+  }
+};
+
+const redactUrlSearchValues = (input) => input.replace(/([?&])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, key, value) => (
+  SENSITIVE_QUERY_KEY.test(safeDecode(key))
+    ? `${prefix}${key}=[redacted]`
+    : `${prefix}${key}=${value ? '[value]' : ''}`
+));
+
+const redactSensitiveString = (value) => {
+  const text = String(value || '');
+  return redactUrlSearchValues(text)
+    .replace(EMAIL_PATTERN, '[redacted-email]')
+    .replace(PHONE_PATTERN, '[redacted-phone]')
+    .replace(BEARER_PATTERN, 'Bearer [redacted]')
+    .replace(TOKEN_PAIR_PATTERN, '$1=[redacted]')
+    .slice(0, 500);
+};
 
 const canUseStorage = () => {
   try {
@@ -69,12 +99,13 @@ const summarizeTarget = (target) => {
   const tag = String(element.tagName || target.tagName || 'element').toLowerCase();
   const type = element.getAttribute?.('type') || element.type || '';
   const role = element.getAttribute?.('role') || '';
+  const canUseVisibleLabel = ['button', 'a'].includes(tag) || Boolean(role) || Boolean(element.getAttribute?.('data-log-label'));
   const label = element.getAttribute?.('aria-label') ||
     element.getAttribute?.('data-log-label') ||
     element.title ||
     element.name ||
     element.id ||
-    String(element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    (canUseVisibleLabel ? String(element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80) : '');
   const href = tag === 'a' ? element.getAttribute?.('href') : '';
   const valueLength = ['input', 'textarea', 'select'].includes(tag)
     ? String(element.value || '').length
@@ -84,8 +115,8 @@ const summarizeTarget = (target) => {
     tag,
     ...(type ? { type } : {}),
     ...(role ? { role } : {}),
-    ...(label ? { label: String(label).slice(0, 100) } : {}),
-    ...(href ? { href: String(href).slice(0, 160) } : {}),
+    ...(label ? { label: redactSensitiveString(label).slice(0, 100) } : {}),
+    ...(href ? { href: redactSensitiveString(href).slice(0, 160) } : {}),
     ...(element.checked != null ? { checked: Boolean(element.checked) } : {}),
     ...(valueLength != null ? { value_length: valueLength } : {}),
   };
@@ -120,7 +151,7 @@ const summarizeResourceTarget = (target) => {
 
 const sanitizePrimitive = (value) => {
   if (value == null) return value;
-  if (typeof value === 'string') return value.slice(0, 500);
+  if (typeof value === 'string') return redactSensitiveString(value);
   if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
   if (typeof value === 'boolean') return value;
   return String(value).slice(0, 500);
@@ -153,11 +184,10 @@ export function sanitizeLogDetail(value, depth = 0) {
     };
   }
 
-  const sensitive = /token|password|secret|auth|email|phone_number|phoneNumber|contact_phone|address|lat|lng|longitude|latitude|coordinate|route_points|driving_events/i;
   return Object.entries(value)
     .slice(0, 40)
     .reduce((acc, [key, item]) => {
-      if (sensitive.test(key)) {
+      if (SENSITIVE_DETAIL_KEY.test(key)) {
         acc[key] = '[redacted]';
         return acc;
       }

@@ -5,6 +5,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 export const TRACKING_CHANNEL_ID = 'drivesense_tracking';
 export const SUMMARY_CHANNEL_ID = 'drivesense_summary';
@@ -165,7 +166,12 @@ const cancelNotificationIds = async (ids = []) => {
     .filter((id) => Number.isFinite(Number(id)))
     .map((id) => ({ id: Number(id) }));
   if (!notifications.length) return;
-  await LocalNotifications.cancel({ notifications }).catch(() => {});
+  await LocalNotifications.cancel({ notifications }).catch((error) => {
+    logSystemFailure('notifications_cancel', error, {
+      notification_count: notifications.length,
+      notification_ids: notifications.map((item) => item.id),
+    });
+  });
 };
 
 const scheduleNotification = async (
@@ -177,12 +183,37 @@ const scheduleNotification = async (
   if (isNativePlatform()) await cancelNotificationIds([notification.id, ...replaceIds]);
   if (!isNativePlatform()) return notification;
 
-  const permission = await LocalNotifications.checkPermissions();
-  const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
-  if (!granted) return null;
-  await LocalNotifications.schedule({ notifications: [notification] });
-  markSent(dedupeKey);
-  return notification;
+  try {
+    const permission = await LocalNotifications.checkPermissions();
+    const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
+    if (!granted) {
+      recordSystemEvent('notification_schedule_blocked', {
+        notification_id: notification.id,
+        channel_id: notification.channelId,
+        type: notification.extra?.type,
+        reason: 'permission_not_granted',
+      }, { category: 'notification', severity: 'warn', source: 'native', title: 'Notification schedule blocked' });
+      return null;
+    }
+    await LocalNotifications.schedule({ notifications: [notification] });
+    markSent(dedupeKey);
+    recordSystemEvent('notification_scheduled', {
+      notification_id: notification.id,
+      channel_id: notification.channelId,
+      type: notification.extra?.type,
+      has_schedule: Boolean(notification.schedule),
+      replace_count: replaceIds.length,
+      dedupe: Boolean(dedupeKey),
+    }, { category: 'notification', source: 'native', title: 'Notification scheduled' });
+    return notification;
+  } catch (error) {
+    logSystemFailure('notification_schedule', error, {
+      notification_id: notification.id,
+      channel_id: notification.channelId,
+      type: notification.extra?.type,
+    });
+    throw error;
+  }
 };
 
 function scoreOf(trip = {}) {
@@ -281,7 +312,8 @@ export const achievementNotificationId = (achievementId) => {
 export async function configureNotificationChannels() {
   if (!isNativePlatform()) return;
 
-  await LocalNotifications.createChannel({
+  try {
+    await LocalNotifications.createChannel({
     id: TRACKING_CHANNEL_ID,
     name: 'Trip Tracking',
     description: 'Shown while Road Sage is actively tracking a trip.',
@@ -290,7 +322,7 @@ export async function configureNotificationChannels() {
     vibration: false,
   });
 
-  await LocalNotifications.createChannel({
+    await LocalNotifications.createChannel({
     id: SUMMARY_CHANNEL_ID,
     name: 'Trip Summaries',
     description: 'Trip completion and driving summary notifications.',
@@ -298,7 +330,7 @@ export async function configureNotificationChannels() {
     visibility: 1,
   });
 
-  await LocalNotifications.createChannel({
+    await LocalNotifications.createChannel({
     id: ACHIEVEMENT_CHANNEL_ID,
     name: 'Achievements',
     description: 'Achievement unlock notifications.',
@@ -306,7 +338,7 @@ export async function configureNotificationChannels() {
     visibility: 1,
   });
 
-  await LocalNotifications.createChannel({
+    await LocalNotifications.createChannel({
     id: SAFETY_ALERTS_CHANNEL_ID,
     name: 'Safety Alerts',
     description: 'Urgent warnings while driving',
@@ -318,7 +350,7 @@ export async function configureNotificationChannels() {
     lightColor: '#ef4444',
   });
 
-  await LocalNotifications.createChannel({
+    await LocalNotifications.createChannel({
     id: COACHING_CHANNEL_ID,
     name: 'Coaching & Milestones',
     description: 'Driving improvement tips and personal milestones',
@@ -328,7 +360,7 @@ export async function configureNotificationChannels() {
     vibration: false,
   });
 
-  await LocalNotifications.createChannel({
+    await LocalNotifications.createChannel({
     id: VEHICLE_CHANNEL_ID,
     name: 'Vehicle & Maintenance',
     description: 'Maintenance reminders and vehicle updates',
@@ -337,6 +369,13 @@ export async function configureNotificationChannels() {
     sound: null,
     vibration: false,
   });
+    recordSystemEvent('notification_channels_configured', {
+      channel_count: 6,
+    }, { category: 'notification', source: 'native', title: 'Notification channels configured' });
+  } catch (error) {
+    logSystemFailure('notification_channels_configure', error);
+    throw error;
+  }
 }
 
 export async function scheduleLongTripReminder(startTime) {
@@ -349,20 +388,23 @@ export async function scheduleLongTripReminder(startTime) {
     ? Math.max(originalReminderAt, Date.now() + 15 * 60 * 1000)
     : Date.now() + 2 * 60 * 60 * 1000;
 
-  await LocalNotifications.schedule({
-    notifications: [{
+  return scheduleNotification({
       id: LONG_TRIP_REMINDER_ID,
       title: 'Road Sage is still tracking',
       body: 'Your trip has been active for a while. Stop tracking when you are done driving.',
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { at: new Date(reminderAt), allowWhileIdle: true },
-    }],
+      extra: { type: 'long_trip_reminder' },
+    }, {
+      requestPermission: false,
+      dedupeKey: 'long_trip_reminder',
+      cooldownMs: 30 * 60 * 1000,
   });
 }
 
 export async function cancelLongTripReminder() {
   if (!isNativePlatform()) return;
-  await LocalNotifications.cancel({ notifications: [{ id: LONG_TRIP_REMINDER_ID }] });
+  await cancelNotificationIds([LONG_TRIP_REMINDER_ID]);
 }
 
 export async function notifyTripStarted(trip = {}) {
@@ -824,7 +866,7 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
     { id: SAFE_DRIVING_ID },
     { id: NOTIFICATION_IDS.SCORE_7_DAY_TREND },
   ];
-  await LocalNotifications.cancel({ notifications: cancelIds });
+  await cancelNotificationIds(cancelIds.map((item) => item.id));
 
   if (settings.notifications_enabled === false) return;
   const needsPermission = settings.weekly_report_notification ||
@@ -859,7 +901,22 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
     });
   }
 
-  if (notifications.length) await LocalNotifications.schedule({ notifications });
+  if (notifications.length) {
+    try {
+      await LocalNotifications.schedule({ notifications });
+      recordSystemEvent('notification_batch_scheduled', {
+        notification_count: notifications.length,
+        notification_ids: notifications.map((item) => item.id),
+        types: notifications.map((item) => item.extra?.type || 'reminder'),
+      }, { category: 'notification', source: 'native', title: 'Reminder notifications scheduled' });
+    } catch (error) {
+      logSystemFailure('notification_batch_schedule', error, {
+        notification_count: notifications.length,
+        notification_ids: notifications.map((item) => item.id),
+      });
+      throw error;
+    }
+  }
 
   if (settings.notif_inactive_nudge_enabled && lastTripTimestamp) {
     const daysSince = (Date.now() - new Date(lastTripTimestamp).getTime()) / 86400000;
@@ -909,7 +966,20 @@ export async function syncAchievementNotifications(achievements = [], { requestP
       extra: { type: 'achievement_batch', achievementIds: newAchievements.map((achievement) => achievement.id) },
     }];
 
-  await LocalNotifications.schedule({ notifications });
+  try {
+    await LocalNotifications.schedule({ notifications });
+    recordSystemEvent('notification_batch_scheduled', {
+      notification_count: notifications.length,
+      notification_ids: notifications.map((item) => item.id),
+      types: notifications.map((item) => item.extra?.type || 'achievement'),
+    }, { category: 'notification', source: 'native', title: 'Achievement notifications scheduled' });
+  } catch (error) {
+    logSystemFailure('achievement_notification_schedule', error, {
+      notification_count: notifications.length,
+      notification_ids: notifications.map((item) => item.id),
+    });
+    throw error;
+  }
 
   newAchievements.forEach((achievement) => notifiedIds.add(achievement.id));
   writeNotifiedAchievementIds(notifiedIds);

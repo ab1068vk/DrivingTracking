@@ -139,9 +139,11 @@ function RouteLogger() {
   const location = useLocation();
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
     recordSystemEvent('route_changed', {
       pathname: location.pathname,
-      search: location.search,
+      has_search: Boolean(location.search),
+      search_param_keys: [...params.keys()].slice(0, 20),
     }, {
       title: 'Page opened',
       category: 'navigation',

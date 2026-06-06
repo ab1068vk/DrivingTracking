@@ -6,6 +6,7 @@ import {
   requestBackgroundLocationPermission,
   requestForegroundLocationPermission,
 } from '@/lib/permissions';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
@@ -68,7 +69,11 @@ export function createDrivingTrackingService({ background = false } = {}) {
           navigator.geolocation.getCurrentPosition(resolve, reject, watchOptions);
         });
       emitPoint(position, onPoint);
-    } catch {
+    } catch (error) {
+      logSystemFailure('tracking_initial_location', error, {
+        background_tracking: background === true,
+        native_platform: isNativePlatform(),
+      });
       // A watcher below can still recover when GPS gets a fix.
     }
   };
@@ -85,6 +90,10 @@ export function createDrivingTrackingService({ background = false } = {}) {
     watcherId = null;
     webWatcherId = null;
     previousPoint = null;
+    recordSystemEvent('tracking_service_stopped', {
+      background_tracking: background === true,
+      native_platform: isNativePlatform(),
+    }, { category: 'background', title: 'Tracking service stopped' });
   };
 
   const emitPermissionDenied = async (onError) => {
@@ -104,6 +113,10 @@ export function createDrivingTrackingService({ background = false } = {}) {
           : await requestForegroundLocationPermission();
 
         if (!allowed) {
+          recordSystemEvent('tracking_service_start_blocked', {
+            background_tracking: background === true,
+            reason: 'permission_denied',
+          }, { category: 'permission', severity: 'warn', title: 'Tracking service start blocked' });
           onError?.({
             type: 'permission_denied',
             message: 'Location permission is required to track a trip.',
@@ -125,27 +138,45 @@ export function createDrivingTrackingService({ background = false } = {}) {
             },
             (location, error) => {
               if (error) {
+                logSystemFailure('background_location_watcher', error, {
+                  code: error.code,
+                });
                 onError?.({ message: error.message || 'Background location failed', code: error.code });
                 return;
               }
               emitPoint(location, onPoint);
             }
           );
+          recordSystemEvent('tracking_service_started', {
+            background_tracking: true,
+            native_platform: true,
+          }, { category: 'background', source: 'android', title: 'Tracking service started' });
           return;
         }
 
         if (isNativePlatform()) {
           watcherId = await Geolocation.watchPosition(watchOptions, (position, error) => {
             if (error) {
+              logSystemFailure('native_location_watcher', error, {
+                code: error.code,
+              });
               onError?.({ message: error.message || 'Location failed', code: error.code });
               return;
             }
             emitPoint(position, onPoint);
           });
+          recordSystemEvent('tracking_service_started', {
+            background_tracking: false,
+            native_platform: true,
+          }, { category: 'background', source: 'native', title: 'Tracking service started' });
           return;
         }
 
         if (!navigator.geolocation) {
+          recordSystemEvent('tracking_service_start_blocked', {
+            background_tracking: false,
+            reason: 'geolocation_unavailable',
+          }, { category: 'permission', severity: 'warn', title: 'Tracking service start blocked' });
           onError?.({ message: 'Geolocation is not supported on this device.' });
           return;
         }
@@ -157,11 +188,22 @@ export function createDrivingTrackingService({ background = false } = {}) {
               await emitPermissionDenied(onError);
               return;
             }
+            logSystemFailure('web_location_watcher', error, {
+              code: error.code,
+            });
             onError?.({ message: error.message, code: error.code });
           },
           watchOptions
         );
+        recordSystemEvent('tracking_service_started', {
+          background_tracking: false,
+          native_platform: false,
+        }, { category: 'background', title: 'Tracking service started' });
       } catch (error) {
+        logSystemFailure('tracking_service_start', error, {
+          background_tracking: background === true,
+          native_platform: isNativePlatform(),
+        });
         onError?.({ message: error.message || 'Could not start location tracking.' });
       }
     },

@@ -46,6 +46,8 @@ const categoryLabels = {
   privacy: 'Privacy',
   weather: 'Weather',
   osrm: 'OSRM',
+  storage: 'Storage',
+  notification: 'Notifications',
   app: 'App',
 };
 

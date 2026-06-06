@@ -5,6 +5,7 @@ import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 /*
  * Backup schema history:
@@ -491,6 +492,12 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
   const content = JSON.stringify(backup, null, 2);
   let nativeFallbackError = null;
+  recordSystemEvent('backup_export_started', {
+    trip_count: Array.isArray(trips) ? trips.length : 0,
+    vehicle_count: Array.isArray(vehicles) ? vehicles.length : 0,
+    saved_filter_count: Array.isArray(savedFilters) ? savedFilters.length : 0,
+    backup_version: BACKUP_VERSION,
+  }, { category: 'storage', title: 'Backup export started' });
 
   try {
     const { Capacitor } = await import('@capacitor/core');
@@ -500,10 +507,20 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
         data: content,
         mimeType: 'application/json',
       });
+      recordSystemEvent('backup_export_completed', {
+        native: true,
+        mime_type: 'application/json',
+        byte_count: content.length,
+        backup_version: BACKUP_VERSION,
+      }, { category: 'storage', title: 'Backup export completed' });
       return { native: true, filename: outputName, uri: result.uri, backup };
     }
   } catch (error) {
     nativeFallbackError = error?.message || 'Native export failed.';
+    logSystemFailure('backup_native_export', error, {
+      mime_type: 'application/json',
+      byte_count: content.length,
+    });
     console.warn('Native JSON export failed, falling back to browser download.', error);
   }
 
@@ -517,6 +534,13 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  recordSystemEvent('backup_export_completed', {
+    native: false,
+    native_fallback: Boolean(nativeFallbackError),
+    mime_type: 'application/json',
+    byte_count: content.length,
+    backup_version: BACKUP_VERSION,
+  }, { category: 'storage', title: 'Backup export completed' });
   return { native: false, filename: outputName, backup, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
 }
 
@@ -606,11 +630,33 @@ export function parseDriveSenseBackup(text) {
 
 export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
+    recordSystemEvent('backup_import_rejected', {
+      reason: 'file_too_large',
+      byte_count: Number(file?.size) || 0,
+      max_bytes: MAX_BACKUP_BYTES,
+    }, { category: 'storage', severity: 'warn', title: 'Backup import rejected' });
     throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
+  recordSystemEvent('backup_import_started', {
+    byte_count: Number(file?.size) || 0,
+    include_settings: includeSettings !== false,
+    acknowledge_truncation: acknowledgeTruncation === true,
+  }, { category: 'storage', title: 'Backup import started' });
   const text = await file.text();
-  const backup = parseDriveSenseBackup(text);
+  let backup;
+  try {
+    backup = parseDriveSenseBackup(text);
+  } catch (error) {
+    logSystemFailure('backup_import_parse', error, {
+      byte_count: Number(file?.size) || text.length || 0,
+    });
+    throw error;
+  }
   if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {
+    recordSystemEvent('backup_import_needs_acknowledgement', {
+      truncated_note_trip_count: backup.truncatedNoteTripCount,
+      truncated_fields: backup.warnings.length,
+    }, { category: 'storage', severity: 'warn', title: 'Backup import needs acknowledgement' });
     return {
       requiresAcknowledgement: true,
       truncatedNoteTripCount: backup.truncatedNoteTripCount,
@@ -632,8 +678,8 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
   let importedSettings = false;
   if (includeSettings && backup.settings) {
     const sanitizedSettings = sanitizeImportedSettings(backup.settings);
-    localSettings.set({ ...localSettings.get(), ...sanitizedSettings });
     importedSettings = Object.keys(sanitizedSettings).length > 0;
+    if (importedSettings) localSettings.update(sanitizedSettings);
   }
 
   const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
@@ -643,10 +689,29 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
       await setJson(SAVED_FILTERS_KEY, savedFilters);
       savedFiltersRestored = true;
     } catch (error) {
+      logSystemFailure('backup_import_saved_filters_restore', error, {
+        saved_filter_count: savedFilters.length,
+      });
       console.warn('Could not restore saved trip filters from backup.', error);
     }
   }
 
+  recordSystemEvent('backup_import_completed', {
+    trip_count: importedTrips.length,
+    vehicle_count: importedVehicles.length,
+    settings_imported: importedSettings,
+    saved_filter_count: savedFilters.length,
+    saved_filters_restored: savedFiltersRestored,
+    warning_count: backup.warnings.length,
+    truncated_note_trip_count: backup.truncatedNoteTripCount,
+    privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
+    source_version: backup.sourceVersion,
+    backup_version: backup.version,
+  }, {
+    category: 'storage',
+    severity: backup.warnings.length || privacyZonesNeedReconfiguration ? 'warn' : 'info',
+    title: 'Backup import completed',
+  });
   return {
     trips: importedTrips.length,
     vehicles: importedVehicles.length,

@@ -2,6 +2,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { requestActivityRecognitionPermission } from '@/lib/permissions';
 import { haversineDistance } from '@/lib/tripEngine';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
@@ -37,11 +38,27 @@ export async function startActivityRecognition(onActivity, onError) {
   try {
     const listener = await ActivityRecognition.addListener('activityChanged', onActivity);
     await ActivityRecognition.start({ intervalMs: ACTIVITY_POLL_INTERVAL_MS });
+    recordSystemEvent('android_activity_recognition_started', {
+      interval_ms: ACTIVITY_POLL_INTERVAL_MS,
+    }, { category: 'background', source: 'android', title: 'Activity recognition started' });
     return async () => {
-      await ActivityRecognition.stop();
-      await listener.remove();
+      try {
+        await ActivityRecognition.stop();
+        await listener.remove();
+        recordSystemEvent('android_activity_recognition_stopped', {}, {
+          category: 'background',
+          source: 'android',
+          title: 'Activity recognition stopped',
+        });
+      } catch (error) {
+        logSystemFailure('android_activity_recognition_stop', error, { source: 'android' });
+        throw error;
+      }
     };
   } catch (error) {
+    logSystemFailure('android_activity_recognition_start', error, {
+      interval_ms: ACTIVITY_POLL_INTERVAL_MS,
+    });
     onError?.({ message: error.message || 'Activity recognition is unavailable on this device.' });
     return null;
   }
@@ -49,61 +66,133 @@ export async function startActivityRecognition(onActivity, onError) {
 
 export async function startNativeAutoTracking() {
   if (!isAndroid()) return false;
-  const result = await ActivityRecognition.startNativeAutoTracking();
-  return result?.enabled === true;
+  try {
+    const result = await ActivityRecognition.startNativeAutoTracking();
+    const enabled = result?.enabled === true;
+    recordSystemEvent('android_native_auto_tracking_started', { enabled }, {
+      category: 'background',
+      source: 'android',
+      severity: enabled ? 'info' : 'warn',
+      title: 'Native auto tracking start requested',
+    });
+    return enabled;
+  } catch (error) {
+    logSystemFailure('android_native_auto_tracking_start', error);
+    throw error;
+  }
 }
 
 export async function stopNativeAutoTracking() {
   if (!isAndroid()) return false;
-  const result = await ActivityRecognition.stopNativeAutoTracking();
-  return result?.enabled === false;
+  try {
+    const result = await ActivityRecognition.stopNativeAutoTracking();
+    const stopped = result?.enabled === false;
+    recordSystemEvent('android_native_auto_tracking_stopped', { stopped }, {
+      category: 'background',
+      source: 'android',
+      severity: stopped ? 'info' : 'warn',
+      title: 'Native auto tracking stop requested',
+    });
+    return stopped;
+  } catch (error) {
+    logSystemFailure('android_native_auto_tracking_stop', error);
+    throw error;
+  }
 }
 
 export async function getNativeAutoTrackingStatus() {
   if (!isAndroid()) return { enabled: false, completedTripsCount: 0 };
-  return ActivityRecognition.nativeAutoTrackingStatus();
+  try {
+    return await ActivityRecognition.nativeAutoTrackingStatus();
+  } catch (error) {
+    logSystemFailure('android_native_auto_tracking_status', error);
+    throw error;
+  }
 }
 
 export async function getNativeDiagnostics() {
   if (!isAndroid()) return { enabled: false, events: [] };
-  const result = await ActivityRecognition.getNativeDiagnostics();
-  return {
-    enabled: result?.enabled === true,
-    events: Array.isArray(result?.events) ? result.events : [],
-  };
+  try {
+    const result = await ActivityRecognition.getNativeDiagnostics();
+    return {
+      enabled: result?.enabled === true,
+      events: Array.isArray(result?.events) ? result.events : [],
+    };
+  } catch (error) {
+    logSystemFailure('android_native_diagnostics_load', error);
+    throw error;
+  }
 }
 
 export async function clearNativeDiagnostics() {
   if (!isAndroid()) return;
-  await ActivityRecognition.clearNativeDiagnostics();
+  try {
+    await ActivityRecognition.clearNativeDiagnostics();
+    recordSystemEvent('android_native_diagnostics_cleared', {}, {
+      category: 'diagnostics',
+      source: 'android',
+      title: 'Native diagnostics cleared',
+    });
+  } catch (error) {
+    logSystemFailure('android_native_diagnostics_clear', error);
+    throw error;
+  }
 }
 
 export async function openAndroidLocationSettings() {
   if (!isAndroid()) return false;
-  await ActivityRecognition.openAppLocationSettings();
-  return true;
+  try {
+    await ActivityRecognition.openAppLocationSettings();
+    recordSystemEvent('android_location_settings_opened', {}, { category: 'permission', source: 'android' });
+    return true;
+  } catch (error) {
+    logSystemFailure('android_location_settings_open', error);
+    throw error;
+  }
 }
 
 export async function openAndroidBatteryOptimizationSettings() {
   if (!isAndroid()) return false;
-  await ActivityRecognition.openBatteryOptimizationSettings();
-  return true;
+  try {
+    await ActivityRecognition.openBatteryOptimizationSettings();
+    recordSystemEvent('android_battery_settings_opened', {}, { category: 'permission', source: 'android' });
+    return true;
+  } catch (error) {
+    logSystemFailure('android_battery_settings_open', error);
+    throw error;
+  }
 }
 
 export async function getAndroidBatteryOptimizationStatus() {
   if (!isAndroid()) return { batteryOptimizationIgnored: true };
-  return ActivityRecognition.batteryOptimizationStatus();
+  try {
+    return await ActivityRecognition.batteryOptimizationStatus();
+  } catch (error) {
+    logSystemFailure('android_battery_status', error);
+    throw error;
+  }
 }
 
 export async function getAndroidUsageAccessStatus() {
   if (!isAndroid()) return { usageAccessGranted: false };
-  return ActivityRecognition.usageAccessStatus();
+  try {
+    return await ActivityRecognition.usageAccessStatus();
+  } catch (error) {
+    logSystemFailure('android_usage_access_status', error);
+    throw error;
+  }
 }
 
 export async function openAndroidUsageAccessSettings() {
   if (!isAndroid()) return false;
-  await ActivityRecognition.openUsageAccessSettings();
-  return true;
+  try {
+    await ActivityRecognition.openUsageAccessSettings();
+    recordSystemEvent('android_usage_access_settings_opened', {}, { category: 'permission', source: 'android' });
+    return true;
+  } catch (error) {
+    logSystemFailure('android_usage_access_settings_open', error);
+    throw error;
+  }
 }
 
 export async function getAndroidPhoneUsageSummary(startMs, endMs) {
@@ -115,18 +204,51 @@ export async function getAndroidPhoneUsageSummary(startMs, endMs) {
       total_seconds: 0,
     };
   }
-  return ActivityRecognition.getPhoneUsageSummary({ startMs, endMs });
+  try {
+    const result = await ActivityRecognition.getPhoneUsageSummary({ startMs, endMs });
+    recordSystemEvent('android_phone_usage_summary_loaded', {
+      event_count: Number(result?.event_count) || (Array.isArray(result?.events) ? result.events.length : 0),
+      total_seconds: Math.round(Number(result?.total_seconds) || 0),
+      usage_access_granted: result?.usage_access_granted === true,
+      window_seconds: Math.max(0, Math.round((Number(endMs) - Number(startMs)) / 1000)),
+    }, { category: 'background', source: 'android', title: 'Phone usage summary loaded' });
+    return result;
+  } catch (error) {
+    logSystemFailure('android_phone_usage_summary', error, {
+      window_seconds: Math.max(0, Math.round((Number(endMs) - Number(startMs)) / 1000)),
+    });
+    throw error;
+  }
 }
 
 export async function getNativeCompletedTrips() {
   if (!isAndroid()) return [];
-  const result = await ActivityRecognition.getNativeCompletedTrips();
-  return Array.isArray(result?.trips) ? result.trips : [];
+  try {
+    const result = await ActivityRecognition.getNativeCompletedTrips();
+    const trips = Array.isArray(result?.trips) ? result.trips : [];
+    recordSystemEvent('android_native_completed_trips_loaded', {
+      trip_count: trips.length,
+    }, { category: 'background', source: 'android', title: 'Native completed trips loaded' });
+    return trips;
+  } catch (error) {
+    logSystemFailure('android_native_completed_trips_load', error);
+    throw error;
+  }
 }
 
 export async function clearNativeCompletedTrips() {
   if (!isAndroid()) return;
-  await ActivityRecognition.clearNativeCompletedTrips();
+  try {
+    await ActivityRecognition.clearNativeCompletedTrips();
+    recordSystemEvent('android_native_completed_trips_cleared', {}, {
+      category: 'background',
+      source: 'android',
+      title: 'Native completed trips cleared',
+    });
+  } catch (error) {
+    logSystemFailure('android_native_completed_trips_clear', error);
+    throw error;
+  }
 }
 
 export function shouldAutoStartTracking({ activity, currentSpeedKmh = 0, recentMovingSeconds = 0 }) {

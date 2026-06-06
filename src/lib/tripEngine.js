@@ -1,4 +1,5 @@
 import { saveExportToDownloads } from './nativeDownloads';
+import { logSystemFailure, recordSystemEvent } from './systemLog';
 import { clamp, pearsonCorrelation } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
 import { maskEventCoordinatesForPrivacy, maskTripForPrivacy } from './privacyZones';
@@ -6789,6 +6790,11 @@ export async function downloadCSV(content, filename) {
       };
     }
   } catch (error) {
+    logSystemFailure('csv_native_export', error, {
+      extension: 'csv',
+      mime_type: 'text/csv',
+      byte_count: String(content || '').length,
+    });
     console.warn('Native CSV export failed, falling back to browser download.', error);
   }
 
@@ -6802,6 +6808,12 @@ export async function downloadCSV(content, filename) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  recordSystemEvent('csv_export_completed', {
+    native: false,
+    extension: 'csv',
+    mime_type: 'text/csv',
+    byte_count: String(content || '').length,
+  }, { category: 'storage', title: 'CSV export completed' });
   return {
     native: false,
     filename: safeFilename,
