@@ -1831,10 +1831,10 @@ export default function Settings() {
               {calibLoading ? 'Analysing...' : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
             </button>
           </div>
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 [overflow-wrap:anywhere] dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-semibold">{PENALTY_SCALE_CALIBRATION.label}</div>
-              <div className="flex items-center gap-2">
+              <div className="min-w-0 font-semibold">{PENALTY_SCALE_CALIBRATION.label}</div>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {PENALTY_SCALE_CALIBRATION.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
                 <span className="font-mono">{PENALTY_SCALE_CALIBRATION.value}</span>
               </div>
@@ -1955,10 +1955,10 @@ export default function Settings() {
               )}
             </div>
           )}
-          <details className="mt-3 rounded-xl border border-border bg-card p-3 text-xs">
+          <details className="mt-3 rounded-xl border border-border bg-card p-3 text-xs [overflow-wrap:anywhere]">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 font-semibold">
-              <span>Calibration registry</span>
-              <span className="flex items-center gap-2">
+              <span className="min-w-0">Calibration registry</span>
+              <span className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                 <CalibrationStatusTag />
                 {PROVISIONAL_SCORING_CONSTANTS.length}
               </span>
@@ -1966,9 +1966,9 @@ export default function Settings() {
             <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
               {PROVISIONAL_SCORING_CONSTANTS.map((entry) => (
                 <div key={entry.key} className="rounded-lg bg-secondary/60 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">{entry.label}</span>
-                    <span className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="min-w-0 font-semibold">{entry.label}</span>
+                    <span className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                       {entry.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
                       <span className="font-mono text-primary">{typeof entry.value === 'object' ? 'policy' : String(entry.value)}</span>
                     </span>

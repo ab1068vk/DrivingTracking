@@ -460,13 +460,13 @@ export default function Reports() {
             transition={{ delay: 0.18 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
-            <div className="mb-5 rounded-2xl border border-border p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-semibold">Driver Score Card</h2>
+            <div className="mb-5 overflow-hidden rounded-2xl border border-border p-4">
+              <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <h2 className="font-semibold leading-tight">Driver Score Card</h2>
                     {UBI_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
-                    <span className="rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+                    <span className="max-w-full rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-center text-[10px] font-bold uppercase leading-tight tracking-wide text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
                       Not insurance
                     </span>
                   </div>
@@ -475,14 +475,14 @@ export default function Reports() {
                   </p>
                 </div>
                 {ubiReport.insufficientData ? (
-                  <div className="text-right text-sm font-semibold text-muted-foreground">Insufficient data</div>
+                  <div className="text-sm font-semibold text-muted-foreground sm:text-right">Insufficient data</div>
                 ) : (
-                  <div className="text-right">
-                    <div className="mb-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                  <div className="min-w-0 text-left sm:max-w-[12rem] sm:text-right">
+                    <div className="mb-1 inline-flex max-w-full rounded-full bg-red-600 px-2 py-0.5 text-center text-[10px] font-bold uppercase leading-tight tracking-wide text-white">
                       Not insurer validated
                     </div>
-                    <div className="font-grotesk text-3xl font-bold">{formatEstimatedScore(ubiReport.ubiScore)}</div>
-                    <div className="text-xs font-semibold text-primary">Internal estimate: {ubiReport.ubiGrade} / {ubiReport.ubiTier}</div>
+                    <div className="font-grotesk text-3xl font-bold leading-none">{formatEstimatedScore(ubiReport.ubiScore)}</div>
+                    <div className="mt-1 text-xs font-semibold leading-snug text-primary">Internal estimate: {ubiReport.ubiGrade} / {ubiReport.ubiTier}</div>
                   </div>
                 )}
               </div>

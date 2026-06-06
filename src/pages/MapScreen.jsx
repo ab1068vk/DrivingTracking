@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
-import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers } from 'lucide-react';
+import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
 import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
@@ -30,6 +30,7 @@ const MAP_FILTERS = [
 ];
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
+const TRIP_CARD_PAGE_SIZE = 30;
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
     const idleId = window.requestIdleCallback(callback, { timeout: 1000 });
@@ -78,6 +79,7 @@ export default function MapScreen() {
   const [showLayerPanel, setShowLayerPanel] = useState(true);
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
+  const [tripListPage, setTripListPage] = useState(0);
   const settings = useMemo(() => localSettings.get(), []);
   const units = settings.units || 'metric';
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
@@ -209,6 +211,11 @@ export default function MapScreen() {
         label: formatDate(trip.start_time),
       }))
   ), [completed, selectedTrip]);
+  const tripPageCount = Math.max(1, Math.ceil(completed.length / TRIP_CARD_PAGE_SIZE));
+  const safeTripListPage = Math.min(tripListPage, tripPageCount - 1);
+  const tripPageStart = safeTripListPage * TRIP_CARD_PAGE_SIZE;
+  const visibleTripCards = completed.slice(tripPageStart, tripPageStart + TRIP_CARD_PAGE_SIZE);
+  const tripPageEnd = tripPageStart + visibleTripCards.length;
 
   const confirmAndFetchRoadContext = () => {
     if (!selectedTrip) return;
@@ -233,6 +240,14 @@ export default function MapScreen() {
   useEffect(() => {
     setSecondaryTripId('');
   }, [selectedTripId]);
+
+  useEffect(() => {
+    setTripListPage(0);
+  }, [mapFilter]);
+
+  useEffect(() => {
+    if (tripListPage > tripPageCount - 1) setTripListPage(Math.max(0, tripPageCount - 1));
+  }, [tripListPage, tripPageCount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -576,7 +591,7 @@ export default function MapScreen() {
             <Filter className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
             <div className="flex gap-1">
               {MAP_FILTERS.map(f => (
-                <button key={f.id} onClick={() => { setMapFilter(f.id); setSelectedTripId(null); }}
+                <button key={f.id} onClick={() => { setMapFilter(f.id); setSelectedTripId(null); setTripListPage(0); }}
                   className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap ${
                     mapFilter === f.id ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                   }`}>
@@ -639,7 +654,40 @@ export default function MapScreen() {
               </div>
             </button>
 
-            {completed.slice(0, 30).map(trip => {
+            {completed.length > TRIP_CARD_PAGE_SIZE && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-secondary/35 px-3 py-2 text-xs text-muted-foreground">
+                <span>
+                  Showing trips {tripPageStart + 1}-{tripPageEnd} of {completed.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setTripListPage((page) => Math.max(0, page - 1))}
+                    disabled={safeTripListPage === 0}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card transition-colors hover:border-primary/40 disabled:opacity-40"
+                    aria-label="Previous trip page"
+                    title="Previous trip page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="min-w-12 text-center font-medium text-foreground">
+                    {safeTripListPage + 1}/{tripPageCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTripListPage((page) => Math.min(tripPageCount - 1, page + 1))}
+                    disabled={safeTripListPage >= tripPageCount - 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card transition-colors hover:border-primary/40 disabled:opacity-40"
+                    aria-label="Next trip page"
+                    title="Next trip page"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {visibleTripCards.map(trip => {
               const overallScore = getTripComponentScore(trip, 'overall');
               const { color } = overallScore.value == null
                 ? { color: 'text-muted-foreground' }
