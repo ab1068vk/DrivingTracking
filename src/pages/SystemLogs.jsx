@@ -5,10 +5,12 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  Filter,
   FileJson,
   RefreshCw,
   Search,
   Trash2,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -21,7 +23,8 @@ import {
   SYSTEM_LOG_EVENT,
 } from '@/lib/systemLog';
 import { getNativeDiagnostics } from '@/lib/activityRecognition';
-import { isAndroid } from '@/lib/nativePlatform';
+import { isAndroid, isNativePlatform } from '@/lib/nativePlatform';
+import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import {
   getTrackingDiagnostics,
   normalizeNativeDiagnosticEvents,
@@ -54,6 +57,21 @@ const categoryLabels = {
 
 const categoryOptions = Object.keys(categoryLabels);
 const LOG_PAGE_SIZE = 50;
+const timeRangeOptions = [
+  { id: 'all', label: 'Any time', ms: Infinity },
+  { id: '15m', label: 'Last 15 min', ms: 15 * 60 * 1000 },
+  { id: '1h', label: 'Last hour', ms: 60 * 60 * 1000 },
+  { id: '6h', label: 'Last 6 hours', ms: 6 * 60 * 60 * 1000 },
+  { id: '24h', label: 'Last 24 hours', ms: 24 * 60 * 60 * 1000 },
+];
+
+const quickFilterOptions = [
+  { id: 'all', label: 'Everything' },
+  { id: 'problems', label: 'Problems' },
+  { id: 'exports', label: 'Imports/exports' },
+  { id: 'native', label: 'Android/native' },
+  { id: 'background', label: 'Background' },
+];
 
 function diagnosticEventToLog(event = {}, sourcePrefix = 'diagnostic') {
   return {
@@ -133,6 +151,39 @@ function downloadText(filename, text, type) {
   URL.revokeObjectURL(url);
 }
 
+async function exportLogText({ filename, text, mimeType, format, logCount }) {
+  let nativeFallbackError = null;
+  if (isNativePlatform()) {
+    try {
+      const result = await saveExportToDownloads({ filename, data: text, mimeType });
+      recordSystemEvent('system_logs_exported', {
+        format,
+        native: true,
+        log_count: logCount,
+        byte_count: text.length,
+      }, { category: 'storage', title: 'System logs exported' });
+      return { native: true, filename, uri: result.uri };
+    } catch (error) {
+      nativeFallbackError = error?.message || 'Native log export failed.';
+      logSystemFailure('system_logs_native_export', error, {
+        format,
+        mime_type: mimeType,
+        byte_count: text.length,
+      });
+    }
+  }
+
+  downloadText(filename, text, mimeType);
+  recordSystemEvent('system_logs_exported', {
+    format,
+    native: false,
+    native_fallback: Boolean(nativeFallbackError),
+    log_count: logCount,
+    byte_count: text.length,
+  }, { category: 'storage', title: 'System logs exported' });
+  return { native: false, filename, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+}
+
 function detailSummary(details = {}) {
   if (!details || typeof details !== 'object') return '';
   const reason = details.reason || details.error?.message || details.statusText || details.target?.label;
@@ -147,6 +198,39 @@ function searchableDetailText(details = {}) {
   } catch {
     return detailSummary(details);
   }
+}
+
+function safeEventTime(event) {
+  const ms = new Date(event?.timestamp || 0).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function normalizeOptionValue(value) {
+  return String(value || '').trim() || 'unknown';
+}
+
+function sortOptionValues(values = []) {
+  return [...new Set(values.map(normalizeOptionValue))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function matchesQuickFilter(event = {}, quickFilter = 'all') {
+  const operation = String(event.operation || '').toLowerCase();
+  const source = String(event.source || '').toLowerCase();
+  if (quickFilter === 'problems') {
+    return event.severity === 'error' || event.severity === 'warn' || ['failure', 'load', 'performance'].includes(event.category);
+  }
+  if (quickFilter === 'exports') {
+    return /(export|import|backup|csv|pdf|download)/i.test(operation);
+  }
+  if (quickFilter === 'native') {
+    return source === 'android' || source === 'native' || operation.includes('native') || operation.includes('android');
+  }
+  if (quickFilter === 'background') {
+    return ['background', 'storage', 'notification'].includes(event.category);
+  }
+  return true;
 }
 
 function LogRow({ event, index }) {
@@ -199,7 +283,14 @@ export default function SystemLogs() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [severity, setSeverity] = useState('all');
+  const [quickFilter, setQuickFilter] = useState('all');
+  const [timeRange, setTimeRange] = useState('all');
+  const [source, setSource] = useState('all');
+  const [operation, setOperation] = useState('all');
+  const [pageFilter, setPageFilter] = useState('all');
+  const [sortOrder, setSortOrder] = useState('newest');
   const [visibleCount, setVisibleCount] = useState(LOG_PAGE_SIZE);
+  const [exportStatus, setExportStatus] = useState('');
 
   const refresh = () => {
     setLogs(getLocalLogSnapshot());
@@ -219,7 +310,13 @@ export default function SystemLogs() {
 
   useEffect(() => {
     setVisibleCount(LOG_PAGE_SIZE);
-  }, [query, category, severity]);
+  }, [query, category, severity, quickFilter, timeRange, source, operation, pageFilter, sortOrder]);
+
+  const filterOptions = useMemo(() => ({
+    sources: sortOptionValues(logs.map((event) => event.source)),
+    operations: sortOptionValues(logs.map((event) => event.operation)),
+    pages: sortOptionValues(logs.map((event) => event.page).filter(Boolean)),
+  }), [logs]);
 
   const searchableLogs = useMemo(() => logs.map((event) => ({
     event,
@@ -237,13 +334,24 @@ export default function SystemLogs() {
 
   const filteredLogs = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return searchableLogs.filter(({ event, searchText }) => {
+    const range = timeRangeOptions.find((option) => option.id === timeRange) || timeRangeOptions[0];
+    const cutoff = range.ms === Infinity ? 0 : Date.now() - range.ms;
+    const filtered = searchableLogs.filter(({ event, searchText }) => {
       if (category !== 'all' && event.category !== category) return false;
       if (severity !== 'all' && event.severity !== severity) return false;
+      if (source !== 'all' && normalizeOptionValue(event.source) !== source) return false;
+      if (operation !== 'all' && normalizeOptionValue(event.operation) !== operation) return false;
+      if (pageFilter !== 'all' && normalizeOptionValue(event.page) !== pageFilter) return false;
+      if (cutoff && safeEventTime(event) < cutoff) return false;
+      if (!matchesQuickFilter(event, quickFilter)) return false;
       if (!q) return true;
       return searchText.includes(q);
     }).map(({ event }) => event);
-  }, [searchableLogs, query, category, severity]);
+    return filtered.sort((a, b) => {
+      const diff = safeEventTime(b) - safeEventTime(a);
+      return sortOrder === 'oldest' ? -diff : diff;
+    });
+  }, [searchableLogs, query, category, severity, source, operation, pageFilter, timeRange, quickFilter, sortOrder]);
 
   const visibleLogs = useMemo(
     () => filteredLogs.slice(0, visibleCount),
@@ -257,28 +365,56 @@ export default function SystemLogs() {
     actions: logs.filter((event) => event.category === 'user_action').length,
   }), [logs]);
 
-  const exportJson = () => {
-    downloadText(
-      `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
-      exportSystemLogsJson(logs),
-      'application/json'
-    );
-    recordSystemEvent('system_logs_exported', {
-      format: 'json',
-      log_count: logs.length,
-    }, { category: 'storage', title: 'System logs exported' });
+  const activeFilterCount = [
+    query.trim(),
+    category !== 'all',
+    severity !== 'all',
+    quickFilter !== 'all',
+    timeRange !== 'all',
+    source !== 'all',
+    operation !== 'all',
+    pageFilter !== 'all',
+    sortOrder !== 'newest',
+  ].filter(Boolean).length;
+
+  const resetFilters = () => {
+    setQuery('');
+    setCategory('all');
+    setSeverity('all');
+    setQuickFilter('all');
+    setTimeRange('all');
+    setSource('all');
+    setOperation('all');
+    setPageFilter('all');
+    setSortOrder('newest');
   };
 
-  const exportCsv = () => {
-    downloadText(
-      `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
-      exportSystemLogsCsv(logs),
-      'text/csv'
-    );
-    recordSystemEvent('system_logs_exported', {
+  const exportJson = async () => {
+    setExportStatus('Saving JSON export...');
+    const result = await exportLogText({
+      filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
+      text: exportSystemLogsJson(filteredLogs),
+      mimeType: 'application/json',
+      format: 'json',
+      logCount: filteredLogs.length,
+    });
+    setExportStatus(result.native
+      ? `${result.filename} saved to Downloads.`
+      : `${result.filename} is downloading.`);
+  };
+
+  const exportCsv = async () => {
+    setExportStatus('Saving CSV export...');
+    const result = await exportLogText({
+      filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+      text: exportSystemLogsCsv(filteredLogs),
+      mimeType: 'text/csv',
       format: 'csv',
-      log_count: logs.length,
-    }, { category: 'storage', title: 'System logs exported' });
+      logCount: filteredLogs.length,
+    });
+    setExportStatus(result.native
+      ? `${result.filename} saved to Downloads.`
+      : `${result.filename} is downloading.`);
   };
 
   const clearLogs = () => {
@@ -298,28 +434,35 @@ export default function SystemLogs() {
             App failures, load failures, user actions, permissions, diagnostics, OSRM, weather, privacy, and background events. System entries expire after 3 days.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={refresh}
-            className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-secondary"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
-          <button
-            onClick={exportJson}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
-          >
-            <FileJson className="h-4 w-4" />
-            Export JSON
-          </button>
-          <button
-            onClick={exportCsv}
-            className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-secondary"
-          >
-            <Download className="h-4 w-4" />
-            Export CSV
-          </button>
+        <div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              onClick={refresh}
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-secondary"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </button>
+            <button
+              onClick={exportJson}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+            >
+              <FileJson className="h-4 w-4" />
+              Export JSON
+            </button>
+            <button
+              onClick={exportCsv}
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-secondary"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+          </div>
+          {exportStatus && (
+            <div className="mt-2 text-right text-xs font-medium text-muted-foreground">
+              {exportStatus}
+            </div>
+          )}
         </div>
       </div>
 
@@ -340,32 +483,116 @@ export default function SystemLogs() {
       </section>
 
       <section className="rounded-xl border border-border bg-card p-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto_auto]">
-          <label className="relative block">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
+                {activeFilterCount} active
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={resetFilters}
+            disabled={activeFilterCount === 0}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-semibold text-muted-foreground hover:bg-secondary disabled:opacity-40"
+          >
+            <X className="h-3.5 w-3.5" />
+            Reset
+          </button>
+        </div>
+
+        <div className="mb-3 flex flex-wrap gap-2">
+          {quickFilterOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setQuickFilter(option.id)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                quickFilter === option.id
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-background text-muted-foreground hover:bg-secondary'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_repeat(7,minmax(120px,1fr))_auto]">
+          <label className="relative block md:col-span-2 xl:col-span-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search operation, reason, page, source..."
+              placeholder="Search title, operation, reason, page, source, details..."
               className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm"
             />
           </label>
           <select
             value={category}
             onChange={(event) => setCategory(event.target.value)}
-            className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            aria-label="Log category"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
           >
             {categoryOptions.map((option) => <option key={option} value={option}>{categoryLabels[option]}</option>)}
           </select>
           <select
             value={severity}
             onChange={(event) => setSeverity(event.target.value)}
-            className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            aria-label="Log severity"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
           >
             <option value="all">All severity</option>
             <option value="error">Errors</option>
             <option value="warn">Warnings</option>
             <option value="info">Info</option>
+          </select>
+          <select
+            value={timeRange}
+            onChange={(event) => setTimeRange(event.target.value)}
+            aria-label="Log time range"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
+          >
+            {timeRangeOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+          <select
+            value={source}
+            onChange={(event) => setSource(event.target.value)}
+            aria-label="Log source"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All sources</option>
+            {filterOptions.sources.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+          <select
+            value={operation}
+            onChange={(event) => setOperation(event.target.value)}
+            aria-label="Log operation"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All operations</option>
+            {filterOptions.operations.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+          <select
+            value={pageFilter}
+            onChange={(event) => setPageFilter(event.target.value)}
+            aria-label="Log page"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All pages</option>
+            {filterOptions.pages.map((option) => <option key={option} value={option}>{option}</option>)}
+          </select>
+          <select
+            value={sortOrder}
+            onChange={(event) => setSortOrder(event.target.value)}
+            aria-label="Log sort order"
+            className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm"
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
           </select>
           <button
             onClick={clearLogs}
@@ -379,7 +606,12 @@ export default function SystemLogs() {
 
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold">Newest First</h2>
+          <div>
+            <h2 className="font-semibold">{sortOrder === 'oldest' ? 'Oldest First' : 'Newest First'}</h2>
+            <div className="text-xs text-muted-foreground">
+              Exports use the current filtered results.
+            </div>
+          </div>
           <span className="text-xs text-muted-foreground">
             {filteredLogs.length
               ? `${visibleLogs.length} of ${filteredLogs.length} shown`

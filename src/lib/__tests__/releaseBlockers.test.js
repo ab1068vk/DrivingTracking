@@ -597,6 +597,9 @@ describe('release blocker regressions', () => {
     expect(tripEngineSource).toContain('csv_export_completed');
     expect(pdfExportSource).toContain('pdf_export_completed');
     expect(systemLogsPageSource).toContain('system_logs_exported');
+    expect(systemLogsPageSource).toContain('saveExportToDownloads');
+    expect(systemLogsPageSource).toContain('All operations');
+    expect(systemLogsPageSource).toContain('Last 24 hours');
     expect(systemLogsPageSource).toContain('LOG_PAGE_SIZE');
     expect(systemLogsPageSource).toContain('visibleLogs');
     expect(systemLogsPageSource).toContain("storage: 'Storage'");
