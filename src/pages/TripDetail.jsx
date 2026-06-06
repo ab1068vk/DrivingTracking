@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { calibrationLabelService, canUploadCalibrationLabels } from '@/api/calibrationLabels';
+import { calibrationLabelService } from '@/api/calibrationLabels';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
@@ -1437,8 +1437,6 @@ export default function TripDetail() {
         tripId={trip.id}
         status={calibrationSurveyStatus}
         labelCount={calibrationLabelCount}
-        sharingEnabled={settings.calibration_sharing_enabled === true}
-        uploadAvailable={canUploadCalibrationLabels()}
         isPending={calibrationSurveyMutation.isPending}
         isSkipping={skipCalibrationSurveyMutation.isPending}
         error={calibrationSurveyMutation.error}
@@ -2140,7 +2138,7 @@ const shouldPromptForCalibrationSurvey = (tripId, labelCount, status) => {
   return hash % 3 === 0;
 };
 
-function PostTripCalibrationSurvey({ tripId, status, labelCount, sharingEnabled, uploadAvailable, isPending, isSkipping, error, onSubmit, onSkip }) {
+function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSkipping, error, onSubmit, onSkip }) {
   const [draft, setDraft] = useState({
     overallDriveRating: null,
     scoreAccuracy: '',
@@ -2162,11 +2160,7 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, sharingEnabled,
     ? 'Rating saved.'
     : isPending
       ? 'Saving rating...'
-      : sharingEnabled && uploadAvailable
-        ? 'Sharing on when quality checks pass.'
-        : sharingEnabled
-          ? 'Sharing on, local-only in this build.'
-          : 'Local only unless sharing is enabled.';
+      : 'Local rating only.';
   const disabled = isPending || isSkipping || (submitted && !editing) || skipped;
   const canSubmit = Number.isInteger(Number(draft.overallDriveRating)) &&
     Number(draft.overallDriveRating) >= 1 &&

@@ -25,7 +25,7 @@ const LAST_PARKED_KEY = 'drivesense_last_parked';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 7;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
 
 const settingsStorage = () => {
   try {
@@ -250,6 +250,8 @@ export const DEFAULT_SETTINGS = {
   tree_co2_kg_per_year: DEFAULT_TREE_CO2_KG_PER_YEAR,
   privacy_zones: [],
   calibration_sharing_enabled: false,
+  legal_notice_ack_version: 0,
+  legal_notice_acknowledged_at: '',
 };
 
 /**
@@ -306,11 +308,13 @@ export function migrateDefaultSettings(parsed = {}) {
   }
   legacyProxyKeys.forEach((key) => delete merged[key]);
   const ecoSettingsRepaired = repairEcoScoringSettings(merged, 'default_settings_migration');
+  const calibrationSharingChanged = merged.calibration_sharing_enabled !== false;
+  merged.calibration_sharing_enabled = false;
 
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: calibrationSharingChanged || ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
@@ -469,6 +473,11 @@ export function sanitizeImportedSettings(raw = {}) {
     if (key === 'last_map_center') {
       const center = sanitizeMapCenter(value);
       if (center) sanitized.last_map_center = center;
+      return;
+    }
+
+    if (key === 'calibration_sharing_enabled') {
+      sanitized.calibration_sharing_enabled = false;
       return;
     }
 

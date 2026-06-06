@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { calibrationLabelService, canUploadCalibrationLabels } from '@/api/calibrationLabels';
+import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
   Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
 } from 'lucide-react';
@@ -82,6 +82,7 @@ import {
   speedLimitDefaultCountryKey,
 } from '@/lib/speedLimitSource';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import {
   CALIBRATION_STATUSES,
   SCORING_CONSTANTS,
@@ -90,7 +91,7 @@ import {
   scoringValue,
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
-import { LEGAL_DISCLAIMER_SHORT, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
+import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 function SectionTitle({ children, id }) {
@@ -276,13 +277,13 @@ export default function Settings() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
+  const [legalNoticeOpen, setLegalNoticeOpen] = useState(false);
   const [patternGuideOpen, setPatternGuideOpen] = useState(false);
   const [calibProfile, setCalibProfile] = useState(null);
   const [calibLoading, setCalibLoading] = useState(false);
   const [calibrationLabels, setCalibrationLabels] = useState([]);
   const [calibrationMarkers, setCalibrationMarkers] = useState({});
   const [calibrationLabelStatus, setCalibrationLabelStatus] = useState('');
-  const [calibrationRetrying, setCalibrationRetrying] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [privacyDraft, setPrivacyDraft] = useState({ label: 'Private place', radius_m: String(PRIVACY_RADIUS_DEFAULT_M) });
   const [privacyRadiusDrafts, setPrivacyRadiusDrafts] = useState({});
@@ -647,27 +648,6 @@ export default function Settings() {
     }
   };
 
-  const retryCalibrationUploads = async () => {
-    setCalibrationRetrying(true);
-    try {
-      const result = await calibrationLabelService.retryPendingUploads();
-      if (result.unavailable) {
-        setCalibrationLabelStatus('Remote calibration upload is not available in this build.');
-      } else {
-        setCalibrationLabelStatus(`Retry complete: ${result.uploaded} uploaded, ${result.failed} failed.`);
-      }
-      await refreshCalibrationLabels();
-    } catch (error) {
-      logSystemFailure('calibration_upload_retry_action_failed', error, {
-        pending_upload_count: pendingCalibrationUploads,
-      });
-      setCalibrationLabelStatus('Could not retry calibration uploads.');
-    } finally {
-      setCalibrationRetrying(false);
-      setTimeout(() => setCalibrationLabelStatus(''), 4000);
-    }
-  };
-
   const deleteCalibrationLabel = async (labelId) => {
     try {
       await calibrationLabelService.deleteLocalLabel(labelId);
@@ -767,10 +747,12 @@ export default function Settings() {
   };
 
   const showPrivacyPolicy = () => {
-    toast({
-      title: 'Privacy, data, and responsible use',
-      description: `Road Sage stores trip, route, score, vehicle, and settings data locally by default. Optional Get Road Data requests can send route-area boxes to OpenStreetMap, a privacy-safe route point/date to Open-Meteo, and sampled GPS points only to a trusted OSRM endpoint after explicit consent. ${LEGAL_DISCLAIMER_SUMMARY}`,
-      duration: 14000,
+    setLegalNoticeOpen(true);
+    recordSystemEvent('legal_notice_review_opened', {
+      source: 'settings_privacy_data',
+    }, {
+      title: 'Legal notice opened',
+      category: 'settings',
     });
   };
 
@@ -949,7 +931,8 @@ export default function Settings() {
     () => summarizeSurveyCoverage(calibrationLabels),
     [calibrationLabels]
   );
-  const pendingCalibrationUploads = calibrationLabels.filter((label) => label?.upload_status === 'pending_upload').length;
+  const answeredCalibrationTrips = Object.keys(calibrationMarkers).length;
+  const excludedCalibrationLabels = calibrationLabels.filter((label) => label?.eligibleForCalibration === false).length;
   const recentCalibrationLabels = calibrationLabels.slice(0, 5);
 
   const commitPrivacyDraftRadius = () => {
@@ -2853,41 +2836,21 @@ export default function Settings() {
         <div>
           <SettingRow
             icon={Shield}
-            label="Privacy Policy"
-            sublabel="All data is stored locally on your device"
+            label="Legal, safety, data & privacy notice"
+            sublabel="Reread the first-launch notice, local data rules, safety limits, and external-service warnings"
             onClick={showPrivacyPolicy}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </SettingRow>
-          <SettingRow
-            icon={Target}
-            label="Share anonymized calibration labels"
-            sublabel={canUploadCalibrationLabels()
-              ? 'Uploads only summary features and survey labels. Raw GPS, addresses, trip notes, and route geometry stay local.'
-              : 'Keeps survey labels local here because no remote calibration store is configured for this build.'}
-          >
-            <Checkbox
-              checked={cfg.calibration_sharing_enabled === true}
-              onCheckedChange={(checked) => updateCfg({ calibration_sharing_enabled: checked === true })}
-            />
           </SettingRow>
           <div className="my-3 rounded-xl border border-border bg-secondary/30 p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-sm font-semibold">Survey labels</div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {calibrationLabels.length} saved label{calibrationLabels.length === 1 ? '' : 's'} · {Object.keys(calibrationMarkers).length} answered trip{Object.keys(calibrationMarkers).length === 1 ? '' : 's'}
+                  {calibrationLabels.length} saved label{calibrationLabels.length === 1 ? '' : 's'} - {answeredCalibrationTrips} answered trip{answeredCalibrationTrips === 1 ? '' : 's'}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={retryCalibrationUploads}
-                  disabled={calibrationRetrying || pendingCalibrationUploads === 0}
-                  className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground disabled:opacity-50"
-                >
-                  {calibrationRetrying ? 'Retrying...' : `Retry uploads (${pendingCalibrationUploads})`}
-                </button>
                 <button
                   type="button"
                   onClick={clearCalibrationLabels}
@@ -2896,6 +2859,16 @@ export default function Settings() {
                 >
                   Clear labels
                 </button>
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-border bg-background/70 p-3 text-xs text-muted-foreground">
+              <div className="font-semibold text-foreground">What survey answers do</div>
+              <div className="mt-1">
+                Survey answers stay on this device. They do not upload anywhere, change past trip scores, or automatically tune detection thresholds.
+              </div>
+              <div className="mt-2">
+                The app uses them as local calibration notes: Settings can compare your rating with the app score, show whether scores feel too harsh or too generous, track coverage gaps like city/highway/night trips, preserve the labels in backup/export, and log survey actions in System Logs.
               </div>
             </div>
 
@@ -2915,12 +2888,12 @@ export default function Settings() {
                     <div className="text-muted-foreground">Avg score delta</div>
                   </div>
                   <div className="rounded-lg bg-card p-2">
-                    <div className="font-semibold text-foreground">{calibrationSurveySummary.uploadStatus?.uploaded || 0}</div>
-                    <div className="text-muted-foreground">Uploaded</div>
+                    <div className="font-semibold text-foreground">{answeredCalibrationTrips}</div>
+                    <div className="text-muted-foreground">Answered trips</div>
                   </div>
                   <div className="rounded-lg bg-card p-2">
-                    <div className="font-semibold text-foreground">{pendingCalibrationUploads}</div>
-                    <div className="text-muted-foreground">Pending upload</div>
+                    <div className="font-semibold text-foreground">{excludedCalibrationLabels}</div>
+                    <div className="text-muted-foreground">Excluded labels</div>
                   </div>
                 </div>
 
@@ -2950,10 +2923,10 @@ export default function Settings() {
                     <div key={label.id || label.labelId} className="grid grid-cols-[1fr_auto] gap-2 border-b border-border/50 p-2 last:border-0">
                       <div className="min-w-0">
                         <div className="truncate font-semibold text-foreground">
-                          Rating {label.surveyLabel?.overallDriveRating ?? 'N/A'} · {calibrationLabelDate(label)}
+                          Rating {label.surveyLabel?.overallDriveRating ?? 'N/A'} - {calibrationLabelDate(label)}
                         </div>
                         <div className="mt-0.5 truncate text-muted-foreground">
-                          {label.upload_status || 'local_only'} · {label.eligibleForCalibration === false ? 'excluded from calibration' : 'eligible'}
+                          Local only - {label.eligibleForCalibration === false ? 'excluded from calibration' : 'eligible for analysis'}
                         </div>
                       </div>
                       <button
@@ -3427,12 +3400,19 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
+      <LegalNoticeDialog
+        open={legalNoticeOpen}
+        onOpenChange={setLegalNoticeOpen}
+        onAcknowledge={() => setLegalNoticeOpen(false)}
+        reviewMode
+      />
+
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
         <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
-        <div>Data: Stored locally by default · No ads · Calibration sharing is opt-in</div>
+        <div>Data: Stored locally by default - No ads - Survey labels stay local</div>
         <div>{LEGAL_DISCLAIMER_SHORT}</div>
       </div>
     </div>

@@ -18,6 +18,8 @@ import { Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import LegalNoticeDialog from '@/components/LegalNoticeDialog';
+import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 
 const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
@@ -51,6 +53,7 @@ function AppLoading() {
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const [onboardingDone, setOnboardingDone] = useState(null);
+  const [legalNoticeOpen, setLegalNoticeOpen] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -59,6 +62,7 @@ const AuthenticatedApp = () => {
       const settings = await localSettings.hydrateFromNative();
       syncReminderNotifications(settings, { requestPermission: false }).catch(() => {});
       setOnboardingDone(settings.onboarding_completed);
+      setLegalNoticeOpen(Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION);
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
         startNativeAutoTracking().catch(() => {});
       }
@@ -67,6 +71,22 @@ const AuthenticatedApp = () => {
     };
     bootstrapSettings();
   }, []);
+
+  const acknowledgeLegalNotice = () => {
+    const acknowledgedAt = new Date().toISOString();
+    localSettings.update({
+      legal_notice_ack_version: LEGAL_NOTICE_ACK_VERSION,
+      legal_notice_acknowledged_at: acknowledgedAt,
+    });
+    recordSystemEvent('legal_notice_acknowledged', {
+      notice_version: LEGAL_NOTICE_ACK_VERSION,
+      acknowledged_at: acknowledgedAt,
+    }, {
+      title: 'Legal notice acknowledged',
+      category: 'settings',
+    });
+    setLegalNoticeOpen(false);
+  };
 
   useEffect(() => {
     let listener;
@@ -99,39 +119,48 @@ const AuthenticatedApp = () => {
   }
 
   return (
-    <Suspense fallback={<AppLoading />}>
-    <Routes>
-      {/* Onboarding (no layout) - only shown to new users */}
-      {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
+    <>
+      <Suspense fallback={<AppLoading />}>
+      <Routes>
+        {/* Onboarding (no layout) - only shown to new users */}
+        {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
 
-      {/* Main App with shared Layout */}
-      <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/trips" element={<TripHistory />} />
-        <Route path="/trips/:id" element={(
-          <SectionErrorBoundary
-            context="trip_detail_page"
-            title="Trip detail unavailable"
-            message="Something went wrong while opening this trip. Reload to try again."
-          >
-            <TripDetail />
-          </SectionErrorBoundary>
-        )} />
-        <Route path="/map" element={<MapScreen />} />
-        <Route path="/coach" element={<DrivingCoach />} />
-        <Route path="/insights" element={<Insights />} />
-        <Route path="/achievements" element={<Achievements />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/diagnostics" element={<Diagnostics />} />
-        <Route path="/system-logs" element={<SystemLogs />} />
-        <Route path="/settings" element={<Settings />} />
-        {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
-        <Route path="/vehicles" element={<Vehicles />} />
-      </Route>
+        {/* Main App with shared Layout */}
+        <Route element={<Layout />}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/trips" element={<TripHistory />} />
+          <Route path="/trips/:id" element={(
+            <SectionErrorBoundary
+              context="trip_detail_page"
+              title="Trip detail unavailable"
+              message="Something went wrong while opening this trip. Reload to try again."
+            >
+              <TripDetail />
+            </SectionErrorBoundary>
+          )} />
+          <Route path="/map" element={<MapScreen />} />
+          <Route path="/coach" element={<DrivingCoach />} />
+          <Route path="/insights" element={<Insights />} />
+          <Route path="/achievements" element={<Achievements />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/diagnostics" element={<Diagnostics />} />
+          <Route path="/system-logs" element={<SystemLogs />} />
+          <Route path="/settings" element={<Settings />} />
+          {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
+          <Route path="/vehicles" element={<Vehicles />} />
+        </Route>
 
-      <Route path="*" element={<PageNotFound />} />
-    </Routes>
-    </Suspense>
+        <Route path="*" element={<PageNotFound />} />
+      </Routes>
+      </Suspense>
+      <LegalNoticeDialog
+        open={legalNoticeOpen}
+        onOpenChange={(open) => {
+          if (open) setLegalNoticeOpen(true);
+        }}
+        onAcknowledge={acknowledgeLegalNotice}
+      />
+    </>
   );
 };
 

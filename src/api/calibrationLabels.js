@@ -1,15 +1,14 @@
-import { API_BASE_URL, apiClient } from '@/api/client';
+import { apiClient } from '@/api/client';
 import {
   CALIBRATION_LABEL_COLLECTION,
   buildCalibrationUploadPayload,
   buildLocalSurveyRecord,
 } from '@/lib/calibrationLabeling';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
-import { isNativePlatform } from '@/lib/nativePlatform';
-import { localSettings } from '@/lib/trackingStore';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
-export const canUploadCalibrationLabels = () => Boolean(API_BASE_URL) && !isNativePlatform();
+export const canUploadCalibrationLabels = () => false;
+const isCalibrationSharingEnabled = () => false;
 
 const uploadPayloadFromRecord = (record = {}) => {
   const {
@@ -32,7 +31,7 @@ export const calibrationLabelService = {
     recordSystemEvent('calibration_survey_submit_started', {
       trip_id_present: tripId != null,
       replace_existing: replaceExisting === true,
-      sharing_enabled: localSettings.get().calibration_sharing_enabled === true,
+      sharing_enabled: isCalibrationSharingEnabled(),
       upload_available: canUploadCalibrationLabels(),
     }, { category: 'calibration', title: 'Survey feedback save started' });
 
@@ -59,7 +58,7 @@ export const calibrationLabelService = {
       freeTextNote: surveyInput?.freeTextNote,
       includeFreeTextInUpload: false,
     });
-    const sharingEnabled = localSettings.get().calibration_sharing_enabled === true;
+    const sharingEnabled = isCalibrationSharingEnabled();
 
     if (sharingEnabled && payload.eligibleForCalibration && canUploadCalibrationLabels()) {
       try {
@@ -207,7 +206,7 @@ export const calibrationLabelService = {
   },
 
   async retryPendingUploads() {
-    const sharingEnabled = localSettings.get().calibration_sharing_enabled === true;
+    const sharingEnabled = isCalibrationSharingEnabled();
     if (!sharingEnabled || !canUploadCalibrationLabels()) {
       recordSystemEvent('calibration_upload_retry_unavailable', {
         sharing_enabled: sharingEnabled,

@@ -23,11 +23,14 @@ describe('tracking store default settings', () => {
     expect(validateSettingsPatch({ osrm_timeout_ms: 4999 })).toMatchObject({ valid: false });
   });
 
-  it('keeps calibration sharing opt-in by default', () => {
+  it('keeps calibration survey data local only', () => {
     expect(DEFAULT_SETTINGS.calibration_sharing_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.legal_notice_ack_version).toBe(0);
+    expect(DEFAULT_SETTINGS.legal_notice_acknowledged_at).toBe('');
     expect(sanitizeImportedSettings({ calibration_sharing_enabled: true })).toMatchObject({
-      calibration_sharing_enabled: true,
+      calibration_sharing_enabled: false,
     });
+    expect(migrateDefaultSettings({ calibration_sharing_enabled: true }).settings.calibration_sharing_enabled).toBe(false);
   });
 
   it('stores the last map center as an opt-in contextual fallback', () => {
@@ -106,7 +109,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(7);
+    expect(legacySunset.settings_defaults_version).toBe(8);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 
