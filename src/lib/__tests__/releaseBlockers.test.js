@@ -12,7 +12,7 @@ import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
-import { exportSystemLogsCsv, exportSystemLogsJson, pruneExpiredSystemLogs, sanitizeLogDetail, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
+import { exportSystemLogsCsv, exportSystemLogsJson, getSystemLogs, pruneExpiredSystemLogs, sanitizeLogDetail, SYSTEM_LOG_EVENT, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import {
@@ -490,6 +490,49 @@ describe('release blocker regressions', () => {
     expect(csv).toContain('Operation failed: trip_playback');
   });
 
+  it('does not dispatch system-log update events when reading and pruning logs', () => {
+    const values = new Map();
+    const now = Date.now();
+    const expired = {
+      id: 'expired-log',
+      timestamp: new Date(now - SYSTEM_LOG_RETENTION_MS - 1000).toISOString(),
+      severity: 'info',
+      category: 'app',
+      source: 'web',
+      operation: 'expired',
+      title: 'Expired',
+      message: '',
+      page: '/system-logs',
+      details: {},
+    };
+    const kept = {
+      ...expired,
+      id: 'kept-log',
+      timestamp: new Date(now).toISOString(),
+      operation: 'kept',
+      title: 'Kept',
+    };
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('CustomEvent', class {
+      constructor(type, init) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    });
+    vi.stubGlobal('window', { dispatchEvent });
+    values.set('drivesense_system_logs_v1', JSON.stringify([expired, kept]));
+
+    const logs = getSystemLogs();
+
+    expect(logs).toEqual([kept]);
+    expect(dispatchEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: SYSTEM_LOG_EVENT }));
+  });
+
   it('captures browser resource load failures in the system logger', () => {
     const source = readFileSync(new URL('../systemLog.js', import.meta.url), 'utf8');
 
@@ -537,6 +580,7 @@ describe('release blocker regressions', () => {
     const storageSource = readFileSync(new URL('../mobileStorage.js', import.meta.url), 'utf8');
     const backupSource = readFileSync(new URL('../dataBackup.js', import.meta.url), 'utf8');
     const nativeDownloadsSource = readFileSync(new URL('../nativeDownloads.js', import.meta.url), 'utf8');
+    const pdfExportSource = readFileSync(new URL('../pdfExport.js', import.meta.url), 'utf8');
     const tripEngineSource = readFileSync(new URL('../tripEngine.js', import.meta.url), 'utf8');
     const systemLogsPageSource = readFileSync(new URL('../../pages/SystemLogs.jsx', import.meta.url), 'utf8');
 
@@ -551,6 +595,10 @@ describe('release blocker regressions', () => {
     expect(backupSource).toContain('backup_export_completed');
     expect(nativeDownloadsSource).toContain('native_export_saved');
     expect(tripEngineSource).toContain('csv_export_completed');
+    expect(pdfExportSource).toContain('pdf_export_completed');
+    expect(systemLogsPageSource).toContain('system_logs_exported');
+    expect(systemLogsPageSource).toContain('LOG_PAGE_SIZE');
+    expect(systemLogsPageSource).toContain('visibleLogs');
     expect(systemLogsPageSource).toContain("storage: 'Storage'");
     expect(systemLogsPageSource).toContain("notification: 'Notifications'");
   });

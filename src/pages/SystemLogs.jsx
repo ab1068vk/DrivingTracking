@@ -17,6 +17,7 @@ import {
   exportSystemLogsJson,
   getSystemLogs,
   logSystemFailure,
+  recordSystemEvent,
   SYSTEM_LOG_EVENT,
 } from '@/lib/systemLog';
 import { getNativeDiagnostics } from '@/lib/activityRecognition';
@@ -52,6 +53,7 @@ const categoryLabels = {
 };
 
 const categoryOptions = Object.keys(categoryLabels);
+const LOG_PAGE_SIZE = 50;
 
 function diagnosticEventToLog(event = {}, sourcePrefix = 'diagnostic') {
   return {
@@ -139,6 +141,14 @@ function detailSummary(details = {}) {
   return keys.map((key) => `${key}: ${JSON.stringify(details[key])}`).join(' | ');
 }
 
+function searchableDetailText(details = {}) {
+  try {
+    return JSON.stringify(details || {}).slice(0, 2000);
+  } catch {
+    return detailSummary(details);
+  }
+}
+
 function LogRow({ event, index }) {
   const Icon = event.severity === 'error' ? XCircle : event.severity === 'warn' ? AlertTriangle : CheckCircle2;
   const summary = detailSummary(event.details);
@@ -189,6 +199,7 @@ export default function SystemLogs() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [severity, setSeverity] = useState('all');
+  const [visibleCount, setVisibleCount] = useState(LOG_PAGE_SIZE);
 
   const refresh = () => {
     setLogs(getLocalLogSnapshot());
@@ -206,22 +217,38 @@ export default function SystemLogs() {
     };
   }, []);
 
+  useEffect(() => {
+    setVisibleCount(LOG_PAGE_SIZE);
+  }, [query, category, severity]);
+
+  const searchableLogs = useMemo(() => logs.map((event) => ({
+    event,
+    searchText: [
+      event.title,
+      event.message,
+      event.operation,
+      event.category,
+      event.source,
+      event.page,
+      detailSummary(event.details),
+      searchableDetailText(event.details),
+    ].map((value) => String(value || '').toLowerCase()).join('\n'),
+  })), [logs]);
+
   const filteredLogs = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return logs.filter((event) => {
+    return searchableLogs.filter(({ event, searchText }) => {
       if (category !== 'all' && event.category !== category) return false;
       if (severity !== 'all' && event.severity !== severity) return false;
       if (!q) return true;
-      return [
-        event.title,
-        event.message,
-        event.operation,
-        event.category,
-        event.page,
-        JSON.stringify(event.details || {}),
-      ].some((value) => String(value || '').toLowerCase().includes(q));
-    });
-  }, [logs, query, category, severity]);
+      return searchText.includes(q);
+    }).map(({ event }) => event);
+  }, [searchableLogs, query, category, severity]);
+
+  const visibleLogs = useMemo(
+    () => filteredLogs.slice(0, visibleCount),
+    [filteredLogs, visibleCount]
+  );
 
   const counts = useMemo(() => ({
     total: logs.length,
@@ -230,20 +257,35 @@ export default function SystemLogs() {
     actions: logs.filter((event) => event.category === 'user_action').length,
   }), [logs]);
 
-  const exportJson = () => downloadText(
-    `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
-    exportSystemLogsJson(logs),
-    'application/json'
-  );
+  const exportJson = () => {
+    downloadText(
+      `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
+      exportSystemLogsJson(logs),
+      'application/json'
+    );
+    recordSystemEvent('system_logs_exported', {
+      format: 'json',
+      log_count: logs.length,
+    }, { category: 'storage', title: 'System logs exported' });
+  };
 
-  const exportCsv = () => downloadText(
-    `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
-    exportSystemLogsCsv(logs),
-    'text/csv'
-  );
+  const exportCsv = () => {
+    downloadText(
+      `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+      exportSystemLogsCsv(logs),
+      'text/csv'
+    );
+    recordSystemEvent('system_logs_exported', {
+      format: 'csv',
+      log_count: logs.length,
+    }, { category: 'storage', title: 'System logs exported' });
+  };
 
   const clearLogs = () => {
     clearSystemLogs();
+    recordSystemEvent('system_logs_cleared', {
+      previous_log_count: logs.length,
+    }, { category: 'storage', severity: 'warn', title: 'System logs cleared' });
     setLogs(getWebDiagnosticLogs());
   };
 
@@ -338,11 +380,26 @@ export default function SystemLogs() {
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold">Newest First</h2>
-          <span className="text-xs text-muted-foreground">{filteredLogs.length} shown</span>
+          <span className="text-xs text-muted-foreground">
+            {filteredLogs.length
+              ? `${visibleLogs.length} of ${filteredLogs.length} shown`
+              : '0 shown'}
+          </span>
         </div>
         <div className="space-y-2">
           {filteredLogs.length > 0 ? (
-            filteredLogs.map((event, index) => <LogRow key={event.id} event={event} index={index} />)
+            <>
+              {visibleLogs.map((event, index) => <LogRow key={event.id} event={event} index={index} />)}
+              {visibleLogs.length < filteredLogs.length && (
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((count) => count + LOG_PAGE_SIZE)}
+                  className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-lg border border-border bg-card px-3 text-sm font-semibold hover:bg-secondary"
+                >
+                  Show more logs
+                </button>
+              )}
+            </>
           ) : (
             <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
               <ClipboardList className="mx-auto mb-2 h-6 w-6" />

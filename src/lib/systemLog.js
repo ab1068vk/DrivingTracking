@@ -79,11 +79,11 @@ export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now
     .slice(0, MAX_STORED_LOGS);
 }
 
-const writeStoredLogs = (logs) => {
+const writeStoredLogs = (logs, { notify = true } = {}) => {
   if (!canUseStorage()) return;
   try {
     localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(logs));
-    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+    if (notify && typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
       window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: logs.length } }));
     }
   } catch {
@@ -261,7 +261,7 @@ export function logSystemFailure(operation, error, details = {}) {
 
 export function getSystemLogs() {
   const logs = pruneExpiredSystemLogs(readStoredLogs());
-  writeStoredLogs(logs);
+  writeStoredLogs(logs, { notify: false });
   return logs;
 }
 

@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { isNativePlatform } from '@/lib/nativePlatform';
+import { recordSystemEvent } from '@/lib/systemLog';
 import { calculateNoHarshBrakeStreak, estimateTripEconomics } from '@/lib/tripInsights';
 import { formatDate, formatDistance, formatDuration, generateReportSummary } from '@/lib/tripEngine';
 import { formatCurrencyAmount } from '@/lib/currency';
@@ -154,6 +155,11 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   const summary = generateReportSummary(tripList);
   const now = new Date();
   const filename = `road-sage-monthly-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
+  recordSystemEvent('pdf_export_started', {
+    report_type: 'monthly',
+    period,
+    trip_count: tripList.length,
+  }, { category: 'storage', title: 'PDF export started' });
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(24);
@@ -272,10 +278,24 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
       mimeType: 'application/pdf',
       base64: true,
     });
+    recordSystemEvent('pdf_export_completed', {
+      report_type: 'monthly',
+      native: true,
+      period,
+      trip_count: tripList.length,
+      mime_type: 'application/pdf',
+    }, { category: 'storage', title: 'PDF export completed' });
     return { ...result, filename, native: true };
   }
 
   doc.save(filename);
+  recordSystemEvent('pdf_export_completed', {
+    report_type: 'monthly',
+    native: false,
+    period,
+    trip_count: tripList.length,
+    mime_type: 'application/pdf',
+  }, { category: 'storage', title: 'PDF export completed' });
   return { filename, native: false };
 }
 
@@ -287,6 +307,11 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
   const period = ubiReport.periodStart && ubiReport.periodEnd
     ? `${formatDate(ubiReport.periodStart)} to ${formatDate(ubiReport.periodEnd)}`
     : 'No completed trips';
+  recordSystemEvent('pdf_export_started', {
+    report_type: 'score_card',
+    trip_count: ubiReport.tripCount || 0,
+    insufficient_data: insufficientData,
+  }, { category: 'storage', title: 'PDF export started' });
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
@@ -367,9 +392,23 @@ export async function exportUBIReportPDF(ubiReport, settings = {}) {
       mimeType: 'application/pdf',
       base64: true,
     });
+    recordSystemEvent('pdf_export_completed', {
+      report_type: 'score_card',
+      native: true,
+      trip_count: ubiReport.tripCount || 0,
+      insufficient_data: insufficientData,
+      mime_type: 'application/pdf',
+    }, { category: 'storage', title: 'PDF export completed' });
     return { ...result, filename, native: true };
   }
 
   doc.save(filename);
+  recordSystemEvent('pdf_export_completed', {
+    report_type: 'score_card',
+    native: false,
+    trip_count: ubiReport.tripCount || 0,
+    insufficient_data: insufficientData,
+    mime_type: 'application/pdf',
+  }, { category: 'storage', title: 'PDF export completed' });
   return { filename, native: false };
 }

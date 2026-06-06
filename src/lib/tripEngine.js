@@ -6783,6 +6783,12 @@ export async function downloadCSV(content, filename) {
         data: content,
         mimeType: 'text/csv',
       });
+      recordSystemEvent('csv_export_completed', {
+        native: true,
+        extension: 'csv',
+        mime_type: 'text/csv',
+        byte_count: String(content || '').length,
+      }, { category: 'storage', title: 'CSV export completed' });
       return {
         native: true,
         uri: result.uri,
