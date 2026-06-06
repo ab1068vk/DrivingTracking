@@ -94,4 +94,11 @@ describe('recovery compatibility', () => {
     expect(manifest).not.toContain('android:dataExtractionRules=');
     expect(manifest).not.toContain('android:fullBackupContent=');
   });
+
+  it('does not bind exported backups to a specific app install', () => {
+    const backupSource = readProjectFile('src/lib/dataBackup.js');
+
+    expect(backupSource).not.toContain('getOrCreateInstallHash');
+    expect(backupSource).not.toContain('integrity_check_failed');
+  });
 });

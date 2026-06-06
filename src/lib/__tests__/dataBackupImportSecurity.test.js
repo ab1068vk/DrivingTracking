@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_WRONG_PASSWORD_CODE,
   importDriveSenseBackup,
   BACKUP_VERSION,
   MAX_BACKUP_BYTES,
@@ -9,6 +11,10 @@ import {
   migrateBackup,
   parseDriveSenseBackup,
 } from '@/lib/dataBackup';
+import {
+  encryptBackupText,
+  isEncryptedBackupEnvelope,
+} from '@/lib/backupEnvelopeEncryption';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 
 vi.mock('@/api/trips', () => ({
@@ -314,6 +320,37 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
     expect(imported.trips).toBe(1);
+  });
+
+  it('imports encrypted backups through the existing v6 sanitizer without leaking plaintext', async () => {
+    const passphrase = 'correct horse battery staple';
+    const plaintext = JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-encrypted', status: 'completed', notes: 'private route note' }],
+    });
+    const encrypted = await encryptBackupText(plaintext, passphrase, {
+      exportedAt: '2026-06-06T12:00:00.000Z',
+    });
+    const file = {
+      size: encrypted.length,
+      text: vi.fn(async () => encrypted),
+    };
+
+    expect(isEncryptedBackupEnvelope(encrypted)).toBe(true);
+    expect(encrypted).not.toContain('trip-encrypted');
+    expect(encrypted).not.toContain('private route note');
+
+    await expect(importDriveSenseBackup(file)).rejects.toMatchObject({
+      code: BACKUP_PASSWORD_REQUIRED_CODE,
+    });
+    await expect(importDriveSenseBackup(file, { passphrase: 'wrong password value' })).rejects.toMatchObject({
+      code: BACKUP_WRONG_PASSWORD_CODE,
+    });
+
+    const imported = await importDriveSenseBackup(file, { passphrase });
+    expect(imported).toMatchObject({ trips: 1, vehicles: 0 });
   });
 });
 

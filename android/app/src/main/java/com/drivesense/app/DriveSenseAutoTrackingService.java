@@ -40,6 +40,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
@@ -1600,7 +1601,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         try {
             return Instant.parse(value).toEpochMilli();
         } catch (DateTimeParseException | NullPointerException e) {
-            return System.currentTimeMillis();
+            try {
+                return LocalDateTime.parse(value)
+                    .atZone(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli();
+            } catch (DateTimeParseException | NullPointerException ignored) {
+                return System.currentTimeMillis();
+            }
         }
     }
 

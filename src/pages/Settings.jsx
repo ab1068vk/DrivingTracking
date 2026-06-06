@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
 } from 'lucide-react';
 import {
   Dialog,
@@ -49,11 +49,14 @@ import {
 } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
 import {
+  BACKUP_PASSWORD_REQUIRED_CODE,
   BACKUP_TOO_LARGE_MESSAGE,
+  BACKUP_WRONG_PASSWORD_CODE,
   exportDriveSenseBackup,
   importDriveSenseBackup,
   MAX_BACKUP_BYTES,
 } from '@/lib/dataBackup';
+import { BACKUP_PASSPHRASE_MIN_LENGTH, ENCRYPTED_BACKUP_MIME_TYPE } from '@/lib/backupEnvelopeEncryption';
 import { COMMUTE_MATCH_RADIUS_M } from '@/lib/mediumInsights';
 import {
   applyCalibrationProfile,
@@ -85,7 +88,7 @@ import {
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
 import { LEGAL_DISCLAIMER_SHORT, LEGAL_DISCLAIMER_SUMMARY } from '@/lib/legalDisclaimers';
-import { logSystemFailure } from '@/lib/systemLog';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -217,6 +220,30 @@ function calibrationStatusLabel(status) {
   return status === CALIBRATION_STATUSES.PROVISIONAL ? 'Provisional' : status;
 }
 
+const yieldToPaint = () => new Promise((resolve) => {
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => resolve());
+    return;
+  }
+  setTimeout(resolve, 0);
+});
+
+const BACKUP_IMPORT_ACCEPT = [
+  'application/json',
+  ENCRYPTED_BACKUP_MIME_TYPE,
+  'application/octet-stream',
+  'text/plain',
+  '.json',
+  '.drivesensebackup',
+  '*/*',
+].join(',');
+
+const backupPasswordRequirements = (value = '') => ({
+  minLength: value.length >= BACKUP_PASSPHRASE_MIN_LENGTH,
+  capital: /[A-Z]/.test(value),
+  special: /[^A-Za-z0-9]/.test(value),
+});
+
 function validatePrivacyRadius(value) {
   const raw = String(value ?? '').trim();
   if (!raw) {
@@ -257,6 +284,19 @@ export default function Settings() {
   const [osrmConsentOpen, setOsrmConsentOpen] = useState(false);
   const [osrmConsentChecked, setOsrmConsentChecked] = useState(false);
   const [osrmPendingEndpoint, setOsrmPendingEndpoint] = useState('');
+  const [backupExportOpen, setBackupExportOpen] = useState(false);
+  const [backupExportPassphrase, setBackupExportPassphrase] = useState('');
+  const [backupExportConfirm, setBackupExportConfirm] = useState('');
+  const [backupExportPlaintext, setBackupExportPlaintext] = useState(false);
+  const [backupExportBusy, setBackupExportBusy] = useState(false);
+  const [backupExportPasswordVisible, setBackupExportPasswordVisible] = useState(false);
+  const [backupExportConfirmVisible, setBackupExportConfirmVisible] = useState(false);
+  const [backupImportOpen, setBackupImportOpen] = useState(false);
+  const [backupImportPassphrase, setBackupImportPassphrase] = useState('');
+  const [backupImportError, setBackupImportError] = useState('');
+  const [backupImportBusy, setBackupImportBusy] = useState(false);
+  const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
+  const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const importInputRef = useRef(null);
@@ -987,18 +1027,21 @@ export default function Settings() {
     });
   };
 
-  const handleExportBackup = async () => {
-    const [trips, vehicles] = await Promise.all([
-      getSettingsTrips(),
-      getSettingsVehicles(),
-    ]);
-    const result = await exportDriveSenseBackup({
-      trips,
-      vehicles,
-      settings: cfg,
-    });
+  const backupExportPassphraseChecks = backupPasswordRequirements(backupExportPassphrase);
+  const backupExportPassphraseStrong = Object.values(backupExportPassphraseChecks).every(Boolean);
+  const backupExportPassphraseReady = backupExportPassphraseStrong &&
+    backupExportPassphrase === backupExportConfirm;
+  const backupExportReady = backupExportPlaintext || backupExportPassphraseReady;
+
+  const showBackupExportToast = (result) => {
+    recordSystemEvent('backup_export_user_notified', {
+      encrypted: result?.encrypted === true,
+      native: result?.native === true,
+      native_fallback: result?.nativeFallback === true,
+      output_format: result?.encrypted ? 'encrypted' : 'json',
+    }, { category: 'storage', title: 'Backup export notification shown' });
     toast({
-      title: 'Backup saved',
+      title: result?.encrypted ? 'Encrypted backup saved' : 'Backup saved',
       description: result?.nativeFallback
         ? `Could not save to Downloads. ${result?.filename || 'Road Sage backup'} is downloading in the browser instead.`
         : result?.native
@@ -1006,6 +1049,129 @@ export default function Settings() {
         : `${result?.filename || 'Road Sage backup'} is downloading.`,
       variant: result?.nativeFallback ? 'destructive' : undefined,
     });
+  };
+
+  const handleExportBackup = () => {
+    setBackupExportPassphrase('');
+    setBackupExportConfirm('');
+    setBackupExportPlaintext(false);
+    setBackupExportPasswordVisible(false);
+    setBackupExportConfirmVisible(false);
+    setBackupExportOpen(true);
+    recordSystemEvent('backup_export_dialog_opened', {
+      default_output_format: 'encrypted',
+    }, { category: 'storage', title: 'Backup export dialog opened' });
+  };
+
+  const performExportBackup = async () => {
+    if (!backupExportReady || backupExportBusy) return;
+    setBackupExportBusy(true);
+    recordSystemEvent('backup_export_confirmed', {
+      output_format: backupExportPlaintext ? 'json' : 'encrypted',
+      encrypted: !backupExportPlaintext,
+    }, {
+      category: 'storage',
+      severity: backupExportPlaintext ? 'warn' : 'info',
+      title: backupExportPlaintext ? 'Readable backup export confirmed' : 'Encrypted backup export confirmed',
+    });
+    try {
+      await yieldToPaint();
+      const [trips, vehicles] = await Promise.all([
+        getSettingsTrips(),
+        getSettingsVehicles(),
+      ]);
+      const result = await exportDriveSenseBackup({
+        trips,
+        vehicles,
+        settings: cfg,
+        passphrase: backupExportPlaintext ? null : backupExportPassphrase,
+      });
+      setBackupExportOpen(false);
+      setBackupExportPasswordVisible(false);
+      setBackupExportConfirmVisible(false);
+      showBackupExportToast(result);
+    } catch (error) {
+      logSystemFailure('backup_export', error);
+      toast({
+        title: 'Could not export backup',
+        description: error.message || 'Try again with a different backup password.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupExportBusy(false);
+    }
+  };
+
+  const finishImportBackup = async (file, { passphrase = null, acknowledgeTruncation = false } = {}) => {
+    let result = await importDriveSenseBackup(file, { passphrase, acknowledgeTruncation });
+    if (result.requiresAcknowledgement) {
+      const affected = result.truncatedNoteTripCount;
+      if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
+      result = await importDriveSenseBackup(file, { passphrase, acknowledgeTruncation: true });
+    }
+    setCfg(localSettings.get());
+    applyThemeMode(localSettings.get().dark_mode);
+    await qc.invalidateQueries();
+    toast({
+      title: 'Import complete',
+      description: result.truncatedFields
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
+        : !result.savedFiltersRestored && result.savedFilters
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
+        : result.privacy_zones_need_reconfiguration
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
+        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
+      variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
+    });
+    setBackupImportOpen(false);
+    setPendingBackupImportFile(null);
+    setBackupImportPassphrase('');
+    setBackupImportError('');
+    setBackupImportPasswordVisible(false);
+    recordSystemEvent('backup_import_user_notified', {
+      trip_count: result.trips,
+      vehicle_count: result.vehicles,
+      saved_filter_count: result.savedFilters || 0,
+      warning_count: result.truncatedFields || 0,
+      privacy_zones_need_reconfiguration: result.privacy_zones_need_reconfiguration || 0,
+    }, { category: 'storage', title: 'Backup import notification shown' });
+    return result;
+  };
+
+  const handleImportPassphraseSubmit = async () => {
+    if (!pendingBackupImportFile || backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy) return;
+    setBackupImportBusy(true);
+    try {
+      recordSystemEvent('backup_import_password_submitted', {
+        encrypted: true,
+        byte_count: Number(pendingBackupImportFile?.size) || 0,
+      }, { category: 'storage', title: 'Backup password submitted' });
+      await yieldToPaint();
+      await finishImportBackup(pendingBackupImportFile, { passphrase: backupImportPassphrase });
+    } catch (error) {
+      if (error?.code === BACKUP_WRONG_PASSWORD_CODE) {
+        setBackupImportError(BACKUP_WRONG_PASSWORD_CODE);
+        recordSystemEvent('backup_import_wrong_password_notice_shown', {
+          encrypted: true,
+          byte_count: Number(pendingBackupImportFile?.size) || 0,
+        }, {
+          category: 'storage',
+          severity: 'warn',
+          title: 'Backup wrong password message shown',
+        });
+        return;
+      }
+      logSystemFailure('backup_import', error, {
+        byte_count: Number(pendingBackupImportFile?.size) || 0,
+      });
+      toast({
+        title: 'Could not import backup',
+        description: error.message || 'Make sure the file is a Road Sage backup file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupImportBusy(false);
+    }
   };
 
   const handleImportBackup = async (event) => {
@@ -1023,33 +1189,31 @@ export default function Settings() {
     if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
 
     try {
-      let result = await importDriveSenseBackup(file);
-      if (result.requiresAcknowledgement) {
-        const affected = result.truncatedNoteTripCount;
-        if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return;
-        result = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
-      }
-      setCfg(localSettings.get());
-      applyThemeMode(localSettings.get().dark_mode);
-      await qc.invalidateQueries();
-      toast({
-        title: 'Import complete',
-        description: result.truncatedFields
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
-          : !result.savedFiltersRestored && result.savedFilters
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
-          : result.privacy_zones_need_reconfiguration
-          ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
-          : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
-        variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
-      });
+      await finishImportBackup(file);
     } catch (error) {
+      if (error?.code === BACKUP_PASSWORD_REQUIRED_CODE || error?.code === BACKUP_WRONG_PASSWORD_CODE) {
+        setPendingBackupImportFile(file);
+        setBackupImportPassphrase('');
+        setBackupImportError(error.code);
+        setBackupImportPasswordVisible(false);
+        setBackupImportOpen(true);
+        recordSystemEvent('backup_import_unlock_dialog_opened', {
+          encrypted: true,
+          byte_count: Number(file?.size) || 0,
+          reason: error.code,
+        }, {
+          category: 'storage',
+          severity: 'warn',
+          title: 'Backup unlock dialog opened',
+        });
+        return;
+      }
       logSystemFailure('backup_import', error, {
         byte_count: Number(file?.size) || 0,
       });
       toast({
         title: 'Could not import backup',
-        description: error.message || 'Make sure the file is a Road Sage backup JSON file.',
+        description: error.message || 'Make sure the file is a Road Sage backup file.',
         variant: 'destructive',
       });
     }
@@ -2700,7 +2864,7 @@ export default function Settings() {
           <SettingRow
             icon={Download}
             label="Export Full Backup"
-            sublabel="JSON with trips, GPS route points, events, vehicles, and settings"
+            sublabel="Password-protected backup with trips, route points, events, vehicles, and settings"
             onClick={handleExportBackup}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -2708,7 +2872,7 @@ export default function Settings() {
           <SettingRow
             icon={Upload}
             label="Import Backup"
-            sublabel="Restore a Road Sage JSON backup into local storage"
+            sublabel="Restore an encrypted or JSON Road Sage backup into local storage"
             onClick={() => importInputRef.current?.click()}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -2743,10 +2907,214 @@ export default function Settings() {
       <input
         ref={importInputRef}
         type="file"
-        accept="application/json,.json"
+        accept={BACKUP_IMPORT_ACCEPT}
         className="hidden"
         onChange={handleImportBackup}
       />
+
+      <Dialog open={backupExportOpen} onOpenChange={(open) => {
+        if (backupExportBusy) return;
+        setBackupExportOpen(open);
+        if (!open) {
+          recordSystemEvent('backup_export_dialog_closed', {
+            completed: false,
+          }, { category: 'storage', title: 'Backup export dialog closed' });
+          setBackupExportPassphrase('');
+          setBackupExportConfirm('');
+          setBackupExportPlaintext(false);
+          setBackupExportPasswordVisible(false);
+          setBackupExportConfirmVisible(false);
+        }
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Export Full Backup</DialogTitle>
+            <DialogDescription>
+              Protect this backup with a password before saving it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="block text-sm font-medium">
+              Password
+              <div className="relative mt-1">
+                <input
+                  type={backupExportPasswordVisible ? 'text' : 'password'}
+                  value={backupExportPassphrase}
+                  onChange={(event) => setBackupExportPassphrase(event.target.value)}
+                  disabled={backupExportPlaintext || backupExportBusy}
+                  autoComplete="new-password"
+                  className="w-full rounded-lg border border-border bg-card py-2 pl-3 pr-10 text-sm outline-none focus:border-primary disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupExportPasswordVisible((visible) => !visible)}
+                  disabled={backupExportPlaintext || backupExportBusy}
+                  className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-secondary disabled:opacity-50"
+                  aria-label={backupExportPasswordVisible ? 'Hide backup password' : 'Show backup password'}
+                  title={backupExportPasswordVisible ? 'Hide backup password' : 'Show backup password'}
+                >
+                  {backupExportPasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
+            <label className="block text-sm font-medium">
+              Confirm password
+              <div className="relative mt-1">
+                <input
+                  type={backupExportConfirmVisible ? 'text' : 'password'}
+                  value={backupExportConfirm}
+                  onChange={(event) => setBackupExportConfirm(event.target.value)}
+                  disabled={backupExportPlaintext || backupExportBusy}
+                  autoComplete="new-password"
+                  className="w-full rounded-lg border border-border bg-card py-2 pl-3 pr-10 text-sm outline-none focus:border-primary disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupExportConfirmVisible((visible) => !visible)}
+                  disabled={backupExportPlaintext || backupExportBusy}
+                  className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-secondary disabled:opacity-50"
+                  aria-label={backupExportConfirmVisible ? 'Hide confirm password' : 'Show confirm password'}
+                  title={backupExportConfirmVisible ? 'Hide confirm password' : 'Show confirm password'}
+                >
+                  {backupExportConfirmVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
+            {!backupExportPlaintext && (
+              <div className="rounded-xl border border-border bg-secondary/30 p-3 text-xs">
+                {[
+                  { ready: backupExportPassphraseChecks.minLength, label: `At least ${BACKUP_PASSPHRASE_MIN_LENGTH} characters` },
+                  { ready: backupExportPassphraseChecks.capital, label: 'One capital letter' },
+                  { ready: backupExportPassphraseChecks.special, label: 'One special character' },
+                  { ready: backupExportPassphrase.length > 0 && backupExportPassphrase === backupExportConfirm, label: 'Passwords match' },
+                ].map((item) => (
+                  <div key={item.label} className={`flex items-center gap-2 py-0.5 font-medium ${item.ready ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {item.ready ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+                    <span>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              <Checkbox
+                checked={backupExportPlaintext}
+                onCheckedChange={(checked) => {
+                  const plaintext = checked === true;
+                  setBackupExportPlaintext(plaintext);
+                  recordSystemEvent(plaintext ? 'backup_plaintext_export_opt_in' : 'backup_plaintext_export_opt_out', {
+                    output_format: plaintext ? 'json' : 'encrypted',
+                  }, {
+                    category: 'storage',
+                    severity: plaintext ? 'warn' : 'info',
+                    title: plaintext ? 'Readable backup option selected' : 'Encrypted backup option selected',
+                  });
+                }}
+                disabled={backupExportBusy}
+                className="mt-0.5"
+              />
+              <span>Export readable JSON instead. Anyone with the file can read trip and route data.</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setBackupExportOpen(false)}
+              disabled={backupExportBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={performExportBackup}
+              disabled={!backupExportReady || backupExportBusy}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {backupExportBusy ? 'Saving...' : backupExportPlaintext ? 'Save JSON' : 'Save Encrypted'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={backupImportOpen} onOpenChange={(open) => {
+        if (backupImportBusy) return;
+        setBackupImportOpen(open);
+        if (!open) {
+          recordSystemEvent('backup_import_unlock_dialog_closed', {
+            completed: false,
+            had_pending_file: Boolean(pendingBackupImportFile),
+          }, { category: 'storage', title: 'Backup unlock dialog closed' });
+          setPendingBackupImportFile(null);
+          setBackupImportPassphrase('');
+          setBackupImportError('');
+          setBackupImportPasswordVisible(false);
+        }
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Unlock Backup</DialogTitle>
+            <DialogDescription>
+              Enter the password used when this backup was exported.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {backupImportError === BACKUP_WRONG_PASSWORD_CODE && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                Wrong password. Try again.
+              </div>
+            )}
+            {backupImportError === BACKUP_PASSWORD_REQUIRED_CODE && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                This backup is encrypted.
+              </div>
+            )}
+            <label className="block text-sm font-medium">
+              Password
+              <div className="relative mt-1">
+                <input
+                  type={backupImportPasswordVisible ? 'text' : 'password'}
+                  value={backupImportPassphrase}
+                  onChange={(event) => setBackupImportPassphrase(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') handleImportPassphraseSubmit();
+                  }}
+                  disabled={backupImportBusy}
+                  autoComplete="current-password"
+                  className="w-full rounded-lg border border-border bg-card py-2 pl-3 pr-10 text-sm outline-none focus:border-primary disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setBackupImportPasswordVisible((visible) => !visible)}
+                  disabled={backupImportBusy}
+                  className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-secondary disabled:opacity-50"
+                  aria-label={backupImportPasswordVisible ? 'Hide backup password' : 'Show backup password'}
+                  title={backupImportPasswordVisible ? 'Hide backup password' : 'Show backup password'}
+                >
+                  {backupImportPasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </label>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setBackupImportOpen(false)}
+              disabled={backupImportBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleImportPassphraseSubmit}
+              disabled={backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy}
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {backupImportBusy ? 'Importing...' : 'Import'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={osrmConsentOpen} onOpenChange={(open) => {
         setOsrmConsentOpen(open);

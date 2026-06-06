@@ -68,8 +68,8 @@ public class DriveSenseAutoTrackingServiceTest {
         calculateStats.setAccessible(true);
 
         JSONArray points = fixture.getJSONArray("points");
-        long startMs = Instant.parse(fixture.getString("startTime")).toEpochMilli();
-        long endMs = Instant.parse(fixture.getString("endTime")).toEpochMilli();
+        long startMs = parseFixtureTimestamp(fixture.getString("startTime"));
+        long endMs = parseFixtureTimestamp(fixture.getString("endTime"));
         Object stats = calculateStats.invoke(service, points, startMs, endMs);
         JSONObject expected = fixture.getJSONObject("expectedStats");
 
@@ -132,10 +132,15 @@ public class DriveSenseAutoTrackingServiceTest {
     private static void assertGoldenScoringFixtureStats(String name) throws Exception {
         JSONObject fixture = loadGoldenScoringFixture(name);
 
-        assertEquals("2.1.0", fixture.getString("scoring_version"));
+        String scoringVersion = fixture.getString("scoring_version");
+        assertTrue(scoringVersion.matches("^[a-f0-9]{8}$"));
         assertTrue(fixture.getBoolean("human_verified"));
         assertTrue(fixture.getJSONArray("points").length() > 1);
         assertTrue(fixture.getJSONObject("expected").getJSONObject("scores").has("score_overall"));
+        assertEquals(
+            scoringVersion,
+            fixture.getJSONObject("expected").getJSONObject("score_provenance").getString("scoring_version")
+        );
 
         DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
         Method calculateStats = DriveSenseAutoTrackingService.class.getDeclaredMethod(
@@ -147,8 +152,8 @@ public class DriveSenseAutoTrackingServiceTest {
         calculateStats.setAccessible(true);
 
         JSONArray points = fixture.getJSONArray("points");
-        long startMs = Instant.parse(fixture.getString("startTime")).toEpochMilli();
-        long endMs = Instant.parse(fixture.getString("endTime")).toEpochMilli();
+        long startMs = parseFixtureTimestamp(fixture.getString("startTime"));
+        long endMs = parseFixtureTimestamp(fixture.getString("endTime"));
         Object stats = calculateStats.invoke(service, points, startMs, endMs);
         JSONObject expected = fixture.getJSONObject("expected").getJSONObject("stats");
 
@@ -189,6 +194,16 @@ public class DriveSenseAutoTrackingServiceTest {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.getBoolean(target);
+    }
+
+    private static long parseFixtureTimestamp(String value) {
+        if (value.endsWith("Z")) {
+            return Instant.parse(value).toEpochMilli();
+        }
+        return LocalDateTime.parse(value)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli();
     }
 
     private static double round(double value, int decimals) {

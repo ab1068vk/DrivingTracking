@@ -17,6 +17,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 
 import org.json.JSONArray;
@@ -29,18 +33,22 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class DriveSenseNativeTripStoreInstrumentedTest {
     private Context context;
+    private Map<String, Object> nativePrefsSnapshot;
+    private Map<String, Object> capacitorPrefsSnapshot;
 
     @Before
     public void setUp() {
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        nativePrefsSnapshot = snapshotPrefs(DriveSenseNativeTripStore.prefs(context));
+        capacitorPrefsSnapshot = snapshotPrefs(context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE));
         DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
         context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
     @After
     public void tearDown() {
-        DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
-        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
+        restorePrefs(DriveSenseNativeTripStore.prefs(context), nativePrefsSnapshot);
+        restorePrefs(context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE), capacitorPrefsSnapshot);
     }
 
     @Test
@@ -173,11 +181,14 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
     private void assertGoldenScoringAsset(String name) throws Exception {
         JSONObject fixture = loadInstrumentationAsset(name);
-        assertEquals("2.1.0", fixture.getString("scoring_version"));
+        String scoringVersion = fixture.getString("scoring_version");
+        assertTrue(scoringVersion.matches("^[a-f0-9]{8}$"));
         assertTrue(fixture.getBoolean("human_verified"));
         assertTrue(fixture.getJSONArray("points").length() > 1);
         assertTrue(fixture.getJSONObject("expected").getJSONObject("scores").has("score_overall"));
-        assertTrue(fixture.getJSONObject("expected").getJSONObject("score_provenance").has("components"));
+        JSONObject provenance = fixture.getJSONObject("expected").getJSONObject("score_provenance");
+        assertEquals(scoringVersion, provenance.getString("scoring_version"));
+        assertTrue(provenance.has("components"));
     }
 
     private JSONObject loadInstrumentationAsset(String name) throws Exception {
@@ -223,5 +234,39 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     private static double round(double value, int decimals) {
         double factor = Math.pow(10d, decimals);
         return Math.round(value * factor) / factor;
+    }
+
+    private static Map<String, Object> snapshotPrefs(SharedPreferences prefs) {
+        Map<String, Object> snapshot = new HashMap<>();
+        for (Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Set<?>) {
+                snapshot.put(entry.getKey(), new HashSet<>((Set<String>) value));
+            } else {
+                snapshot.put(entry.getKey(), value);
+            }
+        }
+        return snapshot;
+    }
+
+    private static void restorePrefs(SharedPreferences prefs, Map<String, Object> snapshot) {
+        SharedPreferences.Editor editor = prefs.edit().clear();
+        for (Map.Entry<String, Object> entry : snapshot.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof String) {
+                editor.putString(entry.getKey(), (String) value);
+            } else if (value instanceof Boolean) {
+                editor.putBoolean(entry.getKey(), (Boolean) value);
+            } else if (value instanceof Integer) {
+                editor.putInt(entry.getKey(), (Integer) value);
+            } else if (value instanceof Long) {
+                editor.putLong(entry.getKey(), (Long) value);
+            } else if (value instanceof Float) {
+                editor.putFloat(entry.getKey(), (Float) value);
+            } else if (value instanceof Set<?>) {
+                editor.putStringSet(entry.getKey(), (Set<String>) value);
+            }
+        }
+        editor.commit();
     }
 }

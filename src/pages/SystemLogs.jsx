@@ -70,6 +70,7 @@ const timeRangeOptions = [
 const quickFilterOptions = [
   { id: 'all', label: 'Everything' },
   { id: 'problems', label: 'Problems' },
+  { id: 'backups', label: 'Backups' },
   { id: 'exports', label: 'Imports/exports' },
   { id: 'native', label: 'Android/native' },
   { id: 'background', label: 'Background' },
@@ -253,6 +254,9 @@ function matchesQuickFilter(event = {}, quickFilter = 'all') {
   if (quickFilter === 'exports') {
     return /(export|import|backup|csv|pdf|download)/i.test(operation);
   }
+  if (quickFilter === 'backups') {
+    return operation.includes('backup');
+  }
   if (quickFilter === 'native') {
     return source === 'android' || source === 'native' || operation.includes('native') || operation.includes('android');
   }
@@ -391,6 +395,7 @@ export default function SystemLogs() {
     total: logs.length,
     errors: logs.filter((event) => event.severity === 'error').length,
     warnings: logs.filter((event) => event.severity === 'warn').length,
+    backups: logs.filter((event) => String(event.operation || '').toLowerCase().includes('backup')).length,
     actions: logs.filter((event) => event.category === 'user_action').length,
   }), [logs]);
 
@@ -473,7 +478,7 @@ export default function SystemLogs() {
         <div>
           <h1 className="font-grotesk text-2xl font-bold">System Logs</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            App failures, load failures, user actions, permissions, diagnostics, OSRM, weather, privacy, and background events. System entries expire after 3 days.
+            App failures, load failures, user actions, permissions, diagnostics, backup import/export, OSRM, weather, privacy, and background events. System entries expire after 3 days.
           </p>
         </div>
         <div>
@@ -508,11 +513,12 @@ export default function SystemLogs() {
         </div>
       </div>
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {[
           { label: 'Total logs', value: counts.total, tone: 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300' },
           { label: 'Failures', value: counts.errors, tone: 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300' },
           { label: 'Warnings', value: counts.warnings, tone: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-950/30 dark:text-yellow-300' },
+          { label: 'Backup events', value: counts.backups, tone: 'bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300' },
           { label: 'User actions', value: counts.actions, tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' },
         ].map((item) => (
           <div key={item.label} className="rounded-xl border border-border bg-card p-4">

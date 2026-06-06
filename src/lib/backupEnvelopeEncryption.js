@@ -1,0 +1,182 @@
+export const ENCRYPTED_BACKUP_FORMAT = 'road-sage-encrypted-backup';
+export const ENCRYPTED_BACKUP_FORMAT_VERSION = 1;
+export const ENCRYPTED_BACKUP_KDF = 'PBKDF2-SHA-256';
+export const ENCRYPTED_BACKUP_CIPHER = 'AES-256-GCM';
+export const ENCRYPTED_BACKUP_EXTENSION = '.drivesensebackup';
+export const ENCRYPTED_BACKUP_MIME_TYPE = 'application/vnd.road-sage.encrypted-backup+json';
+export const BACKUP_PASSPHRASE_MIN_LENGTH = 12;
+export const BACKUP_KDF_ITERATIONS = 210_000;
+
+const SALT_BYTES = 16;
+const IV_BYTES = 12;
+const BASE64_CHUNK_SIZE = 0x8000;
+
+export const BACKUP_PASSWORD_REQUIRED_CODE = 'backup_password_required';
+export const BACKUP_WRONG_PASSWORD_CODE = 'backup_wrong_password';
+export const BACKUP_UNSUPPORTED_ENCRYPTION_CODE = 'backup_unsupported_encryption';
+
+const makeBackupCryptoError = (message, code) => {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+};
+
+const cryptoProvider = () => {
+  const provider = globalThis.crypto;
+  if (!provider?.subtle || typeof provider.getRandomValues !== 'function') {
+    throw new Error('Encrypted backups require Web Crypto support.');
+  }
+  return provider;
+};
+
+const bytesToBase64 = (bytes) => {
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += BASE64_CHUNK_SIZE) {
+    const chunk = bytes.slice(index, index + BASE64_CHUNK_SIZE);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
+
+const base64ToBytes = (value) => {
+  try {
+    const binary = atob(String(value || ''));
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  } catch {
+    throw makeBackupCryptoError(
+      'Encrypted backup data is not valid base64.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  }
+};
+
+const validatePassphrase = (passphrase) => {
+  if (typeof passphrase !== 'string' || passphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH) {
+    throw makeBackupCryptoError(
+      `Backup password must be at least ${BACKUP_PASSPHRASE_MIN_LENGTH} characters.`,
+      BACKUP_PASSWORD_REQUIRED_CODE
+    );
+  }
+};
+
+async function deriveBackupKey(passphrase, salt, iterations) {
+  validatePassphrase(passphrase);
+  const crypto = cryptoProvider();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+const validateEnvelope = (envelope) => {
+  if (
+    !envelope ||
+    envelope.app !== 'Road Sage' ||
+    envelope.format !== ENCRYPTED_BACKUP_FORMAT ||
+    envelope.format_version !== ENCRYPTED_BACKUP_FORMAT_VERSION
+  ) {
+    throw makeBackupCryptoError(
+      'This encrypted backup format is not supported by this version of Road Sage.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  }
+  if (
+    envelope.kdf !== ENCRYPTED_BACKUP_KDF ||
+    envelope.cipher !== ENCRYPTED_BACKUP_CIPHER ||
+    !Number.isInteger(Number(envelope.iterations)) ||
+    typeof envelope.salt !== 'string' ||
+    typeof envelope.iv !== 'string' ||
+    typeof envelope.ciphertext !== 'string'
+  ) {
+    throw makeBackupCryptoError(
+      'Encrypted backup metadata is incomplete.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  }
+};
+
+export function isEncryptedBackupEnvelope(value) {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return parsed?.app === 'Road Sage' &&
+      parsed?.format === ENCRYPTED_BACKUP_FORMAT &&
+      parsed?.format_version === ENCRYPTED_BACKUP_FORMAT_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+export async function encryptBackupText(plaintext, passphrase, { exportedAt = new Date().toISOString() } = {}) {
+  const crypto = cryptoProvider();
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  const key = await deriveBackupKey(passphrase, salt, BACKUP_KDF_ITERATIONS);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(String(plaintext))
+  );
+
+  return JSON.stringify({
+    app: 'Road Sage',
+    format: ENCRYPTED_BACKUP_FORMAT,
+    format_version: ENCRYPTED_BACKUP_FORMAT_VERSION,
+    exported_at: exportedAt,
+    kdf: ENCRYPTED_BACKUP_KDF,
+    cipher: ENCRYPTED_BACKUP_CIPHER,
+    iterations: BACKUP_KDF_ITERATIONS,
+    salt: bytesToBase64(salt),
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+  }, null, 2);
+}
+
+export async function decryptBackupText(encryptedText, passphrase) {
+  validatePassphrase(passphrase);
+
+  let envelope;
+  try {
+    envelope = typeof encryptedText === 'string' ? JSON.parse(encryptedText) : encryptedText;
+  } catch {
+    throw makeBackupCryptoError(
+      'Encrypted backup file is not valid JSON.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  }
+  validateEnvelope(envelope);
+
+  try {
+    const salt = base64ToBytes(envelope.salt);
+    const iv = base64ToBytes(envelope.iv);
+    const ciphertext = base64ToBytes(envelope.ciphertext);
+    const key = await deriveBackupKey(passphrase, salt, Number(envelope.iterations));
+    const plaintext = await cryptoProvider().subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      ciphertext
+    );
+    return new TextDecoder().decode(plaintext);
+  } catch (error) {
+    if (
+      error?.code === BACKUP_PASSWORD_REQUIRED_CODE ||
+      error?.code === BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    ) {
+      throw error;
+    }
+    throw makeBackupCryptoError(
+      'Backup password is incorrect or the encrypted backup is damaged.',
+      BACKUP_WRONG_PASSWORD_CODE
+    );
+  }
+}

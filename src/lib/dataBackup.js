@@ -6,6 +6,15 @@ import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import {
+  BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_WRONG_PASSWORD_CODE,
+  decryptBackupText,
+  ENCRYPTED_BACKUP_EXTENSION,
+  ENCRYPTED_BACKUP_MIME_TYPE,
+  encryptBackupText,
+  isEncryptedBackupEnvelope,
+} from '@/lib/backupEnvelopeEncryption';
 
 /*
  * Backup schema history:
@@ -21,11 +30,12 @@ import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
  */
 export const BACKUP_VERSION = 6;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
-export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage JSON backup that is 50 MB or smaller.';
+export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage backup that is 50 MB or smaller.';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 export const MAX_IMPORTED_STRING_LENGTH = 5000;
 export const MAX_IMPORTED_TRIP_NOTES_LENGTH = 10000;
+export { BACKUP_PASSWORD_REQUIRED_CODE, BACKUP_WRONG_PASSWORD_CODE };
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 const filterString = (value, fallback = '') => (
@@ -484,19 +494,55 @@ export function buildDriveSenseBackup({ trips = [], vehicles = [], settings = lo
 }
 
 /**
- * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string}} options
+ * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,passphrase?:string|null}} options
  */
-export async function exportDriveSenseBackup({ trips, vehicles, settings, filename } = {}) {
+export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, passphrase = null } = {}) {
   const savedFilters = await getJson(SAVED_FILTERS_KEY, []);
   const backup = buildDriveSenseBackup({ trips, vehicles, settings, savedFilters });
-  const outputName = safeFilename(filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`);
-  const content = JSON.stringify(backup, null, 2);
+  const encrypted = typeof passphrase === 'string' && passphrase.length > 0;
+  const requestedName = filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`;
+  const encryptedName = /\.(json|drivesensebackup)$/i.test(requestedName)
+    ? requestedName.replace(/\.(json|drivesensebackup)$/i, ENCRYPTED_BACKUP_EXTENSION)
+    : `${requestedName}${ENCRYPTED_BACKUP_EXTENSION}`;
+  const outputName = safeFilename(encrypted ? encryptedName : requestedName);
+  const plaintext = JSON.stringify(backup, null, 2);
+  let content = plaintext;
+  if (encrypted) {
+    recordSystemEvent('backup_export_encryption_started', {
+      backup_version: BACKUP_VERSION,
+      trip_count: Array.isArray(trips) ? trips.length : 0,
+      vehicle_count: Array.isArray(vehicles) ? vehicles.length : 0,
+    }, { category: 'storage', title: 'Backup encryption started' });
+    try {
+      content = await encryptBackupText(plaintext, passphrase, { exportedAt: backup.exported_at });
+    } catch (error) {
+      logSystemFailure('backup_export_encrypt', error, {
+        backup_version: BACKUP_VERSION,
+      });
+      throw error;
+    }
+  }
+  const mimeType = encrypted ? ENCRYPTED_BACKUP_MIME_TYPE : 'application/json';
   let nativeFallbackError = null;
+  if (!encrypted) {
+    recordSystemEvent('backup_plaintext_export_selected', {
+      backup_version: BACKUP_VERSION,
+      trip_count: Array.isArray(trips) ? trips.length : 0,
+      vehicle_count: Array.isArray(vehicles) ? vehicles.length : 0,
+    }, {
+      category: 'storage',
+      severity: 'warn',
+      title: 'Readable backup export selected',
+      message: 'Backup will be saved without password protection.',
+    });
+  }
   recordSystemEvent('backup_export_started', {
     trip_count: Array.isArray(trips) ? trips.length : 0,
     vehicle_count: Array.isArray(vehicles) ? vehicles.length : 0,
     saved_filter_count: Array.isArray(savedFilters) ? savedFilters.length : 0,
     backup_version: BACKUP_VERSION,
+    encrypted,
+    output_format: encrypted ? 'encrypted' : 'json',
   }, { category: 'storage', title: 'Backup export started' });
 
   try {
@@ -505,26 +551,30 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
       const result = await saveExportToDownloads({
         filename: outputName,
         data: content,
-        mimeType: 'application/json',
+        mimeType,
       });
       recordSystemEvent('backup_export_completed', {
         native: true,
-        mime_type: 'application/json',
+        mime_type: mimeType,
         byte_count: content.length,
         backup_version: BACKUP_VERSION,
+        encrypted,
+        output_format: encrypted ? 'encrypted' : 'json',
       }, { category: 'storage', title: 'Backup export completed' });
-      return { native: true, filename: outputName, uri: result.uri, backup };
+      return { native: true, filename: outputName, uri: result.uri, backup, encrypted };
     }
   } catch (error) {
     nativeFallbackError = error?.message || 'Native export failed.';
     logSystemFailure('backup_native_export', error, {
-      mime_type: 'application/json',
+      mime_type: mimeType,
       byte_count: content.length,
+      encrypted,
+      output_format: encrypted ? 'encrypted' : 'json',
     });
-    console.warn('Native JSON export failed, falling back to browser download.', error);
+    console.warn('Native backup export failed, falling back to browser download.', error);
   }
 
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8;' });
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8;` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -537,11 +587,13 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   recordSystemEvent('backup_export_completed', {
     native: false,
     native_fallback: Boolean(nativeFallbackError),
-    mime_type: 'application/json',
+    mime_type: mimeType,
     byte_count: content.length,
     backup_version: BACKUP_VERSION,
+    encrypted,
+    output_format: encrypted ? 'encrypted' : 'json',
   }, { category: 'storage', title: 'Backup export completed' });
-  return { native: false, filename: outputName, backup, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+  return { native: false, filename: outputName, backup, encrypted, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
 }
 
 export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
@@ -628,7 +680,7 @@ export function parseDriveSenseBackup(text) {
   };
 }
 
-export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false } = {}) {
+export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false, passphrase = null } = {}) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     recordSystemEvent('backup_import_rejected', {
       reason: 'file_too_large',
@@ -642,13 +694,67 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     include_settings: includeSettings !== false,
     acknowledge_truncation: acknowledgeTruncation === true,
   }, { category: 'storage', title: 'Backup import started' });
-  const text = await file.text();
+  let text = '';
+  try {
+    text = await file.text();
+  } catch (error) {
+    logSystemFailure('backup_import_read', error, {
+      byte_count: Number(file?.size) || 0,
+    });
+    throw error;
+  }
+  const encrypted = isEncryptedBackupEnvelope(text);
+  recordSystemEvent('backup_import_format_detected', {
+    byte_count: Number(file?.size) || text.length || 0,
+    encrypted,
+    input_format: encrypted ? 'encrypted' : 'json',
+  }, { category: 'storage', title: 'Backup import format detected' });
+  let backupText = text;
+  if (encrypted) {
+    if (typeof passphrase !== 'string' || passphrase.length === 0) {
+      recordSystemEvent('backup_import_password_required', {
+        byte_count: Number(file?.size) || text.length || 0,
+        encrypted: true,
+      }, {
+        category: 'storage',
+        severity: 'warn',
+        title: 'Backup password required',
+        message: 'Encrypted backup import is waiting for a password.',
+      });
+      const error = new Error('This backup is encrypted. Enter the backup password to import it.');
+      error.code = BACKUP_PASSWORD_REQUIRED_CODE;
+      throw error;
+    }
+    try {
+      backupText = await decryptBackupText(text, passphrase);
+    } catch (error) {
+      const wrongPassword = error?.code === BACKUP_WRONG_PASSWORD_CODE;
+      recordSystemEvent(wrongPassword ? 'backup_import_wrong_password' : 'backup_import_decrypt_failed', {
+        byte_count: Number(file?.size) || text.length || 0,
+        encrypted: true,
+        error_code: error?.code || 'decrypt_failed',
+      }, {
+        category: 'storage',
+        severity: wrongPassword ? 'warn' : 'error',
+        title: wrongPassword ? 'Backup password rejected' : 'Operation failed: backup_import_decrypt',
+        message: wrongPassword
+          ? 'Encrypted backup import was not unlocked.'
+          : 'Encrypted backup could not be decrypted.',
+      });
+      throw error;
+    }
+    recordSystemEvent('backup_import_decrypted', {
+      byte_count: Number(file?.size) || text.length || 0,
+      encrypted: true,
+    }, { category: 'storage', title: 'Backup decrypted' });
+  }
   let backup;
   try {
-    backup = parseDriveSenseBackup(text);
+    backup = parseDriveSenseBackup(backupText);
   } catch (error) {
     logSystemFailure('backup_import_parse', error, {
-      byte_count: Number(file?.size) || text.length || 0,
+      byte_count: Number(file?.size) || backupText.length || 0,
+      encrypted,
     });
     throw error;
   }
@@ -707,6 +813,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
     source_version: backup.sourceVersion,
     backup_version: backup.version,
+    encrypted,
   }, {
     category: 'storage',
     severity: backup.warnings.length || privacyZonesNeedReconfiguration ? 'warn' : 'info',

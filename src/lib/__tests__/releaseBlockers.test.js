@@ -586,6 +586,7 @@ describe('release blocker regressions', () => {
     const pdfExportSource = readFileSync(new URL('../pdfExport.js', import.meta.url), 'utf8');
     const tripEngineSource = readFileSync(new URL('../tripEngine.js', import.meta.url), 'utf8');
     const systemLogsPageSource = readFileSync(new URL('../../pages/SystemLogs.jsx', import.meta.url), 'utf8');
+    const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
 
     expect(activitySource).toContain('android_native_auto_tracking_started');
     expect(activitySource).toContain('android_phone_usage_summary_loaded');
@@ -596,6 +597,23 @@ describe('release blocker regressions', () => {
     expect(storageSource).toContain('storage_set_json');
     expect(backupSource).toContain('backup_import_completed');
     expect(backupSource).toContain('backup_export_completed');
+    expect(backupSource).toContain('backup_export_encryption_started');
+    expect(backupSource).toContain('backup_plaintext_export_selected');
+    expect(backupSource).toContain('backup_import_format_detected');
+    expect(backupSource).toContain('backup_import_password_required');
+    expect(backupSource).toContain('backup_import_wrong_password');
+    expect(backupSource).toContain('backup_import_decrypted');
+    expect(settingsPageSource).toContain('backup_export_dialog_opened');
+    expect(settingsPageSource).toContain('backup_export_user_notified');
+    expect(settingsPageSource).toContain('backup_import_unlock_dialog_opened');
+    expect(settingsPageSource).toContain('backup_import_wrong_password_notice_shown');
+    expect(settingsPageSource).toContain('BACKUP_IMPORT_ACCEPT');
+    expect(settingsPageSource).toContain('application/octet-stream');
+    expect(settingsPageSource).toContain('*/*');
+    expect(settingsPageSource).toContain('backupPasswordRequirements');
+    expect(settingsPageSource).toContain('One capital letter');
+    expect(settingsPageSource).toContain('One special character');
+    expect(settingsPageSource).toContain('Show backup password');
     expect(nativeDownloadsSource).toContain('native_export_saved');
     expect(tripEngineSource).toContain('csv_export_completed');
     expect(pdfExportSource).toContain('pdf_export_completed');
@@ -604,6 +622,8 @@ describe('release blocker regressions', () => {
     expect(systemLogsPageSource).toContain('All operations');
     expect(systemLogsPageSource).toContain('Last 24 hours');
     expect(systemLogsPageSource).toContain('Next deletion');
+    expect(systemLogsPageSource).toContain('Backup events');
+    expect(systemLogsPageSource).toContain("{ id: 'backups', label: 'Backups' }");
     expect(systemLogsPageSource).toContain('Decision logs appear here and in exports');
     expect(systemLogsPageSource).toContain('LOG_PAGE_SIZE');
     expect(systemLogsPageSource).toContain('visibleLogs');
