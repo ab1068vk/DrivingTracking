@@ -8,6 +8,7 @@ import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
+import { recordSystemEvent } from '@/lib/systemLog';
 import { scoringValue } from '@/lib/scoringConstants';
 import { ECO_DEFAULTS } from '@/lib/tripEngine';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
@@ -560,6 +561,28 @@ const shortenParkedAddress = (address) => {
   return parts.length >= 2 ? `${parts[0]}, ${parts[1]}` : trimmed;
 };
 
+const summarizeSettingValue = (key, value) => {
+  if (key === 'privacy_zones') return Array.isArray(value) ? `${value.length} zone(s)` : '0 zone(s)';
+  if (key === 'last_map_center') return value ? '[map center saved]' : null;
+  if (/url|endpoint/i.test(key)) {
+    try {
+      return value ? new URL(String(value)).origin : '';
+    } catch {
+      return value ? '[invalid url]' : '';
+    }
+  }
+  if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  return Array.isArray(value) ? `${value.length} item(s)` : '[object]';
+};
+
+const summarizeSettingsPatch = (keys, before = {}, after = {}) => keys.reduce((acc, key) => {
+  acc[key] = {
+    from: summarizeSettingValue(key, before[key]),
+    to: summarizeSettingValue(key, after[key]),
+  };
+  return acc;
+}, {});
+
 export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
@@ -644,6 +667,46 @@ export const localSettings = {
     const current = this.get();
     const updated = { ...current, ...patch };
     this.set(updated);
+    const requestedKeys = Object.keys(patch || {});
+    const changedKeys = requestedKeys.filter((key) => current[key] !== updated[key]);
+    const persisted = this.get();
+    const appliedKeys = changedKeys.filter((key) => persisted[key] === updated[key]);
+    const failedKeys = changedKeys.filter((key) => persisted[key] !== updated[key]);
+    const unchangedRequestedKeys = requestedKeys.filter((key) => current[key] === updated[key]);
+    const result = failedKeys.length
+      ? (appliedKeys.length ? 'partial' : 'not_applied')
+      : changedKeys.length
+        ? 'applied'
+        : 'no_effect';
+
+    if (changedKeys.length) {
+      recordSystemEvent('settings_changed', {
+        requested_keys: requestedKeys,
+        changed_keys: changedKeys,
+        applied_keys: appliedKeys,
+        failed_keys: failedKeys,
+        changes: summarizeSettingsPatch(changedKeys, current, updated),
+      }, {
+        category: 'settings',
+        title: 'Settings changed',
+        severity: failedKeys.length ? 'warn' : 'info',
+      });
+    }
+
+    recordSystemEvent('settings_update_verified', {
+      result,
+      requested_keys: requestedKeys,
+      changed_keys: changedKeys,
+      applied_keys: appliedKeys,
+      failed_keys: failedKeys,
+      unchanged_requested_keys: unchangedRequestedKeys,
+      persisted_matches_request: failedKeys.length === 0,
+      changes: summarizeSettingsPatch(requestedKeys, current, updated),
+    }, {
+      category: 'settings',
+      title: result === 'no_effect' ? 'Settings update had no effect' : 'Settings update verified',
+      severity: result === 'applied' ? 'info' : 'warn',
+    });
     return updated;
   },
 };

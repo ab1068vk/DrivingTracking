@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Activity, Award, Brain, Car, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
+import { Activity, Award, Brain, Car, ClipboardList, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
@@ -14,6 +14,7 @@ const navItems = [
   { path: '/achievements', label: 'Awards', icon: Award },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
   { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
+  { path: '/system-logs', label: 'Logs', icon: ClipboardList },
   { path: '/vehicles', label: 'Vehicles', icon: Car },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];

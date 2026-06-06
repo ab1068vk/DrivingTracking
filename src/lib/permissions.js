@@ -5,6 +5,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport } from '@/lib/sensorFusionModel';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 const asState = (value) => value || 'unknown';
 
@@ -27,7 +28,9 @@ export async function getPermissionStatus() {
       const location = await navigator.permissions.query({ name: 'geolocation' });
       status.foregroundLocation = asState(location.state);
     }
-  } catch {}
+  } catch (error) {
+    logSystemFailure('permission_status_location', error, { permission: 'foregroundLocation' });
+  }
 
   try {
     if (isNativePlatform()) {
@@ -36,7 +39,9 @@ export async function getPermissionStatus() {
     } else if ('Notification' in window) {
       status.notifications = Notification.permission;
     }
-  } catch {}
+  } catch (error) {
+    logSystemFailure('permission_status_notifications', error, { permission: 'notifications' });
+  }
 
   try {
     if (isAndroid()) {
@@ -46,9 +51,13 @@ export async function getPermissionStatus() {
       try {
         const usage = await ActivityRecognition.usageAccessStatus();
         status.phoneUsageAccess = usage.usageAccessGranted ? 'granted' : 'not_requested';
-      } catch {}
+      } catch (error) {
+        logSystemFailure('permission_status_phone_usage_access', error, { permission: 'phoneUsageAccess' });
+      }
     }
-  } catch {}
+  } catch (error) {
+    logSystemFailure('permission_status_activity_background', error, { permission: 'activityRecognition' });
+  }
 
   if (status.backgroundLocation === 'unknown') {
     status.backgroundLocation = localSettings.get().background_location_granted ? 'granted' : 'not_requested';
@@ -67,24 +76,51 @@ export async function getPermissionStatus() {
     phone_usage_access_granted: status.phoneUsageAccess === 'granted',
   });
 
+  recordSystemEvent('permission_status_checked', {
+    foregroundLocation: status.foregroundLocation,
+    backgroundLocation: status.backgroundLocation,
+    activityRecognition: status.activityRecognition,
+    notifications: status.notifications,
+    phoneUsageAccess: status.phoneUsageAccess,
+    motionSensors: status.motionSensors,
+    bluetooth: status.bluetooth,
+  }, {
+    category: 'permission',
+    title: 'Permission status checked',
+  });
+
   return status;
 }
 
 export async function requestForegroundLocationPermission() {
   if (isNativePlatform()) {
-    const result = await Geolocation.requestPermissions({ permissions: ['location'] });
-    localSettings.update({ location_permission_granted: result.location === 'granted' });
-    return result.location === 'granted';
+    try {
+      const result = await Geolocation.requestPermissions({ permissions: ['location'] });
+      const granted = result.location === 'granted';
+      localSettings.update({ location_permission_granted: granted });
+      recordSystemEvent('permission_request_foreground_location', { result: result.location, granted }, { category: 'permission' });
+      return granted;
+    } catch (error) {
+      logSystemFailure('permission_request_foreground_location', error, { permission: 'foregroundLocation' });
+      return false;
+    }
   }
 
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
+      recordSystemEvent('permission_request_foreground_location', { granted: false, reason: 'geolocation_unavailable' }, { category: 'permission', severity: 'warn' });
       resolve(false);
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      () => resolve(true),
-      () => resolve(false),
+      () => {
+        recordSystemEvent('permission_request_foreground_location', { granted: true }, { category: 'permission' });
+        resolve(true);
+      },
+      (error) => {
+        logSystemFailure('permission_request_foreground_location', error, { permission: 'foregroundLocation' });
+        resolve(false);
+      },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   });
@@ -92,14 +128,26 @@ export async function requestForegroundLocationPermission() {
 
 export async function requestNotificationPermission() {
   if (isNativePlatform()) {
-    const result = await LocalNotifications.requestPermissions();
-    localSettings.update({ notification_permission_granted: result.display === 'granted' });
-    return result.display === 'granted';
+    try {
+      const result = await LocalNotifications.requestPermissions();
+      const granted = result.display === 'granted';
+      localSettings.update({ notification_permission_granted: granted });
+      recordSystemEvent('permission_request_notifications', { result: result.display, granted }, { category: 'permission' });
+      return granted;
+    } catch (error) {
+      logSystemFailure('permission_request_notifications', error, { permission: 'notifications' });
+      return false;
+    }
   }
 
-  if (!('Notification' in window)) return false;
+  if (!('Notification' in window)) {
+    recordSystemEvent('permission_request_notifications', { granted: false, reason: 'notification_api_unavailable' }, { category: 'permission', severity: 'warn' });
+    return false;
+  }
   const result = await Notification.requestPermission();
-  return result === 'granted';
+  const granted = result === 'granted';
+  recordSystemEvent('permission_request_notifications', { result, granted }, { category: 'permission' });
+  return granted;
 }
 
 export async function requestActivityRecognitionPermission() {
@@ -108,8 +156,10 @@ export async function requestActivityRecognitionPermission() {
     const result = await ActivityRecognition.requestPermissions();
     const granted = result.activityRecognition === 'granted';
     localSettings.update({ activity_permission_granted: granted });
+    recordSystemEvent('permission_request_activity_recognition', { result: result.activityRecognition, granted }, { category: 'permission' });
     return granted;
-  } catch {
+  } catch (error) {
+    logSystemFailure('permission_request_activity_recognition', error, { permission: 'activityRecognition' });
     return false;
   }
 }
@@ -126,25 +176,31 @@ export async function requestBackgroundLocationPermission() {
       let status = await ActivityRecognition.checkPermissions();
       if (status.backgroundLocation === 'granted') {
         localSettings.update({ background_location_granted: true });
+        recordSystemEvent('permission_request_background_location', { result: status.backgroundLocation, granted: true }, { category: 'permission' });
         return true;
       }
 
       const result = await ActivityRecognition.requestBackgroundLocation();
       const granted = result.backgroundLocation === 'granted';
       localSettings.update({ background_location_granted: granted });
+      recordSystemEvent('permission_request_background_location', { result: result.backgroundLocation, granted }, { category: 'permission' });
       if (!granted) {
         await ActivityRecognition.openAppLocationSettings();
       }
       return granted;
-    } catch {
+    } catch (error) {
       try {
         await ActivityRecognition.openAppLocationSettings();
-      } catch {}
+      } catch (settingsError) {
+        logSystemFailure('permission_open_background_location_settings', settingsError, { permission: 'backgroundLocation' });
+      }
+      logSystemFailure('permission_request_background_location', error, { permission: 'backgroundLocation' });
       return false;
     }
   }
 
   localSettings.update({ background_location_granted: true });
+  recordSystemEvent('permission_request_background_location', { granted: true, platform: 'web' }, { category: 'permission' });
   return true;
 }
 

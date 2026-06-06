@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -12,6 +13,7 @@ import { configureNotificationChannels, syncReminderNotifications } from '@/lib/
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
+import { recordSystemEvent } from '@/lib/systemLog';
 import { Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
@@ -30,6 +32,7 @@ const Vehicles = lazy(() => import('@/pages/Vehicles'));
 const Achievements = lazy(() => import('@/pages/Achievements'));
 const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
+const SystemLogs = lazy(() => import('@/pages/SystemLogs'));
 const Insights = lazy(() => import('@/pages/Insights'));
 
 function AppLoading() {
@@ -120,6 +123,7 @@ const AuthenticatedApp = () => {
         <Route path="/achievements" element={<Achievements />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
+        <Route path="/system-logs" element={<SystemLogs />} />
         <Route path="/settings" element={<Settings />} />
         {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
         <Route path="/vehicles" element={<Vehicles />} />
@@ -131,11 +135,28 @@ const AuthenticatedApp = () => {
   );
 };
 
+function RouteLogger() {
+  const location = useLocation();
+
+  useEffect(() => {
+    recordSystemEvent('route_changed', {
+      pathname: location.pathname,
+      search: location.search,
+    }, {
+      title: 'Page opened',
+      category: 'navigation',
+    });
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function App() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
+          <RouteLogger />
           <AuthenticatedApp />
         </Router>
         <Toaster />

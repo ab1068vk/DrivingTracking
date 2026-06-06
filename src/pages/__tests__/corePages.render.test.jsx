@@ -483,6 +483,17 @@ describe('core page component renders', () => {
     expect(html).toContain('No writes');
   });
 
+  it('renders the system logs page with export controls and retention text', async () => {
+    const { default: SystemLogs } = await import('@/pages/SystemLogs');
+    const html = renderToStaticMarkup(<SystemLogs />);
+
+    expect(html).toContain('System Logs');
+    expect(html).toContain('Export JSON');
+    expect(html).toContain('Export CSV');
+    expect(html).toContain('Load failures');
+    expect(html).toContain('System entries expire after 3 days');
+  });
+
   it('shows tire-life estimate calibration warning on Vehicles', async () => {
     queryData.set(JSON.stringify(['vehicles']), [{
       id: 'vehicle-1',

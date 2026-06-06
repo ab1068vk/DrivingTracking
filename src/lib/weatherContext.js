@@ -4,6 +4,7 @@ import { withRetry } from '@/lib/retry';
 import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
 import { getPrivacyZones } from '@/lib/privacyZones';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -207,6 +208,12 @@ async function fetchOpenMeteoWeather({ lat, lng, date }) {
     const response = await withRetry('open-meteo-weather', () => fetch(url, { signal: controller.signal }));
     if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`);
     return response.json();
+  } catch (error) {
+    logSystemFailure('weather_open_meteo_fetch', error, {
+      date: startDate,
+      provider: 'open-meteo',
+    });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -261,12 +268,21 @@ function samplesForTrip(data, startTime, endTime) {
 
 export async function fetchWeatherContextForTrip(routePoints = [], startTime, endTime, settings = {}) {
   if (settings.weather_context_enabled === false) {
+    recordSystemEvent('weather_context_skipped', { status: 'disabled' }, { category: 'weather' });
     return unavailableWeatherContext('disabled');
   }
   const privacyZones = getPrivacyZones(settings);
   const center = privacyZones.length ? safeWeatherPoint(routePoints, privacyZones) : midpoint(routePoints);
   if (!center) {
     const hasRoutePoints = Array.isArray(routePoints) && routePoints.length > 0;
+    recordSystemEvent('weather_context_unavailable', {
+      status: privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route',
+      route_point_count: Array.isArray(routePoints) ? routePoints.length : 0,
+      privacy_zone_count: privacyZones.length,
+      reason: privacyZones.length && hasRoutePoints
+        ? WEATHER_SKIPPED_ALL_POINTS_PRIVATE
+        : 'No usable route points were available.',
+    }, { category: 'weather', severity: 'warn', title: 'Operation failed: weather_context' });
     return unavailableWeatherContext(privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route', {
       ...(privacyZones.length && hasRoutePoints
         ? { weather_context: null, weather_skipped_reason: WEATHER_SKIPPED_ALL_POINTS_PRIVATE }
@@ -293,7 +309,19 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
   }
 
   const samples = samplesForTrip(data, startTime, endTime);
-  if (!samples.length) return unavailableWeatherContext('no_hourly_match');
+  if (!samples.length) {
+    recordSystemEvent('weather_context_unavailable', {
+      status: 'no_hourly_match',
+      sample_count: 0,
+      reason: 'No Open-Meteo hourly sample matched the trip time window.',
+    }, { category: 'weather', severity: 'warn', title: 'Operation failed: weather_context' });
+    return unavailableWeatherContext('no_hourly_match');
+  }
+  recordSystemEvent('weather_context_loaded', {
+    status,
+    sample_count: samples.length,
+    provider: 'open-meteo',
+  }, { category: 'weather' });
   return {
     ...classifyWeather(samples),
     status,

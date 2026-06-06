@@ -1,4 +1,5 @@
 import { localSettings } from '@/lib/trackingStore';
+import { recordSystemEvent } from '@/lib/systemLog';
 
 const EARTH_RADIUS_M = 6371000;
 export const ZONE_EVENT_GUARD_M = 50;
@@ -172,13 +173,30 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
     }
   });
 
+  const hiddenCount = points.length - masked.filter((point) => !point?.privacy_boundary).length;
+  if (hiddenCount > 0) {
+    recordSystemEvent('privacy_route_masked', {
+      route_point_count: points.length,
+      hidden_point_count: hiddenCount,
+      privacy_zone_count: zones.length,
+    }, { category: 'privacy', title: 'Privacy zone masked route points' });
+  }
   return masked;
 }
 
 export function maskEventsForPrivacy(events = [], settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   if (!zones.length) return events;
-  return events.filter((event) => !shouldMaskEventForPrivacy(event, zones));
+  const filtered = events.filter((event) => !shouldMaskEventForPrivacy(event, zones));
+  const hiddenCount = events.length - filtered.length;
+  if (hiddenCount > 0) {
+    recordSystemEvent('privacy_events_masked', {
+      event_count: events.length,
+      hidden_event_count: hiddenCount,
+      privacy_zone_count: zones.length,
+    }, { category: 'privacy', title: 'Privacy zone masked driving events' });
+  }
+  return filtered;
 }
 
 export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
@@ -201,10 +219,22 @@ export function upsertPrivacyZone(zone, settings = localSettings.get()) {
     radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
   };
   const next = zones.filter((item) => item.id !== normalized.id).concat(normalized);
-  return localSettings.update({ privacy_zones: next });
+  const updated = localSettings.update({ privacy_zones: next });
+  recordSystemEvent('privacy_zone_saved', {
+    zone_id: normalized.id,
+    label: normalized.label,
+    radius_m: normalized.radius_m,
+    zone_count: next.length,
+  }, { category: 'privacy', title: 'Privacy zone saved' });
+  return updated;
 }
 
 export function removePrivacyZone(id, settings = localSettings.get()) {
   const next = getPrivacyZones(settings).filter((zone) => zone.id !== id);
-  return localSettings.update({ privacy_zones: next });
+  const updated = localSettings.update({ privacy_zones: next });
+  recordSystemEvent('privacy_zone_removed', {
+    zone_id: id,
+    zone_count: next.length,
+  }, { category: 'privacy', title: 'Privacy zone removed' });
+  return updated;
 }

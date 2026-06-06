@@ -12,6 +12,7 @@ import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
+import { exportSystemLogsCsv, exportSystemLogsJson, pruneExpiredSystemLogs, sanitizeLogDetail, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import {
@@ -447,6 +448,60 @@ describe('release blocker regressions', () => {
       tripId: 'trip-1',
     });
     expect(events[0]).toMatchObject(diagnostic);
+  });
+
+  it('keeps system logs exportable, redacted, and limited to the three-day retention window', () => {
+    const now = new Date('2026-06-06T12:00:00.000Z').getTime();
+    const kept = {
+      timestamp: new Date(now - SYSTEM_LOG_RETENTION_MS + 1000).toISOString(),
+      severity: 'error',
+      category: 'failure',
+      source: 'web',
+      operation: 'trip_playback',
+      title: 'Operation failed: trip_playback',
+      message: 'Cannot read properties of undefined',
+      page: '/trips/1',
+      details: sanitizeLogDetail({
+        lat: 43.65,
+        lng: -79.38,
+        address: '123 Private St',
+        reason: 'Cannot read properties of undefined',
+      }),
+    };
+    const expired = { ...kept, timestamp: new Date(now - SYSTEM_LOG_RETENTION_MS - 1000).toISOString() };
+    const pruned = pruneExpiredSystemLogs([expired, kept], now);
+    const json = exportSystemLogsJson(pruned);
+    const csv = exportSystemLogsCsv(pruned);
+
+    expect(pruned).toEqual([kept]);
+    expect(json).toContain('"retention_days": 3');
+    expect(json).toContain('Operation failed: trip_playback');
+    expect(json).toContain('[redacted]');
+    expect(json).not.toContain('43.65');
+    expect(json).not.toContain('123 Private St');
+    expect(csv).toContain('Operation failed: trip_playback');
+  });
+
+  it('captures browser resource load failures in the system logger', () => {
+    const source = readFileSync(new URL('../systemLog.js', import.meta.url), 'utf8');
+
+    expect(source).toContain('resource_load_failed');
+    expect(source).toContain("window.addEventListener('error', logResourceLoadFailure, true)");
+    expect(source).toContain('content_security_policy_violation');
+    expect(source).toContain('browser_long_task');
+    expect(source).toContain("document.addEventListener('invalid', logControlEvent, true)");
+    expect(source).toContain("document.addEventListener('paste', logClipboardEvent, true)");
+    expect(source).toContain("window.addEventListener('scroll', logScrollEvent, { passive: true })");
+  });
+
+  it('verifies settings updates after writes so placeholder controls are visible', () => {
+    const source = readFileSync(new URL('../trackingStore.js', import.meta.url), 'utf8');
+
+    expect(source).toContain('settings_update_verified');
+    expect(source).toContain('persisted_matches_request');
+    expect(source).toContain('unchanged_requested_keys');
+    expect(source).toContain('failed_keys');
+    expect(source).toContain('no_effect');
   });
 
   it('keeps critical post-trip, odometer, and coach persistence failures diagnostically logged', () => {

@@ -41,6 +41,7 @@ import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -189,14 +190,24 @@ export default function Diagnostics() {
 
   const refresh = async () => {
     setRefreshing(true);
+    recordSystemEvent('diagnostics_refresh_started', {}, { category: 'diagnostics', title: 'Diagnostics refresh started' });
     setWebDiagnostics(getTrackingDiagnostics());
     setActiveTrip(activeTripStore.get());
     try {
       const [permissions, native, battery, nativeLog] = await Promise.all([
         getPermissionStatus(),
-        isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
-        isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
-        isAndroid() ? getNativeDiagnostics().catch(() => ({ enabled: false, events: [] })) : Promise.resolve({ enabled: false, events: [] }),
+        isAndroid() ? getNativeAutoTrackingStatus().catch((error) => {
+          logSystemFailure('diagnostics_native_status', error);
+          return null;
+        }) : Promise.resolve(null),
+        isAndroid() ? getAndroidBatteryOptimizationStatus().catch((error) => {
+          logSystemFailure('diagnostics_battery_status', error);
+          return null;
+        }) : Promise.resolve(null),
+        isAndroid() ? getNativeDiagnostics().catch((error) => {
+          logSystemFailure('diagnostics_native_log', error);
+          return { enabled: false, events: [] };
+        }) : Promise.resolve({ enabled: false, events: [] }),
       ]);
       setPermissionStatus(permissions);
       setNativeStatus(native);
@@ -207,6 +218,12 @@ export default function Diagnostics() {
         refetch(),
         import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),
       ]);
+      recordSystemEvent('diagnostics_refresh_completed', {
+        native_event_count: nativeLog?.events?.length || 0,
+        web_event_count: getTrackingDiagnostics().events?.length || 0,
+      }, { category: 'diagnostics', title: 'Diagnostics refresh completed' });
+    } catch (error) {
+      logSystemFailure('diagnostics_refresh', error);
     } finally {
       setRefreshing(false);
     }
@@ -249,6 +266,7 @@ export default function Diagnostics() {
   const clearLogs = async () => {
     clearTrackingDiagnostics();
     if (isAndroid()) await clearNativeDiagnostics().catch(() => {});
+    recordSystemEvent('diagnostics_logs_cleared', {}, { category: 'diagnostics', title: 'Diagnostics logs cleared' });
     await refresh();
   };
 
@@ -256,7 +274,10 @@ export default function Diagnostics() {
     setMotionPermissionBusy(true);
     try {
       await requestMotionSensorPermission();
+      recordSystemEvent('diagnostics_motion_permission_requested', {}, { category: 'diagnostics', title: 'Motion permission requested' });
       await refresh();
+    } catch (error) {
+      logSystemFailure('diagnostics_motion_permission', error);
     } finally {
       setMotionPermissionBusy(false);
     }
@@ -265,6 +286,7 @@ export default function Diagnostics() {
   const armNative = async () => {
     if (!isAndroid()) return;
     await startNativeAutoTracking().catch(() => {});
+    recordSystemEvent('diagnostics_native_arm_requested', {}, { category: 'diagnostics', title: 'Native tracking arm requested' });
     await refresh();
   };
 
@@ -276,6 +298,9 @@ export default function Diagnostics() {
       }));
       await refresh();
       setTestDataNotice(`${seeded.length} synthetic trips are available in this local profile.`);
+      recordSystemEvent('diagnostics_test_trips_seeded', { count: seeded.length }, { category: 'diagnostics', title: 'Local test trips seeded' });
+    } catch (error) {
+      logSystemFailure('diagnostics_test_trips_seed', error);
     } finally {
       setTestDataBusy(false);
     }
@@ -287,6 +312,9 @@ export default function Diagnostics() {
       await Promise.all(storedTestTrips.map((trip) => tripService.delete(trip.id)));
       await refresh();
       setTestDataNotice(`${storedTestTrips.length} synthetic trips removed from this local profile.`);
+      recordSystemEvent('diagnostics_test_trips_removed', { count: storedTestTrips.length }, { category: 'diagnostics', title: 'Local test trips removed' });
+    } catch (error) {
+      logSystemFailure('diagnostics_test_trips_remove', error);
     } finally {
       setTestDataBusy(false);
     }

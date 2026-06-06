@@ -2,6 +2,7 @@ import {
   AUTO_START_GPS_FALLBACK_SECONDS,
   AUTO_START_SPEED_KMH,
 } from '@/lib/activityRecognition';
+import { recordSystemEvent } from '@/lib/systemLog';
 
 const DIAGNOSTIC_EVENTS_KEY = 'drivesense_tracking_diagnostics';
 const MAX_EVENTS = 120;
@@ -41,6 +42,20 @@ export function recordTrackingDiagnostic(event = {}) {
   try {
     localStorage.setItem(DIAGNOSTIC_EVENTS_KEY, JSON.stringify(next));
   } catch {}
+  recordSystemEvent(nextEvent.type || 'tracking_diagnostic', {
+    title: nextEvent.title,
+    detail: nextEvent.detail,
+    context: nextEvent.context,
+    reason: nextEvent.reason,
+    speed_kmh: nextEvent.speed_kmh,
+    stopped_seconds: nextEvent.stopped_seconds,
+    drift_m: nextEvent.drift_m,
+  }, {
+    category: nextEvent.type === 'operation_error' ? 'failure' : 'diagnostics',
+    severity: nextEvent.type === 'operation_error' ? 'error' : 'info',
+    title: nextEvent.title || 'Tracking diagnostic',
+    source: nextEvent.source || 'web',
+  });
   return nextEvent;
 }
 
@@ -48,6 +63,7 @@ export function clearTrackingDiagnostics() {
   try {
     localStorage.removeItem(DIAGNOSTIC_EVENTS_KEY);
   } catch {}
+  recordSystemEvent('tracking_diagnostics_cleared', {}, { category: 'diagnostics', title: 'Tracking diagnostics cleared' });
 }
 
 export function normalizeNativeDiagnosticEvents(nativePayload = {}) {

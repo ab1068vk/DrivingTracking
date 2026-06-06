@@ -1,4 +1,5 @@
 import { recordTrackingDiagnostic } from '@/lib/trackingDiagnostics';
+import { logSystemFailure } from '@/lib/systemLog';
 
 const sanitizeError = (error) => {
   const value = error?.reason || error?.error || error;
@@ -17,6 +18,7 @@ const sanitizeError = (error) => {
 
 export function logError(context, error, extra = {}) {
   const sanitized = sanitizeError(error);
+  logSystemFailure(context, error, extra);
   return recordTrackingDiagnostic({
     type: 'operation_error',
     title: `Operation failed: ${context}`,
