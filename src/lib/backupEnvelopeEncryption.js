@@ -15,8 +15,13 @@ export const BACKUP_PASSWORD_REQUIRED_CODE = 'backup_password_required';
 export const BACKUP_WRONG_PASSWORD_CODE = 'backup_wrong_password';
 export const BACKUP_UNSUPPORTED_ENCRYPTION_CODE = 'backup_unsupported_encryption';
 
+/**
+ * @param {string} message
+ * @param {string} code
+ * @returns {Error & { code: string }}
+ */
 const makeBackupCryptoError = (message, code) => {
-  const error = new Error(message);
+  const error = /** @type {Error & { code: string }} */ (new Error(message));
   error.code = code;
   return error;
 };

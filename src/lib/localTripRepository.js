@@ -1,6 +1,7 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import {
   buildDrivingThresholds,
   calculateTripScores,
@@ -33,7 +34,7 @@ export const TRIP_SCHEMA_VERSION = 23;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
 export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
-export const RESCORE_PROGRESS_EVENT = 'road-sage:rescore-progress';
+export { RESCORE_PROGRESS_EVENT };
 export const AUTO_RESCORE_RECENT_WINDOW_DAYS = 28;
 export const AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO = 0.2;
 /*
@@ -232,6 +233,9 @@ const deleteDbByName = (dbName) => new Promise((resolve, reject) => {
 
 let dbNameMigrationPromise = null;
 
+/**
+ * @param {{ previousName?: string, currentName?: string, storage?: Storage | null }} [options]
+ */
 export const migrateIndexedDbName = async ({
   previousName,
   currentName = DB_NAME,
@@ -439,18 +443,19 @@ const normalizeEventFeedbackKeys = (feedback = {}, eventsBefore = [], eventsAfte
 
 export const normalizeRetiredTripEventTypes = (trip = {}) => {
   if (!trip || typeof trip !== 'object') return trip;
+  const existingTrip = /** @type {Record<string, any>} */ (trip);
   const eventFields = ['driving_events', 'phone_proxy_events', 'phone_use_events'];
   let changed = false;
-  const next = { ...trip };
+  const next = /** @type {Record<string, any>} */ ({ ...trip });
 
   eventFields.forEach((field) => {
-    if (!Array.isArray(trip[field])) return;
-    const normalized = trip[field].map(normalizeRetiredEventType);
-    if (normalized.some((event, index) => event !== trip[field][index])) {
+    if (!Array.isArray(existingTrip[field])) return;
+    const normalized = existingTrip[field].map(normalizeRetiredEventType);
+    if (normalized.some((event, index) => event !== existingTrip[field][index])) {
       next[field] = normalized;
       changed = true;
       if (field === 'driving_events') {
-        next.event_feedback = normalizeEventFeedbackKeys(trip.event_feedback, trip[field], normalized);
+        next.event_feedback = normalizeEventFeedbackKeys(existingTrip.event_feedback, existingTrip[field], normalized);
       }
     }
   });
@@ -468,7 +473,7 @@ export const normalizeRetiredTripEventTypes = (trip = {}) => {
     next.heading_deviation_legacy_count !== legacyHeadingCount
   );
 
-  if (changed || needsCountRefresh || trip.lane_changes_count != null || trip.lane_changes_per_10km != null) {
+  if (changed || needsCountRefresh || existingTrip.lane_changes_count != null || existingTrip.lane_changes_per_10km != null) {
     delete next.lane_changes_count;
     delete next.lane_changes_per_10km;
     next.heading_deviation_count = modernHeadingCount;
@@ -796,7 +801,7 @@ export const localTripRepository = {
   },
 
   async create(trip) {
-    const saved = withId({ ...trip, created_at: new Date().toISOString() });
+    const saved = /** @type {Record<string, any>} */ (withId({ ...trip, created_at: new Date().toISOString() }));
     await putTrip(saved);
     if (saved.status === 'completed') await invalidateTripDerivedCaches();
     await pruneExpiredTrips();
@@ -805,7 +810,7 @@ export const localTripRepository = {
 
   async update(id, patch) {
     const current = await this.getById(id);
-    const updated = withId({ ...current, ...patch, id: current.id });
+    const updated = /** @type {Record<string, any>} */ (withId({ ...current, ...patch, id: current.id }));
     await putTrip(updated);
     if (updated.status === 'completed') await invalidateTripDerivedCaches();
     return updated;

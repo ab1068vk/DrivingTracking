@@ -9,8 +9,6 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { applyThemeMode, localSettings } from '@/lib/trackingStore';
-import { configureNotificationChannels, syncReminderNotifications } from '@/lib/notificationService';
-import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { recordSystemEvent } from '@/lib/systemLog';
@@ -58,13 +56,20 @@ const AuthenticatedApp = () => {
 
   useEffect(() => {
     const bootstrapSettings = async () => {
-      configureNotificationChannels().catch(() => {});
+      const notificationService = import('@/lib/notificationService');
+      notificationService
+        .then(({ configureNotificationChannels }) => configureNotificationChannels())
+        .catch(() => {});
       const settings = await localSettings.hydrateFromNative();
-      syncReminderNotifications(settings, { requestPermission: false }).catch(() => {});
+      notificationService
+        .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
+        .catch(() => {});
       setOnboardingDone(settings.onboarding_completed);
       setLegalNoticeOpen(Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION);
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-        startNativeAutoTracking().catch(() => {});
+        import('@/lib/activityRecognition')
+          .then(({ startNativeAutoTracking }) => startNativeAutoTracking())
+          .catch(() => {});
       }
 
       applyThemeMode(settings.dark_mode);

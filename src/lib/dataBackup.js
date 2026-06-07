@@ -795,18 +795,21 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
         title: 'Backup password required',
         message: 'Encrypted backup import is waiting for a password.',
       });
-      const error = new Error('This backup is encrypted. Enter the backup password to import it.');
+      const error = /** @type {Error & { code: string }} */ (
+        new Error('This backup is encrypted. Enter the backup password to import it.')
+      );
       error.code = BACKUP_PASSWORD_REQUIRED_CODE;
       throw error;
     }
     try {
       backupText = await decryptBackupText(text, passphrase);
     } catch (error) {
-      const wrongPassword = error?.code === BACKUP_WRONG_PASSWORD_CODE;
+      const errorCode = error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
+      const wrongPassword = errorCode === BACKUP_WRONG_PASSWORD_CODE;
       recordSystemEvent(wrongPassword ? 'backup_import_wrong_password' : 'backup_import_decrypt_failed', {
         byte_count: Number(file?.size) || text.length || 0,
         encrypted: true,
-        error_code: error?.code || 'decrypt_failed',
+        error_code: errorCode || 'decrypt_failed',
       }, {
         category: 'storage',
         severity: wrongPassword ? 'warn' : 'error',

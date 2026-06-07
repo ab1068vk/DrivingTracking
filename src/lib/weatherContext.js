@@ -1,5 +1,5 @@
 import { clamp } from '@/lib/mathUtils';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
@@ -14,6 +14,10 @@ export const WEATHER_SKIPPED_ALL_POINTS_PRIVATE = 'all_points_within_privacy_zon
 
 const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 const round1 = (value) => Math.round(value * 10) / 10;
+
+export async function clearWeatherContextCache() {
+  await removeJson(WEATHER_CACHE_KEY);
+}
 
 function midpoint(points = []) {
   const valid = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));

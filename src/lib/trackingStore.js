@@ -10,14 +10,14 @@ import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
 import { logError } from '@/lib/errorReporting';
 import { recordSystemEvent } from '@/lib/systemLog';
 import { scoringValue } from '@/lib/scoringConstants';
-import { ECO_DEFAULTS } from '@/lib/tripEngine';
+import { ECO_DEFAULTS } from '@/lib/ecoDefaults';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
   DEFAULT_GRID_CO2_KG_PER_KWH,
   DEFAULT_TREE_CO2_KG_PER_YEAR,
-} from '@/lib/tripInsights';
+} from '@/lib/tripEconomyDefaults';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';

@@ -18,17 +18,17 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
-import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import { NIGHT_END_TIME, NIGHT_START_TIME, SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
-  RESCORE_PROGRESS_EVENT,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
 } from '@/lib/localTripRepository';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -45,6 +45,7 @@ import {
   openAndroidUsageAccessSettings,
   getNativeAutoTrackingStatus,
   openAndroidBatteryOptimizationSettings,
+  clearNativeCompletedTrips,
   startNativeAutoTracking,
   stopNativeAutoTracking,
 } from '@/lib/activityRecognition';
@@ -75,12 +76,14 @@ import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
 import { testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { checkOsrmEndpointHealth } from '@/lib/mapMatching';
+import { checkOsrmEndpointHealth, clearMapMatchingCache } from '@/lib/mapMatching';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
+  clearOsmSpeedLimitCache,
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
   speedLimitDefaultCountryKey,
 } from '@/lib/speedLimitSource';
+import { clearWeatherContextCache } from '@/lib/weatherContext';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import {
@@ -1110,10 +1113,31 @@ export default function Settings() {
     for (const t of trips) {
       await tripService.delete(t.id);
     }
+    await Promise.all([
+      setJson(SAVED_FILTERS_KEY, []),
+      calibrationLabelService.replaceLocalLabels([]),
+      calibrationLabelService.replaceTripSurveyMarkers({}),
+      clearCalibrationProfile(),
+      invalidateRouteRiskIndex(),
+      clearMapMatchingCache(),
+      clearOsmSpeedLimitCache(),
+      clearWeatherContextCache(),
+      isAndroid() ? clearNativeCompletedTrips() : Promise.resolve(),
+    ]);
+    setCalibrationLabels([]);
+    setCalibrationMarkers({});
+    setCalibProfile(null);
+    recordSystemEvent('trip_history_deleted', {
+      deleted_trip_count: trips.length,
+      cleared_saved_filters: true,
+      cleared_trip_calibration: true,
+      cleared_external_context_caches: true,
+      cleared_native_completed_trips: isAndroid(),
+    }, { category: 'storage', severity: 'warn', title: 'Trip history deleted' });
     qc.invalidateQueries();
     toast({
       title: 'Trips deleted',
-      description: 'All local trip history was removed from this device.',
+      description: 'Trip records and local trip-derived caches were removed from this device.',
     });
   };
 
@@ -2103,7 +2127,7 @@ export default function Settings() {
               <div className="min-w-0 font-semibold">{PENALTY_SCALE_CALIBRATION.label}</div>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {PENALTY_SCALE_CALIBRATION.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && <CalibrationStatusTag />}
-                <span className="font-mono">{PENALTY_SCALE_CALIBRATION.value}</span>
+                <span className="font-mono">{String(PENALTY_SCALE_CALIBRATION.value)}</span>
               </div>
             </div>
             <div className="mt-1">{PENALTY_SCALE_CALIBRATION.calibration_note}</div>

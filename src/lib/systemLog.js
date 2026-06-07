@@ -403,12 +403,20 @@ function initializeFetchFailureLogging() {
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
     const startedAt = Date.now();
+    const requestInfo = args[0];
+    const requestInit = args[1];
+    const requestMethod = requestInit?.method ||
+      (requestInfo instanceof Request ? requestInfo.method : 'GET');
     try {
       const response = await originalFetch(...args);
       if (!response.ok) {
         let url = '';
         try {
-          url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+          url = requestInfo instanceof Request
+            ? requestInfo.url
+            : requestInfo instanceof URL
+              ? requestInfo.href
+              : String(requestInfo || '');
           url = url ? new URL(url, window.location.origin).origin : '';
         } catch {}
         recordSystemLog({
@@ -420,7 +428,7 @@ function initializeFetchFailureLogging() {
           details: {
             status: response.status,
             statusText: response.statusText,
-            method: args[1]?.method || args[0]?.method || 'GET',
+            method: requestMethod,
             origin: url,
             duration_ms: Date.now() - startedAt,
           },
@@ -429,7 +437,7 @@ function initializeFetchFailureLogging() {
       return response;
     } catch (error) {
       logSystemFailure('fetch', error, {
-        method: args[1]?.method || args[0]?.method || 'GET',
+        method: requestMethod,
         duration_ms: Date.now() - startedAt,
       });
       throw error;

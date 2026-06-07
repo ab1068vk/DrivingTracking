@@ -227,12 +227,13 @@ export function buildCalibrationMetadata({
   minimumLabeledTrips = MIN_CALIBRATION_LABEL_COUNT,
 } = {}) {
   const calibrated = eligibleLabeledTripCount >= minimumLabeledTrips;
+  const validationMetrics = /** @type {{ mae?: number | null, rmse?: number | null }} */ (validation || {});
   return {
     scoring_model_version: scoringModelVersion,
     dataset_id: datasetId,
     eligible_labeled_trip_count: eligibleLabeledTripCount,
-    validation_mae: validation.mae ?? null,
-    validation_rmse: validation.rmse ?? null,
+    validation_mae: validationMetrics.mae ?? null,
+    validation_rmse: validationMetrics.rmse ?? null,
     calibration_date: calibrated ? calibrationDate : null,
     minimum_labeled_trips: minimumLabeledTrips,
     warning: calibrated ? null : CALIBRATION_PENDING_MESSAGE,

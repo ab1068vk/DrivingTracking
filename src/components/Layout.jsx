@@ -1,8 +1,7 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { Activity, Award, Brain, Car, ClipboardList, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { RESCORE_PROGRESS_EVENT } from '@/lib/localTripRepository';
+import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 
 const navItems = [
@@ -96,26 +95,18 @@ export default function Layout() {
           <BrandMark className="h-8 w-8" />
           <span className="truncate font-grotesk font-bold text-lg tracking-tight">Road Sage</span>
           {trackingActive && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="flex items-center gap-1.5 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-xs font-medium px-2.5 py-1 rounded-full border border-red-200 dark:border-red-800/50"
-            >
+            <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-xs font-medium px-2.5 py-1 rounded-full border border-red-200 dark:border-red-800/50">
               <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
               Recording
-            </motion.div>
+            </div>
           )}
           {rescoreProgress && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="hidden sm:flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300"
-            >
+            <div className="hidden sm:flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
               {rescoreProgress.status === 'complete'
                 ? 'Trip history updated'
                 : `Updating trips ${rescoreProgress.completed || 0}/${rescoreProgress.total || 0}`}
-            </motion.div>
+            </div>
           )}
         </div>
 
@@ -156,53 +147,44 @@ export default function Layout() {
       </header>
 
       {/* Mobile Menu Drawer */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/40 md:hidden"
-              onClick={() => setMobileMenuOpen(false)}
-            />
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              id="mobile-navigation"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Navigation menu"
-              className="fixed top-0 right-0 bottom-0 z-50 w-64 bg-card border-l border-border shadow-2xl md:hidden flex flex-col pt-16"
-            >
-              <nav aria-label="Mobile navigation" className="flex flex-col p-4 gap-1">
-                {navItems.map(item => {
-                  const Icon = item.icon;
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      end={item.path === '/'}
-                      className={({ isActive }) =>
-                        `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-                          isActive
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                        }`
-                      }
-                    >
-                      <Icon className="w-5 h-5" />
-                      {item.label}
-                    </NavLink>
-                  );
-                })}
-              </nav>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      {mobileMenuOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40 md:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <div
+            id="mobile-navigation"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation menu"
+            className="fixed top-0 right-0 bottom-0 z-50 w-64 bg-card border-l border-border shadow-2xl md:hidden flex flex-col pt-16"
+          >
+            <nav aria-label="Mobile navigation" className="flex flex-col p-4 gap-1">
+              {navItems.map(item => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === '/'}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                      }`
+                    }
+                  >
+                    <Icon className="w-5 h-5" />
+                    {item.label}
+                  </NavLink>
+                );
+              })}
+            </nav>
+          </div>
+        </>
+      )}
 
       {/* Main Content */}
       <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 container max-w-6xl mx-auto px-4 py-6">

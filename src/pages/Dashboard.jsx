@@ -1024,8 +1024,10 @@ export default function Dashboard() {
     const driverModel = buildOnDeviceDriverModel(completedTrips);
     const anomaly = scoreTripAnomaly({ ...stats, ...scores }, driverModel);
     const dataQualityFlags = Array.from(new Set(Array.isArray(tripToEnd.data_quality_flags) ? tripToEnd.data_quality_flags : []));
+    const statsRecord = /** @type {Record<string, any>} */ (stats);
+    const weatherContextRecord = /** @type {Record<string, any> | null} */ (weatherContext || null);
     const scoreConfidenceFlag = tripToEnd.score_confidence_flag ||
-      stats.score_confidence_flag ||
+      statsRecord.score_confidence_flag ||
       (dataQualityFlags.includes('location_permission_loss') ? 'data_gap_detected' : null);
 
     const completedTrip = {
@@ -1053,8 +1055,8 @@ export default function Dashboard() {
         snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
         isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl,
       },
-      weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
-      weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
+      weather_context: weatherContextRecord?.weather_skipped_reason ? null : weatherContext,
+      weather_skipped_reason: weatherContextRecord?.weather_skipped_reason || null,
       sensor_fusion_summary: sensorFusionSummary,
       driver_anomaly: anomaly,
       anomaly_score: anomaly.anomaly_score,

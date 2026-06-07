@@ -67,7 +67,7 @@ const EVENT_COUNT_FIELDS = Object.freeze({
 const eventCountsFromTrip = (trip = {}) => Object.fromEntries(
   Object.entries(EVENT_COUNT_FIELDS)
     .map(([type, field]) => [type, Math.max(0, Number(trip[field]) || 0)])
-    .filter(([, count]) => count > 0)
+    .filter(([, count]) => Number(count) > 0)
 );
 
 const per100Km = (count, distanceKm) => (

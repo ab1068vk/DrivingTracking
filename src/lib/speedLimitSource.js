@@ -1,4 +1,4 @@
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
 import { withRetry } from '@/lib/retry';
 import { getPrivacyZones } from '@/lib/privacyZones';
@@ -112,6 +112,10 @@ export function parseMaxspeedKmh(value) {
   const parsed = Number(match[1]);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.round(mph ? parsed * 1.60934 : parsed);
+}
+
+export async function clearOsmSpeedLimitCache() {
+  await removeJson(SPEED_LIMIT_CACHE_KEY);
 }
 
 function isInsidePrivacyGuard(point, zones = []) {

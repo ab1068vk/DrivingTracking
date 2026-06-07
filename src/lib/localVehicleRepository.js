@@ -1,5 +1,5 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripInsights';
+import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripEconomyDefaults';
 
 const VEHICLES_KEY = 'drivesense_vehicles';
 

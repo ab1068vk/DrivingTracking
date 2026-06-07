@@ -190,7 +190,8 @@ async function exportLogText({ filename, text, mimeType, format, logCount }) {
 
 function detailSummary(details = {}) {
   if (!details || typeof details !== 'object') return '';
-  const reason = details.reason || details.error?.message || details.statusText || details.target?.label;
+  const detailRecord = /** @type {Record<string, any>} */ (details);
+  const reason = detailRecord.reason || detailRecord.error?.message || detailRecord.statusText || detailRecord.target?.label;
   if (reason) return String(reason);
   const keys = Object.keys(details).slice(0, 4);
   return keys.map((key) => `${key}: ${JSON.stringify(details[key])}`).join(' | ');

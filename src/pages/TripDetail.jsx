@@ -307,6 +307,9 @@ export default function TripDetail() {
     },
   });
   const calibrationSurveyMutation = useMutation({
+    /**
+     * @param {{ surveyInput: unknown, replaceExisting?: boolean }} variables
+     */
     mutationFn: ({ surveyInput, replaceExisting = false }) => (
       calibrationLabelService.submitTripSurveyLabel(trip, surveyInput, { replaceExisting })
     ),
@@ -624,7 +627,7 @@ export default function TripDetail() {
   const brakeOnsetSequenceCount = Math.max(0, Number(trip.brake_onset_sequence_count) || 0);
   const brakeOnsetMinimumSequences = 2;
   const brakeOnsetCollectingDataText = componentScore('brake_onset_smoothness').value == null && brakeOnsetSequenceCount > 0
-    ? `${brakeOnsetSequenceCount} of ${brakeOnsetMinimumSequences} qualifying brake event${brakeOnsetMinimumSequences === 1 ? '' : 's'} recorded`
+    ? `${brakeOnsetSequenceCount} of ${brakeOnsetMinimumSequences} qualifying brake events recorded`
     : null;
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';

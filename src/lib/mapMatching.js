@@ -1,4 +1,4 @@
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -191,6 +191,10 @@ export async function checkOsrmEndpointHealth(endpoint) {
         : error?.message || 'OSRM health check failed.',
     };
   }
+}
+
+export async function clearMapMatchingCache() {
+  await removeJson(CACHE_KEY);
 }
 
 function nearestMatchedPoint(original, geometry = []) {

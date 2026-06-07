@@ -239,8 +239,9 @@ export function buildMotionSensorDiagnostics({
   const permission = permissionState || support?.status || 'unknown';
   const sensorAvailable = support?.supported === true;
   const permissionGranted = permission === 'granted';
-  const sensorFusionEnabled = settings?.sensor_fusion_enabled !== false;
-  const crashDetectionEnabled = settings?.crash_detection_enabled !== false;
+  const settingsRecord = /** @type {Record<string, any>} */ (settings || {});
+  const sensorFusionEnabled = settingsRecord.sensor_fusion_enabled !== false;
+  const crashDetectionEnabled = settingsRecord.crash_detection_enabled !== false;
   const crashDetectionActive = sensorAvailable && permissionGranted && sensorFusionEnabled && crashDetectionEnabled;
   const inactiveReasons = [];
 

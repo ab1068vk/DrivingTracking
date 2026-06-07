@@ -25,6 +25,7 @@ import {
   getProvisionalScoringConstants,
   scoringValue,
 } from './scoringConstants';
+import { ECO_DEFAULTS } from './ecoDefaults';
 import { formatEstimatedScore, isEstimatedScoreMetric } from './scoreDisplay';
 
 /**
@@ -91,11 +92,7 @@ export { SCORING_VERSION };
  *   note?: string
  * }} ComponentScore
  */
-export const ECO_DEFAULTS = Object.freeze({
-  CRUISE_SCORE_MULTIPLIER: scoringValue('ECO_CRUISE_SCORE_MULTIPLIER'),
-  IDLE_PENALTY_MULTIPLIER: scoringValue('ECO_IDLE_PENALTY_MULTIPLIER'),
-  IDLE_MAX_PENALTY: scoringValue('ECO_IDLE_MAX_PENALTY'),
-});
+export { ECO_DEFAULTS };
 export const SVI_DEFAULTS = Object.freeze({
   MOVING_SPEED_FLOOR_KMH: 5,
   MIN_MOVING_SAMPLES: 10,
@@ -5389,12 +5386,8 @@ export function calculateNightPenalty(routePoints = [], thresholds = DEFAULT_THR
 
 // ─── Trip Statistics ───────────────────────────────────────────────────────────
 /**
- * Calculate aggregate trip statistics from route points.
- *
- * @param {Array} points - GPS route points
- * @param {string} startTime - ISO timestamp
- * @param {string} endTime - ISO timestamp
- * @returns {Object} Trip statistics
+ * @param {object} context
+ * @returns {number[]}
  */
 function permissionLossEventTimesMs(context = {}) {
   const timeline = Array.isArray(context?.native_tracking_timeline)

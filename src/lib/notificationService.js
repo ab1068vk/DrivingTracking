@@ -2,7 +2,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
-import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripInsights';
+import { DEFAULT_FUEL_PRICE_PER_LITER } from '@/lib/tripEconomyDefaults';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -888,6 +888,7 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
       body: 'Your weekly Road Sage report is ready. Review distance, score, and risky events.',
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { on: { weekday: 2, hour: 9, minute: 0 }, allowWhileIdle: true },
+      extra: { type: 'weekly_report' },
     });
   }
 
@@ -898,6 +899,7 @@ export async function syncReminderNotifications(settings = localSettings.get(), 
       body: todaysSafeDrivingTip(),
       channelId: SUMMARY_CHANNEL_ID,
       schedule: { on: { hour: 8, minute: 0 }, allowWhileIdle: true },
+      extra: { type: 'safe_driving_tip' },
     });
   }
 

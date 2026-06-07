@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
+import { LEGAL_NOTICE_ACK_VERSION } from '../src/lib/legalDisclaimers.js';
 
 const onboardedSettings = {
   onboarding_completed: true,
+  legal_notice_ack_version: LEGAL_NOTICE_ACK_VERSION,
+  legal_notice_acknowledged_at: '2026-06-07T00:00:00.000Z',
   tracking_mode: 'manual',
   dark_mode: 'system',
   units: 'metric',

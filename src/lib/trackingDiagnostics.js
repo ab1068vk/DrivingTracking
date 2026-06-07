@@ -37,23 +37,24 @@ export function recordTrackingDiagnostic(event = {}) {
     type: 'info',
     ...event,
   };
+  const diagnosticEvent = /** @type {Record<string, any>} */ (nextEvent);
   const current = getTrackingDiagnostics().events;
   const next = [nextEvent, ...current].slice(0, MAX_EVENTS);
   try {
     localStorage.setItem(DIAGNOSTIC_EVENTS_KEY, JSON.stringify(next));
   } catch {}
   recordSystemEvent(nextEvent.type || 'tracking_diagnostic', {
-    title: nextEvent.title,
-    detail: nextEvent.detail,
-    context: nextEvent.context,
-    reason: nextEvent.reason,
-    speed_kmh: nextEvent.speed_kmh,
-    stopped_seconds: nextEvent.stopped_seconds,
-    drift_m: nextEvent.drift_m,
+    title: diagnosticEvent.title,
+    detail: diagnosticEvent.detail,
+    context: diagnosticEvent.context,
+    reason: diagnosticEvent.reason,
+    speed_kmh: diagnosticEvent.speed_kmh,
+    stopped_seconds: diagnosticEvent.stopped_seconds,
+    drift_m: diagnosticEvent.drift_m,
   }, {
     category: nextEvent.type === 'operation_error' ? 'failure' : 'diagnostics',
     severity: nextEvent.type === 'operation_error' ? 'error' : 'info',
-    title: nextEvent.title || 'Tracking diagnostic',
+    title: diagnosticEvent.title || 'Tracking diagnostic',
     source: nextEvent.source || 'web',
   });
   return nextEvent;
