@@ -51,7 +51,7 @@ export default function LegalNoticeDialog({
 
           {reviewMode && (
             <div className="rounded-xl border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
-              This is the same notice shown when a new notice version requires acknowledgment.
+              This is the same first-launch notice. It is available here for review after setup.
             </div>
           )}
 

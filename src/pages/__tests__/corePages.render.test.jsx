@@ -445,22 +445,22 @@ describe('core page component renders', () => {
     expect(parkingSlice).not.toContain('>100<');
   });
 
-  it('renders Settings tracking, permission, and external-context controls', async () => {
+  it('renders Settings as a compact settings-area hub', async () => {
     const { default: Settings } = await import('@/pages/Settings');
     const html = renderToStaticMarkup(<Settings />);
 
     expect(html).toContain('Settings');
-    expect(html).toContain('Tracking Mode');
+    expect(html).toContain('Settings areas');
+    expect(html).toContain('Pick one area to keep this page short');
+    expect(html).toContain('Choose a settings area');
+    expect(html).toContain('Tracking');
     expect(html).toContain('Android Permissions');
-    expect(html).toContain('Snap route to roads');
+    expect(html).toContain('Advanced Models');
+    expect(html).toContain('Speed &amp; Road Data');
+    expect(html).toContain('Privacy &amp; Data');
+    expect(html).not.toContain('Tracking Mode');
+    expect(html).not.toContain('Snap route to roads');
     expect(html).toContain('Share route samples with OSRM?');
-    expect(html).toContain('Automatic road-data fetching');
-    expect(html).toContain('Calibration registry');
-    expect(html).toContain('Trip penalty scale factor');
-    expect(html).toContain('Uncalibrated - scores are self-consistent');
-    expect(html).toContain('Status: Provisional');
-    expect(html).toContain('Affects score_overall, score_safety');
-    expect(html).toContain('approximate');
     expect(html).toContain('Personal-use estimates only');
   });
 

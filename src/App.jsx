@@ -65,7 +65,9 @@ const AuthenticatedApp = () => {
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
         .catch(() => {});
       setOnboardingDone(settings.onboarding_completed);
-      setLegalNoticeOpen(Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION);
+      const shouldShowFirstLaunchLegalNotice = !settings.onboarding_completed &&
+        Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION;
+      setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice);
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
         import('@/lib/activityRecognition')
           .then(({ startNativeAutoTracking }) => startNativeAutoTracking())

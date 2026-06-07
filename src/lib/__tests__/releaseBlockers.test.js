@@ -562,6 +562,17 @@ describe('release blocker regressions', () => {
     expect(systemLogSource).toContain('TOKEN_PAIR_PATTERN');
   });
 
+  it('keeps the legal notice automatic popup limited to first-launch onboarding', () => {
+    const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
+    const noticeDialogSource = readFileSync(new URL('../../components/LegalNoticeDialog.jsx', import.meta.url), 'utf8');
+
+    expect(appSource).toContain('shouldShowFirstLaunchLegalNotice');
+    expect(appSource).toContain('!settings.onboarding_completed');
+    expect(appSource).toContain('Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION');
+    expect(appSource).toContain('setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice)');
+    expect(noticeDialogSource).toContain('same first-launch notice');
+  });
+
   it('verifies settings updates after writes so placeholder controls are visible', () => {
     const source = readFileSync(new URL('../trackingStore.js', import.meta.url), 'utf8');
 
