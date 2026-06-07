@@ -2095,8 +2095,8 @@ export default function Settings() {
         <div className="mb-3 rounded-2xl bg-secondary/40 p-3">
           <SettingRow
             icon={Route}
-            label="Lane-change score"
-            sublabel="Highway-speed estimate only; use lane-change rate and simultaneous-braking detections in Safety scoring"
+            label="Use lane changes in Safety score"
+            sublabel="Detection still runs when off; this only controls Safety score impact"
           >
             <Toggle
               value={cfg.lane_change_score_enabled !== false}
@@ -2104,7 +2104,7 @@ export default function Settings() {
             />
           </SettingRow>
           <div className="px-1 pb-2 text-xs leading-relaxed text-muted-foreground">
-            Does not detect slow traffic below 65 km/h, curved-road lane changes, turn-signal use, or following-vehicle gaps. GPS-only detection may see 30-40% false positives in testing conditions; IMU-fused detection is closer to 10-15%. IMU calibration needs at least two GPS-confirmed harsh-brake events, so early trip segments may stay GPS-only.
+            Detected lane changes remain visible on trips when this is off, but lane-changing will not lower Safety. Does not detect slow traffic below 65 km/h, curved-road lane changes, turn-signal use, or following-vehicle gaps. GPS-only detection may see 30-40% false positives in testing conditions; IMU-fused detection is closer to 10-15%. IMU calibration needs at least two GPS-confirmed harsh-brake events, so early trip segments may stay GPS-only.
           </div>
         </div>
         <div className="mb-4 rounded-2xl border border-border bg-secondary/30 p-4">
