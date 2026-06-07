@@ -12,7 +12,17 @@ import {
   LEGAL_DISCLAIMER_SHORT,
   LEGAL_NOTICE_ACK_VERSION,
   LEGAL_NOTICE_INTRO,
+  LEGAL_NOTICE_KEY_POINTS,
 } from '@/lib/legalDisclaimers';
+
+const LEGAL_DISCLAIMER_GROUPS = LEGAL_DISCLAIMER_ITEMS.reduce((groups, item) => {
+  const group = item.group || 'Notice';
+  if (!groups.some((entry) => entry.title === group)) {
+    groups.push({ title: group, items: [] });
+  }
+  groups.find((entry) => entry.title === group).items.push(item);
+  return groups;
+}, []);
 
 export default function LegalNoticeDialog({
   open,
@@ -39,11 +49,35 @@ export default function LegalNoticeDialog({
             {LEGAL_DISCLAIMER_SHORT}
           </div>
 
-          <div className="grid gap-2">
-            {LEGAL_DISCLAIMER_ITEMS.map((item) => (
-              <section key={item.title} className="rounded-xl border border-border bg-secondary/30 p-3">
-                <div className="font-semibold text-foreground">{item.title}</div>
-                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</div>
+          {reviewMode && (
+            <div className="rounded-xl border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
+              This is the same notice shown when a new notice version requires acknowledgment.
+            </div>
+          )}
+
+          <section className="rounded-xl border border-border bg-card p-3">
+            <div className="font-semibold text-foreground">Most important points</div>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
+              {LEGAL_NOTICE_KEY_POINTS.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          </section>
+
+          <div className="space-y-3">
+            {LEGAL_DISCLAIMER_GROUPS.map((group) => (
+              <section key={group.title} className="space-y-2">
+                <div className="px-1 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  {group.title}
+                </div>
+                <div className="grid gap-2">
+                  {group.items.map((item) => (
+                    <section key={item.title} className="rounded-xl border border-border bg-secondary/30 p-3">
+                      <div className="font-semibold text-foreground">{item.title}</div>
+                      <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</div>
+                    </section>
+                  ))}
+                </div>
               </section>
             ))}
           </div>
@@ -61,7 +95,7 @@ export default function LegalNoticeDialog({
 
         <AlertDialogFooter>
           <AlertDialogAction onClick={handleAction}>
-            {reviewMode ? 'Close' : 'I understand'}
+            {reviewMode ? 'Close' : 'I have read and understand'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

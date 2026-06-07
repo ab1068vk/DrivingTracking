@@ -95,7 +95,7 @@ import {
   scoringValue,
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
-import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
+import { LEGAL_DISCLAIMER_SHORT, LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 function SectionTitle({ children, id }) {
@@ -122,6 +122,17 @@ function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, 
       <div className="flex-shrink-0 max-w-[46%]">{children}</div>
     </div>
   );
+}
+
+function formatLegalNoticeDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(date);
 }
 
 function Toggle({ value, onChange, disabled = false }) {
@@ -384,6 +395,25 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 1500);
     return updated;
   };
+
+  const legalNoticeStatus = useMemo(() => {
+    const acceptedVersion = Number(cfg.legal_notice_ack_version) || 0;
+    const acceptedDate = formatLegalNoticeDate(cfg.legal_notice_acknowledged_at);
+
+    if (acceptedVersion >= LEGAL_NOTICE_ACK_VERSION) {
+      return acceptedDate
+        ? `Accepted ${acceptedDate} - Version ${acceptedVersion}`
+        : `Accepted - Version ${acceptedVersion}`;
+    }
+
+    if (acceptedVersion > 0) {
+      return acceptedDate
+        ? `Accepted ${acceptedDate} - Version ${acceptedVersion}; current version ${LEGAL_NOTICE_ACK_VERSION} needs review`
+        : `Version ${acceptedVersion} accepted; current version ${LEGAL_NOTICE_ACK_VERSION} needs review`;
+    }
+
+    return `Not yet accepted - Version ${LEGAL_NOTICE_ACK_VERSION}`;
+  }, [cfg.legal_notice_ack_version, cfg.legal_notice_acknowledged_at]);
 
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
@@ -2868,7 +2898,7 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Legal, safety, data & privacy notice"
-            sublabel="Reread the first-launch notice, local data rules, safety limits, and external-service warnings"
+            sublabel={`Reread the first-launch notice, local data rules, safety limits, and external-service warnings. ${legalNoticeStatus}.`}
             onClick={showPrivacyPolicy}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />

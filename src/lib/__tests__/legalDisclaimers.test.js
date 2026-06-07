@@ -5,6 +5,7 @@ import {
   LEGAL_DISCLAIMER_SUMMARY,
   LEGAL_NOTICE_ACK_VERSION,
   LEGAL_NOTICE_INTRO,
+  LEGAL_NOTICE_KEY_POINTS,
 } from '@/lib/legalDisclaimers';
 
 describe('legal and responsible-use explanations', () => {
@@ -20,6 +21,11 @@ describe('legal and responsible-use explanations', () => {
 
     expect(LEGAL_NOTICE_ACK_VERSION).toBeGreaterThan(0);
     expect(LEGAL_NOTICE_INTRO).toContain('local-first');
+    expect(LEGAL_NOTICE_KEY_POINTS).toEqual(expect.arrayContaining([
+      expect.stringContaining('Do not use the app while driving'),
+      expect.stringContaining('may be wrong'),
+      expect.stringContaining('outside services'),
+    ]));
     expect(LEGAL_DISCLAIMER_ITEMS.length).toBeGreaterThanOrEqual(12);
     expect(copy).toContain('Maps are not navigation');
     expect(copy.toLowerCase()).toContain('not official records');
