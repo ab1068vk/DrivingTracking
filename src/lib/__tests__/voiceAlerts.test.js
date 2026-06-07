@@ -118,18 +118,19 @@ describe('voice alert cooldowns', () => {
     });
   });
 
-  it('prefers the native speak bridge when present', async () => {
+  it('prefers the Android speakText bridge when present', async () => {
     mockState.isNative = true;
     mockState.nativeSpeech.speak = vi.fn().mockResolvedValue();
+    mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();
 
     expect(await speakSafetyAlert('Eyes on the road.', { voice_alerts_enabled: true })).toBe(true);
-    expect(mockState.nativeSpeech.speak).toHaveBeenCalledWith({
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith({
       text: 'Eyes on the road.',
       rate: 0.95,
       pitch: 1,
       volume: 0.95,
       language: 'en-US',
     });
-    expect(mockState.nativeSpeech.speakText).not.toHaveBeenCalled();
+    expect(mockState.nativeSpeech.speak).not.toHaveBeenCalled();
   });
 });

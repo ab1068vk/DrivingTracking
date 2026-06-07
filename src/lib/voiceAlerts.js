@@ -48,10 +48,10 @@ export async function speakSafetyAlert(text, settings = localSettings.get(), spe
   if (isNativePlatform()) {
     try {
       const payload = { text: message, ...tuning };
-      if (typeof NativeSpeech?.speak === 'function') {
-        await NativeSpeech.speak(payload);
-      } else {
+      if (typeof NativeSpeech?.speakText === 'function') {
         await NativeSpeech.speakText(payload);
+      } else {
+        await NativeSpeech.speak(payload);
       }
       return true;
     } catch {
