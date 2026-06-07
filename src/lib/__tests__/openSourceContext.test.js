@@ -48,9 +48,13 @@ describe('open-source trip context', () => {
   });
 
   it('describes external road-context data before manual fetch', () => {
-    expect(isExternalContextAutoFetchEnabled({})).toBe(true);
+    expect(isExternalContextAutoFetchEnabled({})).toBe(false);
     expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: false })).toBe(false);
-    expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: true })).toBe(true);
+    expect(isExternalContextAutoFetchEnabled({ external_context_auto_fetch_enabled: true })).toBe(false);
+    expect(isExternalContextAutoFetchEnabled({
+      external_context_auto_fetch_enabled: true,
+      external_context_auto_fetch_consented_at: '2026-06-07T12:00:00.000Z',
+    })).toBe(true);
     const message = buildRoadContextPrivacyMessage({
       speed_limit_lookup_enabled: true,
       weather_context_enabled: true,

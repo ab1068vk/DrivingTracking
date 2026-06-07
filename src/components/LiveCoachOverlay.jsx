@@ -19,6 +19,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import { buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
@@ -67,10 +68,17 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     const settings = localSettings.get();
-    const voiceText = plainText(normalized.text);
+    const voiceText = plainText(normalized.voiceText ?? normalized.text);
     const speak = normalized.voiceKey
-      ? speakSafetyAlertOnce(normalized.voiceKey, voiceText, settings, normalized.voiceCooldownMs).catch(() => {})
-      : speakSafetyAlert(voiceText, settings).catch(() => {});
+      ? speakSafetyAlertOnce(
+        normalized.voiceKey,
+        voiceText,
+        settings,
+        normalized.voiceCooldownMs,
+        undefined,
+        normalized.voiceParams
+      ).catch(() => {})
+      : speakSafetyAlert(voiceText, settings, normalized.voiceParams).catch(() => {});
     void speak;
     if (!dismissed) setMessage(normalized);
     setTimeout(() => {
@@ -134,11 +142,12 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
       const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
-      const latestSpeedLimit = resolveEffectiveSpeedLimitForIndex(
+      const latestSpeedLimitContext = resolveEffectiveSpeedLimitForIndex(
         currentRoutePoints,
         currentRoutePoints.length - 1,
         thresholds
-      ).effectiveLimitKmh;
+      );
+      const latestSpeedLimit = latestSpeedLimitContext.effectiveLimitKmh;
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
 
       let nextMessage = null;
@@ -155,7 +164,9 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           tone: 'danger',
           displayMs: PHONE_DISPLAY_MS,
           voiceKey: 'phone_use',
+          voiceText: buildVoiceAlertMessage('phone_use'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.phone_use,
+          voiceParams: { interrupt: true },
         };
         if (settings.notif_phone_use_alert_enabled !== false) {
           notifyPhoneUseDetected({
@@ -167,48 +178,60 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         nextMessage = {
           text: 'Estimated brake-turn manoeuvre alert. Review conditions when safe.',
           voiceKey: 'close_proximity',
+          voiceText: buildVoiceAlertMessage('close_proximity'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.close_proximity,
         };
       } else if (stats.heading_drift_beta_level === 'high') {
         nextMessage = {
           text: 'GPS heading variation pattern recorded. Take a break if you feel tired.',
           voiceKey: 'heading_drift_beta',
+          voiceText: buildVoiceAlertMessage('heading_drift_beta'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
       } else if (settings.speed_warning_enabled !== false && latestSpeed > (latestSpeedLimit ?? thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
         nextMessage = {
-          text: `Speed warning. ${Math.round(latestSpeed)} kilometers per hour.`,
+          text: `Speed warning. ${Math.round(latestSpeed)} km/h${latestSpeedLimit ? ` over ${Math.round(latestSpeedLimit)} km/h` : ''}.`,
           voiceKey: 'speeding',
+          voiceText: buildVoiceAlertMessage('speeding', {
+            speedKmh: latestSpeed,
+            speedLimitKmh: latestSpeedLimit,
+            speedLimitSource: latestSpeedLimitContext.limitSource,
+          }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
         };
       } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
         nextMessage = {
           text: 'Brake earlier and more gradually',
           voiceKey: 'harsh_brake',
+          voiceText: buildVoiceAlertMessage('harsh_brake'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
         };
       } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
         nextMessage = {
           text: 'Repeated stop-start pattern recorded',
           voiceKey: 'stop_start_pattern',
+          voiceText: buildVoiceAlertMessage('stop_start_pattern'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
         };
       } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
         nextMessage = {
           text: 'Accelerate more smoothly',
           voiceKey: 'rapid_accel',
+          voiceText: buildVoiceAlertMessage('rapid_accel'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.rapid_accel,
         };
       } else if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
         nextMessage = {
           text: `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`,
           voiceKey: 'long_drive',
+          voiceText: buildVoiceAlertMessage('long_drive'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.long_drive,
         };
       } else if ((stats.idle_time_seconds || 0) > 300) {
         nextMessage = {
           text: 'Extended idling recorded',
           voiceKey: 'idle',
+          voiceText: buildVoiceAlertMessage('idle'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.idle,
         };
       }
@@ -221,8 +244,14 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
         }, settings).catch(() => {});
         if (!nextMessage && settings.voice_alerts_enabled !== false) {
           nextMessage = {
-            text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} kilometers per hour.`,
+            text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} km/h.`,
             voiceKey: 'speeding',
+            voiceText: buildVoiceAlertMessage('speeding', {
+              speedKmh: latestSpeeding.speed_kmh || latestSpeed,
+              speedLimitKmh: latestSpeeding.speed_limit_kmh ?? latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
+              speedLimitSource: latestSpeeding.speed_limit_source,
+              limitIsEstimated: latestSpeeding.speed_limit_source === 'inferred' || latestSpeeding.speed_limit_kmh == null,
+            }),
             voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
           };
         }

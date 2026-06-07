@@ -25,7 +25,7 @@ const LAST_PARKED_KEY = 'drivesense_last_parked';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 8;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 9;
 
 const settingsStorage = () => {
   try {
@@ -191,7 +191,8 @@ export const DEFAULT_SETTINGS = {
   country_code: '',
   configurable_country_defaults: 'global',
   weather_context_enabled: true,
-  external_context_auto_fetch_enabled: true,
+  external_context_auto_fetch_enabled: false,
+  external_context_auto_fetch_consented_at: '',
   min_speed_rapid_accel_kmh: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
   min_speed_harsh_brake_kmh: scoringValue('MIN_SPEED_HARSH_BRAKE_KMH'),
   weekly_goal_harsh_brakes: 5,
@@ -311,6 +312,11 @@ export function migrateDefaultSettings(parsed = {}) {
   const calibrationSharingChanged = merged.calibration_sharing_enabled !== false;
   merged.calibration_sharing_enabled = false;
 
+  if (version < 9) {
+    merged.external_context_auto_fetch_enabled = false;
+    merged.external_context_auto_fetch_consented_at = '';
+  }
+
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
@@ -384,6 +390,8 @@ const IMPORT_ENUMS = {
 };
 
 const IMPORT_STRIPPED_KEYS = new Set([
+  'external_context_auto_fetch_enabled',
+  'external_context_auto_fetch_consented_at',
   'osrm_map_matching_url',
   'osrm_public_demo_consent_at',
   'osrm_data_sharing_consented',
@@ -580,6 +588,7 @@ const summarizeSettingValue = (key, value) => {
       return value ? '[invalid url]' : '';
     }
   }
+
   if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
   return Array.isArray(value) ? `${value.length} item(s)` : '[object]';
 };

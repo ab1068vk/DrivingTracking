@@ -60,6 +60,7 @@ import {
 } from '@/lib/dataBackup';
 import { BACKUP_PASSPHRASE_MIN_LENGTH, ENCRYPTED_BACKUP_MIME_TYPE } from '@/lib/backupEnvelopeEncryption';
 import { COMMUTE_MATCH_RADIUS_M } from '@/lib/mediumInsights';
+import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import {
   applyCalibrationProfile,
   clearCalibrationProfile,
@@ -559,14 +560,20 @@ export default function Settings() {
 
   const updateExternalContextAutoFetch = (enabled) => {
     if (!enabled) {
-      updateCfg({ external_context_auto_fetch_enabled: false });
+      updateCfg({
+        external_context_auto_fetch_enabled: false,
+        external_context_auto_fetch_consented_at: '',
+      });
       return;
     }
     const ok = typeof window === 'undefined' || window.confirm(
       'Automatic road data sends route-area boxes to OpenStreetMap and a privacy-safe route point/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
     );
     if (!ok) return;
-    updateCfg({ external_context_auto_fetch_enabled: true });
+    updateCfg({
+      external_context_auto_fetch_enabled: true,
+      external_context_auto_fetch_consented_at: new Date().toISOString(),
+    });
   };
 
   const updateNightMode = (mode) => {
@@ -2795,10 +2802,10 @@ export default function Settings() {
         <SettingRow
           icon={Info}
           label="Automatic road-data fetching"
-          sublabel="On by default. Saved trips fetch OpenStreetMap speed limits and Open-Meteo weather when internet is available. OSRM snapping still stays manual."
+          sublabel="Off until you approve it. Saved trips stay local unless you enable automatic OpenStreetMap/Open-Meteo lookups."
         >
           <Toggle
-            value={cfg.external_context_auto_fetch_enabled !== false}
+            value={isExternalContextAutoFetchEnabled(cfg)}
             onChange={updateExternalContextAutoFetch}
           />
         </SettingRow>
@@ -2830,8 +2837,8 @@ export default function Settings() {
                   : 'will be skipped until an OSRM endpoint is added.'}
             </div>
             <div>
-              <span className="font-semibold text-foreground">Automatic road-data fetching {cfg.external_context_auto_fetch_enabled !== false ? 'ON' : 'OFF'}:</span>{' '}
-              {cfg.external_context_auto_fetch_enabled !== false
+              <span className="font-semibold text-foreground">Automatic road-data fetching {isExternalContextAutoFetchEnabled(cfg) ? 'ON' : 'OFF'}:</span>{' '}
+              {isExternalContextAutoFetchEnabled(cfg)
                 ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
                 : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
             </div>

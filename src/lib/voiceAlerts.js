@@ -3,10 +3,11 @@ import { localSettings } from '@/lib/trackingStore';
 import NativeSpeech from '@/lib/driveSenseNativePlugin';
 
 const lastSpokenAtByKey = new Map();
-const DEFAULT_RATE = 0.95;
+const DEFAULT_RATE = 0.92;
 const DEFAULT_VOLUME = 0.95;
 const DEFAULT_PITCH = 1;
 const DEFAULT_LANGUAGE = 'en-US';
+const DEFAULT_QUEUE_MODE = 'add';
 
 export function isVoiceAlertEnabled(settings = {}) {
   const raw = settings.voice_alerts_enabled;
@@ -21,11 +22,14 @@ function normalizeSpeechParams(params = {}) {
   const rate = Number(params.rate);
   const pitch = Number(params.pitch);
   const volume = Number(params.volume);
+  const interrupt = params.interrupt === true || params.queueMode === 'flush';
   return {
     rate: Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_RATE,
     pitch: Number.isFinite(pitch) && pitch > 0 ? pitch : DEFAULT_PITCH,
     volume: Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : DEFAULT_VOLUME,
     language: DEFAULT_LANGUAGE,
+    interrupt,
+    queueMode: interrupt ? 'flush' : DEFAULT_QUEUE_MODE,
   };
 }
 
@@ -69,7 +73,9 @@ export async function speakSafetyAlert(text, settings = localSettings.get(), spe
   utterance.pitch = tuning.pitch;
   utterance.volume = tuning.volume;
   utterance.lang = tuning.language;
-  window.speechSynthesis.cancel();
+  if (tuning.interrupt) {
+    window.speechSynthesis.cancel();
+  }
   window.speechSynthesis.speak(utterance);
   return true;
 }
@@ -86,5 +92,7 @@ export function resetSafetyAlertCooldowns() {
 }
 
 export function testVoiceAlert(settings = localSettings.get()) {
-  return speakSafetyAlert('Road Sage voice alerts are working.', settings);
+  return speakSafetyAlert('Road Sage voice alerts are ready. Coaching alerts will speak during active trips.', settings, {
+    interrupt: true,
+  });
 }

@@ -92,6 +92,7 @@ import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import { buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
 import {
   buildSensorFusionSummary,
   createMotionSensorFusion,
@@ -232,7 +233,7 @@ export default function Dashboard() {
       stayAlertSentRef.current = true;
       lastStayAlertAtRef.current = Date.now();
       notifyStayAlert().catch(() => {});
-      speakSafetyAlert('GPS heading variation pattern recorded. Take a break when it is safe if you feel tired.', cfg).catch(() => {});
+      speakSafetyAlert(buildVoiceAlertMessage('heading_drift_beta'), cfg).catch(() => {});
     }
   }, [activeTrip, tracking]);
 
@@ -452,7 +453,10 @@ export default function Dashboard() {
               body,
               extra: { type: 'repeated_event_area', zoneId: zone.id },
             }).catch(() => {});
-            speakSafetyAlert(`Repeated event area ahead. ${typeLabel} was recorded nearby in your history.`, latestSettings).catch(() => {});
+            speakSafetyAlert(buildVoiceAlertMessage('repeated_event_area', {
+              dominantType: typeLabel,
+              distanceM: zone.distanceM,
+            }), latestSettings).catch(() => {});
           }
         }
         const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), point];
@@ -490,7 +494,12 @@ export default function Dashboard() {
           });
           speakSafetyAlertOnce(
             'speeding',
-            `Speed warning. ${Math.round(speed)} kilometers per hour. ${speedLimitLabel} ${Math.round(speedLimitKmh)}.`,
+            buildVoiceAlertMessage('speeding', {
+              speedKmh: speed,
+              speedLimitKmh,
+              speedLimitSource,
+              limitIsEstimated: speedLimitSource === 'inferred',
+            }),
             latestSettings,
             60 * 1000
           ).catch(() => {});
@@ -544,7 +553,9 @@ export default function Dashboard() {
               : 'Road Sage recorded impact-like motion followed by little movement.',
             extra: { type: 'possible_crash', severity: incident.severity, emergencyWorkflow },
           }).catch(() => {});
-          speakSafetyAlert(workflowBody, latestSettings).catch(() => {});
+          speakSafetyAlert(buildVoiceAlertMessage('possible_incident', {
+            emergencyWorkflow,
+          }), latestSettings, { interrupt: true }).catch(() => {});
           setActiveTrip(prev => {
             if (!prev) return prev;
             const updated = {

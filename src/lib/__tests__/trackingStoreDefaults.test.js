@@ -2,8 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, migrateDefaultSettings, sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
 
 describe('tracking store default settings', () => {
-  it('keeps external context auto-fetch enabled by default', () => {
-    expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(true);
+  it('keeps external context auto-fetch off until the user approves it', () => {
+    expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.external_context_auto_fetch_consented_at).toBe('');
+
+    const migrated = migrateDefaultSettings({
+      settings_defaults_version: 8,
+      external_context_auto_fetch_enabled: true,
+      external_context_auto_fetch_consented_at: '2026-06-01T12:00:00.000Z',
+    }).settings;
+    expect(migrated.external_context_auto_fetch_enabled).toBe(false);
+    expect(migrated.external_context_auto_fetch_consented_at).toBe('');
+    expect(sanitizeImportedSettings({
+      external_context_auto_fetch_enabled: true,
+      external_context_auto_fetch_consented_at: '2026-06-01T12:00:00.000Z',
+    })).not.toHaveProperty('external_context_auto_fetch_enabled');
   });
 
   it('keeps OSRM route snapping off until an endpoint and consent are saved', () => {
@@ -109,7 +122,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(8);
+    expect(legacySunset.settings_defaults_version).toBe(9);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 

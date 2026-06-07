@@ -23,6 +23,7 @@ import {
   resetSafetyAlertCooldowns,
   speakSafetyAlert,
   speakSafetyAlertOnce,
+  testVoiceAlert,
 } from '@/lib/voiceAlerts';
 
 function stubSpeechSynthesis(overrides = {}) {
@@ -102,6 +103,19 @@ describe('voice alert cooldowns', () => {
     expect(utterance.pitch).toBe(0.95);
     expect(utterance.volume).toBe(0.8);
     expect(utterance.lang).toBe('en-US');
+    expect(speechSynthesis.cancel).not.toHaveBeenCalled();
+  });
+
+  it('only interrupts browser speech when requested', async () => {
+    const speechSynthesis = stubSpeechSynthesis();
+
+    expect(await speakSafetyAlert(
+      'Urgent alert.',
+      { voice_alerts_enabled: true },
+      { interrupt: true }
+    )).toBe(true);
+
+    expect(speechSynthesis.cancel).toHaveBeenCalledTimes(1);
   });
 
   it('passes tuning through the native speakText bridge', async () => {
@@ -111,10 +125,12 @@ describe('voice alert cooldowns', () => {
     expect(await speakSafetyAlert('Eyes on the road.', { voice_alerts_enabled: true })).toBe(true);
     expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith({
       text: 'Eyes on the road.',
-      rate: 0.95,
+      rate: 0.92,
       pitch: 1,
       volume: 0.95,
       language: 'en-US',
+      interrupt: false,
+      queueMode: 'add',
     });
   });
 
@@ -126,11 +142,29 @@ describe('voice alert cooldowns', () => {
     expect(await speakSafetyAlert('Eyes on the road.', { voice_alerts_enabled: true })).toBe(true);
     expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith({
       text: 'Eyes on the road.',
-      rate: 0.95,
+      rate: 0.92,
       pitch: 1,
       volume: 0.95,
       language: 'en-US',
+      interrupt: false,
+      queueMode: 'add',
     });
     expect(mockState.nativeSpeech.speak).not.toHaveBeenCalled();
+  });
+
+  it('marks the settings test alert as interruptible', async () => {
+    mockState.isNative = true;
+    mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();
+
+    expect(await testVoiceAlert({ voice_alerts_enabled: true })).toBe(true);
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith({
+      text: 'Road Sage voice alerts are ready. Coaching alerts will speak during active trips.',
+      rate: 0.92,
+      pitch: 1,
+      volume: 0.95,
+      language: 'en-US',
+      interrupt: true,
+      queueMode: 'flush',
+    });
   });
 });

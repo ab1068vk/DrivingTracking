@@ -35,7 +35,9 @@ export const isOsrmMapMatchingEnabled = (settings = {}) => (
 );
 
 export const isExternalContextAutoFetchEnabled = (settings = {}) => (
-  settings.external_context_auto_fetch_enabled !== false
+  settings.external_context_auto_fetch_enabled === true &&
+  typeof settings.external_context_auto_fetch_consented_at === 'string' &&
+  settings.external_context_auto_fetch_consented_at.trim().length > 0
 );
 
 export function buildRoadContextPrivacyMessage(settings = {}) {

@@ -1258,9 +1258,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void speakNativeAlert(String text) {
+        speakNativeAlert(text, false);
+    }
+
+    private void speakNativeAlert(String text, boolean interrupt) {
         if (text == null || text.trim().isEmpty()) return;
         if (textToSpeech != null && textToSpeechReady) {
-            speakNativeAlertNow(text);
+            speakNativeAlertNow(text, interrupt);
             return;
         }
         if (textToSpeech == null) {
@@ -1269,19 +1273,20 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                     textToSpeech.setLanguage(Locale.getDefault());
                     textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
                     textToSpeechReady = true;
-                    speakNativeAlertNow(text);
+                    speakNativeAlertNow(text, interrupt);
                 }
             });
         }
     }
 
-    private void speakNativeAlertNow(String text) {
+    private void speakNativeAlertNow(String text, boolean interrupt) {
         if (textToSpeech == null) return;
         String utteranceId = "drivesense_phone_use_" + System.currentTimeMillis();
+        int queueMode = interrupt ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            textToSpeech.speak(text, queueMode, null, utteranceId);
         } else {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
+            textToSpeech.speak(text, queueMode, null);
         }
     }
 
@@ -1496,7 +1501,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
             sendPhoneUseWarningNotification();
             if (isSettingEnabled("voice_alerts_enabled", true)) {
-                speakNativeAlert("Put your phone down. Keep your eyes on the road.");
+                speakNativeAlert("Phone use detected. Keep your eyes up. Handle the phone only when parked.", true);
             }
             lastPhoneUseNotifyMs = nowMs;
         }

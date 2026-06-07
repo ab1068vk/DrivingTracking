@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.MediaStore;
@@ -172,9 +173,16 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             call.reject("text is required.");
             return;
         }
+        float rate = floatParam(call, "rate", 0.95f, 0.5f, 1.4f);
+        float pitch = floatParam(call, "pitch", 1.0f, 0.75f, 1.25f);
+        float volume = floatParam(call, "volume", 0.95f, 0.0f, 1.0f);
+        int queueMode = "flush".equals(call.getString("queueMode", "add"))
+            ? TextToSpeech.QUEUE_FLUSH
+            : TextToSpeech.QUEUE_ADD;
 
         if (textToSpeech != null && textToSpeechReady) {
-            speakNow(text);
+            applySpeechTuning(rate, pitch);
+            speakNow(text, volume, queueMode);
             call.resolve();
             return;
         }
@@ -185,9 +193,9 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
                 return;
             }
             textToSpeech.setLanguage(Locale.getDefault());
-            textToSpeech.setSpeechRate(0.95f);
+            applySpeechTuning(rate, pitch);
             textToSpeechReady = true;
-            speakNow(text);
+            speakNow(text, volume, queueMode);
             call.resolve();
         });
     }
@@ -205,13 +213,27 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         }
     }
 
-    private void speakNow(String text) {
+    private float floatParam(PluginCall call, String key, float fallback, float min, float max) {
+        double value = call.getData().optDouble(key, fallback);
+        if (Double.isNaN(value) || Double.isInfinite(value)) return fallback;
+        return (float) Math.max(min, Math.min(max, value));
+    }
+
+    private void applySpeechTuning(float rate, float pitch) {
+        if (textToSpeech == null) return;
+        textToSpeech.setSpeechRate(rate);
+        textToSpeech.setPitch(pitch);
+    }
+
+    private void speakNow(String text, float volume, int queueMode) {
         if (textToSpeech == null) return;
         String utteranceId = "roadsage_" + System.currentTimeMillis();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            Bundle params = new Bundle();
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume);
+            textToSpeech.speak(text, queueMode, params, utteranceId);
         } else {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null);
+            textToSpeech.speak(text, queueMode, null);
         }
     }
 
