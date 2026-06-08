@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Activity, Award, Brain, Car, ClipboardList, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
+import { activeTripStore } from '@/lib/trackingStore';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -36,11 +37,8 @@ export default function Layout() {
   // Listen for tracking state changes
   useEffect(() => {
     const checkTracking = () => {
-      try {
-        const raw = localStorage.getItem('drivesense_active_trip');
-        const nextActive = !!raw;
-        setTrackingActive((current) => (current === nextActive ? current : nextActive));
-      } catch {}
+      const nextActive = Boolean(activeTripStore.get());
+      setTrackingActive((current) => (current === nextActive ? current : nextActive));
     };
     const checkTrackingWhenVisible = () => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {

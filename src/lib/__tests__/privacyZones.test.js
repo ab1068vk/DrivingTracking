@@ -1,13 +1,42 @@
-import { describe, expect, it } from 'vitest';
-import { haversineDistance } from '@/lib/tripEngine';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Capacitor } from '@capacitor/core';
+import { Preferences } from '@capacitor/preferences';
+import { cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
 import {
+  countTripsAffectedByPrivacyZone,
+  findOverlappingZones,
+  getPrivacyZoneDisplayCircle,
+  isPointInPrivacyZone,
   isInsidePrivacyZone,
+  loadPrivacyZonesFromStorage,
   maskEventCoordinatesForPrivacy,
   maskEventsForPrivacy,
+  maskRoutePointsForPrivacyExport,
   maskRoutePointsForPrivacy,
+  NATIVE_PRIVACY_ZONES_KEY,
+  PRIVACY_ZONES_SECURE_KEY,
   privacyBoundaryPoint,
   privacyZonesForRoute,
+  purgeGpsWithinPrivacyZone,
+  purgeTripGpsWithinPrivacyZone,
+  redactRoutePointForPrivacyStorage,
+  syncZonesToNative,
+  upsertPrivacyZone,
 } from '@/lib/privacyZones';
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    isNativePlatform: vi.fn(() => false),
+    getPlatform: vi.fn(() => 'web'),
+  },
+  registerPlugin: vi.fn(() => ({})),
+}));
+
+vi.mock('@capacitor/preferences', () => ({
+  Preferences: {
+    set: vi.fn(async () => {}),
+  },
+}));
 
 const zone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
 const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
@@ -18,6 +47,24 @@ const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
 });
 
 describe('privacyZones', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('uses stable offset geometry without exposing the stored center', () => {
+    const display = getPrivacyZoneDisplayCircle(zone);
+    const repeated = getPrivacyZoneDisplayCircle(zone);
+    const offsetM = haversineDistance(display.lat, display.lng, zone.lat, zone.lng) * 1000;
+
+    expect(display).toEqual(repeated);
+    expect(display.lat).not.toBe(zone.lat);
+    expect(display.lng).not.toBe(zone.lng);
+    expect(offsetM).toBeCloseTo(35, 0);
+    expect(display.radius_m).toBe(zone.radius_m + 35);
+    expect(display.source_radius_m).toBe(zone.radius_m);
+  });
+
   it('interpolates the route crossing at the circle boundary', () => {
     const inside = point(43.65, -79.38, 0, 10);
     const outside = point(43.6522, -79.38, 20, 40);
@@ -51,6 +98,142 @@ describe('privacyZones', () => {
     expect(masked.some((item) => item.lat === zone.lat && item.lng === zone.lng)).toBe(false);
   });
 
+  it('redacts live route points before storage when they are inside a privacy zone', () => {
+    const raw = {
+      ...point(43.65, -79.38, 0, 12),
+      latitude: 43.65,
+      longitude: -79.38,
+      original_lat: 43.65,
+      original_lng: -79.38,
+    };
+
+    const stored = redactRoutePointForPrivacyStorage(raw, [zone]);
+
+    expect(stored).toMatchObject({
+      lat: null,
+      lng: null,
+      speed_kmh: 12,
+      masked_for_privacy: true,
+      privacy_gap: true,
+      privacy_live_redacted: true,
+      privacy_zone_id: 'home',
+    });
+    expect(JSON.stringify(stored)).not.toContain('43.65');
+    expect(JSON.stringify(stored)).not.toContain('-79.38');
+    expect(stored.latitude).toBeUndefined();
+    expect(stored.longitude).toBeUndefined();
+    expect(redactRoutePointForPrivacyStorage(point(43.6532, -79.38), [zone])).toEqual(point(43.6532, -79.38));
+  });
+
+  it('keeps privacy storage stubs when route points are cleaned', () => {
+    const redacted = redactRoutePointForPrivacyStorage(point(43.65, -79.38, 10, 8), [zone]);
+    const cleaned = cleanRoutePoints([
+      point(43.6522, -79.38, 0, 20),
+      redacted,
+      point(43.6532, -79.38, 20, 20),
+    ]);
+
+    expect(cleaned).toHaveLength(3);
+    expect(cleaned[1]).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_live_redacted: true,
+    });
+  });
+
+  it('adds export-only noise to privacy boundary coordinates', () => {
+    const route = [
+      point(43.65, -79.38, 0),
+      { ...point(43.6522, -79.38, 20), radius_m: 999, privacy_zone_radius_m: 100 },
+    ];
+    const settings = { privacy_zones: [zone] };
+    const exact = maskRoutePointsForPrivacy(route, settings);
+    const exported = maskRoutePointsForPrivacyExport(route, settings, 'export-salt');
+    const repeated = maskRoutePointsForPrivacyExport(route, settings, 'export-salt');
+    const changed = maskRoutePointsForPrivacyExport(route, settings, 'other-export-salt');
+
+    const exactBoundary = exact.find((item) => item.privacy_boundary);
+    const exportedBoundary = exported.find((item) => item.privacy_boundary);
+    const repeatedBoundary = repeated.find((item) => item.privacy_boundary);
+    const changedBoundary = changed.find((item) => item.privacy_boundary);
+    const noiseM = haversineDistance(
+      exactBoundary.lat,
+      exactBoundary.lng,
+      exportedBoundary.lat,
+      exportedBoundary.lng
+    ) * 1000;
+
+    expect(noiseM).toBeGreaterThanOrEqual(10);
+    expect(noiseM).toBeLessThanOrEqual(35.5);
+    expect(exportedBoundary.lat).toBe(repeatedBoundary.lat);
+    expect(exportedBoundary.lng).toBe(repeatedBoundary.lng);
+    expect(exportedBoundary.lat).not.toBe(changedBoundary.lat);
+    expect(exportedBoundary.export_noised_for_privacy).toBe(true);
+    expect(exportedBoundary.radius_m).toBeUndefined();
+    expect(exportedBoundary.privacy_zone_radius_m).toBeUndefined();
+  });
+
+  it('counts trips that would be exposed by privacy zone deletion', () => {
+    const trips = [
+      { id: 'inside-route', route_points: [point(43.65, -79.38, 0)] },
+      { id: 'inside-event', route_points: [point(43.6532, -79.38, 0)], driving_events: [{ lat: 43.65, lng: -79.38 }] },
+      { id: 'outside', route_points: [point(43.6532, -79.38, 0)] },
+    ];
+
+    expect(countTripsAffectedByPrivacyZone(trips, zone)).toBe(2);
+  });
+
+  it('purges raw GPS inside a deleted privacy zone and leaves a placeholder gap', () => {
+    const trip = {
+      id: 'purge-trip',
+      route_points: [
+        point(43.649, -79.38, 0),
+        point(43.65, -79.38, 10),
+        point(43.6502, -79.38, 20),
+        point(43.6522, -79.38, 30),
+      ],
+      driving_events: [
+        { type: 'harsh_brake', lat: 43.65, lng: -79.38 },
+        { type: 'sharp_turn', lat: 43.6532, lng: -79.38 },
+      ],
+    };
+
+    const result = purgeTripGpsWithinPrivacyZone(trip, zone);
+
+    expect(result.changed).toBe(true);
+    expect(result.purgedPoints).toBe(2);
+    expect(result.purgedEvents).toBe(1);
+    expect(result.trip.route_points).toHaveLength(3);
+    expect(result.trip.route_points[1]).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+      privacy_purged: true,
+      privacy_zone_id: 'home',
+    });
+    expect(result.trip.driving_events).toEqual([trip.driving_events[1]]);
+    expect(result.trip.needs_rescore).toBe(true);
+  });
+
+  it('updates each affected trip when purging a privacy zone', async () => {
+    const updateTrip = vi.fn(async () => ({}));
+    const trips = [
+      { id: 'inside', route_points: [point(43.65, -79.38, 0)], driving_events: [] },
+      { id: 'outside', route_points: [point(43.6532, -79.38, 0)], driving_events: [] },
+    ];
+
+    const result = await purgeGpsWithinPrivacyZone(trips, zone, updateTrip);
+
+    expect(result).toMatchObject({ tripsAffected: 1, pointsPurged: 1, eventsPurged: 0 });
+    expect(updateTrip).toHaveBeenCalledTimes(1);
+    expect(updateTrip.mock.calls[0][0]).toBe('inside');
+    expect(updateTrip.mock.calls[0][1].route_points[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_purged: true,
+    });
+  });
+
   it('omits events inside privacy zones but keeps public events', () => {
     const events = [
       { type: 'speeding', lat: 43.65, lng: -79.38 },
@@ -80,6 +263,41 @@ describe('privacyZones', () => {
     expect(isInsidePrivacyZone(43.6532, -79.38, [zone])).toBe(false);
   });
 
+  it('chooses the zone where the point is deepest inside when zones overlap', () => {
+    const shallow = { id: 'shallow', label: 'Shallow', lat: 43.65, lng: -79.38, radius_m: 100 };
+    const deep = { id: 'deep', label: 'Deep', lat: 43.65, lng: -79.38, radius_m: 250 };
+
+    expect(isPointInPrivacyZone(point(43.65, -79.38), [shallow, deep])).toBe(deep);
+  });
+
+  it('reports overlapping privacy-zone pairs', () => {
+    const nearby = { id: 'nearby', label: 'Nearby', lat: 43.6505, lng: -79.38, radius_m: 100 };
+    const far = { id: 'far', label: 'Far', lat: 43.653, lng: -79.38, radius_m: 100 };
+
+    const overlaps = findOverlappingZones([zone, nearby, far]);
+
+    expect(overlaps).toHaveLength(1);
+    expect(overlaps[0].a).toBe(zone);
+    expect(overlaps[0].b).toBe(nearby);
+    expect(overlaps[0].overlapMeters).toBeGreaterThan(100);
+  });
+
+  it('syncs sanitized privacy zones to native preferences', async () => {
+    Capacitor.isNativePlatform.mockReturnValue(true);
+    vi.stubGlobal('window', {});
+
+    await syncZonesToNative([zone, { id: 'bad', label: 'Bad', lat: null, lng: -79.38, radius_m: 100 }]);
+
+    expect(Preferences.set).toHaveBeenCalledTimes(1);
+    const payload = Preferences.set.mock.calls[0][0];
+    expect(payload.key).toBe(NATIVE_PRIVACY_ZONES_KEY);
+    expect(payload.value).toContain('"encrypted":true');
+    expect(payload.value).not.toContain('43.65');
+    expect(payload.value).not.toContain('-79.38');
+    expect(payload.value).not.toContain('"lat"');
+    expect(payload.value).not.toContain('"lng"');
+  });
+
   it('returns only privacy zones touched by a route', () => {
     const work = { id: 'work', label: 'Work', lat: 43.72, lng: -79.42, radius_m: 100 };
     const route = [
@@ -97,5 +315,77 @@ describe('privacyZones', () => {
     ];
 
     expect(privacyZonesForRoute(route, { privacy_zones: [zone] })).toEqual([zone]);
+  });
+
+  it('invalidates OSRM consent when a privacy zone is added', async () => {
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 9,
+        map_matching_enabled: true,
+        osrm_map_matching_url: 'https://osrm.example',
+        osrm_data_sharing_consented: true,
+        osrm_data_sharing_consented_at: '2026-06-01T12:00:00.000Z',
+        privacy_zones: [],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const updated = await upsertPrivacyZone(zone, JSON.parse(values.get('drivesense_settings')));
+    const storedSettings = JSON.parse(values.get('drivesense_settings'));
+    const encryptedZones = values.get(PRIVACY_ZONES_SECURE_KEY);
+
+    expect(updated.osrm_data_sharing_consented).toBe(false);
+    expect(updated.osrm_data_sharing_consented_at).toBe('');
+    expect(updated.osrm_consent_invalidated_reason).toBe('privacy_zone_changed');
+    expect(updated.osrm_consent_invalidated_zone_label).toBe('Home');
+    expect(updated.map_matching_enabled).toBe(true);
+    expect(storedSettings.privacy_zones[0]).toEqual({
+      id: 'home',
+      label: 'Home',
+      radius_m: 100,
+      masked_for_privacy: true,
+    });
+    expect(JSON.stringify(storedSettings)).not.toContain('43.65');
+    expect(JSON.stringify(storedSettings)).not.toContain('-79.38');
+    expect(encryptedZones).toContain('"encrypted":true');
+    expect(encryptedZones).not.toContain('43.65');
+    expect(encryptedZones).not.toContain('-79.38');
+  });
+
+  it('migrates legacy plaintext privacy zones into encrypted storage and scrubs settings', async () => {
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 9,
+        privacy_zones: [zone],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const loaded = await loadPrivacyZonesFromStorage(JSON.parse(values.get('drivesense_settings')));
+    const storedSettings = JSON.parse(values.get('drivesense_settings'));
+    const encryptedZones = values.get(PRIVACY_ZONES_SECURE_KEY);
+
+    expect(loaded).toEqual([zone]);
+    expect(storedSettings.privacy_zones[0]).toEqual({
+      id: 'home',
+      label: 'Home',
+      radius_m: 100,
+      masked_for_privacy: true,
+    });
+    expect(JSON.stringify(storedSettings)).not.toContain('43.65');
+    expect(JSON.stringify(storedSettings)).not.toContain('-79.38');
+    expect(encryptedZones).toContain('"encrypted":true');
+    expect(encryptedZones).not.toContain('43.65');
+    expect(encryptedZones).not.toContain('-79.38');
   });
 });

@@ -90,7 +90,7 @@ describe('recovery compatibility', () => {
     expect(mainActivity).toContain(`package ${ANDROID_APP_ID};`);
     expect(tile).toContain(`private static final String SETTINGS_KEY = "${SETTINGS_KEY}"`);
     expect(trackingStore).toContain(`const SETTINGS_KEY = '${SETTINGS_KEY}'`);
-    expect(manifest).toContain('android:allowBackup="true"');
+    expect(manifest).toContain('android:allowBackup="false"');
     expect(manifest).not.toContain('android:dataExtractionRules=');
     expect(manifest).not.toContain('android:fullBackupContent=');
   });

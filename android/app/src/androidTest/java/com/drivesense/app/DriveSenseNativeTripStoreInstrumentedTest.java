@@ -35,20 +35,24 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     private Context context;
     private Map<String, Object> nativePrefsSnapshot;
     private Map<String, Object> capacitorPrefsSnapshot;
+    private Map<String, Object> driveSenseSettingsPrefsSnapshot;
 
     @Before
     public void setUp() {
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         nativePrefsSnapshot = snapshotPrefs(DriveSenseNativeTripStore.prefs(context));
         capacitorPrefsSnapshot = snapshotPrefs(context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE));
+        driveSenseSettingsPrefsSnapshot = snapshotPrefs(context.getSharedPreferences("DriveSenseSettings", Context.MODE_PRIVATE));
         DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
         context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
+        context.getSharedPreferences("DriveSenseSettings", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
     @After
     public void tearDown() {
         restorePrefs(DriveSenseNativeTripStore.prefs(context), nativePrefsSnapshot);
         restorePrefs(context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE), capacitorPrefsSnapshot);
+        restorePrefs(context.getSharedPreferences("DriveSenseSettings", Context.MODE_PRIVATE), driveSenseSettingsPrefsSnapshot);
     }
 
     @Test
@@ -79,6 +83,9 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         JSONArray trips = DriveSenseNativeTripStore.getCompletedTrips(context);
         assertEquals(1, trips.length());
         assertEquals("native-trip-1", trips.getJSONObject(0).getString("id"));
+        String stored = prefs.getString("completed_trips", "");
+        assertTrue(stored.startsWith("enc:v1:"));
+        assertFalse(stored.contains("native-trip-1"));
     }
 
     @Test
@@ -119,6 +126,135 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             .commit();
 
         assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+    }
+
+    @Test
+    public void nativeParkedLocationIsEncryptedAtRest() {
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "trip-secure",
+            "test"
+        );
+
+        String stored = DriveSenseNativeTripStore.prefs(context).getString("last_parked_location", "");
+        assertTrue(stored.startsWith("enc:v1:"));
+        assertFalse(stored.contains("43.6532"));
+        assertFalse(stored.contains("-79.3832"));
+
+        JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
+        assertNotNull(restored);
+        assertEquals(43.6532, restored.optDouble("lat"), 0.0001);
+        assertEquals(-79.3832, restored.optDouble("lng"), 0.0001);
+    }
+
+    @Test
+    public void nativeParkedLocationInsideMirroredPrivacyZoneIsNotStored() throws Exception {
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "previous-park",
+            "test"
+        );
+        assertNotNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+
+        JSONArray zones = new JSONArray();
+        JSONObject zone = new JSONObject();
+        zone.put("id", "home");
+        zone.put("label", "Home");
+        zone.put("lat", 43.6532);
+        zone.put("lng", -79.3832);
+        zone.put("radius_m", 100);
+        zones.put(zone);
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("privacy_zones_v1", zones.toString())
+            .commit();
+
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "private-park",
+            "test"
+        );
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+        assertFalse(DriveSenseNativeTripStore.prefs(context).contains("last_parked_location"));
+    }
+
+    @Test
+    public void nativeParkedLocationInsideEncryptedMirroredPrivacyZoneIsNotStored() throws Exception {
+        JSONArray zones = new JSONArray();
+        JSONObject zone = new JSONObject();
+        zone.put("id", "home");
+        zone.put("label", "Home");
+        zone.put("lat", 43.6532);
+        zone.put("lng", -79.3832);
+        zone.put("radius_m", 100);
+        zones.put(zone);
+
+        JSONObject encrypted = new JSONObject();
+        encrypted.put("encrypted", true);
+        encrypted.put("version", 1);
+        encrypted.put("algorithm", "AES-256-GCM");
+        encrypted.put("key_provider", "android-keystore");
+        encrypted.put("ciphertext", DriveSensePayloadCrypto.encrypt(zones.toString(), "native:privacy_zones_v1"));
+        String storedZones = encrypted.toString();
+
+        assertFalse(storedZones.contains("43.6532"));
+        assertFalse(storedZones.contains("-79.3832"));
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("privacy_zones_v1", storedZones)
+            .commit();
+
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "encrypted-private-park",
+            "test"
+        );
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+        assertFalse(DriveSenseNativeTripStore.prefs(context).contains("last_parked_location"));
+    }
+
+    @Test
+    public void nativeParkedLocationUsesPrivacyZonesFromSyncedSettingsFallback() throws Exception {
+        JSONObject settings = new JSONObject();
+        JSONArray zones = new JSONArray();
+        JSONObject zone = new JSONObject();
+        zone.put("id", "work");
+        zone.put("label", "Work");
+        zone.put("latitude", 43.6532);
+        zone.put("longitude", -79.3832);
+        zone.put("radius", 100);
+        zones.put(zone);
+        settings.put("privacy_zones", zones);
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("drivesense_settings", settings.toString())
+            .commit();
+
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "settings-private-park",
+            "test"
+        );
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+        assertFalse(DriveSenseNativeTripStore.prefs(context).contains("last_parked_location"));
     }
 
     @Test

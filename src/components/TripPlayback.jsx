@@ -8,7 +8,12 @@ import { buildSpeedSegmentPopupHtml, titleCase } from '@/lib/mapPopupHtml';
 import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings } from '@/lib/trackingStore';
-import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import {
+  getPrivacyZoneDisplayCircle,
+  getPrivacyZones,
+  maskEventsForPrivacy,
+  maskRoutePointsForPrivacy,
+} from '@/lib/privacyZones';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -48,7 +53,7 @@ const EVENT_LABELS = {
 };
 
 const privacyZonePopupHtml = (zone) => (
-  `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.radius_m) || 150)} m radius<br>Playback starts at the circle edge to hide the exact private location.`
+  `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.source_radius_m) || 150)} m mask radius<br>This display outline is intentionally offset from the private location.`
 );
 
 const formatEventTime = (value) => {
@@ -129,13 +134,6 @@ const envDefaultMapCenter = () => (
   validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)
 );
 
-const privacyZoneMapCenter = (settings = {}) => {
-  const zone = Array.isArray(settings.privacy_zones)
-    ? settings.privacy_zones.find((item) => validLatLng(item?.lat, item?.lng))
-    : null;
-  return zone ? validLatLng(zone.lat, zone.lng) : null;
-};
-
 const getDeviceMapCenter = async () => {
   if (typeof window === 'undefined') return null;
   try {
@@ -184,7 +182,6 @@ const resolveFallbackMapCenter = async (settings = {}) => {
   const saved = settingMapCenter(settings.last_map_center);
   if (saved) return { ...saved, source: 'last_map_center' };
 
-  const zoneCenter = privacyZoneMapCenter(settings);
   const contextualCenter = await firstValidMapCenter([
     getLastParkedLocation()
       .then((parked) => {
@@ -192,7 +189,6 @@ const resolveFallbackMapCenter = async (settings = {}) => {
         return parkedCenter ? { ...parkedCenter, source: 'last_parked' } : null;
       })
       .catch(() => null),
-    Promise.resolve(zoneCenter ? { ...zoneCenter, source: 'privacy_zone' } : null),
     getDeviceMapCenter().then((device) => (
       device ? { ...device, source: 'device_location' } : null
     )),
@@ -209,7 +205,6 @@ const resolveInitialMapCenter = (points = [], secondaryPoints = [], settings = {
   validLatLng(points[0]?.lat, points[0]?.lng) ||
   validLatLng(secondaryPoints[0]?.lat, secondaryPoints[0]?.lng) ||
   settingMapCenter(settings.last_map_center) ||
-  privacyZoneMapCenter(settings) ||
   envDefaultMapCenter() ||
   DEFAULT_MAP_CENTER
 );
@@ -295,7 +290,9 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     [privacySettings, trip?.driving_events]
   );
   const visiblePrivacyZones = useMemo(
-    () => getPrivacyZones(privacySettings).filter((zone) => validLatLng(zone?.lat, zone?.lng)),
+    () => privacySettings.show_privacy_circles === true
+      ? getPrivacyZones(privacySettings).map((zone) => getPrivacyZoneDisplayCircle(zone)).filter(Boolean)
+      : [],
     [privacySettings]
   );
   const totalPoints = points.length;
@@ -475,9 +472,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
           const midpoint = points[Math.floor((points.length - 1) / 2)];
           persistLastMapCenter(midpoint, trip?.id);
           visiblePrivacyZones.forEach((zone) => {
-            const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
             const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
-              radius,
+              radius: zone.radius_m,
               color: '#2563eb',
               fillColor: '#3b82f6',
               fillOpacity: 0.08,
@@ -966,12 +962,6 @@ function PlaybackRoutePreview({ points = [], secondaryPoints = [], events = [], 
   const allPoints = [...points, ...secondaryPoints]
     .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   const validPrivacyZones = privacyZones
-    .map((zone) => ({
-      ...zone,
-      lat: Number(zone.lat),
-      lng: Number(zone.lng),
-      radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
-    }))
     .filter((zone) => Number.isFinite(zone.lat) && Number.isFinite(zone.lng));
   const zoneBounds = validPrivacyZones.flatMap((zone) => {
     const latDelta = zone.radius_m / 111320;

@@ -965,7 +965,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("max_speed_kmh", round(stats.maxSpeedKmh, 1));
             trip.put("idle_time_seconds", stats.idleSeconds);
             trip.put("night_driving", stats.nightDriving);
-            trip.put("route_points", points);
+            trip.put("route_points", PrivacyZoneChecker.redactRoutePoints(this, points));
             trip.put("motion_samples", motionSamples);
             trip.put("native_motion_sample_count", motionSamples.length());
             trip.put("driving_events", new JSONArray());

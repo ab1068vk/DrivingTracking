@@ -1,9 +1,8 @@
 /**
  * Road Sage Tracking Store
- * Manages active trip state in memory and persists to sessionStorage for crash recovery.
+ * Manages active trip state in memory with encrypted persistence for crash recovery.
  * This is a singleton store used by the tracking service.
  */
-import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
@@ -18,6 +17,12 @@ import {
   DEFAULT_GRID_CO2_KG_PER_KWH,
   DEFAULT_TREE_CO2_KG_PER_YEAR,
 } from '@/lib/tripEconomyDefaults';
+import {
+  getEncryptedJson,
+  removeEncryptedJson,
+  setEncryptedJson,
+} from '@/lib/securePayloadCrypto';
+import { getHydratedPrivacyZones, redactRoutePointForPrivacyStorage } from '@/lib/privacyZones';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
@@ -25,6 +30,8 @@ const LAST_PARKED_KEY = 'drivesense_last_parked';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
+let activeTripMemory = null;
+let activeTripWriteQueue = Promise.resolve();
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 9;
 
 const settingsStorage = () => {
@@ -98,9 +105,17 @@ const distanceMeters = (a, b) => {
   return 2 * 6371000 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
 };
 
-const isPrivateParkedLocation = (location, settings = localSettings.get()) => {
+const getParkedLocationPrivacyZones = async (settings = localSettings.get()) => {
+  try {
+    return getHydratedPrivacyZones(settings);
+  } catch {}
+  return [];
+};
+
+const isPrivateParkedLocation = async (location, settings = localSettings.get()) => {
   if (finiteNumber(location?.lat) == null || finiteNumber(location?.lng) == null) return false;
-  return (Array.isArray(settings?.privacy_zones) ? settings.privacy_zones : []).some((zone) => {
+  const zones = await getParkedLocationPrivacyZones(settings);
+  return zones.some((zone) => {
     const radiusM = Number(zone?.radius_m);
     return Number.isFinite(radiusM) &&
       radiusM > 0 &&
@@ -216,6 +231,9 @@ export const DEFAULT_SETTINGS = {
   osrm_public_demo_consent_at: '',
   osrm_data_sharing_consented: false,
   osrm_data_sharing_consented_at: '',
+  osrm_consent_invalidated_reason: '',
+  osrm_consent_invalidated_at: '',
+  osrm_consent_invalidated_zone_label: '',
   osrm_health_status: '',
   osrm_last_health_checked_at: '',
   osrm_last_reachable_at: '',
@@ -250,6 +268,8 @@ export const DEFAULT_SETTINGS = {
   grid_co2_kg_per_kwh: DEFAULT_GRID_CO2_KG_PER_KWH,
   tree_co2_kg_per_year: DEFAULT_TREE_CO2_KG_PER_YEAR,
   privacy_zones: [],
+  show_privacy_circles: false,
+  privacy_log_retention_hours: 24,
   calibration_sharing_enabled: false,
   legal_notice_ack_version: 0,
   legal_notice_acknowledged_at: '',
@@ -368,6 +388,7 @@ const IMPORT_NUMBER_RANGES = {
   notif_inactive_nudge_days: [1, 365],
   notif_min_score_for_post_trip: [0, 100],
   osrm_timeout_ms: [5000, 30000],
+  privacy_log_retention_hours: [0, 72],
   co2_baseline_kg_per_100km: [0, 50],
   default_ev_kwh_per_100km: [5, 40],
   grid_co2_kg_per_kwh: [0, 2],
@@ -400,6 +421,9 @@ const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_last_health_checked_at',
   'osrm_last_reachable_at',
   'osrm_last_health_error',
+  'osrm_consent_invalidated_reason',
+  'osrm_consent_invalidated_at',
+  'osrm_consent_invalidated_zone_label',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -409,21 +433,15 @@ const sanitizeImportedPrivacyZones = (zones) => (
       .slice(0, 20)
       .map((zone, index) => {
         const radius = clampNumber(Number(zone.radius_m) || 150, 50, 1000);
-        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean,lat?:number,lng?:number}} */
+        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean}} */
         const sanitized = {
           id: typeof zone.id === 'string' ? zone.id.slice(0, 80) : `privacy_zone_import_${index}`,
           label: typeof zone.label === 'string' && zone.label.trim()
             ? zone.label.trim().slice(0, 80)
             : 'Private place',
           radius_m: radius,
-          ...(zone.masked_for_privacy === true ? { masked_for_privacy: true } : {}),
+          masked_for_privacy: true,
         };
-        const lat = Number(zone.lat);
-        const lng = Number(zone.lng);
-        if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-          sanitized.lat = lat;
-          sanitized.lng = lng;
-        }
         return sanitized;
       })
     : []
@@ -562,9 +580,9 @@ export function validateSettingsPatch(patch = {}) {
 }
 
 export async function getLastParkedLocation() {
-  const parkedLocation = await getJson(LAST_PARKED_KEY, null);
-  if (parkedLocation && isPrivateParkedLocation(parkedLocation)) {
-    await removeJson(LAST_PARKED_KEY);
+  const parkedLocation = await getEncryptedJson(LAST_PARKED_KEY, null);
+  if (parkedLocation && await isPrivateParkedLocation(parkedLocation)) {
+    await removeEncryptedJson(LAST_PARKED_KEY);
     return null;
   }
   return parkedLocation;
@@ -605,8 +623,8 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
   if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
-  if (isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
-    await removeJson(LAST_PARKED_KEY);
+  if (await isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
+    await removeEncryptedJson(LAST_PARKED_KEY);
     return null;
   }
 
@@ -618,7 +636,7 @@ export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, addr
     address: shortenParkedAddress(address),
     source,
   };
-  await setJson(LAST_PARKED_KEY, parkedLocation);
+  await setEncryptedJson(LAST_PARKED_KEY, parkedLocation);
   return parkedLocation;
 }
 
@@ -749,27 +767,33 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────
 export const activeTripStore = {
+  async hydrate() {
+    activeTripMemory = await getEncryptedJson(ACTIVE_TRIP_KEY, null);
+    return activeTripMemory;
+  },
   get() {
-    try {
-      const raw = localStorage.getItem(ACTIVE_TRIP_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    return activeTripMemory;
   },
   set(trip) {
-    try {
-      localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip));
-    } catch {}
+    activeTripMemory = trip;
+    activeTripWriteQueue = activeTripWriteQueue
+      .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, trip))
+      .catch(() => {});
   },
   clear() {
-    localStorage.removeItem(ACTIVE_TRIP_KEY);
+    activeTripMemory = null;
+    activeTripWriteQueue = activeTripWriteQueue
+      .then(() => removeEncryptedJson(ACTIVE_TRIP_KEY))
+      .catch(() => {});
+  },
+  flush() {
+    return activeTripWriteQueue;
   },
   addPoint(point) {
     const trip = this.get();
     if (!trip) return;
     trip.route_points = trip.route_points || [];
-    trip.route_points.push(point);
+    trip.route_points.push(redactRoutePointForPrivacyStorage(point));
     this.set(trip);
   },
 };

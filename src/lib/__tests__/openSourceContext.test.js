@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defaultSpeedLimitKmhForOsmHighway, parseMaxspeedKmh } from '@/lib/speedLimitSource';
 import {
+  buildPrivacySafeOsrmRoute,
+  buildOpenSourceTripContextPatch,
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
@@ -182,5 +184,62 @@ describe('open-source trip context', () => {
     expect(masked.route_points[0].privacy_boundary).toBe(true);
     expect(masked.driving_events).toHaveLength(0);
     expect(masked.route_points[1].lat).toBe(43.66);
+  });
+
+  it('splits OSRM input around privacy zones without exposing interior or boundary coordinates', () => {
+    const route = [
+      { lat: 43.648, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:10.000Z' },
+      { lat: 43.652, lng: -79.38, timestamp: '2026-01-01T12:00:20.000Z' },
+    ];
+    const safe = buildPrivacySafeOsrmRoute(route, {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
+    });
+
+    expect(safe.some((point) => point.lat === 43.65 && point.lng === -79.38)).toBe(false);
+    expect(safe.filter((point) => point.privacy_boundary)).toHaveLength(0);
+    expect(safe.filter((point) => point.privacy_gap)).toHaveLength(1);
+    expect(safe.findIndex((point) => point.privacy_gap)).toBeGreaterThan(0);
+    expect(safe.every((point) => !point.masked_for_privacy || point.privacy_gap)).toBe(true);
+  });
+
+  it('produces no OSRM coordinates when every route point is private', () => {
+    const route = [
+      { lat: 43.65, lng: -79.38 },
+      { lat: 43.6501, lng: -79.38 },
+    ];
+    const safe = buildPrivacySafeOsrmRoute(route, {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 500 }],
+    });
+
+    expect(safe).toEqual([]);
+  });
+
+  it('skips every network request when OSRM is configured but the whole route is private', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const route = [
+      { lat: 43.65, lng: -79.38, speed_kmh: 20, timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.6501, lng: -79.38, speed_kmh: 20, timestamp: '2026-01-01T12:00:10.000Z' },
+    ];
+
+    const patch = await buildOpenSourceTripContextPatch({
+      id: 'private-trip',
+      start_time: route[0].timestamp,
+      end_time: route[1].timestamp,
+      route_points: route,
+      driving_events: [],
+    }, {
+      speed_limit_lookup_enabled: false,
+      weather_context_enabled: false,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 500 }],
+    });
+
+    expect(patch.map_matching_context.status).toBe('privacy_zones_excluded');
+    expect(patch.route_points).toEqual(route);
+    expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

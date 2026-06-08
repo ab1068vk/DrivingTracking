@@ -356,6 +356,40 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void encryptSensitivePayload(PluginCall call) {
+        String plaintext = call.getString("plaintext");
+        String context = call.getString("context", "drivesense");
+        if (plaintext == null) {
+            call.reject("plaintext is required.");
+            return;
+        }
+        try {
+            JSObject payload = new JSObject();
+            payload.put("ciphertext", DriveSensePayloadCrypto.encrypt(plaintext, context));
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject("Sensitive payload encryption failed.", error);
+        }
+    }
+
+    @PluginMethod
+    public void decryptSensitivePayload(PluginCall call) {
+        String ciphertext = call.getString("ciphertext");
+        String context = call.getString("context", "drivesense");
+        if (ciphertext == null) {
+            call.reject("ciphertext is required.");
+            return;
+        }
+        try {
+            JSObject payload = new JSObject();
+            payload.put("plaintext", DriveSensePayloadCrypto.decrypt(ciphertext, context));
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject("Sensitive payload decryption failed.", error);
+        }
+    }
+
+    @PluginMethod
     public void saveExportToDownloads(PluginCall call) {
         String filename = call.getString("filename");
         String data = call.getString("data");

@@ -1,6 +1,9 @@
 const SYSTEM_LOG_KEY = 'drivesense_system_logs_v1';
+const SETTINGS_KEY = 'drivesense_settings';
 export const SYSTEM_LOG_EVENT = 'drivesense:system-log-updated';
 export const SYSTEM_LOG_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+export const PRIVACY_LOG_DEFAULT_RETENTION_HOURS = 24;
+export const PRIVACY_LOG_RETENTION_SETTING_KEY = 'privacy_log_retention_hours';
 const MAX_STORED_LOGS = 2500;
 const MAX_PENDING_LOGS = 500;
 const FLUSH_DELAY_MS = 750;
@@ -19,6 +22,7 @@ const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE_PATTERN = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}\b/g;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/g;
 const TOKEN_PAIR_PATTERN = /\b(access_token|refresh_token|id_token|token|password|secret|code)=([^&\s]+)/gi;
+const PRIVACY_LOG_METADATA_KEY = /^(label|zone_id|zone_label|privacy_zone_id|privacy_zone_label|radius_m|source_radius_m|zone_radius_m|privacy_radius_m|privacy_zone_radius_m)$/i;
 
 const safeDecode = (value) => {
   try {
@@ -71,10 +75,29 @@ const eventTimestamp = (event) => {
   return Number.isFinite(ms) ? ms : 0;
 };
 
+export function getPrivacyLogRetentionMs() {
+  if (!canUseStorage()) return PRIVACY_LOG_DEFAULT_RETENTION_HOURS * 60 * 60 * 1000;
+  try {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    const hours = Number(settings?.[PRIVACY_LOG_RETENTION_SETTING_KEY]);
+    if (Number.isFinite(hours) && hours >= 0) return hours * 60 * 60 * 1000;
+  } catch {}
+  return PRIVACY_LOG_DEFAULT_RETENTION_HOURS * 60 * 60 * 1000;
+}
+
+const retentionMsForEvent = (event) => (
+  event?.category === 'privacy'
+    ? getPrivacyLogRetentionMs()
+    : SYSTEM_LOG_RETENTION_MS
+);
+
 export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now()) {
-  const cutoff = nowMs - SYSTEM_LOG_RETENTION_MS;
   return logs
-    .filter((event) => eventTimestamp(event) >= cutoff)
+    .filter((event) => {
+      const retentionMs = retentionMsForEvent(event);
+      if (retentionMs <= 0) return false;
+      return eventTimestamp(event) >= nowMs - retentionMs;
+    })
     .sort((a, b) => eventTimestamp(b) - eventTimestamp(a))
     .slice(0, MAX_STORED_LOGS);
 }
@@ -82,13 +105,14 @@ export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now
 const writeStoredLogs = (logs, { notify = true } = {}) => {
   if (!canUseStorage()) return;
   try {
-    localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(logs));
+    const pruned = pruneExpiredSystemLogs(logs);
+    localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(pruned));
     if (notify && typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
-      window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: logs.length } }));
+      window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: pruned.length } }));
     }
   } catch {
     try {
-      localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(logs.slice(0, Math.floor(MAX_STORED_LOGS / 2))));
+      localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(pruneExpiredSystemLogs(logs).slice(0, Math.floor(MAX_STORED_LOGS / 2))));
     } catch {}
   }
 };
@@ -196,6 +220,16 @@ export function sanitizeLogDetail(value, depth = 0) {
     }, {});
 }
 
+const stripPrivacyLogMetadata = (value) => {
+  if (Array.isArray(value)) return value.map(stripPrivacyLogMetadata);
+  if (!value || typeof value !== 'object') return value;
+  return Object.entries(value).reduce((acc, [key, item]) => {
+    if (PRIVACY_LOG_METADATA_KEY.test(key)) return acc;
+    acc[key] = stripPrivacyLogMetadata(item);
+    return acc;
+  }, {});
+};
+
 const flushPendingLogs = () => {
   flushTimer = null;
   if (!pendingLogs.length) return;
@@ -211,17 +245,26 @@ const scheduleFlush = () => {
 };
 
 export function recordSystemLog(event = {}) {
+  const category = event.category || 'app';
+  if (category === 'privacy' && getPrivacyLogRetentionMs() <= 0) {
+    writeStoredLogs(readStoredLogs());
+    return null;
+  }
+
+  const sanitizedDetails = sanitizeLogDetail(event.details || {});
   const next = {
     id: event.id || `log_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     timestamp: event.timestamp || safeNow(),
     severity: event.severity || 'info',
-    category: event.category || 'app',
+    category,
     source: event.source || 'web',
     operation: event.operation || event.type || 'app_event',
     title: event.title || event.operation || 'App event',
     message: event.message || event.detail || '',
     page: event.page || (typeof window !== 'undefined' ? window.location?.pathname : ''),
-    details: sanitizeLogDetail(event.details || {}),
+    details: category === 'privacy'
+      ? stripPrivacyLogMetadata(sanitizedDetails)
+      : sanitizedDetails,
   };
 
   pendingLogs.unshift(next);
@@ -278,6 +321,7 @@ export function exportSystemLogsJson(logs = getSystemLogs()) {
   return JSON.stringify({
     exported_at: safeNow(),
     retention_days: 3,
+    privacy_retention_hours: Math.round(getPrivacyLogRetentionMs() / (60 * 60 * 1000)),
     count: logs.length,
     logs,
   }, null, 2);

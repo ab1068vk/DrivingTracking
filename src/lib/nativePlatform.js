@@ -5,7 +5,11 @@ const PLATFORM = Capacitor.getPlatform();
 
 export const isNativePlatform = () => NATIVE_PLATFORM;
 
+export const getNativePlatform = () => PLATFORM;
+
 export const isAndroid = () => PLATFORM === 'android';
+
+export const isIos = () => PLATFORM === 'ios';
 
 export const openNativeSettings = async () => {
   if (!isNativePlatform()) return false;

@@ -18,6 +18,7 @@ import {
   exportSystemLogsCsv,
   exportSystemLogsJson,
   getSystemLogs,
+  getPrivacyLogRetentionMs,
   logSystemFailure,
   recordSystemEvent,
   SYSTEM_LOG_EVENT,
@@ -413,6 +414,7 @@ export default function SystemLogs() {
       nextDeletion: oldestSystemLog ? formatDeletionTime(oldestSystemLog.timestamp) : null,
     };
   }, [logs]);
+  const privacyRetentionHours = Math.round(getPrivacyLogRetentionMs() / (60 * 60 * 1000));
 
   const activeFilterCount = [
     query.trim(),
@@ -480,7 +482,7 @@ export default function SystemLogs() {
         <div>
           <h1 className="font-grotesk text-2xl font-bold">System Logs</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            App failures, load failures, user actions, permissions, diagnostics, backup import/export, OSRM, weather, privacy, and background events. System entries expire after 3 days.
+            App failures, load failures, user actions, permissions, diagnostics, backup import/export, OSRM, weather, privacy, and background events. Privacy logging is {privacyRetentionHours === 0 ? 'disabled' : `kept for ${privacyRetentionHours} hour${privacyRetentionHours === 1 ? '' : 's'}`}; other system entries expire after 3 days.
           </p>
         </div>
         <div>
@@ -537,10 +539,10 @@ export default function SystemLogs() {
           <div>
             <div className="text-xs font-bold uppercase text-muted-foreground">Auto delete</div>
             <div className="mt-1 text-sm font-semibold">
-              System logs expire after {Math.round(SYSTEM_LOG_RETENTION_MS / (24 * 60 * 60 * 1000))} days
+              Privacy logs: {privacyRetentionHours === 0 ? 'off' : `${privacyRetentionHours} hour${privacyRetentionHours === 1 ? '' : 's'}`}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              Expired entries are removed when logs load, refresh, or export.
+              Other system logs expire after {Math.round(SYSTEM_LOG_RETENTION_MS / (24 * 60 * 60 * 1000))} days. Expired entries are removed when logs load, refresh, export, or a log is written.
             </div>
           </div>
           <div>

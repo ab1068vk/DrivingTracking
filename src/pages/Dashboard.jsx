@@ -105,7 +105,12 @@ import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { getPrivacyZones, isInsidePrivacyZone, maskEventsForPrivacy } from '@/lib/privacyZones';
+import {
+  getPrivacyZones,
+  isInsidePrivacyZone,
+  maskEventsForPrivacy,
+  redactRoutePointForPrivacyStorage,
+} from '@/lib/privacyZones';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 const AUTO_START_TRIGGER_SECONDS = 2;
@@ -438,6 +443,7 @@ export default function Dashboard() {
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
         const latestPrivacyZones = getPrivacyZones(latestSettings);
         const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
+        const storedPoint = redactRoutePointForPrivacyStorage(point, latestPrivacyZones);
         if (!isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
           const zones = await loadDangerZones();
           const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
@@ -459,17 +465,23 @@ export default function Dashboard() {
             }), latestSettings).catch(() => {});
           }
         }
-        const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), point];
+        const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), storedPoint];
+        const routePointsForLiveContext = [
+          ...(tripBeforePoint?.route_points || []).filter((routePoint) => (
+            Number.isFinite(Number(routePoint?.lat)) && Number.isFinite(Number(routePoint?.lng))
+          )),
+          point,
+        ];
         const speed = Number(point.speed_kmh) || 0;
         const thresholds = buildDrivingThresholds(latestSettings);
-        inferredSpeedZonesRef.current = inferSpeedZones(routePointsWithLatest, thresholds);
+        inferredSpeedZonesRef.current = inferSpeedZones(routePointsForLiveContext, thresholds);
         const postedLimitKmh = Number(point.speed_limit_kmh);
         const currentPointLimitKmh = Number.isFinite(postedLimitKmh) && postedLimitKmh > 0 ? postedLimitKmh : null;
         const currentInferredLimit = currentPointLimitKmh
-          ?? getInferredLimitForPoint(routePointsWithLatest, point, thresholds, inferredSpeedZonesRef.current);
+          ?? getInferredLimitForPoint(routePointsForLiveContext, point, thresholds, inferredSpeedZonesRef.current);
         const speedLimitContext = resolveEffectiveSpeedLimitForIndex(
-          routePointsWithLatest,
-          routePointsWithLatest.length - 1,
+          routePointsForLiveContext,
+          routePointsForLiveContext.length - 1,
           thresholds,
           { inferredZones: inferredSpeedZonesRef.current }
         );
@@ -584,6 +596,8 @@ export default function Dashboard() {
         stoppedAnchorRef.current ??= { lat: point.lat, lng: point.lng };
         const stillSeconds = (nowMs - stillSinceRef.current) / 1000;
         const recentPoints = (trip.route_points || []).filter((routePoint) => (
+          Number.isFinite(Number(routePoint?.lat)) &&
+          Number.isFinite(Number(routePoint?.lng)) &&
           new Date(routePoint.timestamp).getTime() >= stillSinceRef.current - 5000
         ));
         const gpsPositionDriftM = computeGpsPositionDrift(
@@ -705,6 +719,9 @@ export default function Dashboard() {
     }
 
     const startTime = initialPoint?.timestamp || new Date().toISOString();
+    const storedInitialPoint = initialPoint
+      ? redactRoutePointForPrivacyStorage(initialPoint, getPrivacyZones(cfg))
+      : null;
     const phoneUsageAccessStatus = isAndroid()
       ? await getAndroidUsageAccessStatus().catch(() => null)
       : null;
@@ -713,13 +730,13 @@ export default function Dashboard() {
       start_time: startTime,
       status: 'active',
       trip_state: candidate ? TRIP_STATES.CANDIDATE : TRIP_STATES.CONFIRMED,
-      route_points: initialPoint ? [initialPoint] : [],
+      route_points: storedInitialPoint ? [storedInitialPoint] : [],
       driving_events: [],
       background_tracking: useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
       resume_native_auto: !autoStarted && useBackground && isAndroid(),
       candidate_started_at: candidate ? startTime : null,
-      candidate_first_point: candidate && initialPoint ? initialPoint : null,
+      candidate_first_point: candidate && storedInitialPoint ? storedInitialPoint : null,
       candidate_near_parked: candidate ? nearParkedLocation === true : false,
       candidate_trigger_reason: triggerReason,
       native_phone_usage_access_granted: phoneUsageAccessGrantedAtStart,

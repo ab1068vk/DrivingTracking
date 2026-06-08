@@ -71,7 +71,18 @@ import {
   summarizeSurveyCoverage,
 } from '@/lib/thresholdCalibration';
 import { getCurrentLocation } from '@/lib/trackingService';
-import { getPrivacyZones, removePrivacyZone, upsertPrivacyZone } from '@/lib/privacyZones';
+import {
+  countTripsAffectedByPrivacyZone,
+  findOverlappingZones,
+  getPrivacyZones,
+  loadPrivacyZonesFromStorage,
+  purgeGpsWithinPrivacyZone,
+  removePrivacyZone,
+  tripIdsAffectedByPrivacyZone,
+  upsertPrivacyZone,
+} from '@/lib/privacyZones';
+import { enqueueRescoreJob, isPrivacyRescoreReason, scheduleRescoringQueue } from '@/lib/rescoringQueue';
+import { rescoreTripForQueue } from '@/lib/rescoringWorker';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
@@ -313,6 +324,10 @@ export default function Settings() {
   const [privacyRadiusDrafts, setPrivacyRadiusDrafts] = useState({});
   const [privacyDraftRadiusError, setPrivacyDraftRadiusError] = useState('');
   const [privacyZoneRadiusErrors, setPrivacyZoneRadiusErrors] = useState({});
+  const [privacyDeleteZone, setPrivacyDeleteZone] = useState(null);
+  const [privacyDeletePurge, setPrivacyDeletePurge] = useState(false);
+  const [privacyDeleteBusy, setPrivacyDeleteBusy] = useState(false);
+  const [privacyDeleteImpact, setPrivacyDeleteImpact] = useState({ loading: false, tripCount: null });
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
@@ -377,6 +392,52 @@ export default function Settings() {
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 200 }),
     staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
+
+  const enqueuePrivacyZoneRescore = async (reason, zones, trips = null) => {
+    const zoneList = (Array.isArray(zones) ? zones : [zones]).filter((zone) => zone?.id);
+    if (!zoneList.length) return null;
+    const sourceTrips = Array.isArray(trips) ? trips : await getSettingsTrips();
+    const tripIds = Array.from(new Set(zoneList.flatMap((zone) => tripIdsAffectedByPrivacyZone(sourceTrips, zone))));
+    return enqueueRescoreJob({
+      reason,
+      zoneId: zoneList[0].id,
+      tripIds,
+    }, { rescoreTrip: rescoreTripForQueue });
+  };
+
+  useEffect(() => {
+    scheduleRescoringQueue({ rescoreTrip: rescoreTripForQueue });
+  }, []);
+
+  useEffect(() => {
+    if (!privacyDeleteZone) {
+      setPrivacyDeleteImpact({ loading: false, tripCount: null });
+      setPrivacyDeletePurge(false);
+      return undefined;
+    }
+
+    let active = true;
+    setPrivacyDeleteImpact({ loading: true, tripCount: null });
+    getSettingsTrips()
+      .then((trips) => {
+        if (!active) return;
+        setPrivacyDeleteImpact({
+          loading: false,
+          tripCount: countTripsAffectedByPrivacyZone(trips, privacyDeleteZone),
+        });
+      })
+      .catch((error) => {
+        if (!active) return;
+        logSystemFailure('settings_privacy_zone_delete_impact', error, {
+          zone_id: privacyDeleteZone.id,
+        });
+        setPrivacyDeleteImpact({ loading: false, tripCount: null });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [privacyDeleteZone]);
 
   const updateCfg = (patch) => {
     const validation = validateSettingsPatch(patch);
@@ -472,13 +533,23 @@ export default function Settings() {
     const onProgress = (event) => {
       const detail = event.detail || {};
       setRescoreProgress(detail);
+      const privacyRescore = isPrivacyRescoreReason(detail.reason);
+      if (detail.status === 'pending') {
+        setRescoreStatus(privacyRescore
+          ? `Queued privacy re-score for ${detail.total || 0} trip${detail.total === 1 ? '' : 's'}.`
+          : `Queued trip re-score for ${detail.total || 0} trip${detail.total === 1 ? '' : 's'}.`);
+      }
       if (detail.status === 'running') {
-        setRescoreStatus(detail.reason === 'auto_provenance'
+        setRescoreStatus(privacyRescore
+          ? `Updating privacy-affected trip scores ${detail.completed || 0}/${detail.total || 0}.`
+          : detail.reason === 'auto_provenance'
           ? `Updating older trip scores ${detail.completed || 0}/${detail.total || 0}.`
           : `Refreshing stored trip scores ${detail.completed || 0}/${detail.total || 0}.`);
       }
       if (detail.status === 'complete') {
-        setRescoreStatus(`${detail.completed || 0} trip${detail.completed === 1 ? '' : 's'} re-scored.`);
+        setRescoreStatus(privacyRescore
+          ? `${detail.completed || 0} privacy-affected trip${detail.completed === 1 ? '' : 's'} re-scored.`
+          : `${detail.completed || 0} trip${detail.completed === 1 ? '' : 's'} re-scored.`);
         qc.invalidateQueries({ queryKey: ['settings-trips'] });
         qc.invalidateQueries({ queryKey: ['score-migration-summary'] });
         setTimeout(() => {
@@ -534,6 +605,9 @@ export default function Settings() {
         osrm_public_demo_consent_at: '',
         osrm_data_sharing_consented: false,
         osrm_data_sharing_consented_at: '',
+        osrm_consent_invalidated_reason: '',
+        osrm_consent_invalidated_at: '',
+        osrm_consent_invalidated_zone_label: '',
         osrm_health_status: '',
         osrm_last_health_checked_at: '',
         osrm_last_reachable_at: '',
@@ -574,6 +648,9 @@ export default function Settings() {
       osrm_public_demo_consent_at: '',
       osrm_data_sharing_consented: true,
       osrm_data_sharing_consented_at: consentedAt,
+      osrm_consent_invalidated_reason: '',
+      osrm_consent_invalidated_at: '',
+      osrm_consent_invalidated_zone_label: '',
       ...patch,
     });
     toast({
@@ -970,9 +1047,13 @@ export default function Settings() {
       logSystemFailure('settings_initial_calibration_labels_load_failed', error);
     });
     getLastParkedLocation().then(setParkedLocation);
+    loadPrivacyZonesFromStorage().then(() => setCfg(localSettings.get())).catch((error) => {
+      logSystemFailure('settings_privacy_zones_secure_load', error);
+    });
   }, []);
 
   const privacyZones = getPrivacyZones(cfg);
+  const privacyZoneOverlaps = findOverlappingZones(privacyZones);
   const calibrationSurveySummary = useMemo(
     () => summarizeCalibrationSurveyLabels(calibrationLabels),
     [calibrationLabels]
@@ -1000,7 +1081,7 @@ export default function Settings() {
     return true;
   };
 
-  const savePrivacyZone = (location, sourceLabel) => {
+  const savePrivacyZone = async (location, sourceLabel) => {
     const validation = validatePrivacyRadius(privacyDraft.radius_m);
     if (!validation.valid) {
       setPrivacyDraftRadiusError(validation.error);
@@ -1023,22 +1104,25 @@ export default function Settings() {
       return;
     }
     setPrivacyDraftRadiusError('');
-    const updated = upsertPrivacyZone({
+    const zoneToSave = {
+      id: `pz_${Date.now().toString(36)}`,
       label: privacyDraft.label || sourceLabel,
       radius_m: validation.radius,
       lat,
       lng,
-    }, cfg);
+    };
+    const updated = await upsertPrivacyZone(zoneToSave, cfg);
     void invalidateRouteRiskIndex();
     setCfg(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+    void enqueuePrivacyZoneRescore('privacy_zone_added', zoneToSave);
   };
 
   const addCurrentPrivacyZone = async () => {
     try {
       const location = await getCurrentLocation();
-      savePrivacyZone(location, 'Current location');
+      await savePrivacyZone(location, 'Current location');
     } catch (error) {
       logSystemFailure('settings_privacy_zone_current_location', error);
       toast({
@@ -1049,8 +1133,20 @@ export default function Settings() {
     }
   };
 
-  const deletePrivacyZone = (id) => {
-    const updated = removePrivacyZone(id, cfg);
+  const clearPrivacyZoneDeleteState = () => {
+    setPrivacyDeleteZone(null);
+    setPrivacyDeletePurge(false);
+    setPrivacyDeleteBusy(false);
+    setPrivacyDeleteImpact({ loading: false, tripCount: null });
+  };
+
+  const requestDeletePrivacyZone = (zone) => {
+    setPrivacyDeleteZone(zone);
+    setPrivacyDeletePurge(false);
+  };
+
+  const removePrivacyZoneFromSettings = async (id) => {
+    const updated = await removePrivacyZone(id, cfg);
     void invalidateRouteRiskIndex();
     setCfg(updated);
     setPrivacyRadiusDrafts((drafts) => {
@@ -1065,9 +1161,70 @@ export default function Settings() {
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+    return updated;
   };
 
-  const updatePrivacyZoneRadius = (zone, rawValue) => {
+  const confirmDeletePrivacyZone = async () => {
+    if (!privacyDeleteZone || privacyDeleteBusy) return;
+    setPrivacyDeleteBusy(true);
+
+    try {
+      let purgeResult = null;
+      const tripsBeforeDelete = await getSettingsTrips();
+      if (privacyDeletePurge) {
+        purgeResult = await purgeGpsWithinPrivacyZone(
+          tripsBeforeDelete,
+          privacyDeleteZone,
+          (id, patch) => tripService.update(id, patch)
+        );
+        qc.invalidateQueries({ queryKey: ['settings-trips'] });
+      }
+
+      await removePrivacyZoneFromSettings(privacyDeleteZone.id);
+      const rescoreTripIds = privacyDeletePurge
+        ? purgeResult?.tripIdsAffected || []
+        : tripIdsAffectedByPrivacyZone(tripsBeforeDelete, privacyDeleteZone);
+      void enqueueRescoreJob({
+        reason: privacyDeletePurge ? 'privacy_zone_purged' : 'privacy_zone_deleted',
+        zoneId: privacyDeleteZone.id,
+        tripIds: rescoreTripIds,
+      }, { rescoreTrip: rescoreTripForQueue });
+      recordSystemEvent('privacy_zone_deleted', {
+        zone_id: privacyDeleteZone.id,
+        label: privacyDeleteZone.label,
+        purge_raw_gps: privacyDeletePurge,
+        affected_trip_count: privacyDeleteImpact.tripCount,
+        purged_trip_count: purgeResult?.tripsAffected || 0,
+        purged_point_count: purgeResult?.pointsPurged || 0,
+        purged_event_count: purgeResult?.eventsPurged || 0,
+      }, {
+        category: 'privacy',
+        severity: privacyDeletePurge ? 'warn' : 'info',
+        title: privacyDeletePurge ? 'Privacy zone deleted and GPS purged' : 'Privacy zone deleted',
+      });
+      toast({
+        title: privacyDeletePurge ? 'Privacy zone deleted and GPS purged' : 'Privacy zone deleted',
+        description: privacyDeletePurge
+          ? `Removed ${purgeResult?.pointsPurged || 0} route point(s) and ${purgeResult?.eventsPurged || 0} event(s) from ${purgeResult?.tripsAffected || 0} trip(s).`
+          : 'Historical routes through this area may now be visible.',
+        variant: privacyDeletePurge ? 'destructive' : undefined,
+      });
+      clearPrivacyZoneDeleteState();
+    } catch (error) {
+      logSystemFailure('settings_privacy_zone_delete', error, {
+        zone_id: privacyDeleteZone.id,
+        purge_raw_gps: privacyDeletePurge,
+      });
+      toast({
+        title: 'Privacy zone not deleted',
+        description: error.message || 'Try again after Road Sage finishes loading trip history.',
+        variant: 'destructive',
+      });
+      setPrivacyDeleteBusy(false);
+    }
+  };
+
+  const updatePrivacyZoneRadius = async (zone, rawValue) => {
     const validation = validatePrivacyRadius(rawValue);
     if (!validation.valid) {
       setPrivacyZoneRadiusErrors((errors) => ({ ...errors, [zone.id]: validation.error }));
@@ -1080,7 +1237,8 @@ export default function Settings() {
     }
 
     const radius = validation.radius;
-    const updated = upsertPrivacyZone({ ...zone, radius_m: radius }, cfg);
+    const updatedZone = { ...zone, radius_m: radius };
+    const updated = await upsertPrivacyZone(updatedZone, cfg);
     void invalidateRouteRiskIndex();
     setCfg(updated);
     setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
@@ -1091,6 +1249,7 @@ export default function Settings() {
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+    void enqueuePrivacyZoneRescore('privacy_zone_updated', [zone, updatedZone]);
   };
 
   useEffect(() => {
@@ -1451,6 +1610,8 @@ export default function Settings() {
     ? Math.min(100, Math.round((rescoreCompleted / rescoreTotal) * 100))
     : 0;
   const autoRescoreVisible = scoreMigrationSummary.auto_rescore_recommended || rescoreProgress?.reason === 'auto_provenance';
+  const privacyRescoreActive = isPrivacyRescoreReason(rescoreProgress?.reason) &&
+    (rescoreProgress?.status === 'pending' || rescoreProgress?.status === 'running');
 
   return (
     <div className="space-y-4 pb-6">
@@ -1472,6 +1633,23 @@ export default function Settings() {
           </motion.div>
         )}
       </motion.div>
+
+      {privacyRescoreActive && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold">Updating privacy-affected trip scores</div>
+              <div className="mt-1 text-xs">
+                Re-scoring {Math.max(0, rescoreTotal - rescoreCompleted)} trip{Math.max(0, rescoreTotal - rescoreCompleted) === 1 ? '' : 's'} affected by the privacy-zone change.
+              </div>
+            </div>
+            <div className="shrink-0 font-mono text-xs">{rescoreProgressPct}%</div>
+          </div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100 dark:bg-blue-900/50">
+            <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${rescoreProgressPct}%` }} />
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
         <div className="relative">
@@ -2617,7 +2795,7 @@ export default function Settings() {
           <SettingRow
             icon={Route}
             label="Snap route to roads (OSRM)"
-            sublabel="Manual only. Sends sampled GPS points only when you tap Get Road Data on a trip."
+            sublabel="Manual only. Excludes privacy zones, then sends sampled public GPS segments when you tap Get Road Data."
           >
             <Toggle
               value={cfg.map_matching_enabled !== false && Boolean(cfg.osrm_map_matching_url) && cfg.osrm_data_sharing_consented === true}
@@ -2694,7 +2872,7 @@ export default function Settings() {
                     ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
                       ? 'Blocked: the public OSRM demo cannot be used as a route-snapping endpoint.'
                       : cfg.osrm_data_sharing_consented === true
-                        ? 'On: Get Road Data sends sampled GPS points to this OSRM link and stores snapped road points if OSRM matches them.'
+                        ? 'On: Get Road Data excludes privacy zones, sends sampled public GPS segments to this OSRM link, and stores snapped road points if OSRM matches them.'
                         : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
                   : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
             </div>
@@ -3005,7 +3183,7 @@ export default function Settings() {
                   ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
                     ? 'blocked because the public OSRM demo is reference text only.'
                     : cfg.osrm_data_sharing_consented === true
-                      ? 'sends sampled GPS points to your trusted OSRM endpoint and may make map/playback follow roads more cleanly.'
+                      ? 'excludes privacy zones, sends sampled public GPS segments to your trusted OSRM endpoint, and may make map/playback follow roads more cleanly.'
                       : 'will be skipped until OSRM data-sharing consent is saved.'
                   : 'will be skipped until an OSRM endpoint is added.'}
             </div>
@@ -3162,6 +3340,12 @@ export default function Settings() {
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <MapPin className="h-4 w-4 text-primary" />
                   Privacy Zones
+                  {privacyZoneOverlaps.length > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                      <AlertTriangle className="h-3 w-3" />
+                      {privacyZoneOverlaps.length} overlap{privacyZoneOverlaps.length === 1 ? '' : 's'}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">Mask sensitive places from maps, CSV exports, and backups.</div>
               </div>
@@ -3208,8 +3392,38 @@ export default function Settings() {
               </div>
             )}
             <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
-              Radius can be 50-1000 m. Maps and playback draw this circle and clip the visible route to its edge, while full raw GPS still powers distance, speed, and scoring. Events inside the circle stay hidden from maps and exports.
+              Radius can be 50-1000 m. Routes and events inside the zone stay hidden from maps and exports. Optional map outlines are offset and expanded so they never pinpoint the saved center.
             </div>
+            {privacyZoneOverlaps.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {privacyZoneOverlaps.map((pair) => (
+                  <div
+                    key={`${pair.a.id || pair.a.label}_${pair.b.id || pair.b.label}`}
+                    className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
+                  >
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <div>
+                        <span className="font-semibold">Privacy zones overlap: </span>
+                        "{pair.a.label}" and "{pair.b.label}" overlap by about {Math.round(pair.overlapMeters)} m.
+                        Points covered by both zones use the zone they are deepest inside. Consider merging them or adjusting radii.
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <SettingRow
+              icon={Eye}
+              label="Show privacy circles on map"
+              sublabel="Off by default. Zones remain active when their offset display outlines are hidden."
+            >
+              <Checkbox
+                checked={cfg.show_privacy_circles === true}
+                onCheckedChange={(checked) => updateCfg({ show_privacy_circles: checked === true })}
+                aria-label="Show privacy circles on map"
+              />
+            </SettingRow>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -3266,7 +3480,7 @@ export default function Settings() {
                       />
                       <button
                         type="button"
-                        onClick={() => deletePrivacyZone(zone.id)}
+                        onClick={() => requestDeletePrivacyZone(zone)}
                         className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-red-500"
                         aria-label={`Delete ${zone.label} privacy zone`}
                       >
@@ -3323,6 +3537,22 @@ export default function Settings() {
             </select>
           </SettingRow>
           <SettingRow
+            icon={Shield}
+            label="Privacy Log Retention"
+            sublabel="How long to keep privacy zone operation records"
+          >
+            <select
+              value={Number(cfg.privacy_log_retention_hours ?? 24)}
+              onChange={(event) => updateCfg({ privacy_log_retention_hours: Number(event.target.value) })}
+              className="bg-card border border-border rounded-lg text-xs px-2 py-1"
+            >
+              <option value={0}>Off</option>
+              <option value={1}>1 hour</option>
+              <option value={24}>24 hours</option>
+              <option value={72}>3 days</option>
+            </select>
+          </SettingRow>
+          <SettingRow
             icon={Trash2}
             label="Delete All Trips"
             sublabel="Permanently removes all trip data"
@@ -3331,6 +3561,42 @@ export default function Settings() {
           >
             <ChevronRight className="w-4 h-4 text-red-400" />
           </SettingRow>
+          {cfg.osrm_consent_invalidated_reason === 'privacy_zone_changed' && (
+            <div className="mx-1 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <div>
+                  <div className="font-semibold">OSRM consent needs review</div>
+                  <div className="mt-1">
+                    {cfg.osrm_consent_invalidated_zone_label || 'A privacy zone'} changed. OSRM is paused until you review the endpoint and consent again. Privacy-zone interiors are excluded from every OSRM request.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={requestSaveOsrmEndpoint}
+                  className="rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white dark:bg-amber-200 dark:text-amber-950"
+                >
+                  Review consent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateCfg({
+                    map_matching_enabled: false,
+                    osrm_data_sharing_consented: false,
+                    osrm_data_sharing_consented_at: '',
+                    osrm_consent_invalidated_reason: '',
+                    osrm_consent_invalidated_at: '',
+                    osrm_consent_invalidated_zone_label: '',
+                  })}
+                  className="rounded-lg border border-amber-400 px-3 py-1.5 font-semibold"
+                >
+                  Keep OSRM off
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         </SettingsSection>
       </div>
@@ -3343,6 +3609,84 @@ export default function Settings() {
         className="hidden"
         onChange={handleImportBackup}
       />
+
+      <Dialog open={Boolean(privacyDeleteZone)} onOpenChange={(open) => {
+        if (privacyDeleteBusy) return;
+        if (!open) clearPrivacyZoneDeleteState();
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Delete "{privacyDeleteZone?.label || 'privacy zone'}"?</DialogTitle>
+            <DialogDescription>
+              Removing this privacy zone can make older routes through this area visible again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <div className="font-semibold">Historical route visibility may change</div>
+                  <div className="mt-1">
+                    All stored routes and exports through this area will be checked without this zone.
+                    {privacyDeleteImpact.loading
+                      ? ' Counting affected trips...'
+                      : privacyDeleteImpact.tripCount != null
+                        ? ` This affects ${privacyDeleteImpact.tripCount} recorded trip${privacyDeleteImpact.tripCount === 1 ? '' : 's'}.`
+                        : ' Affected trip count is unavailable right now.'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <label className="flex items-start gap-3 rounded-xl border border-border bg-secondary/30 p-3 text-sm">
+              <Checkbox
+                checked={privacyDeletePurge}
+                onCheckedChange={(checked) => setPrivacyDeletePurge(checked === true)}
+                disabled={privacyDeleteBusy}
+                className="mt-0.5"
+                aria-label="Permanently delete raw GPS within this zone"
+              />
+              <span>
+                <span className="font-semibold">Permanently delete raw GPS within this zone radius</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Route points and event coordinates inside the zone will be removed before the zone is deleted.
+                </span>
+              </span>
+            </label>
+            {privacyDeletePurge && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                This cannot be undone. Affected trips will keep privacy placeholders where raw GPS was purged and will be marked for rescoring.
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={clearPrivacyZoneDeleteState}
+              disabled={privacyDeleteBusy}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDeletePrivacyZone}
+              disabled={!privacyDeleteZone || privacyDeleteBusy}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
+                privacyDeletePurge
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-amber-700 hover:bg-amber-800'
+              }`}
+            >
+              {privacyDeleteBusy
+                ? 'Deleting...'
+                : privacyDeletePurge
+                  ? 'Delete Zone & Purge GPS'
+                  : 'Delete Zone'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={backupExportOpen} onOpenChange={(open) => {
         if (backupExportBusy) return;
@@ -3568,7 +3912,7 @@ export default function Settings() {
               onCheckedChange={(checked) => setOsrmConsentChecked(checked === true)}
               className="mt-0.5"
             />
-            <span>I understand and accept that sampled GPS coordinate pairs from selected trips will be sent to this OSRM endpoint when I tap Get Road Data.</span>
+            <span>I understand and accept that sampled public GPS coordinate pairs, with privacy-zone interiors excluded, will be sent to this OSRM endpoint when I tap Get Road Data.</span>
           </label>
           <DialogFooter>
             <button

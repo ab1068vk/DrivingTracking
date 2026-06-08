@@ -10,7 +10,12 @@ export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || D
 const OSRM_HEALTH_TIMEOUT_MS = 5000;
 
 const round = (value, places = 5) => +Number(value).toFixed(places);
-const isValidRoutePoint = (point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng);
+const isValidRoutePoint = (point) => (
+  Number.isFinite(point?.lat) &&
+  Number.isFinite(point?.lng) &&
+  point?.privacy_boundary !== true &&
+  point?.masked_for_privacy !== true
+);
 
 const endpointOrigin = (endpoint) => {
   try {

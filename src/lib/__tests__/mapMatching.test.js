@@ -210,4 +210,60 @@ describe('mapMatching', () => {
     expect(result.routePoints[0].map_matched).toBe(true);
     expect(result.routePoints[4].map_matched).toBe(true);
   });
+
+  it('treats privacy boundary coordinates as gaps before OSRM requests', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = new URL(String(url)).pathname;
+      const coords = decodeURIComponent(path.split('/').pop() || '')
+        .split(';')
+        .map((pair) => pair.split(',').map(Number));
+      return {
+        ok: true,
+        json: async () => ({
+          matchings: [{
+            confidence: 0.9,
+            geometry: {
+              coordinates: coords,
+            },
+          }],
+        }),
+      };
+    }));
+
+    const boundary = {
+      lat: 43.653,
+      lng: -79.38,
+      masked_for_privacy: true,
+      privacy_boundary: true,
+      privacy_zone_id: 'home',
+    };
+    const route = [
+      point(510),
+      point(511),
+      boundary,
+      point(700),
+      point(701),
+    ];
+
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const requestedCoords = fetch.mock.calls.flatMap(([url]) => (
+      decodeURIComponent(new URL(String(url)).pathname)
+        .split('/')
+        .pop()
+        .split(';')
+        .map((pair) => pair.split(',').map(Number))
+    ));
+    expect(requestedCoords).not.toContainEqual([boundary.lng, boundary.lat]);
+    expect(result.routePoints.find((item) => item.privacy_gap)).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_gap: true,
+      privacy_zone_id: 'home',
+    });
+  });
 });

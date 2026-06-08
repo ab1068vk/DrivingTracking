@@ -2,7 +2,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
-import { getPrivacyZones, maskTripForPrivacy } from '@/lib/privacyZones';
+import { createPrivacyExportSalt, getPrivacyZones, maskTripForPrivacyExport } from '@/lib/privacyZones';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -511,12 +511,12 @@ export function buildDriveSenseBackup({
   const savedTripFilters = sanitizeSavedTripFilters(savedFilters);
   const sanitizedCalibrationLabels = sanitizeCalibrationLabels(calibrationLabels);
   const sanitizedCalibrationSurveyMarkers = sanitizeCalibrationSurveyMarkers(calibrationSurveyMarkers);
+  const privacyExportSalt = createPrivacyExportSalt();
   const exportSettings = {
     ...settings,
     privacy_zones: getPrivacyZones(settings).map((zone) => ({
       id: zone.id,
       label: zone.label,
-      radius_m: zone.radius_m,
       masked_for_privacy: true,
     })),
   };
@@ -534,7 +534,7 @@ export function buildDriveSenseBackup({
     },
     vehicles,
     trips: trips.map((trip) => {
-      const masked = /** @type {any} */ (maskTripForPrivacy(trip, settings));
+      const masked = /** @type {any} */ (maskTripForPrivacyExport(trip, settings, privacyExportSalt));
       return {
         ...masked,
         route_points: Array.isArray(masked.route_points) ? masked.route_points : [],
@@ -852,10 +852,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
   const importedTrips = await tripService.upsertMany(backup.trips);
 
   const privacyZonesNeedReconfiguration = includeSettings && Array.isArray(backup.settings?.privacy_zones)
-    ? backup.settings.privacy_zones.filter((zone) => (
-      zone?.masked_for_privacy === true &&
-      (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng)))
-    )).length
+    ? backup.settings.privacy_zones.filter((zone) => zone && typeof zone === 'object').length
     : 0;
 
   let importedSettings = false;

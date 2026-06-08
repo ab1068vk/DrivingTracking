@@ -16,6 +16,7 @@ import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import {
   buildPhoneUsageAccessProvenance,
   buildPhoneUseFromTripEvidence,
@@ -23,6 +24,13 @@ import {
 } from '@/lib/phoneUsageAccess';
 import { hasRecoverableOriginalRouteGeometry, restoreOriginalRouteGeometry } from '@/lib/mapPlaybackInsights';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
+import {
+  decryptSensitiveValue,
+  encryptSensitiveValue,
+  getEncryptedJson,
+  isEncryptedPayload,
+  setEncryptedJson,
+} from '@/lib/securePayloadCrypto';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
@@ -196,11 +204,27 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
   tx.onabort = () => reject(tx.error);
 });
 
+const tripEncryptionContext = (id) => `trip:${String(id)}`;
+
+const encodeTripRecord = async (trip) => ({
+  id: trip.id,
+  start_time: trip.start_time || '',
+  status: trip.status || '',
+  encrypted_payload: await encryptSensitiveValue(trip, tripEncryptionContext(trip.id)),
+});
+
+const decodeTripRecord = async (record) => {
+  if (!isEncryptedPayload(record?.encrypted_payload)) return record;
+  return decryptSensitiveValue(record.encrypted_payload, tripEncryptionContext(record.id));
+};
+
+const decodeTripRecords = (records = []) => Promise.all(records.map(decodeTripRecord));
+
 const readTripsFromDb = async (dbName) => {
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readonly');
-    return await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    return decodeTripRecords(await idbRequest(tx.objectStore(TRIP_STORE).getAll()));
   } finally {
     db.close();
   }
@@ -208,11 +232,12 @@ const readTripsFromDb = async (dbName) => {
 
 const writeTripsToDb = async (dbName, trips) => {
   if (!trips.length) return;
+  const encryptedTrips = await Promise.all(trips.map(encodeTripRecord));
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
-    trips.forEach((trip) => store.put(trip));
+    encryptedTrips.forEach((trip) => store.put(trip));
     await idbTransactionDone(tx);
   } finally {
     db.close();
@@ -288,44 +313,96 @@ const getAllTrips = async () => {
   try {
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readonly');
-    const trips = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
     db.close();
+    const trips = await decodeTripRecords(records);
+    const legacyTrips = records.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
+    if (legacyTrips.length) await writeTripsToDb(DB_NAME, legacyTrips);
     return trips;
   } catch {
-    return getJson(TRIPS_KEY, []);
+    return getEncryptedJson(TRIPS_KEY, []);
   }
 };
 
+export async function migrateLegacyTripStorageToEncrypted() {
+  let indexedDbRecordsMigrated = 0;
+  let fallbackStoreMigrated = false;
+
+  if (canUseIndexedDb()) {
+    try {
+      const db = await openDb();
+      try {
+        const tx = db.transaction(TRIP_STORE, 'readonly');
+        const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+        const legacyTrips = records.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
+        if (legacyTrips.length) {
+          await writeTripsToDb(DB_NAME, legacyTrips);
+          indexedDbRecordsMigrated = legacyTrips.length;
+        }
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      logSystemFailure('trip_storage_encryption_migration_indexeddb', error, {
+        db_name: DB_NAME,
+      });
+    }
+  }
+
+  try {
+    const fallbackTrips = await getJson(TRIPS_KEY, null);
+    if (Array.isArray(fallbackTrips)) {
+      await setEncryptedJson(TRIPS_KEY, fallbackTrips);
+      fallbackStoreMigrated = true;
+    }
+  } catch (error) {
+    logSystemFailure('trip_storage_encryption_migration_fallback', error, {
+      key: TRIPS_KEY,
+    });
+  }
+
+  if (indexedDbRecordsMigrated || fallbackStoreMigrated) {
+    recordSystemEvent('trip_storage_encryption_migrated', {
+      indexeddb_record_count: indexedDbRecordsMigrated,
+      fallback_store_migrated: fallbackStoreMigrated,
+    }, { category: 'privacy', title: 'Trip storage encrypted' });
+  }
+
+  return { indexedDbRecordsMigrated, fallbackStoreMigrated };
+}
+
 const putTrip = async (trip) => {
   try {
+    const encryptedTrip = await encodeTripRecord(trip);
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).put(trip));
+    await idbRequest(tx.objectStore(TRIP_STORE).put(encryptedTrip));
     db.close();
   } catch {
-    const trips = await getJson(TRIPS_KEY, []);
+    const trips = await getEncryptedJson(TRIPS_KEY, []);
     const next = [trip, ...trips.filter((item) => String(item.id) !== String(trip.id))];
-    await setJson(TRIPS_KEY, next);
+    await setEncryptedJson(TRIPS_KEY, next);
   }
 };
 
 const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
   try {
+    const encryptedTrips = await Promise.all(incomingTrips.map(encodeTripRecord));
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
-    incomingTrips.forEach((trip) => store.put(trip));
+    encryptedTrips.forEach((trip) => store.put(trip));
     await idbTransactionDone(tx);
     db.close();
   } catch {
-    const trips = await getJson(TRIPS_KEY, []);
+    const trips = await getEncryptedJson(TRIPS_KEY, []);
     const incomingIds = new Set(incomingTrips.map((trip) => String(trip.id)));
     const next = [
       ...incomingTrips,
       ...trips.filter((item) => !incomingIds.has(String(item.id))),
     ];
-    await setJson(TRIPS_KEY, next);
+    await setEncryptedJson(TRIPS_KEY, next);
   }
 };
 
@@ -730,8 +807,8 @@ const deleteTrip = async (id) => {
     await idbRequest(tx.objectStore(TRIP_STORE).delete(id));
     db.close();
   } catch {
-    const trips = await getJson(TRIPS_KEY, []);
-    await setJson(TRIPS_KEY, trips.filter((trip) => String(trip.id) !== String(id)));
+    const trips = await getEncryptedJson(TRIPS_KEY, []);
+    await setEncryptedJson(TRIPS_KEY, trips.filter((trip) => String(trip.id) !== String(id)));
   }
 };
 

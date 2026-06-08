@@ -18,6 +18,7 @@ import {
 } from '@/lib/backupEnvelopeEncryption';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
+import { maskTripForPrivacy } from '@/lib/privacyZones';
 
 vi.mock('@/api/trips', () => ({
   tripService: {
@@ -487,5 +488,36 @@ describe('backup calibration labels', () => {
     });
     expect(labels[0].id).toBe('label-imported');
     expect(marker).toMatchObject({ label_id: 'label-imported', rating: 5 });
+  });
+});
+
+describe('backup export privacy', () => {
+  it('jitters exported privacy boundaries and strips zone radius metadata', () => {
+    const settings = {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
+    };
+    const trip = {
+      id: 'trip-private-boundary',
+      status: 'completed',
+      route_points: [
+        { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z' },
+        { lat: 43.6522, lng: -79.38, timestamp: '2026-01-01T12:00:20.000Z', radius_m: 999 },
+      ],
+      driving_events: [],
+    };
+    const exactBoundary = maskTripForPrivacy(trip, settings).route_points.find((point) => point.privacy_boundary);
+
+    const backup = buildDriveSenseBackup({ trips: [trip], vehicles: [], settings });
+    const exportedBoundary = backup.trips[0].route_points.find((point) => point.privacy_boundary);
+
+    expect(exportedBoundary.export_noised_for_privacy).toBe(true);
+    expect(exportedBoundary.lat).not.toBeCloseTo(exactBoundary.lat, 6);
+    expect(exportedBoundary.lng).not.toBeCloseTo(exactBoundary.lng, 6);
+    expect(exportedBoundary.radius_m).toBeUndefined();
+    expect(backup.settings.privacy_zones[0]).toEqual({
+      id: 'home',
+      label: 'Home',
+      masked_for_privacy: true,
+    });
   });
 });

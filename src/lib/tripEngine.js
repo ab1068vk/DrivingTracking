@@ -2,7 +2,7 @@ import { saveExportToDownloads } from './nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from './systemLog';
 import { clamp, pearsonCorrelation } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
-import { maskEventCoordinatesForPrivacy, maskTripForPrivacy } from './privacyZones';
+import { createPrivacyExportSalt, maskEventCoordinatesForPrivacy, maskTripForPrivacyExport } from './privacyZones';
 import {
   COMPONENT_METRIC_KEYS,
   CSV_METRIC_COLUMNS,
@@ -948,11 +948,25 @@ export function shouldAcceptLocationPoint(point, previousPoint = null, threshold
   return true;
 }
 
+function isPrivacyRouteStorageStub(point) {
+  return point?.masked_for_privacy === true &&
+    (point?.privacy_gap === true || point?.privacy_live_redacted === true || point?.privacy_purged === true) &&
+    !hasValidCoordinates(point);
+}
+
 export function cleanRoutePoints(points, thresholds = DEFAULT_THRESHOLDS) {
+  let previousAcceptedGpsPoint = null;
   return (points || []).reduce((accepted, rawPoint) => {
     const point = normalizeLocationPoint(rawPoint) || rawPoint;
-    const previous = accepted[accepted.length - 1] || null;
-    if (shouldAcceptLocationPoint(point, previous, thresholds)) accepted.push(point);
+    if (isPrivacyRouteStorageStub(point)) {
+      accepted.push(point);
+      previousAcceptedGpsPoint = null;
+      return accepted;
+    }
+    if (shouldAcceptLocationPoint(point, previousAcceptedGpsPoint, thresholds)) {
+      accepted.push(point);
+      previousAcceptedGpsPoint = point;
+    }
     return accepted;
   }, []);
 }
@@ -6675,8 +6689,9 @@ export function tripsToCSV(trips) {
       : value ?? ''
   );
 
+  const privacyExportSalt = createPrivacyExportSalt();
   const rows = trips.map((rawTrip) => {
-    const t = /** @type {any} */ (maskTripForPrivacy(rawTrip));
+    const t = /** @type {any} */ (maskTripForPrivacyExport(rawTrip, undefined, privacyExportSalt));
     const feedbackItems = Object.values(t.event_feedback || {});
     const accurateFeedback = feedbackItems.filter((item) => item?.verdict === 'accurate').length;
     const wrongFeedback = feedbackItems.filter((item) => item?.verdict === 'wrong').length;

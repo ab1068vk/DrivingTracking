@@ -8,8 +8,10 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { applyThemeMode, localSettings } from '@/lib/trackingStore';
+import { activeTripStore, applyThemeMode, localSettings } from '@/lib/trackingStore';
+import { loadPrivacyZonesFromStorage } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
+import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { recordSystemEvent } from '@/lib/systemLog';
 import { Route as RouteIcon } from 'lucide-react';
@@ -61,6 +63,14 @@ const AuthenticatedApp = () => {
         .then(({ configureNotificationChannels }) => configureNotificationChannels())
         .catch(() => {});
       const settings = await localSettings.hydrateFromNative();
+      await loadPrivacyZonesFromStorage(settings);
+      await import('@/lib/localTripRepository')
+        .then(({ migrateLegacyTripStorageToEncrypted }) => migrateLegacyTripStorageToEncrypted())
+        .catch(() => {});
+      await activeTripStore.hydrate();
+      import('@/lib/rescoringWorker')
+        .then(({ startRescoringWorker }) => startRescoringWorker())
+        .catch(() => {});
       notificationService
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
         .catch(() => {});
@@ -69,9 +79,7 @@ const AuthenticatedApp = () => {
         Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION;
       setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice);
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-        import('@/lib/activityRecognition')
-          .then(({ startNativeAutoTracking }) => startNativeAutoTracking())
-          .catch(() => {});
+        startNativeAutoTracking().catch(() => {});
       }
 
       applyThemeMode(settings.dark_mode);

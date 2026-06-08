@@ -12,7 +12,7 @@ import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
-import { exportSystemLogsCsv, exportSystemLogsJson, getSystemLogs, pruneExpiredSystemLogs, sanitizeLogDetail, SYSTEM_LOG_EVENT, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
+import { exportSystemLogsCsv, exportSystemLogsJson, getSystemLogs, pruneExpiredSystemLogs, recordSystemEvent, sanitizeLogDetail, SYSTEM_LOG_EVENT, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import {
@@ -450,7 +450,7 @@ describe('release blocker regressions', () => {
     expect(events[0]).toMatchObject(diagnostic);
   });
 
-  it('keeps system logs exportable, redacted, and limited to the three-day retention window', () => {
+  it('keeps system logs exportable, redacted, and applies shorter privacy retention', () => {
     const now = new Date('2026-06-06T12:00:00.000Z').getTime();
     const kept = {
       timestamp: new Date(now - SYSTEM_LOG_RETENTION_MS + 1000).toISOString(),
@@ -473,12 +473,20 @@ describe('release blocker regressions', () => {
       }),
     };
     const expired = { ...kept, timestamp: new Date(now - SYSTEM_LOG_RETENTION_MS - 1000).toISOString() };
-    const pruned = pruneExpiredSystemLogs([expired, kept], now);
+    const privacyExpired = {
+      ...kept,
+      id: 'privacy-expired',
+      category: 'privacy',
+      operation: 'privacy_route_masked',
+      timestamp: new Date(now - (24 * 60 * 60 * 1000) - 1000).toISOString(),
+    };
+    const pruned = pruneExpiredSystemLogs([expired, privacyExpired, kept], now);
     const json = exportSystemLogsJson(pruned);
     const csv = exportSystemLogsCsv(pruned);
 
     expect(pruned).toEqual([kept]);
     expect(json).toContain('"retention_days": 3');
+    expect(json).toContain('"privacy_retention_hours": 24');
     expect(json).toContain('Operation failed: trip_playback');
     expect(json).toContain('[redacted]');
     expect(json).not.toContain('43.65');
@@ -488,6 +496,61 @@ describe('release blocker regressions', () => {
     expect(json).not.toContain('abc123456789');
     expect(json).toContain('native_platform');
     expect(csv).toContain('Operation failed: trip_playback');
+  });
+
+  it('skips privacy system logs when privacy log retention is off', () => {
+    const values = new Map([
+      ['drivesense_settings', JSON.stringify({ privacy_log_retention_hours: 0 })],
+      ['drivesense_system_logs_v1', JSON.stringify([])],
+    ]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const event = recordSystemEvent('privacy_route_masked', {
+      zone_id: 'home',
+      label: 'Home',
+      hidden_point_count: 47,
+    }, { category: 'privacy', title: 'Privacy route masked' });
+
+    expect(event).toBeNull();
+    expect(JSON.parse(values.get('drivesense_system_logs_v1'))).toEqual([]);
+  });
+
+  it('strips zone identity and radius metadata from privacy system logs', () => {
+    const values = new Map([
+      ['drivesense_settings', JSON.stringify({ privacy_log_retention_hours: 24 })],
+      ['drivesense_system_logs_v1', JSON.stringify([])],
+    ]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const event = recordSystemEvent('privacy_zone_saved', {
+      zone_id: 'home',
+      privacy_zone_id: 'home',
+      label: 'Home',
+      privacy_zone_label: 'Home',
+      radius_m: 150,
+      privacy_zone_radius_m: 150,
+      hidden_point_count: 47,
+      nested: {
+        zone_label: 'Work',
+        source_radius_m: 200,
+        hidden_event_count: 3,
+      },
+    }, { category: 'privacy', title: 'Privacy zone saved' });
+
+    expect(event.details).toEqual({
+      hidden_point_count: 47,
+      nested: {
+        hidden_event_count: 3,
+      },
+    });
   });
 
   it('does not dispatch system-log update events when reading and pruning logs', () => {

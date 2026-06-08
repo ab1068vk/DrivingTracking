@@ -10,7 +10,7 @@ import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/spe
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
+import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -40,6 +40,62 @@ export const isExternalContextAutoFetchEnabled = (settings = {}) => (
   settings.external_context_auto_fetch_consented_at.trim().length > 0
 );
 
+export function buildPrivacySafeOsrmRoute(routePoints = [], settings = {}) {
+  const zones = getPrivacyZones(settings);
+  if (!zones.length) return routePoints;
+
+  const masked = maskRoutePointsForPrivacy(routePoints, settings);
+  return masked.reduce((safePoints, point) => {
+    const previous = safePoints.at(-1);
+    if (point?.privacy_boundary || point?.masked_for_privacy || !Number.isFinite(Number(point?.lat)) || !Number.isFinite(Number(point?.lng))) {
+      if (!previous?.privacy_gap) {
+        safePoints.push({
+          lat: null,
+          lng: null,
+          masked_for_privacy: true,
+          privacy_gap: true,
+          privacy_zone_id: point?.privacy_zone_id || previous?.privacy_zone_id,
+          privacy_zone_label: point?.privacy_zone_label || previous?.privacy_zone_label,
+        });
+      }
+      return safePoints;
+    }
+    safePoints.push(point);
+    return safePoints;
+  }, []);
+}
+
+const routePointKey = (point = {}) => (
+  point.timestamp
+    ? `time:${point.timestamp}`
+    : Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lng))
+      ? `coord:${Number(point.lat).toFixed(7)},${Number(point.lng).toFixed(7)}`
+      : null
+);
+
+function mergePublicMapMatchingMetadata(originalPoints = [], matchedPoints = []) {
+  const matchedByKey = new Map();
+  matchedPoints.forEach((point) => {
+    if (point?.privacy_boundary || point?.privacy_gap || point?.map_matched !== true) return;
+    const key = routePointKey(point);
+    if (key) matchedByKey.set(key, point);
+  });
+
+  return originalPoints.map((point) => {
+    const matched = matchedByKey.get(routePointKey(point));
+    if (!matched) return point;
+    return {
+      ...point,
+      original_lat: matched.original_lat,
+      original_lng: matched.original_lng,
+      matched_lat: matched.matched_lat,
+      matched_lng: matched.matched_lng,
+      map_matched: true,
+      map_matching_provider: matched.map_matching_provider,
+    };
+  });
+}
+
 export function buildRoadContextPrivacyMessage(settings = {}) {
   const lines = [
     'Get Road Data will check online services for this selected trip:',
@@ -52,7 +108,7 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
-    lines.push('- Snap route to roads: sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per continuous route segment.');
+    lines.push('- Snap route to roads: excludes privacy-zone interiors and exact boundary points, then sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per public route segment.');
   } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
@@ -104,20 +160,37 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }));
 
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
+  const osrmRoutePoints = buildPrivacySafeOsrmRoute(originalPoints, settings);
+  const osrmValidPointCount = osrmRoutePoints.filter((point) => (
+    Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng))
+  )).length;
   stage(onProgress, osrmConfigured ? 'Snapping route to roads with OSRM' : 'Skipping route snapping');
-  const mapMatchingContext = await timeout(
-    mapMatchRoute(originalPoints, settings),
-    16000,
-    'OSRM route snapping timed out'
-  ).catch((error) => ({
-    routePoints: originalPoints,
-    status: 'unavailable',
-    provider: 'osrm',
-    error: error?.message || 'Map matching unavailable',
-    confidence: null,
-    snapped_coverage: 0,
-  }));
-  let routePoints = mapMatchingContext.routePoints || originalPoints;
+  const mapMatchingContext = osrmConfigured && privacyZones.length > 0 && osrmValidPointCount < 2
+    ? {
+      routePoints: originalPoints,
+      status: 'privacy_zones_excluded',
+      provider: 'osrm',
+      error: 'OSRM was skipped because the route has no public segment outside privacy zones.',
+      confidence: null,
+      snapped_coverage: 0,
+      privacy_gap_count: osrmRoutePoints.filter((point) => point?.privacy_gap).length,
+    }
+    : await timeout(
+      mapMatchRoute(osrmRoutePoints, settings),
+      16000,
+      'OSRM route snapping timed out'
+    ).catch((error) => ({
+      routePoints: originalPoints,
+      status: 'unavailable',
+      provider: 'osrm',
+      error: error?.message || 'Map matching unavailable',
+      confidence: null,
+      snapped_coverage: 0,
+    }));
+  let routePoints = mergePublicMapMatchingMetadata(
+    originalPoints,
+    mapMatchingContext.routePoints || []
+  );
   stage(onProgress, 'Getting speed limits from OpenStreetMap');
   const speedLimitContext = await timeout(
     annotateRouteSpeedLimits(routePoints, settings),
@@ -173,6 +246,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       status: mapMatchingContext.status,
       confidence: mapMatchingContext.confidence ?? null,
       snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
+      privacy_gap_count: mapMatchingContext.privacy_gap_count ?? 0,
+      privacy_zone_count: privacyZones.length,
       error: mapMatchingContext.error,
       isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl === true || isPublicOsrmDemoUrl(settings.osrm_map_matching_url),
     },
@@ -226,6 +301,9 @@ export function describeMapMatchingStatus(context = {}) {
   }
   if (context.status === 'not_enough_points') {
     return 'OSRM road matching needs at least three GPS points.';
+  }
+  if (context.status === 'privacy_zones_excluded') {
+    return context.error || 'OSRM was skipped because the route is entirely inside privacy zones.';
   }
   if (context.status === 'unavailable') {
     return context.error || 'OSRM road matching was unavailable, so the original GPS route was kept.';

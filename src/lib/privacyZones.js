@@ -1,8 +1,17 @@
 import { localSettings } from '@/lib/trackingStore';
-import { recordSystemEvent } from '@/lib/systemLog';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { clearMapMatchingCache } from '@/lib/mapMatching';
+import { encryptSensitiveValue, getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
 
 const EARTH_RADIUS_M = 6371000;
+const DISPLAY_CIRCLE_OFFSET_M = 35;
+const EXPORT_NOISE_MIN_M = 10;
+const EXPORT_NOISE_MAX_M = 35;
+export const PRIVACY_ZONES_SECURE_KEY = 'drivesense_privacy_zones_config_v1';
+export const NATIVE_PRIVACY_ZONES_KEY = 'privacy_zones_v1';
+export const NATIVE_PRIVACY_ZONES_CONTEXT = 'native:privacy_zones_v1';
 export const ZONE_EVENT_GUARD_M = 50;
+let privacyZonesMemory = null;
 
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
@@ -54,23 +63,377 @@ const privacyMetadata = (zone, boundary = false) => ({
   ...(boundary ? { privacy_boundary: true } : {}),
 });
 
+const normalizePrivacyZones = (zones = []) => (
+  Array.isArray(zones)
+    ? zones
+      .filter((zone) => (
+        Number.isFinite(Number(zone?.lat)) &&
+        Number.isFinite(Number(zone?.lng)) &&
+        Number(zone?.radius_m) > 0
+      ))
+      .map((zone) => ({
+        id: String(zone.id || `pz_${Date.now().toString(36)}`),
+        label: String(zone.label || 'Private place').trim() || 'Private place',
+        lat: Number(zone.lat),
+        lng: Number(zone.lng),
+        radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
+      }))
+    : []
+);
+
+const redactedPrivacyZones = (zones = []) => (
+  (Array.isArray(zones) ? zones : []).map((zone) => ({
+    id: String(zone.id || ''),
+    label: String(zone.label || 'Private place'),
+    radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
+    masked_for_privacy: true,
+  }))
+);
+
 export function getPrivacyZones(settings = localSettings.get()) {
-  return Array.isArray(settings.privacy_zones)
-    ? settings.privacy_zones.filter((zone) => (
-      Number.isFinite(Number(zone.lat)) &&
-      Number.isFinite(Number(zone.lng)) &&
-      Number(zone.radius_m) > 0
-    ))
-    : [];
+  const settingsZones = normalizePrivacyZones(settings?.privacy_zones);
+  if (settingsZones.length) {
+    privacyZonesMemory = settingsZones;
+    return settingsZones;
+  }
+  if (Array.isArray(settings?.privacy_zones) && settings.privacy_zones.length === 0) return [];
+  return Array.isArray(privacyZonesMemory) ? privacyZonesMemory : [];
+}
+
+export async function getHydratedPrivacyZones(settings = localSettings.get()) {
+  const zones = getPrivacyZones(settings);
+  if (zones.length) return zones;
+  if (!Array.isArray(settings?.privacy_zones) || settings.privacy_zones.length === 0) return [];
+
+  const secureZones = normalizePrivacyZones(await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []));
+  if (secureZones.length) privacyZonesMemory = secureZones;
+  return secureZones;
+}
+
+async function persistPrivacyZones(zones = []) {
+  const normalized = normalizePrivacyZones(zones);
+  privacyZonesMemory = normalized;
+  await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, normalized);
+  await syncZonesToNative(normalized);
+  return normalized;
+}
+
+export async function savePrivacyZonesToStorage(zones = [], settings = localSettings.get()) {
+  const normalized = await persistPrivacyZones(zones);
+  localSettings.update({ privacy_zones: redactedPrivacyZones(normalized) });
+  return {
+    ...settings,
+    ...localSettings.get(),
+    privacy_zones: redactedPrivacyZones(normalized),
+  };
+}
+
+export async function loadPrivacyZonesFromStorage(settings = localSettings.get()) {
+  const secureZones = normalizePrivacyZones(await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []));
+  const legacyPlaintextZones = normalizePrivacyZones(settings?.privacy_zones);
+  const zones = secureZones.length ? secureZones : legacyPlaintextZones;
+
+  if (zones.length) {
+    await persistPrivacyZones(zones);
+  } else {
+    privacyZonesMemory = [];
+  }
+
+  if (legacyPlaintextZones.length || JSON.stringify(settings?.privacy_zones || []) !== JSON.stringify(redactedPrivacyZones(zones))) {
+    localSettings.update({ privacy_zones: redactedPrivacyZones(zones) });
+  }
+
+  return zones;
+}
+
+export async function syncZonesToNative(zones = getPrivacyZones()) {
+  if (typeof window === 'undefined') return;
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (!Capacitor.isNativePlatform()) return;
+
+    const nativeZones = (Array.isArray(zones) ? zones : [])
+      .filter((zone) => (
+        finiteNumber(zone?.lat) != null &&
+        finiteNumber(zone?.lng) != null &&
+        Number(zone?.radius_m) > 0
+      ))
+      .map((zone) => ({
+        id: String(zone.id || ''),
+        label: String(zone.label || 'Private place'),
+        lat: Number(zone.lat),
+        lng: Number(zone.lng),
+        radius_m: Number(zone.radius_m),
+      }));
+
+    const encryptedNativeZones = await encryptSensitiveValue(nativeZones, NATIVE_PRIVACY_ZONES_CONTEXT);
+    const { Preferences } = await import('@capacitor/preferences');
+    await Preferences.set({
+      key: NATIVE_PRIVACY_ZONES_KEY,
+      value: JSON.stringify(encryptedNativeZones),
+    });
+  } catch (error) {
+    logSystemFailure('privacy_zones_native_sync_failed', error, {
+      zone_count: Array.isArray(zones) ? zones.length : 0,
+    });
+  }
+}
+
+const hashCode = (value) => {
+  let hash = 0;
+  const text = String(value || 'privacy-zone');
+  for (let index = 0; index < text.length; index++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
+  }
+  return hash >>> 0;
+};
+
+export function createPrivacyExportSalt() {
+  try {
+    const bytes = new Uint32Array(2);
+    globalThis.crypto?.getRandomValues?.(bytes);
+    if (bytes[0] || bytes[1]) return `${bytes[0].toString(36)}${bytes[1].toString(36)}`;
+  } catch {}
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
+
+export function addExportNoise(lat, lng, zoneId = 'privacy-zone', exportSalt = createPrivacyExportSalt(), pointKey = '') {
+  const latitude = finiteNumber(lat);
+  const longitude = finiteNumber(lng);
+  if (latitude == null || longitude == null) return { lat, lng };
+
+  const seed = hashCode(`${zoneId}:${exportSalt}:${pointKey}:${latitude.toFixed(6)}:${longitude.toFixed(6)}`);
+  const angle = (seed % 62832) / 10000;
+  const distanceM = EXPORT_NOISE_MIN_M + ((seed >>> 10) % (EXPORT_NOISE_MAX_M - EXPORT_NOISE_MIN_M + 1));
+  const latitudeCosine = Math.max(0.01, Math.abs(Math.cos(latitude * Math.PI / 180)));
+  const dLat = (distanceM * Math.cos(angle)) / 111320;
+  const dLng = (distanceM * Math.sin(angle)) / (111320 * latitudeCosine);
+
+  return {
+    lat: Math.max(-90, Math.min(90, latitude + dLat)),
+    lng: Math.max(-180, Math.min(180, longitude + dLng)),
+  };
+}
+
+export function getPrivacyZoneDisplayCircle(zone, offsetM = DISPLAY_CIRCLE_OFFSET_M) {
+  const lat = finiteNumber(zone?.lat);
+  const lng = finiteNumber(zone?.lng);
+  if (lat == null || lng == null) return null;
+
+  const safeOffsetM = Math.max(1, finiteNumber(offsetM) ?? DISPLAY_CIRCLE_OFFSET_M);
+  const angle = (hashCode(zone?.id || zone?.label) % 62832) / 10000;
+  const latitudeCosine = Math.max(0.01, Math.abs(Math.cos(lat * Math.PI / 180)));
+  const dLat = (safeOffsetM * Math.cos(angle)) / 111320;
+  const dLng = (safeOffsetM * Math.sin(angle)) / (111320 * latitudeCosine);
+  const radiusM = Math.max(50, Math.min(1000, finiteNumber(zone?.radius_m) ?? 150));
+
+  return {
+    ...zone,
+    lat: Math.max(-90, Math.min(90, lat + dLat)),
+    lng: Math.max(-180, Math.min(180, lng + dLng)),
+    radius_m: radiusM + safeOffsetM,
+    source_radius_m: radiusM,
+  };
 }
 
 export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 0) {
   if (finiteNumber(point?.lat) == null || finiteNumber(point?.lng) == null) return null;
-  return zones.find((zone) => distanceM(point, zone) <= Number(zone.radius_m || 150) + guardM) || null;
+  let bestZone = null;
+  let bestDepth = Number.NEGATIVE_INFINITY;
+
+  for (const zone of Array.isArray(zones) ? zones : []) {
+    const radius = Number(zone?.radius_m || 150) + guardM;
+    const depth = radius - distanceM(point, zone);
+    if (depth >= 0 && depth > bestDepth) {
+      bestZone = zone;
+      bestDepth = depth;
+    }
+  }
+
+  return bestZone;
 }
 
 export function isInsidePrivacyZone(lat, lng, zones = getPrivacyZones()) {
   return Boolean(isPointInPrivacyZone({ lat, lng }, zones));
+}
+
+export function redactRoutePointForPrivacyStorage(point = {}, zones = getPrivacyZones(), guardM = 0) {
+  const zone = isPointInPrivacyZone(point, zones, guardM);
+  if (!zone) return point;
+
+  const {
+    lat,
+    lng,
+    latitude,
+    longitude,
+    original_lat,
+    original_lng,
+    matched_lat,
+    matched_lng,
+    ...rest
+  } = point || {};
+
+  return {
+    ...rest,
+    lat: null,
+    lng: null,
+    masked_for_privacy: true,
+    privacy_gap: true,
+    privacy_live_redacted: true,
+    privacy_zone_id: zone.id,
+    privacy_zone_label: zone.label,
+    timestamp: point?.timestamp ?? point?.time ?? new Date().toISOString(),
+    speed_kmh: point?.speed_kmh ?? point?.speed ?? null,
+  };
+}
+
+export function findOverlappingZones(zones = getPrivacyZones()) {
+  const validZones = Array.isArray(zones) ? zones.filter((zone) => (
+    finiteNumber(zone?.lat) != null &&
+    finiteNumber(zone?.lng) != null &&
+    Number(zone?.radius_m) > 0
+  )) : [];
+  const overlaps = [];
+
+  for (let i = 0; i < validZones.length; i++) {
+    for (let j = i + 1; j < validZones.length; j++) {
+      const a = validZones[i];
+      const b = validZones[j];
+      const overlapMeters = Number(a.radius_m) + Number(b.radius_m) - distanceM(a, b);
+      if (overlapMeters > 0) {
+        overlaps.push({ a, b, overlapMeters });
+      }
+    }
+  }
+
+  return overlaps;
+}
+
+const pointCoordinatePairs = (point = {}) => ([
+  [point.lat, point.lng],
+  [point.latitude, point.longitude],
+  [point.original_lat, point.original_lng],
+  [point.matched_lat, point.matched_lng],
+]);
+
+export function isRoutePointInsidePrivacyZone(point, zone, guardM = 0) {
+  if (!zone) return false;
+  return pointCoordinatePairs(point).some(([lat, lng]) => (
+    finiteNumber(lat) != null &&
+    finiteNumber(lng) != null &&
+    isPointInPrivacyZone({ lat, lng }, [zone], guardM)
+  ));
+}
+
+export function countTripsAffectedByPrivacyZone(trips = [], zone) {
+  return tripIdsAffectedByPrivacyZone(trips, zone).length;
+}
+
+export function tripIdsAffectedByPrivacyZone(trips = [], zone) {
+  if (!zone || !Array.isArray(trips)) return [];
+  return trips.filter((trip) => (
+    (Array.isArray(trip?.route_points) && trip.route_points.some((point) => isRoutePointInsidePrivacyZone(point, zone))) ||
+    (Array.isArray(trip?.driving_events) && trip.driving_events.some((event) => isRoutePointInsidePrivacyZone(event, zone)))
+  )).map((trip) => trip.id).filter((id) => id != null);
+}
+
+const privacyPurgePlaceholder = (point, zone) => ({
+  lat: null,
+  lng: null,
+  timestamp: point?.timestamp ?? point?.time ?? null,
+  masked_for_privacy: true,
+  privacy_purged: true,
+  privacy_zone_id: zone.id,
+  privacy_zone_label: zone.label,
+});
+
+export function purgeTripGpsWithinPrivacyZone(trip = {}, zone) {
+  if (!zone || !trip || typeof trip !== 'object') {
+    return { trip, changed: false, purgedPoints: 0, purgedEvents: 0 };
+  }
+
+  let changed = false;
+  let purgedPoints = 0;
+  let previousPurged = false;
+  const routePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const nextRoutePoints = [];
+
+  routePoints.forEach((point) => {
+    if (!isRoutePointInsidePrivacyZone(point, zone)) {
+      nextRoutePoints.push(point);
+      previousPurged = false;
+      return;
+    }
+
+    changed = true;
+    purgedPoints += 1;
+    if (!previousPurged) {
+      nextRoutePoints.push(privacyPurgePlaceholder(point, zone));
+      previousPurged = true;
+    }
+  });
+
+  let purgedEvents = 0;
+  const drivingEvents = Array.isArray(trip.driving_events) ? trip.driving_events : [];
+  const nextDrivingEvents = drivingEvents.filter((event) => {
+    const inside = isRoutePointInsidePrivacyZone(event, zone);
+    if (inside) {
+      changed = true;
+      purgedEvents += 1;
+    }
+    return !inside;
+  });
+
+  if (!changed) return { trip, changed: false, purgedPoints: 0, purgedEvents: 0 };
+
+  return {
+    changed: true,
+    purgedPoints,
+    purgedEvents,
+    trip: {
+      ...trip,
+      route_points: nextRoutePoints,
+      route_points_raw_count: routePoints.length,
+      route_points_map_count: nextRoutePoints.filter((point) => finiteNumber(point?.lat) != null && finiteNumber(point?.lng) != null).length,
+      driving_events: nextDrivingEvents,
+      privacy_purged_zone_ids: Array.from(new Set([
+        ...(Array.isArray(trip.privacy_purged_zone_ids) ? trip.privacy_purged_zone_ids : []),
+        zone.id,
+      ])),
+      privacy_purged_at: new Date().toISOString(),
+      needs_rescore: true,
+    },
+  };
+}
+
+export async function purgeGpsWithinPrivacyZone(trips = [], zone, updateTrip) {
+  let tripsAffected = 0;
+  let pointsPurged = 0;
+  let eventsPurged = 0;
+  const tripIdsAffected = [];
+
+  for (const trip of Array.isArray(trips) ? trips : []) {
+    const result = purgeTripGpsWithinPrivacyZone(trip, zone);
+    if (!result.changed) continue;
+
+    tripsAffected += 1;
+    pointsPurged += result.purgedPoints;
+    eventsPurged += result.purgedEvents;
+    tripIdsAffected.push(trip.id);
+    if (typeof updateTrip === 'function') {
+      await updateTrip(trip.id, {
+        route_points: result.trip.route_points,
+        route_points_raw_count: result.trip.route_points_raw_count,
+        route_points_map_count: result.trip.route_points_map_count,
+        driving_events: result.trip.driving_events,
+        privacy_purged_zone_ids: result.trip.privacy_purged_zone_ids,
+        privacy_purged_at: result.trip.privacy_purged_at,
+        needs_rescore: result.trip.needs_rescore,
+      });
+    }
+  }
+
+  return { tripsAffected, pointsPurged, eventsPurged, tripIdsAffected };
 }
 
 export function shouldMaskEventForPrivacy(event, zones = getPrivacyZones(), guardM = ZONE_EVENT_GUARD_M) {
@@ -184,6 +547,43 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
   return masked;
 }
 
+const stripExportBoundaryGeometry = (point = {}) => {
+  const {
+    radius,
+    radius_m,
+    source_radius_m,
+    zone_radius_m,
+    privacy_radius_m,
+    privacy_zone_radius_m,
+    ...rest
+  } = point;
+  return rest;
+};
+
+export function addExportNoiseToPrivacyBoundaries(routePoints = [], exportSalt = createPrivacyExportSalt()) {
+  return (Array.isArray(routePoints) ? routePoints : []).map((point, index) => {
+    if (!point?.privacy_boundary) return point;
+    const boundary = stripExportBoundaryGeometry(point);
+    const noisy = addExportNoise(
+      boundary.lat,
+      boundary.lng,
+      boundary.privacy_zone_id || boundary.zone_id || 'privacy-zone',
+      exportSalt,
+      `${index}:${boundary.timestamp || boundary.time || ''}`
+    );
+    return {
+      ...boundary,
+      lat: noisy.lat,
+      lng: noisy.lng,
+      export_noised_for_privacy: true,
+    };
+  });
+}
+
+export function maskRoutePointsForPrivacyExport(routePoints = [], settings = localSettings.get(), exportSalt = createPrivacyExportSalt()) {
+  return addExportNoiseToPrivacyBoundaries(maskRoutePointsForPrivacy(routePoints, settings), exportSalt);
+}
+
 export function maskEventsForPrivacy(events = [], settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   if (!zones.length) return events;
@@ -209,7 +609,18 @@ export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
   };
 }
 
-export function upsertPrivacyZone(zone, settings = localSettings.get()) {
+export function maskTripForPrivacyExport(trip = {}, settings = localSettings.get(), exportSalt = createPrivacyExportSalt()) {
+  const masked = maskTripForPrivacy(trip, settings);
+  return {
+    ...masked,
+    route_points: addExportNoiseToPrivacyBoundaries(
+      Array.isArray(masked.route_points) ? masked.route_points : [],
+      exportSalt
+    ),
+  };
+}
+
+export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   const normalized = {
     id: zone.id || `pz_${Date.now().toString(36)}`,
@@ -218,20 +629,50 @@ export function upsertPrivacyZone(zone, settings = localSettings.get()) {
     lng: Number(zone.lng),
     radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
   };
+  const previous = zones.find((item) => item.id === normalized.id);
+  const zoneChanged = !previous ||
+    previous.lat !== normalized.lat ||
+    previous.lng !== normalized.lng ||
+    previous.radius_m !== normalized.radius_m;
   const next = zones.filter((item) => item.id !== normalized.id).concat(normalized);
-  const updated = localSettings.update({ privacy_zones: next });
+  const consentInvalidated = zoneChanged && settings.osrm_data_sharing_consented === true;
+  if (zoneChanged) void clearMapMatchingCache();
+  await persistPrivacyZones(next);
+  const updated = localSettings.update({
+    privacy_zones: redactedPrivacyZones(next),
+    ...(consentInvalidated ? {
+      osrm_data_sharing_consented: false,
+      osrm_data_sharing_consented_at: '',
+      osrm_consent_invalidated_reason: 'privacy_zone_changed',
+      osrm_consent_invalidated_at: new Date().toISOString(),
+      osrm_consent_invalidated_zone_label: normalized.label,
+    } : {}),
+  });
   recordSystemEvent('privacy_zone_saved', {
     zone_id: normalized.id,
     label: normalized.label,
     radius_m: normalized.radius_m,
     zone_count: next.length,
   }, { category: 'privacy', title: 'Privacy zone saved' });
+  if (consentInvalidated) {
+    recordSystemEvent('osrm_consent_invalidated', {
+      reason: 'privacy_zone_changed',
+      zone_id: normalized.id,
+      zone_label: normalized.label,
+    }, { category: 'osrm', severity: 'warn', title: 'OSRM consent needs review' });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('osrm-consent-required', {
+        detail: { reason: 'new_privacy_zone', zoneLabel: normalized.label },
+      }));
+    }
+  }
   return updated;
 }
 
-export function removePrivacyZone(id, settings = localSettings.get()) {
+export async function removePrivacyZone(id, settings = localSettings.get()) {
   const next = getPrivacyZones(settings).filter((zone) => zone.id !== id);
-  const updated = localSettings.update({ privacy_zones: next });
+  await persistPrivacyZones(next);
+  const updated = localSettings.update({ privacy_zones: redactedPrivacyZones(next) });
   recordSystemEvent('privacy_zone_removed', {
     zone_id: id,
     zone_count: next.length,

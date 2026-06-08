@@ -72,7 +72,7 @@ import {
   shouldAutoStopTracking,
   ACTIVITY_TYPES,
 } from '@/lib/activityRecognition';
-import { maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { maskRoutePointsForPrivacy, savePrivacyZonesToStorage } from '@/lib/privacyZones';
 import {
   buildScoreTips,
   buildSpeedSegments,
@@ -1878,6 +1878,63 @@ describe('tripEngine', () => {
     expect(csv).toContain('gb');
   });
 
+  it('adds export noise to privacy boundary points in CSV route JSON', () => {
+    const parseCsvLine = (line) => {
+      const cells = [];
+      let value = '';
+      let quoted = false;
+      for (let index = 0; index < line.length; index++) {
+        const char = line[index];
+        if (char === '"' && line[index + 1] === '"') {
+          value += '"';
+          index++;
+        } else if (char === '"') {
+          quoted = !quoted;
+        } else if (char === ',' && !quoted) {
+          cells.push(value);
+          value = '';
+        } else {
+          value += char;
+        }
+      }
+      cells.push(value);
+      return cells;
+    };
+    const previousZones = localSettings.get().privacy_zones;
+    const privacyZone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
+    const trip = {
+      id: 'trip-csv-private-boundary',
+      route_points: [
+        point(43.65, -79.38, 0),
+        point(43.6522, -79.38, 20),
+      ],
+      driving_events: [],
+    };
+
+    localSettings.update({ privacy_zones: [privacyZone] });
+    try {
+      const exactBoundary = maskRoutePointsForPrivacy(trip.route_points, { privacy_zones: [privacyZone] })
+        .find((routePoint) => routePoint.privacy_boundary);
+      const lines = tripsToCSV([trip]).split('\n');
+      const headers = parseCsvLine(lines[0]);
+      const values = parseCsvLine(lines[2]);
+      const exportedRoute = JSON.parse(values[headers.indexOf('Route Points JSON')]);
+      const exportedBoundary = exportedRoute.find((routePoint) => routePoint.privacy_boundary);
+      const noiseM = haversineDistance(
+        exactBoundary.lat,
+        exactBoundary.lng,
+        exportedBoundary.lat,
+        exportedBoundary.lng
+      ) * 1000;
+
+      expect(exportedBoundary.export_noised_for_privacy).toBe(true);
+      expect(noiseM).toBeGreaterThanOrEqual(10);
+      expect(noiseM).toBeLessThanOrEqual(35.5);
+    } finally {
+      localSettings.update({ privacy_zones: previousZones || [] });
+    }
+  });
+
   it('does not flag normal steady city speed as erratic speed', () => {
     const steady = Array.from({ length: 10 }, (_, index) => (
       point(43.6532 + index * 0.00022, -79.3832, index * 5, index % 2 === 0 ? 42 : 45)
@@ -2000,9 +2057,8 @@ describe('tripEngine', () => {
     const publicParkedLocation = pointNorthOf(privacyZone, guardBoundaryM + 25);
     const privateParkedLocation = pointNorthOf(privacyZone, guardBoundaryM - 1);
 
-    localSettings.update({
-      privacy_zones: [privacyZone],
-    });
+    await savePrivacyZonesToStorage([privacyZone]);
+    expect(localSettings.get().privacy_zones[0].lat).toBeUndefined();
 
     try {
       await saveLastParkedLocation({
@@ -2019,6 +2075,7 @@ describe('tripEngine', () => {
       expect(savedPrivate).toBeNull();
       expect(await getLastParkedLocation()).toBeNull();
     } finally {
+      await savePrivacyZonesToStorage([]);
       localSettings.update({ privacy_zones: previousZones || [] });
     }
   });

@@ -6,6 +6,7 @@ import {
   DB_VERSION,
   localTripRepository,
   migrateIndexedDbName,
+  migrateLegacyTripStorageToEncrypted,
   normalizeRetiredTripEventTypes,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
@@ -64,6 +65,10 @@ class FakeObjectStore {
       queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
       return value[this.keyPath];
     });
+  }
+
+  get(id) {
+    return makeIdbRequest(() => this.state.records.get(id));
   }
 
   getAll() {
@@ -198,6 +203,7 @@ describe('localTripRepository IndexedDB migrations', () => {
     await localTripRepository.create({
       status: 'draft',
       start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
     });
 
     const database = fakeIndexedDb.databases.get('drivesense_mobile');
@@ -210,6 +216,16 @@ describe('localTripRepository IndexedDB migrations', () => {
     expect(trips.indexKeyPaths.get('start_time')).toBe('start_time');
     expect(trips.indexes.has('status')).toBe(true);
     expect(trips.indexKeyPaths.get('status')).toBe('status');
+    const [storedRecord] = [...trips.records.values()];
+    expect(storedRecord).toMatchObject({
+      status: 'draft',
+      encrypted_payload: {
+        encrypted: true,
+        algorithm: 'AES-256-GCM',
+      },
+    });
+    expect(JSON.stringify(storedRecord)).not.toContain('43.6532');
+    expect(JSON.stringify(storedRecord)).not.toContain('-79.3832');
   });
 
   it('runs only migrations newer than the existing IndexedDB version', () => {
@@ -267,9 +283,78 @@ describe('localTripRepository IndexedDB migrations', () => {
     await expect(migrateIndexedDbName({ currentName: DB_NAME, storage })).resolves.toBe(true);
 
     const migratedTrips = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records;
-    expect(migratedTrips.get('legacy-trip')).toMatchObject({ id: 'legacy-trip' });
+    expect(migratedTrips.get('legacy-trip')).toMatchObject({
+      id: 'legacy-trip',
+      encrypted_payload: { encrypted: true },
+    });
     expect(fakeIndexedDb.databases.has('legacy_drivesense_mobile')).toBe(false);
     expect(values.get(DB_NAME_META_KEY)).toBe(DB_NAME);
+  });
+
+  it('rewrites legacy plaintext trip records after a successful read', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const db = await new Promise((resolve, reject) => {
+      const request = fakeIndexedDb.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore('trips', { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const legacyTrip = {
+      id: 'legacy-plaintext-trip',
+      status: 'draft',
+      start_time: '2026-01-01T12:00:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    };
+    await new Promise((resolve, reject) => {
+      const request = db.transaction('trips', 'readwrite').objectStore('trips').put(legacyTrip);
+      request.onsuccess = resolve;
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+
+    const trips = await localTripRepository.listAll();
+    const stored = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records.get(legacyTrip.id);
+
+    expect(trips).toContainEqual(expect.objectContaining(legacyTrip));
+    expect(stored.encrypted_payload).toMatchObject({ encrypted: true });
+    expect(JSON.stringify(stored)).not.toContain('43.65');
+    expect(JSON.stringify(stored)).not.toContain('-79.38');
+  });
+
+  it('explicitly migrates legacy plaintext trip storage during startup', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const db = await new Promise((resolve, reject) => {
+      const request = fakeIndexedDb.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore('trips', { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const legacyTrip = {
+      id: 'startup-migration-trip',
+      status: 'completed',
+      start_time: '2026-01-01T12:00:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    };
+    await new Promise((resolve, reject) => {
+      const request = db.transaction('trips', 'readwrite').objectStore('trips').put(legacyTrip);
+      request.onsuccess = resolve;
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+
+    const result = await migrateLegacyTripStorageToEncrypted();
+    const stored = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips').records.get(legacyTrip.id);
+
+    expect(result.indexedDbRecordsMigrated).toBe(1);
+    expect(stored.encrypted_payload).toMatchObject({ encrypted: true });
+    expect(JSON.stringify(stored)).not.toContain('43.65');
+    expect(JSON.stringify(stored)).not.toContain('-79.38');
   });
 
   it('tags legacy completed trip provenance without silently recalculating scores on launch', async () => {

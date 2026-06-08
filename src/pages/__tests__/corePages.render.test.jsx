@@ -491,7 +491,8 @@ describe('core page component renders', () => {
     expect(html).toContain('Export JSON');
     expect(html).toContain('Export CSV');
     expect(html).toContain('Load failures');
-    expect(html).toContain('System entries expire after 3 days');
+    expect(html).toContain('Privacy logging is kept for 24 hours');
+    expect(html).toContain('other system entries expire after 3 days');
   });
 
   it('shows tire-life estimate calibration warning on Vehicles', async () => {

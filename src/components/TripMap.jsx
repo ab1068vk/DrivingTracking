@@ -14,7 +14,13 @@ import {
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
-import { getPrivacyZones, isPointInPrivacyZone, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import {
+  getPrivacyZoneDisplayCircle,
+  getPrivacyZones,
+  isPointInPrivacyZone,
+  maskEventsForPrivacy,
+  maskRoutePointsForPrivacy,
+} from '@/lib/privacyZones';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -78,7 +84,7 @@ const RISK_COLORS = {
 };
 
 const privacyZonePopupHtml = (zone) => (
-  `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.radius_m) || 150)} m radius<br>Route coordinates inside this circle are hidden.`
+  `<b>Privacy zone</b><br>${escapeHtml(zone.label || 'Private place')}<br>${Math.round(Number(zone.source_radius_m) || 150)} m mask radius<br>This display outline is intentionally offset from the private location.`
 );
 
 const CORNERING_HEATMAP_BANDS = [
@@ -433,6 +439,9 @@ function TripMapContent({
     layers.clearLayers();
 
     const privacySettings = localSettings.get();
+    const displayPrivacyZones = privacySettings.show_privacy_circles === true
+      ? getPrivacyZones(privacySettings).map((zone) => getPrivacyZoneDisplayCircle(zone)).filter(Boolean)
+      : [];
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
@@ -465,10 +474,9 @@ function TripMapContent({
     const safeCurrentLocation = currentLocation && !isPrivatePoint(currentLocation) ? currentLocation : null;
     const safeParkedLocation = parkedLocation && !isPrivatePoint(parkedLocation) ? parkedLocation : null;
     const drawPrivacyZones = (bounds = null) => {
-      visiblePrivacyZones.forEach((zone) => {
-        const radius = Math.max(50, Math.min(1000, Number(zone.radius_m) || 150));
+      displayPrivacyZones.forEach((zone) => {
         const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
-          radius,
+          radius: zone.radius_m,
           color: '#2563eb',
           fillColor: '#3b82f6',
           fillOpacity: 0.08,
@@ -673,7 +681,7 @@ function TripMapContent({
       window.L.marker(latLngs[latLngs.length - 1], { icon: endIcon })
         .bindPopup(endedStopped ? '<b>Parked / trip ended</b>' : '<b>End</b>')
         .addTo(layers);
-    } else if (visiblePrivacyZones.length > 0) {
+    } else if (displayPrivacyZones.length > 0) {
       const bounds = window.L.latLngBounds([]);
       drawPrivacyZones(bounds);
       lastBoundsRef.current = bounds;
@@ -930,6 +938,7 @@ function OfflineRoutePreview({
   className = '',
 }) {
   const settings = localSettings.get();
+  const showPrivacyCircles = settings.show_privacy_circles === true;
   const routeSets = Array.isArray(routes)
     ? routes
     : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
@@ -941,14 +950,8 @@ function OfflineRoutePreview({
     ),
   })).filter((route) => route.route_points.length > 1);
   const allPoints = maskedRoutes.flatMap((route) => route.route_points);
-  const visiblePrivacyZones = getPrivacyZones(settings);
-  const validPrivacyZones = visiblePrivacyZones
-    .map((zone) => ({
-      ...zone,
-      lat: Number(zone.lat),
-      lng: Number(zone.lng),
-      radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
-    }))
+  const validPrivacyZones = (showPrivacyCircles ? getPrivacyZones(settings) : [])
+    .map((zone) => getPrivacyZoneDisplayCircle(zone))
     .filter((zone) => Number.isFinite(zone.lat) && Number.isFinite(zone.lng));
   const zoneBounds = validPrivacyZones.flatMap((zone) => {
     const latDelta = zone.radius_m / 111320;
