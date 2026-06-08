@@ -23,6 +23,8 @@ const PHONE_PATTERN = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}\b
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/g;
 const TOKEN_PAIR_PATTERN = /\b(access_token|refresh_token|id_token|token|password|secret|code)=([^&\s]+)/gi;
 const PRIVACY_LOG_METADATA_KEY = /^(label|zone_id|zone_label|privacy_zone_id|privacy_zone_label|radius_m|source_radius_m|zone_radius_m|privacy_radius_m|privacy_zone_radius_m)$/i;
+const PRIVACY_LOG_COLLECTION_KEY = /^(privacy_zone|privacy_zones)$/i;
+const PRIVACY_OPERATION_PATTERN = /(^|_)privacy(_|$)|privacy_zone|privacy_zones|osrm_consent_invalidated/i;
 
 const safeDecode = (value) => {
   try {
@@ -86,7 +88,7 @@ export function getPrivacyLogRetentionMs() {
 }
 
 const retentionMsForEvent = (event) => (
-  event?.category === 'privacy'
+  isPrivacySensitiveLog(event)
     ? getPrivacyLogRetentionMs()
     : SYSTEM_LOG_RETENTION_MS
 );
@@ -224,11 +226,27 @@ const stripPrivacyLogMetadata = (value) => {
   if (Array.isArray(value)) return value.map(stripPrivacyLogMetadata);
   if (!value || typeof value !== 'object') return value;
   return Object.entries(value).reduce((acc, [key, item]) => {
-    if (PRIVACY_LOG_METADATA_KEY.test(key)) return acc;
+    if (PRIVACY_LOG_METADATA_KEY.test(key) || PRIVACY_LOG_COLLECTION_KEY.test(key)) return acc;
     acc[key] = stripPrivacyLogMetadata(item);
     return acc;
   }, {});
 };
+
+const containsPrivacyLogMetadata = (value) => {
+  if (Array.isArray(value)) return value.some(containsPrivacyLogMetadata);
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value).some(([key, item]) => (
+    PRIVACY_LOG_METADATA_KEY.test(key) ||
+    PRIVACY_LOG_COLLECTION_KEY.test(key) ||
+    containsPrivacyLogMetadata(item)
+  ));
+};
+
+const isPrivacySensitiveLog = (event = {}) => (
+  event?.category === 'privacy' ||
+  PRIVACY_OPERATION_PATTERN.test(String(event?.operation || event?.type || '')) ||
+  containsPrivacyLogMetadata(event?.details)
+);
 
 const flushPendingLogs = () => {
   flushTimer = null;
@@ -246,7 +264,8 @@ const scheduleFlush = () => {
 
 export function recordSystemLog(event = {}) {
   const category = event.category || 'app';
-  if (category === 'privacy' && getPrivacyLogRetentionMs() <= 0) {
+  const privacySensitive = isPrivacySensitiveLog({ ...event, category });
+  if (privacySensitive && getPrivacyLogRetentionMs() <= 0) {
     writeStoredLogs(readStoredLogs());
     return null;
   }
@@ -262,7 +281,7 @@ export function recordSystemLog(event = {}) {
     title: event.title || event.operation || 'App event',
     message: event.message || event.detail || '',
     page: event.page || (typeof window !== 'undefined' ? window.location?.pathname : ''),
-    details: category === 'privacy'
+    details: privacySensitive
       ? stripPrivacyLogMetadata(sanitizedDetails)
       : sanitizedDetails,
   };

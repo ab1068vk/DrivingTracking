@@ -30,11 +30,12 @@ import {
  * v5: privacy-safe zone metadata and hardened import sanitization.
  * v6: legacy lane_change events are relabelled as heading_deviation_legacy.
  * v7: local post-trip calibration labels and survey markers are preserved.
+ * v8: privacy zone cell hashes are omitted from backups; zones must be re-entered after restore.
  *
  * Every import is migrated one version at a time before it is sanitized and
  * merged. Coordinates omitted for privacy zones are intentionally not restored.
  */
-export const BACKUP_VERSION = 7;
+export const BACKUP_VERSION = 8;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage backup that is 50 MB or smaller.';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
@@ -517,6 +518,8 @@ export function buildDriveSenseBackup({
     privacy_zones: getPrivacyZones(settings).map((zone) => ({
       id: zone.id,
       label: zone.label,
+      radius_m: zone.radius_m,
+      exclude_from_osrm: zone.exclude_from_osrm !== false,
       masked_for_privacy: true,
     })),
   };

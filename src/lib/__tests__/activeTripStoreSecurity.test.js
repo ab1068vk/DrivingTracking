@@ -98,4 +98,41 @@ describe('activeTripStore encryption', () => {
     expect(stored).not.toContain('43.65');
     expect(stored).not.toContain('-79.38');
   });
+
+  it('redacts private route arrays passed directly to active trip set', async () => {
+    const values = new Map();
+    vi.stubGlobal('indexedDB', undefined);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+    localSettings.set({
+      ...localSettings.get(),
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 150 }],
+    });
+
+    activeTripStore.set({
+      id: 'active-trip-direct-set',
+      route_points: [{ lat: 43.65, lng: -79.38, speed_kmh: 9 }],
+      driving_events: [{ type: 'harsh_brake', lat: 43.65, lng: -79.38 }],
+    });
+    await activeTripStore.flush();
+
+    const storedTrip = activeTripStore.get();
+    expect(storedTrip.route_points[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_live_redacted: true,
+      privacy_zone_id: 'home',
+    });
+    expect(storedTrip.driving_events[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_event_redacted: true,
+      privacy_zone_id: 'home',
+    });
+    expect(values.get('drivesense_active_trip')).not.toContain('43.65');
+    expect(values.get('drivesense_active_trip')).not.toContain('-79.38');
+  });
 });

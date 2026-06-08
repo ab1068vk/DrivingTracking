@@ -1878,7 +1878,7 @@ describe('tripEngine', () => {
     expect(csv).toContain('gb');
   });
 
-  it('adds export noise to privacy boundary points in CSV route JSON', () => {
+  it('replaces privacy boundary points with opaque CSV export placeholders', () => {
     const parseCsvLine = (line) => {
       const cells = [];
       let value = '';
@@ -1919,17 +1919,19 @@ describe('tripEngine', () => {
       const headers = parseCsvLine(lines[0]);
       const values = parseCsvLine(lines[2]);
       const exportedRoute = JSON.parse(values[headers.indexOf('Route Points JSON')]);
-      const exportedBoundary = exportedRoute.find((routePoint) => routePoint.privacy_boundary);
-      const noiseM = haversineDistance(
-        exactBoundary.lat,
-        exactBoundary.lng,
-        exportedBoundary.lat,
-        exportedBoundary.lng
-      ) * 1000;
+      const exportedPlaceholder = exportedRoute.find((routePoint) => routePoint.privacy_export_placeholder);
 
-      expect(exportedBoundary.export_noised_for_privacy).toBe(true);
-      expect(noiseM).toBeGreaterThanOrEqual(10);
-      expect(noiseM).toBeLessThanOrEqual(35.5);
+      expect(exactBoundary.lat).not.toBeNull();
+      expect(exportedRoute.some((routePoint) => routePoint.privacy_boundary)).toBe(false);
+      expect(exportedPlaceholder).toMatchObject({
+        lat: null,
+        lng: null,
+        privacy_gap: true,
+        masked_for_privacy: true,
+        privacy_export_placeholder: true,
+        privacy_zone_id: 'home',
+      });
+      expect(JSON.stringify(exportedRoute)).not.toContain(String(exactBoundary.lat));
     } finally {
       localSettings.update({ privacy_zones: previousZones || [] });
     }

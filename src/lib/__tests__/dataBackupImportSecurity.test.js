@@ -394,13 +394,43 @@ describe('backup schema migrations', () => {
     expect(parsed.trips[0].heading_deviation_legacy_count).toBe(1);
   });
 
-  it('migrates v6 content to v7 with empty calibration payload', () => {
+  it('migrates v6 content to the current schema with empty calibration payload', () => {
     const v6 = { app: 'Road Sage', version: 6, trips: [{ id: 'trip-v6', notes: 'kept' }] };
     expect(migrateBackup(v6, 6)).toEqual({
       ...v6,
       version: BACKUP_VERSION,
       calibration: { labels: [], survey_markers: {} },
     });
+  });
+
+  it('migrates v7 backups to the current privacy-safe backup schema', () => {
+    const parsed = parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: 7,
+      vehicles: [],
+      trips: [{ id: 'trip-v7', status: 'completed' }],
+      settings: {
+        privacy_zones: [{
+          id: 'home',
+          label: 'Home',
+          radius_m: 100,
+          privacy_cell_hashes: ['pzc_legacy'],
+          masked_for_privacy: true,
+        }],
+      },
+    }));
+
+    expect(parsed.version).toBe(BACKUP_VERSION);
+    expect(parsed.sourceVersion).toBe(7);
+    expect(parsed.trips[0].id).toBe('trip-v7');
+  });
+
+  it('rejects backups newer than the current schema', () => {
+    expect(() => parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: BACKUP_VERSION + 1,
+      trips: [],
+    }))).toThrow('newer than this app supports');
   });
 
   it('treats a versionless backup as v1', () => {
@@ -492,7 +522,7 @@ describe('backup calibration labels', () => {
 });
 
 describe('backup export privacy', () => {
-  it('jitters exported privacy boundaries and strips zone radius metadata', () => {
+  it('replaces exported privacy boundaries with opaque placeholders', () => {
     const settings = {
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
     };
@@ -508,16 +538,27 @@ describe('backup export privacy', () => {
     const exactBoundary = maskTripForPrivacy(trip, settings).route_points.find((point) => point.privacy_boundary);
 
     const backup = buildDriveSenseBackup({ trips: [trip], vehicles: [], settings });
-    const exportedBoundary = backup.trips[0].route_points.find((point) => point.privacy_boundary);
+    const exportedPlaceholder = backup.trips[0].route_points.find((point) => point.privacy_export_placeholder);
 
-    expect(exportedBoundary.export_noised_for_privacy).toBe(true);
-    expect(exportedBoundary.lat).not.toBeCloseTo(exactBoundary.lat, 6);
-    expect(exportedBoundary.lng).not.toBeCloseTo(exactBoundary.lng, 6);
-    expect(exportedBoundary.radius_m).toBeUndefined();
-    expect(backup.settings.privacy_zones[0]).toEqual({
+    expect(backup.trips[0].route_points.some((point) => point.privacy_boundary)).toBe(false);
+    expect(exportedPlaceholder).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+      privacy_gap: true,
+      privacy_export_placeholder: true,
+      privacy_zone_id: 'home',
+    });
+    expect(JSON.stringify(backup.trips[0].route_points)).not.toContain(String(exactBoundary.lat));
+    expect(exportedPlaceholder.radius_m).toBeUndefined();
+    expect(backup.settings.privacy_zones[0]).toMatchObject({
       id: 'home',
       label: 'Home',
+      radius_m: 100,
+      exclude_from_osrm: true,
       masked_for_privacy: true,
     });
+    expect(backup.settings.privacy_zones[0].privacy_cell_hashes).toBeUndefined();
+    expect(JSON.stringify(backup.settings.privacy_zones)).not.toContain('privacy_cell_hashes');
   });
 });

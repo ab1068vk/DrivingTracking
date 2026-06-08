@@ -203,6 +203,26 @@ describe('open-source trip context', () => {
     expect(safe.every((point) => !point.masked_for_privacy || point.privacy_gap)).toBe(true);
   });
 
+  it('allows a zone to opt into OSRM exposure explicitly', () => {
+    const route = [
+      { lat: 43.648, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:10.000Z' },
+      { lat: 43.652, lng: -79.38, timestamp: '2026-01-01T12:00:20.000Z' },
+    ];
+    const safe = buildPrivacySafeOsrmRoute(route, {
+      privacy_zones: [{
+        id: 'home',
+        label: 'Home',
+        lat: 43.65,
+        lng: -79.38,
+        radius_m: 100,
+        exclude_from_osrm: false,
+      }],
+    });
+
+    expect(safe).toBe(route);
+  });
+
   it('produces no OSRM coordinates when every route point is private', () => {
     const route = [
       { lat: 43.65, lng: -79.38 },

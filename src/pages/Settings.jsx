@@ -76,6 +76,9 @@ import {
   findOverlappingZones,
   getPrivacyZones,
   loadPrivacyZonesFromStorage,
+  mergePrivacyZones,
+  NATIVE_PRIVACY_SYNC_FAILED_EVENT,
+  NATIVE_PRIVACY_SYNC_STATUS_FAILED,
   purgeGpsWithinPrivacyZone,
   removePrivacyZone,
   tripIdsAffectedByPrivacyZone,
@@ -467,6 +470,16 @@ export default function Settings() {
     return updated;
   };
 
+  const showPrivacyNativeSyncFailure = (error, title = 'Privacy zone not saved') => {
+    setCfg(localSettings.get());
+    toast({
+      title,
+      description: error?.message || 'Android privacy-zone sync failed. Background auto tracking was turned off until zones sync.',
+      variant: 'destructive',
+      duration: 9000,
+    });
+  };
+
   const legalNoticeStatus = useMemo(() => {
     const acceptedVersion = Number(cfg.legal_notice_ack_version) || 0;
     const acceptedDate = formatLegalNoticeDate(cfg.legal_notice_acknowledged_at);
@@ -561,6 +574,21 @@ export default function Settings() {
     window.addEventListener(RESCORE_PROGRESS_EVENT, onProgress);
     return () => window.removeEventListener(RESCORE_PROGRESS_EVENT, onProgress);
   }, [qc]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onNativePrivacySyncFailed = (event) => {
+      setCfg(localSettings.get());
+      toast({
+        title: 'Android privacy guard not synced',
+        description: event?.detail?.message || 'Background auto tracking was turned off until Android receives the privacy-zone guard.',
+        variant: 'destructive',
+        duration: 9000,
+      });
+    };
+    window.addEventListener(NATIVE_PRIVACY_SYNC_FAILED_EVENT, onNativePrivacySyncFailed);
+    return () => window.removeEventListener(NATIVE_PRIVACY_SYNC_FAILED_EVENT, onNativePrivacySyncFailed);
+  }, []);
 
   const dismissHeadingEventMigrationNote = async () => {
     await setJson(TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY, true);
@@ -970,6 +998,16 @@ export default function Settings() {
     }
 
     if (mode === 'background_auto') {
+      if (cfg.privacy_zones_native_sync_status === NATIVE_PRIVACY_SYNC_STATUS_FAILED) {
+        toast({
+          title: 'Background tracking blocked',
+          description: 'Re-save a privacy zone so Android receives the native privacy guard before enabling background auto tracking.',
+          variant: 'destructive',
+          duration: 9000,
+        });
+        return;
+      }
+
       const backgroundGranted = await requestBackgroundLocationPermission();
       if (!backgroundGranted) {
         toast({
@@ -1111,12 +1149,16 @@ export default function Settings() {
       lat,
       lng,
     };
-    const updated = await upsertPrivacyZone(zoneToSave, cfg);
-    void invalidateRouteRiskIndex();
-    setCfg(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    void enqueuePrivacyZoneRescore('privacy_zone_added', zoneToSave);
+    try {
+      const updated = await upsertPrivacyZone(zoneToSave, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      void enqueuePrivacyZoneRescore('privacy_zone_added', zoneToSave);
+    } catch (error) {
+      showPrivacyNativeSyncFailure(error);
+    }
   };
 
   const addCurrentPrivacyZone = async () => {
@@ -1200,12 +1242,12 @@ export default function Settings() {
       }, {
         category: 'privacy',
         severity: privacyDeletePurge ? 'warn' : 'info',
-        title: privacyDeletePurge ? 'Privacy zone deleted and GPS purged' : 'Privacy zone deleted',
+        title: privacyDeletePurge ? 'Privacy zone deleted and private GPS erased' : 'Privacy zone deleted',
       });
       toast({
-        title: privacyDeletePurge ? 'Privacy zone deleted and GPS purged' : 'Privacy zone deleted',
+        title: privacyDeletePurge ? 'Privacy zone deleted and private GPS erased' : 'Privacy zone deleted',
         description: privacyDeletePurge
-          ? `Removed ${purgeResult?.pointsPurged || 0} route point(s) and ${purgeResult?.eventsPurged || 0} event(s) from ${purgeResult?.tripsAffected || 0} trip(s).`
+          ? `Erased ${purgeResult?.pointsPurged || 0} private route point(s) and ${purgeResult?.eventsPurged || 0} private event(s) from ${purgeResult?.tripsAffected || 0} trip(s).`
           : 'Historical routes through this area may now be visible.',
         variant: privacyDeletePurge ? 'destructive' : undefined,
       });
@@ -1238,18 +1280,89 @@ export default function Settings() {
 
     const radius = validation.radius;
     const updatedZone = { ...zone, radius_m: radius };
-    const updated = await upsertPrivacyZone(updatedZone, cfg);
+    try {
+      const updated = await upsertPrivacyZone(updatedZone, cfg);
+      void invalidateRouteRiskIndex();
+      setCfg(updated);
+      setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
+      setPrivacyZoneRadiusErrors((errors) => {
+        const next = { ...errors };
+        delete next[zone.id];
+        return next;
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      void enqueuePrivacyZoneRescore('privacy_zone_updated', [zone, updatedZone]);
+    } catch (error) {
+      showPrivacyNativeSyncFailure(error, 'Privacy zone radius not saved');
+    }
+  };
+
+  const updatePrivacyZoneOsrmExclusion = async (zone, excluded) => {
+    const updatedZone = {
+      ...zone,
+      exclude_from_osrm: excluded === true,
+    };
+    try {
+      const updated = await upsertPrivacyZone(updatedZone, cfg);
+      setCfg(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      toast({
+        title: excluded ? 'Zone excluded from OSRM' : 'Zone allowed for OSRM',
+        description: excluded
+          ? `${zone.label} will be removed from route-snapping requests.`
+          : `${zone.label} may be sent to your configured OSRM endpoint after consent review.`,
+        variant: excluded ? undefined : 'destructive',
+      });
+    } catch (error) {
+      showPrivacyNativeSyncFailure(error, 'Privacy zone OSRM setting not saved');
+    }
+  };
+
+  const mergeOverlappingPrivacyZones = async (pair) => {
+    const mergedZone = mergePrivacyZones(pair.a, pair.b);
+    if (!mergedZone) {
+      toast({
+        title: 'Privacy zones not merged',
+        description: 'These zones do not have enough saved geometry to merge safely.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (mergedZone.radius_m > PRIVACY_RADIUS_MAX_M) {
+      toast({
+        title: 'Privacy zones not merged',
+        description: `The merged radius would be ${Math.round(mergedZone.radius_m)} m, above the ${PRIVACY_RADIUS_MAX_M} m maximum.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    let updated;
+    try {
+      const withMerged = await upsertPrivacyZone(mergedZone, cfg);
+      const withoutA = await removePrivacyZone(pair.a.id, withMerged);
+      updated = await removePrivacyZone(pair.b.id, withoutA);
+    } catch (error) {
+      showPrivacyNativeSyncFailure(error, 'Privacy zones not merged');
+      return;
+    }
     void invalidateRouteRiskIndex();
     setCfg(updated);
-    setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
-    setPrivacyZoneRadiusErrors((errors) => {
-      const next = { ...errors };
-      delete next[zone.id];
+    setPrivacyRadiusDrafts((drafts) => {
+      const next = { ...drafts, [mergedZone.id]: String(Math.round(mergedZone.radius_m)) };
+      delete next[pair.a.id];
+      delete next[pair.b.id];
       return next;
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
-    void enqueuePrivacyZoneRescore('privacy_zone_updated', [zone, updatedZone]);
+    void enqueuePrivacyZoneRescore('privacy_zone_updated', [pair.a, pair.b, mergedZone]);
+    toast({
+      title: 'Privacy zones merged',
+      description: `"${pair.a.label}" and "${pair.b.label}" are now one ${Math.round(mergedZone.radius_m)} m zone.`,
+    });
   };
 
   useEffect(() => {
@@ -1612,6 +1725,17 @@ export default function Settings() {
   const autoRescoreVisible = scoreMigrationSummary.auto_rescore_recommended || rescoreProgress?.reason === 'auto_provenance';
   const privacyRescoreActive = isPrivacyRescoreReason(rescoreProgress?.reason) &&
     (rescoreProgress?.status === 'pending' || rescoreProgress?.status === 'running');
+  const privacyNativeSyncFailed = cfg.privacy_zones_native_sync_status === NATIVE_PRIVACY_SYNC_STATUS_FAILED;
+  const osrmSharedPrivacyZones = privacyZones.filter((zone) => zone.exclude_from_osrm === false);
+  const privacyHealthStatus = privacyNativeSyncFailed
+    ? 'Android sync blocked'
+    : privacyRescoreActive
+    ? `${Math.max(0, rescoreTotal - rescoreCompleted)} trip${Math.max(0, rescoreTotal - rescoreCompleted) === 1 ? '' : 's'} re-scoring`
+    : privacyZoneOverlaps.length
+      ? `${privacyZoneOverlaps.length} overlap${privacyZoneOverlaps.length === 1 ? '' : 's'} to review`
+      : osrmSharedPrivacyZones.length
+        ? `${osrmSharedPrivacyZones.length} OSRM-shared zone${osrmSharedPrivacyZones.length === 1 ? '' : 's'}`
+        : 'Protected';
 
   return (
     <div className="space-y-4 pb-6">
@@ -3394,6 +3518,37 @@ export default function Settings() {
             <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
               Radius can be 50-1000 m. Routes and events inside the zone stay hidden from maps and exports. Optional map outlines are offset and expanded so they never pinpoint the saved center.
             </div>
+            <div className="mt-2 rounded-xl border border-border bg-background/60 px-3 py-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-semibold">Privacy Health</div>
+                  <div className="mt-0.5 text-muted-foreground">
+                    {privacyZones.length} zone{privacyZones.length === 1 ? '' : 's'} - {osrmSharedPrivacyZones.length} allowed for OSRM - {privacyZoneOverlaps.length} overlap{privacyZoneOverlaps.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <span className={`rounded-full px-2 py-1 font-semibold ${
+                  privacyNativeSyncFailed
+                    ? 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-100'
+                    : privacyRescoreActive
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-100'
+                    : privacyZoneOverlaps.length || osrmSharedPrivacyZones.length
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-100'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100'
+                }`}>
+                  {privacyHealthStatus}
+                </span>
+              </div>
+              {privacyNativeSyncFailed && (
+                <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+                  Android did not receive the latest privacy zones, so background auto tracking is off until zones sync successfully.
+                </div>
+              )}
+              {privacyRescoreActive && (
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-blue-100 dark:bg-blue-900/50">
+                  <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${rescoreProgressPct}%` }} />
+                </div>
+              )}
+            </div>
             {privacyZoneOverlaps.length > 0 && (
               <div className="mt-2 space-y-2">
                 {privacyZoneOverlaps.map((pair) => (
@@ -3409,6 +3564,13 @@ export default function Settings() {
                         Points covered by both zones use the zone they are deepest inside. Consider merging them or adjusting radii.
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => mergeOverlappingPrivacyZones(pair)}
+                      className="mt-2 rounded-lg border border-amber-300 bg-white/70 px-2.5 py-1.5 font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+                    >
+                      Merge zones
+                    </button>
                   </div>
                 ))}
               </div>
@@ -3449,9 +3611,23 @@ export default function Settings() {
                   <div key={zone.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-card px-3 py-2 text-xs">
                     <div className="min-w-0">
                       <div className="truncate font-semibold">{zone.label}</div>
-                      <div className="text-muted-foreground">{Math.round(zone.radius_m)} m mask radius</div>
+                      <div className="text-muted-foreground">
+                        {Math.round(zone.radius_m)} m mask radius - {zone.exclude_from_osrm === false ? 'allowed for OSRM' : 'excluded from OSRM'}
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      <label className={`flex h-8 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-semibold ${
+                        zone.exclude_from_osrm === false
+                          ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
+                          : 'border-border bg-background text-muted-foreground'
+                      }`}>
+                        <Checkbox
+                          checked={zone.exclude_from_osrm !== false}
+                          onCheckedChange={(checked) => updatePrivacyZoneOsrmExclusion(zone, checked === true)}
+                          aria-label={`Exclude ${zone.label} from OSRM`}
+                        />
+                        Exclude
+                      </label>
                       <input
                         type="number"
                         inputMode="numeric"
@@ -3568,7 +3744,7 @@ export default function Settings() {
                 <div>
                   <div className="font-semibold">OSRM consent needs review</div>
                   <div className="mt-1">
-                    {cfg.osrm_consent_invalidated_zone_label || 'A privacy zone'} changed. OSRM is paused until you review the endpoint and consent again. Privacy-zone interiors are excluded from every OSRM request.
+                    {cfg.osrm_consent_invalidated_zone_label || 'A privacy zone'} changed. OSRM is paused until you review the endpoint and consent again. Zones marked excluded are removed from OSRM requests.
                   </div>
                 </div>
               </div>
@@ -3618,7 +3794,7 @@ export default function Settings() {
           <DialogHeader>
             <DialogTitle>Delete "{privacyDeleteZone?.label || 'privacy zone'}"?</DialogTitle>
             <DialogDescription>
-              Removing this privacy zone can make older routes through this area visible again.
+              Choose what should happen to stored trips that passed through this private area.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -3626,9 +3802,9 @@ export default function Settings() {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
-                  <div className="font-semibold">Historical route visibility may change</div>
+                  <div className="font-semibold">Option 1: Delete Zone Only</div>
                   <div className="mt-1">
-                    All stored routes and exports through this area will be checked without this zone.
+                    This removes the privacy mask but keeps stored GPS inside this area. Older maps, playback, and exports may show this place again.
                     {privacyDeleteImpact.loading
                       ? ' Counting affected trips...'
                       : privacyDeleteImpact.tripCount != null
@@ -3647,15 +3823,15 @@ export default function Settings() {
                 aria-label="Permanently delete raw GPS within this zone"
               />
               <span>
-                <span className="font-semibold">Permanently delete raw GPS within this zone radius</span>
+                <span className="font-semibold">Option 2: Erase Private GPS First</span>
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  Route points and event coordinates inside the zone will be removed before the zone is deleted.
+                  Before deleting the zone, permanently remove stored route points and driving-event coordinates inside this radius. Trips keep privacy gap placeholders instead of the hidden location.
                 </span>
               </span>
             </label>
             {privacyDeletePurge && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-                This cannot be undone. Affected trips will keep privacy placeholders where raw GPS was purged and will be marked for rescoring.
+                Use this if you do not want old trips to reveal this place after the zone is removed. This cannot be undone, and affected trips will be marked for rescoring.
               </div>
             )}
           </div>
@@ -3681,8 +3857,8 @@ export default function Settings() {
               {privacyDeleteBusy
                 ? 'Deleting...'
                 : privacyDeletePurge
-                  ? 'Delete Zone & Purge GPS'
-                  : 'Delete Zone'}
+                  ? 'Erase GPS & Delete Zone'
+                  : 'Delete Zone Only'}
             </button>
           </DialogFooter>
         </DialogContent>

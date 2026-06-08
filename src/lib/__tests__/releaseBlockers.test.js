@@ -151,7 +151,7 @@ describe('release blocker regressions', () => {
       tracking_mode: 'injected_value',
       phone_use_detection_enabled: false,
       injected_key: 'nope',
-      privacy_zones: [{ id: 'home', label: 'Home', radius_m: 5000, masked_for_privacy: true }],
+      privacy_zones: [{ id: 'home', label: 'Home', radius_m: 5000, privacy_cell_hashes: ['pzc_legacy'], masked_for_privacy: true }],
     });
 
     expect(settings.threshold_harsh_brake_ms2).toBeGreaterThan(0);
@@ -165,6 +165,7 @@ describe('release blocker regressions', () => {
       masked_for_privacy: true,
     });
     expect(settings.privacy_zones[0].lat).toBeUndefined();
+    expect(settings.privacy_zones[0].privacy_cell_hashes).toBeUndefined();
   });
 
   it('validates settings patches before saving unsafe thresholds', () => {
@@ -551,6 +552,40 @@ describe('release blocker regressions', () => {
         hidden_event_count: 3,
       },
     });
+  });
+
+  it('applies privacy log retention and metadata stripping to privacy-sensitive OSRM logs', () => {
+    const values = new Map([
+      ['drivesense_settings', JSON.stringify({ privacy_log_retention_hours: 24 })],
+      ['drivesense_system_logs_v1', JSON.stringify([])],
+    ]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const event = recordSystemEvent('osrm_consent_invalidated', {
+      reason: 'privacy_zone_changed',
+      zone_id: 'home',
+      zone_label: 'Home',
+      radius_m: 150,
+      privacy_zones: [{ label: 'Home', radius_m: 150 }],
+      hidden_point_count: 12,
+    }, { category: 'osrm', severity: 'warn', title: 'OSRM consent needs review' });
+
+    expect(event.category).toBe('osrm');
+    expect(event.details).toEqual({
+      reason: 'privacy_zone_changed',
+      hidden_point_count: 12,
+    });
+
+    const now = new Date('2026-06-06T12:00:00.000Z').getTime();
+    const oldOsrmPrivacyLog = {
+      ...event,
+      timestamp: new Date(now - (24 * 60 * 60 * 1000) - 1).toISOString(),
+    };
+    expect(pruneExpiredSystemLogs([oldOsrmPrivacyLog], now)).toEqual([]);
   });
 
   it('does not dispatch system-log update events when reading and pruning logs', () => {

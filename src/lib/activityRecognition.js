@@ -14,6 +14,7 @@ export const AUTO_START_SPEED_KMH = 5;
 export const AUTO_START_IN_VEHICLE_SECONDS = 2;
 export const AUTO_START_GPS_FALLBACK_SECONDS = 2;
 export const WALKING_SPEED_CUTOFF_KMH = 10;
+const SETTINGS_KEY = 'drivesense_settings';
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -24,6 +25,16 @@ export const ACTIVITY_TYPES = {
   ON_BICYCLE: 'on_bicycle',
   CYCLING: 'cycling',
   UNKNOWN: 'unknown',
+};
+
+const nativePrivacyZoneSyncBlocked = () => {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    return settings?.privacy_zones_native_sync_status === 'failed';
+  } catch {
+    return false;
+  }
 };
 
 export async function startActivityRecognition(onActivity, onError) {
@@ -66,6 +77,18 @@ export async function startActivityRecognition(onActivity, onError) {
 
 export async function startNativeAutoTracking() {
   if (!isAndroid()) return false;
+  if (nativePrivacyZoneSyncBlocked()) {
+    recordSystemEvent('android_native_auto_tracking_blocked_privacy_sync', {
+      reason: 'privacy_zones_native_sync_failed',
+    }, {
+      category: 'privacy',
+      source: 'android',
+      severity: 'warn',
+      title: 'Native auto tracking blocked',
+      message: 'Re-save privacy zones before enabling Android background auto tracking.',
+    });
+    throw new Error('Android privacy-zone sync is not verified. Re-save privacy zones before enabling background auto tracking.');
+  }
   try {
     const result = await ActivityRecognition.startNativeAutoTracking();
     const enabled = result?.enabled === true;

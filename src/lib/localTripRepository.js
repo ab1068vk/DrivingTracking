@@ -13,7 +13,11 @@ import {
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
 import { localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
-import { getPrivacyZones, maskEventsForPrivacy } from '@/lib/privacyZones';
+import {
+  getPrivacyZones,
+  maskEventsForPrivacy,
+  sanitizeTripForPrivacyStorageAsync,
+} from '@/lib/privacyZones';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -206,12 +210,15 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
 
 const tripEncryptionContext = (id) => `trip:${String(id)}`;
 
-const encodeTripRecord = async (trip) => ({
-  id: trip.id,
-  start_time: trip.start_time || '',
-  status: trip.status || '',
-  encrypted_payload: await encryptSensitiveValue(trip, tripEncryptionContext(trip.id)),
-});
+const encodeTripRecord = async (trip) => {
+  const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
+  return {
+    id: storageTrip.id,
+    start_time: storageTrip.start_time || '',
+    status: storageTrip.status || '',
+    encrypted_payload: await encryptSensitiveValue(storageTrip, tripEncryptionContext(storageTrip.id)),
+  };
+};
 
 const decodeTripRecord = async (record) => {
   if (!isEncryptedPayload(record?.encrypted_payload)) return record;
@@ -219,6 +226,9 @@ const decodeTripRecord = async (record) => {
 };
 
 const decodeTripRecords = (records = []) => Promise.all(records.map(decodeTripRecord));
+const sanitizeTripsForPrivacyStorage = (trips = []) => (
+  Promise.all((Array.isArray(trips) ? trips : []).map((trip) => sanitizeTripForPrivacyStorageAsync(trip)))
+);
 
 const readTripsFromDb = async (dbName) => {
   const db = await openDbByName(dbName);
@@ -317,10 +327,17 @@ const getAllTrips = async () => {
     db.close();
     const trips = await decodeTripRecords(records);
     const legacyTrips = records.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
-    if (legacyTrips.length) await writeTripsToDb(DB_NAME, legacyTrips);
-    return trips;
+    const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
+    const sanitizedChanged = JSON.stringify(sanitizedTrips) !== JSON.stringify(trips);
+    if (legacyTrips.length || sanitizedChanged) await writeTripsToDb(DB_NAME, sanitizedTrips);
+    return sanitizedTrips;
   } catch {
-    return getEncryptedJson(TRIPS_KEY, []);
+    const trips = await getEncryptedJson(TRIPS_KEY, []);
+    const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
+    if (JSON.stringify(sanitizedTrips) !== JSON.stringify(trips)) {
+      await setEncryptedJson(TRIPS_KEY, sanitizedTrips);
+    }
+    return sanitizedTrips;
   }
 };
 
@@ -352,7 +369,7 @@ export async function migrateLegacyTripStorageToEncrypted() {
   try {
     const fallbackTrips = await getJson(TRIPS_KEY, null);
     if (Array.isArray(fallbackTrips)) {
-      await setEncryptedJson(TRIPS_KEY, fallbackTrips);
+      await setEncryptedJson(TRIPS_KEY, await sanitizeTripsForPrivacyStorage(fallbackTrips));
       fallbackStoreMigrated = true;
     }
   } catch (error) {
@@ -372,23 +389,25 @@ export async function migrateLegacyTripStorageToEncrypted() {
 }
 
 const putTrip = async (trip) => {
+  const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
   try {
-    const encryptedTrip = await encodeTripRecord(trip);
+    const encryptedTrip = await encodeTripRecord(storageTrip);
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     await idbRequest(tx.objectStore(TRIP_STORE).put(encryptedTrip));
     db.close();
   } catch {
     const trips = await getEncryptedJson(TRIPS_KEY, []);
-    const next = [trip, ...trips.filter((item) => String(item.id) !== String(trip.id))];
+    const next = [storageTrip, ...trips.filter((item) => String(item.id) !== String(storageTrip.id))];
     await setEncryptedJson(TRIPS_KEY, next);
   }
 };
 
 const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
+  const storageTrips = await sanitizeTripsForPrivacyStorage(incomingTrips);
   try {
-    const encryptedTrips = await Promise.all(incomingTrips.map(encodeTripRecord));
+    const encryptedTrips = await Promise.all(storageTrips.map(encodeTripRecord));
     const db = await openDb();
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
@@ -397,9 +416,9 @@ const putTrips = async (incomingTrips) => {
     db.close();
   } catch {
     const trips = await getEncryptedJson(TRIPS_KEY, []);
-    const incomingIds = new Set(incomingTrips.map((trip) => String(trip.id)));
+    const incomingIds = new Set(storageTrips.map((trip) => String(trip.id)));
     const next = [
-      ...incomingTrips,
+      ...storageTrips,
       ...trips.filter((item) => !incomingIds.has(String(item.id))),
     ];
     await setEncryptedJson(TRIPS_KEY, next);
@@ -879,18 +898,20 @@ export const localTripRepository = {
 
   async create(trip) {
     const saved = /** @type {Record<string, any>} */ (withId({ ...trip, created_at: new Date().toISOString() }));
-    await putTrip(saved);
-    if (saved.status === 'completed') await invalidateTripDerivedCaches();
+    const storageSaved = await sanitizeTripForPrivacyStorageAsync(saved);
+    await putTrip(storageSaved);
+    if (storageSaved.status === 'completed') await invalidateTripDerivedCaches();
     await pruneExpiredTrips();
-    return saved;
+    return storageSaved;
   },
 
   async update(id, patch) {
     const current = await this.getById(id);
     const updated = /** @type {Record<string, any>} */ (withId({ ...current, ...patch, id: current.id }));
-    await putTrip(updated);
-    if (updated.status === 'completed') await invalidateTripDerivedCaches();
-    return updated;
+    const storageUpdated = await sanitizeTripForPrivacyStorageAsync(updated);
+    await putTrip(storageUpdated);
+    if (storageUpdated.status === 'completed') await invalidateTripDerivedCaches();
+    return storageUpdated;
   },
 
   async delete(id) {
@@ -901,13 +922,14 @@ export const localTripRepository = {
   async upsertMany(trips = []) {
     const thresholds = buildDrivingThresholds(localSettings.get());
     const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
-    const normalized = trips.map((trip) => {
+    const rescoredTrips = trips.map((trip) => {
       const next = withId({
         ...trip,
         created_at: trip.created_at || trip.start_time || new Date().toISOString(),
       });
       return needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next;
     });
+    const normalized = await sanitizeTripsForPrivacyStorage(rescoredTrips);
     await putTrips(normalized);
     if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
     await pruneExpiredTrips();

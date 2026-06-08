@@ -16,8 +16,31 @@ final class PrivacyZoneChecker {
     private static final String SETTINGS_KEY = "drivesense_settings";
     private static final String PRIVACY_ZONES_CONTEXT = "native:privacy_zones_v1";
     private static final double GUARD_METERS = 50.0d;
+    private static final double DEFAULT_PRIVACY_CELL_SIZE_M = 100.0d;
 
     private PrivacyZoneChecker() {}
+
+    private static final class ZoneReadResult {
+        final JSONArray zones;
+        final boolean failClosed;
+
+        ZoneReadResult(JSONArray zones, boolean failClosed) {
+            this.zones = zones != null ? zones : new JSONArray();
+            this.failClosed = failClosed;
+        }
+    }
+
+    private static final class ZoneParseResult {
+        final JSONArray zones;
+        final boolean present;
+        final boolean failed;
+
+        ZoneParseResult(JSONArray zones, boolean present, boolean failed) {
+            this.zones = zones != null ? zones : new JSONArray();
+            this.present = present;
+            this.failed = failed;
+        }
+    }
 
     static boolean isInsidePrivacyZone(Context context, double lat, double lng) {
         return findPrivacyZone(context, lat, lng) != null;
@@ -26,7 +49,10 @@ final class PrivacyZoneChecker {
     static JSONObject findPrivacyZone(Context context, double lat, double lng) {
         if (!isValidCoordinate(lat, lng)) return null;
 
-        JSONArray zones = getPrivacyZones(context);
+        ZoneReadResult zoneRead = getPrivacyZoneReadResult(context);
+        if (zoneRead.failClosed) return failClosedZone();
+
+        JSONArray zones = zoneRead.zones;
         for (int i = 0; i < zones.length(); i++) {
             JSONObject zone = zones.optJSONObject(i);
             if (zone == null) continue;
@@ -35,6 +61,9 @@ final class PrivacyZoneChecker {
             double zoneLng = firstFinite(zone, "lng", "longitude");
             double zoneRadiusM = firstFinite(zone, "radius_m", "radius");
             if (!isValidCoordinate(zoneLat, zoneLng) || !Double.isFinite(zoneRadiusM) || zoneRadiusM <= 0d) {
+                if (isInsidePrivacyCellZone(lat, lng, zone)) {
+                    return zone;
+                }
                 continue;
             }
 
@@ -103,46 +132,142 @@ final class PrivacyZoneChecker {
         return redactedPoints;
     }
 
-    private static JSONArray getPrivacyZones(Context context) {
-        JSONArray mirroredZones = parseZoneArray(readString(context, CAPACITOR_PREFS, PRIVACY_ZONES_KEY));
-        if (mirroredZones.length() > 0) return mirroredZones;
+    private static ZoneReadResult getPrivacyZoneReadResult(Context context) {
+        ZoneParseResult mirroredZones = parseZoneArray(readString(context, CAPACITOR_PREFS, PRIVACY_ZONES_KEY));
+        if (mirroredZones.zones.length() > 0) return new ZoneReadResult(mirroredZones.zones, false);
+        if (mirroredZones.present && mirroredZones.failed) return failClosedReadResult("Privacy zone mirror unreadable");
 
-        JSONArray legacyMirroredZones = parseZoneArray(readString(context, DRIVE_SENSE_SETTINGS_PREFS, PRIVACY_ZONES_KEY));
-        if (legacyMirroredZones.length() > 0) return legacyMirroredZones;
+        ZoneParseResult legacyMirroredZones = parseZoneArray(readString(context, DRIVE_SENSE_SETTINGS_PREFS, PRIVACY_ZONES_KEY));
+        if (legacyMirroredZones.zones.length() > 0) return new ZoneReadResult(legacyMirroredZones.zones, false);
+        if (legacyMirroredZones.present && legacyMirroredZones.failed) return failClosedReadResult("Legacy privacy zone mirror unreadable");
 
         try {
             String rawSettings = readString(context, CAPACITOR_PREFS, SETTINGS_KEY);
-            if (rawSettings == null || rawSettings.trim().isEmpty()) return new JSONArray();
+            if (rawSettings == null || rawSettings.trim().isEmpty()) {
+                return new ZoneReadResult(new JSONArray(), false);
+            }
             JSONObject settings = new JSONObject(rawSettings);
             JSONArray settingsZones = settings.optJSONArray("privacy_zones");
-            return settingsZones != null ? settingsZones : new JSONArray();
+            if (settingsZones == null || settingsZones.length() == 0) {
+                return new ZoneReadResult(new JSONArray(), false);
+            }
+            if (hasUsableZoneGuard(settingsZones)) {
+                return new ZoneReadResult(settingsZones, false);
+            }
+            return failClosedReadResult("Privacy zones configured without native geometry mirror");
         } catch (Exception error) {
             Log.w(TAG, "Privacy zone settings parse failed", error);
-            return new JSONArray();
+            return failClosedReadResult("Privacy zone settings unreadable");
         }
     }
 
-    private static JSONArray parseZoneArray(String raw) {
-        if (raw == null || raw.trim().isEmpty()) return new JSONArray();
+    private static ZoneParseResult parseZoneArray(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return new ZoneParseResult(new JSONArray(), false, false);
+        }
         try {
             String text = raw.trim();
             if (DriveSensePayloadCrypto.isEncryptedStoredValue(text)) {
-                return new JSONArray(DriveSensePayloadCrypto.decryptStoredValue(text, PRIVACY_ZONES_CONTEXT));
+                return new ZoneParseResult(
+                    new JSONArray(DriveSensePayloadCrypto.decryptStoredValue(text, PRIVACY_ZONES_CONTEXT)),
+                    true,
+                    false
+                );
             }
             if (text.startsWith("{")) {
                 JSONObject payload = new JSONObject(text);
                 if (payload.optBoolean("encrypted", false) && payload.has("ciphertext")) {
-                    return new JSONArray(DriveSensePayloadCrypto.decrypt(
-                        payload.getString("ciphertext"),
-                        PRIVACY_ZONES_CONTEXT
-                    ));
+                    return new ZoneParseResult(
+                        new JSONArray(DriveSensePayloadCrypto.decrypt(
+                            payload.getString("ciphertext"),
+                            PRIVACY_ZONES_CONTEXT
+                        )),
+                        true,
+                        false
+                    );
                 }
             }
-            return new JSONArray(text);
+            return new ZoneParseResult(new JSONArray(text), true, false);
         } catch (Exception error) {
             Log.w(TAG, "Privacy zone mirror parse failed", error);
-            return new JSONArray();
+            return new ZoneParseResult(new JSONArray(), true, true);
         }
+    }
+
+    private static ZoneReadResult failClosedReadResult(String reason) {
+        Log.w(TAG, reason + "; native GPS will be treated as private until zones sync.");
+        return new ZoneReadResult(new JSONArray(), true);
+    }
+
+    private static JSONObject failClosedZone() {
+        JSONObject zone = new JSONObject();
+        try {
+            zone.put("id", "native_privacy_sync_unavailable");
+            zone.put("label", "Private place");
+        } catch (Exception ignored) {}
+        return zone;
+    }
+
+    private static boolean hasUsableZoneGuard(JSONArray zones) {
+        if (zones == null) return false;
+        for (int i = 0; i < zones.length(); i++) {
+            JSONObject zone = zones.optJSONObject(i);
+            if (zone == null) continue;
+            double zoneLat = firstFinite(zone, "lat", "latitude");
+            double zoneLng = firstFinite(zone, "lng", "longitude");
+            double zoneRadiusM = firstFinite(zone, "radius_m", "radius");
+            if (isValidCoordinate(zoneLat, zoneLng) &&
+                Double.isFinite(zoneRadiusM) &&
+                zoneRadiusM > 0d) {
+                return true;
+            }
+            if (hasUsableCellGeometry(zone)) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasUsableCellGeometry(JSONObject zone) {
+        JSONArray hashes = zone.optJSONArray("privacy_cell_hashes");
+        return hashes != null && hashes.length() > 0;
+    }
+
+    private static boolean isInsidePrivacyCellZone(double lat, double lng, JSONObject zone) {
+        JSONArray hashes = zone.optJSONArray("privacy_cell_hashes");
+        if (hashes == null || hashes.length() == 0) return false;
+
+        double cellSizeM = zone.optDouble("privacy_cell_size_m", DEFAULT_PRIVACY_CELL_SIZE_M);
+        if (!Double.isFinite(cellSizeM) || cellSizeM < 25d) {
+            cellSizeM = DEFAULT_PRIVACY_CELL_SIZE_M;
+        }
+        long[] cell = privacyCellCoordinate(lat, lng, cellSizeM);
+        String hash = privacyCellHash(cell[0], cell[1], cellSizeM);
+
+        for (int i = 0; i < hashes.length(); i++) {
+            if (hash.equals(hashes.optString(i, ""))) return true;
+        }
+        return false;
+    }
+
+    private static long[] privacyCellCoordinate(double lat, double lng, double cellSizeM) {
+        double latStep = cellSizeM / 111320.0d;
+        double lngStep = cellSizeM / 111320.0d;
+        long y = (long) Math.floor((lat + 90.0d) / latStep);
+        long x = (long) Math.floor((lng + 180.0d) / lngStep);
+        return new long[] { y, x };
+    }
+
+    private static String privacyCellHash(long y, long x, double cellSizeM) {
+        long unsignedHash = jsHashCodeUnsigned(Math.round(cellSizeM) + ":" + y + ":" + x);
+        return "pzc_" + Long.toString(unsignedHash, 36);
+    }
+
+    private static long jsHashCodeUnsigned(String value) {
+        int hash = 0;
+        String text = value != null ? value : "";
+        for (int i = 0; i < text.length(); i++) {
+            hash = ((hash << 5) - hash) + text.charAt(i);
+        }
+        return Integer.toUnsignedLong(hash);
     }
 
     private static String readString(Context context, String prefsName, String key) {

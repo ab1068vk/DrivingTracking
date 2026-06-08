@@ -155,7 +155,7 @@ export function buildRecoveryCompatibilitySnapshot(settings = {}, isAndroidPlatf
     { label: 'Android package', value: 'com.drivesense.app', detail: 'In-place upgrades keep the same app data sandbox.' },
     { label: 'Settings key', value: 'drivesense_settings', detail: 'Existing settings continue to hydrate from the established key.' },
     { label: 'Trip database', value: 'drivesense_mobile', detail: 'Trip history stays on the recovered IndexedDB name.' },
-    { label: 'Backup format', value: 'Road Sage JSON v7', detail: 'Current imports/exports include local calibration labels and keep older backups migratable.' },
+    { label: 'Backup format', value: 'Road Sage JSON v8', detail: 'Current imports/exports include local calibration labels, omit privacy-zone fingerprints, and keep older backups migratable.' },
     { label: 'Permission model', value: isAndroidPlatform ? 'Android runtime permissions' : 'Current platform permissions', detail: 'Diagnostics are read-only unless you press an explicit permission or service button.' },
     { label: 'Tracking mode', value: mode, detail: 'Shown from current settings; this panel does not change it.' },
   ];

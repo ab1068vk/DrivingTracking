@@ -36,6 +36,15 @@ describe('tracking store default settings', () => {
     expect(validateSettingsPatch({ osrm_timeout_ms: 4999 })).toMatchObject({ valid: false });
   });
 
+  it('does not import native privacy sync state from backups', () => {
+    expect(DEFAULT_SETTINGS.privacy_zones_native_sync_status).toBe('');
+    expect(sanitizeImportedSettings({
+      privacy_zones_native_sync_status: 'failed',
+      privacy_zones_native_sync_failed_at: '2026-06-08T12:00:00.000Z',
+      privacy_zones_native_sync_zone_count: 2,
+    })).not.toHaveProperty('privacy_zones_native_sync_status');
+  });
+
   it('keeps calibration survey data local only', () => {
     expect(DEFAULT_SETTINGS.calibration_sharing_enabled).toBe(false);
     expect(DEFAULT_SETTINGS.legal_notice_ack_version).toBe(0);

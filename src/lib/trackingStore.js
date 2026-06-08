@@ -22,7 +22,12 @@ import {
   removeEncryptedJson,
   setEncryptedJson,
 } from '@/lib/securePayloadCrypto';
-import { getHydratedPrivacyZones, redactRoutePointForPrivacyStorage } from '@/lib/privacyZones';
+import {
+  getHydratedPrivacyZones,
+  isPointInPrivacyZone,
+  redactRoutePointForPrivacyStorage,
+  sanitizeTripForPrivacyStorage,
+} from '@/lib/privacyZones';
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
@@ -88,23 +93,6 @@ function repairEcoScoringSettings(settings, source, sourceValues = settings) {
   return true;
 }
 
-const distanceMeters = (a, b) => {
-  const aLat = finiteNumber(a?.lat);
-  const aLng = finiteNumber(a?.lng);
-  const bLat = finiteNumber(b?.lat);
-  const bLng = finiteNumber(b?.lng);
-  if (aLat == null || aLng == null || bLat == null || bLng == null) return Number.POSITIVE_INFINITY;
-
-  const toRad = (value) => value * Math.PI / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLng = toRad(bLng - aLng);
-  const lat1 = toRad(aLat);
-  const lat2 = toRad(bLat);
-  const h = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6371000 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
-};
-
 const getParkedLocationPrivacyZones = async (settings = localSettings.get()) => {
   try {
     return getHydratedPrivacyZones(settings);
@@ -115,12 +103,7 @@ const getParkedLocationPrivacyZones = async (settings = localSettings.get()) => 
 const isPrivateParkedLocation = async (location, settings = localSettings.get()) => {
   if (finiteNumber(location?.lat) == null || finiteNumber(location?.lng) == null) return false;
   const zones = await getParkedLocationPrivacyZones(settings);
-  return zones.some((zone) => {
-    const radiusM = Number(zone?.radius_m);
-    return Number.isFinite(radiusM) &&
-      radiusM > 0 &&
-      distanceMeters(location, zone) <= radiusM + PARKED_LOCATION_PRIVACY_GUARD_M;
-  });
+  return Boolean(isPointInPrivacyZone(location, zones, PARKED_LOCATION_PRIVACY_GUARD_M));
 };
 
 const syncSettingsForNative = (settings) => {
@@ -270,6 +253,9 @@ export const DEFAULT_SETTINGS = {
   privacy_zones: [],
   show_privacy_circles: false,
   privacy_log_retention_hours: 24,
+  privacy_zones_native_sync_status: '',
+  privacy_zones_native_sync_failed_at: '',
+  privacy_zones_native_sync_zone_count: 0,
   calibration_sharing_enabled: false,
   legal_notice_ack_version: 0,
   legal_notice_acknowledged_at: '',
@@ -389,6 +375,7 @@ const IMPORT_NUMBER_RANGES = {
   notif_min_score_for_post_trip: [0, 100],
   osrm_timeout_ms: [5000, 30000],
   privacy_log_retention_hours: [0, 72],
+  privacy_zones_native_sync_zone_count: [0, 20],
   co2_baseline_kg_per_100km: [0, 50],
   default_ev_kwh_per_100km: [5, 40],
   grid_co2_kg_per_kwh: [0, 2],
@@ -403,6 +390,7 @@ const SETTINGS_ENUMS = {
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
   configurable_country_defaults: ['global', 'ca', 'us', 'gb', 'uk', 'de', 'au', 'fr'],
+  privacy_zones_native_sync_status: ['', 'ok', 'failed'],
 };
 
 const IMPORT_ENUMS = {
@@ -424,6 +412,9 @@ const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_consent_invalidated_reason',
   'osrm_consent_invalidated_at',
   'osrm_consent_invalidated_zone_label',
+  'privacy_zones_native_sync_status',
+  'privacy_zones_native_sync_failed_at',
+  'privacy_zones_native_sync_zone_count',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -440,6 +431,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
             ? zone.label.trim().slice(0, 80)
             : 'Private place',
           radius_m: radius,
+          exclude_from_osrm: zone.exclude_from_osrm !== false,
           masked_for_privacy: true,
         };
         return sanitized;
@@ -768,16 +760,20 @@ export function applyThemeMode(mode = localSettings.get().dark_mode || 'system')
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────
 export const activeTripStore = {
   async hydrate() {
-    activeTripMemory = await getEncryptedJson(ACTIVE_TRIP_KEY, null);
+    const recovered = await getEncryptedJson(ACTIVE_TRIP_KEY, null);
+    activeTripMemory = recovered ? sanitizeTripForPrivacyStorage(recovered) : null;
+    if (recovered && JSON.stringify(recovered) !== JSON.stringify(activeTripMemory)) {
+      await setEncryptedJson(ACTIVE_TRIP_KEY, activeTripMemory);
+    }
     return activeTripMemory;
   },
   get() {
     return activeTripMemory;
   },
   set(trip) {
-    activeTripMemory = trip;
+    activeTripMemory = sanitizeTripForPrivacyStorage(trip);
     activeTripWriteQueue = activeTripWriteQueue
-      .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, trip))
+      .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, activeTripMemory))
       .catch(() => {});
   },
   clear() {

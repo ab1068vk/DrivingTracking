@@ -14,6 +14,12 @@ import {
 } from '@/lib/localTripRepository';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import { DEFAULT_THRESHOLDS, buildScoreConstantsSnapshot } from '@/lib/tripEngine';
+import { setEncryptedJson } from '@/lib/securePayloadCrypto';
+import {
+  createPrivacyCellHashes,
+  PRIVACY_ZONES_SECURE_KEY,
+  savePrivacyZonesToStorage,
+} from '@/lib/privacyZones';
 
 const makeDomStringList = (items) => ({
   contains: (item) => items.has(item),
@@ -226,6 +232,108 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
     expect(JSON.stringify(storedRecord)).not.toContain('43.6532');
     expect(JSON.stringify(storedRecord)).not.toContain('-79.3832');
+  });
+
+  it('redacts private route and event coordinates at the repository write boundary', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 9,
+        privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 120 }],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    await localTripRepository.create({
+      id: 'repo-privacy-trip',
+      status: 'draft',
+      start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 12, timestamp: '2026-05-22T10:00:00.000Z' },
+        { lat: 43.6532, lng: -79.38, speed_kmh: 30, timestamp: '2026-05-22T10:01:00.000Z' },
+      ],
+      driving_events: [
+        { type: 'harsh_brake', lat: 43.6501, lng: -79.38, timestamp: '2026-05-22T10:00:10.000Z' },
+      ],
+    });
+
+    const stored = await localTripRepository.getById('repo-privacy-trip');
+
+    expect(stored.route_points[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+      privacy_live_redacted: true,
+      privacy_zone_id: 'home',
+    });
+    expect(stored.route_points[0].latitude).toBeUndefined();
+    expect(stored.route_points[0].longitude).toBeUndefined();
+    expect(stored.route_points[1].lat).toBe(43.6532);
+    expect(stored.driving_events[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+      privacy_event_redacted: true,
+      privacy_zone_id: 'home',
+    });
+  });
+
+  it('hydrates cell-only privacy zones before repository writes', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    await savePrivacyZonesToStorage([]);
+    const cellOnlyZone = {
+      id: 'home-restart',
+      label: 'Home',
+      radius_m: 120,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 100,
+      privacy_cell_hashes: createPrivacyCellHashes({ lat: 43.65, lng: -79.38, radius_m: 120 }),
+      masked_for_privacy: true,
+    };
+    await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, [cellOnlyZone]);
+    values.set('drivesense_settings', JSON.stringify({
+      settings_defaults_version: 9,
+      privacy_zones: [{
+        id: 'home-restart',
+        label: 'Home',
+        radius_m: 120,
+        masked_for_privacy: true,
+      }],
+    }));
+
+    const saved = await localTripRepository.create({
+      id: 'repo-cell-only-trip',
+      status: 'draft',
+      start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 12, timestamp: '2026-05-22T10:00:00.000Z' },
+      ],
+    });
+
+    expect(saved.route_points[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+      privacy_zone_id: 'home-restart',
+    });
+    expect(JSON.stringify([...fakeIndexedDb.databases.get('drivesense_mobile').stores.get('trips').records.values()]))
+      .not.toContain('43.65');
+    expect(JSON.stringify(values.get('drivesense_settings'))).not.toContain('43.65');
+    expect(JSON.stringify(values.get('drivesense_settings'))).not.toContain('-79.38');
   });
 
   it('runs only migrations newer than the existing IndexedDB version', () => {

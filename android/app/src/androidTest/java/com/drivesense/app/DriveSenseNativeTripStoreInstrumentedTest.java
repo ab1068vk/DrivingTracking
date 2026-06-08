@@ -258,6 +258,95 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
+    public void nativeParkedLocationInsideCellOnlyPrivacyZoneIsNotStored() throws Exception {
+        JSONArray zones = new JSONArray();
+        JSONObject zone = new JSONObject();
+        zone.put("id", "home-cell");
+        zone.put("label", "Home");
+        zone.put("radius_m", 100);
+        zone.put("privacy_cell_schema", "global_grid_v1");
+        zone.put("privacy_cell_size_m", 100);
+        JSONArray hashes = new JSONArray();
+        hashes.put(privacyCellHashFor(43.6532, -79.3832));
+        zone.put("privacy_cell_hashes", hashes);
+        zones.put(zone);
+
+        String storedZones = zones.toString();
+        assertFalse(storedZones.contains("43.6532"));
+        assertFalse(storedZones.contains("-79.3832"));
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("privacy_zones_v1", storedZones)
+            .commit();
+
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "cell-private-park",
+            "test"
+        );
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+        assertFalse(DriveSenseNativeTripStore.prefs(context).contains("last_parked_location"));
+
+        JSONArray points = new JSONArray();
+        JSONObject point = new JSONObject();
+        point.put("lat", 43.6532);
+        point.put("lng", -79.3832);
+        point.put("timestamp", "2026-06-08T12:00:00.000Z");
+        points.put(point);
+
+        JSONArray redacted = PrivacyZoneChecker.redactRoutePoints(context, points);
+        assertTrue(redacted.getJSONObject(0).isNull("lat"));
+        assertTrue(redacted.getJSONObject(0).isNull("lng"));
+        assertEquals("home-cell", redacted.getJSONObject(0).getString("privacy_zone_id"));
+    }
+
+    @Test
+    public void nativePrivacyCheckerFailsClosedWhenSettingsOnlyContainRedactedZones() throws Exception {
+        JSONObject settings = new JSONObject();
+        JSONArray zones = new JSONArray();
+        JSONObject zone = new JSONObject();
+        zone.put("id", "home");
+        zone.put("label", "Home");
+        zone.put("radius_m", 100);
+        zone.put("masked_for_privacy", true);
+        zones.put(zone);
+        settings.put("privacy_zones", zones);
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("drivesense_settings", settings.toString())
+            .commit();
+
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.6532,
+            -79.3832,
+            System.currentTimeMillis(),
+            "redacted-settings-private-park",
+            "test"
+        );
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+        assertFalse(DriveSenseNativeTripStore.prefs(context).contains("last_parked_location"));
+
+        JSONArray points = new JSONArray();
+        JSONObject point = new JSONObject();
+        point.put("lat", 43.6532);
+        point.put("lng", -79.3832);
+        point.put("timestamp", "2026-06-08T12:00:00.000Z");
+        points.put(point);
+
+        JSONArray redacted = PrivacyZoneChecker.redactRoutePoints(context, points);
+        assertTrue(redacted.getJSONObject(0).isNull("lat"));
+        assertTrue(redacted.getJSONObject(0).isNull("lng"));
+        assertTrue(redacted.getJSONObject(0).getBoolean("masked_for_privacy"));
+        assertEquals("native_privacy_sync_unavailable", redacted.getJSONObject(0).getString("privacy_zone_id"));
+    }
+
+    @Test
     public void goldenScoringFixturesArePackagedForInstrumentation() throws Exception {
         assertGoldenScoringAsset("urban_smooth_v2_1_0.json");
         assertGoldenScoringAsset("eventful_speeding_v2_1_0.json");
@@ -370,6 +459,22 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     private static double round(double value, int decimals) {
         double factor = Math.pow(10d, decimals);
         return Math.round(value * factor) / factor;
+    }
+
+    private static String privacyCellHashFor(double lat, double lng) throws Exception {
+        double cellSizeM = 100.0d;
+        double latStep = cellSizeM / 111320.0d;
+        double lngStep = cellSizeM / 111320.0d;
+        long y = (long) Math.floor((lat + 90.0d) / latStep);
+        long x = (long) Math.floor((lng + 180.0d) / lngStep);
+        Method hash = PrivacyZoneChecker.class.getDeclaredMethod(
+            "privacyCellHash",
+            long.class,
+            long.class,
+            double.class
+        );
+        hash.setAccessible(true);
+        return (String) hash.invoke(null, y, x, cellSizeM);
     }
 
     private static Map<String, Object> snapshotPrefs(SharedPreferences prefs) {
