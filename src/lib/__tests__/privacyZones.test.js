@@ -26,7 +26,7 @@ import {
   syncZonesToNative,
   upsertPrivacyZone,
 } from '@/lib/privacyZones';
-import { getEncryptedJson } from '@/lib/securePayloadCrypto';
+import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
 import { localSettings } from '@/lib/trackingStore';
 
 vi.mock('@capacitor/core', () => ({
@@ -477,18 +477,14 @@ describe('privacyZones', () => {
       expect.objectContaining({
         id: 'home',
         radius_m: 100,
-        display_lat: expect.any(Number),
-        display_lng: expect.any(Number),
-        display_radius_m: 135,
+        privacy_cell_hashes: expect.any(Array),
       }),
     ]);
     expect(storedZones[0].lat).toBeUndefined();
     expect(storedZones[0].lng).toBeUndefined();
-    expect(getPrivacyZoneDisplayCircle(storedZones[0])).toMatchObject({
-      id: 'home',
-      source_radius_m: 100,
-      radius_m: 135,
-    });
+    expect(storedZones[0].display_lat).toBeUndefined();
+    expect(storedZones[0].display_lng).toBeUndefined();
+    expect(storedZones[0].display_radius_m).toBeUndefined();
   });
 
   it('migrates legacy plaintext privacy zones into encrypted storage and scrubs settings', async () => {
@@ -530,17 +526,57 @@ describe('privacyZones', () => {
       expect.objectContaining({
         id: 'home',
         radius_m: 100,
-        display_lat: expect.any(Number),
-        display_lng: expect.any(Number),
-        display_radius_m: 135,
+        privacy_cell_hashes: expect.any(Array),
       }),
     ]);
     expect(storedZones[0].lat).toBeUndefined();
     expect(storedZones[0].lng).toBeUndefined();
-    expect(getPrivacyZoneDisplayCircle(storedZones[0])).toMatchObject({
-      id: 'home',
-      source_radius_m: 100,
-      radius_m: 135,
+    expect(storedZones[0].display_lat).toBeUndefined();
+    expect(storedZones[0].display_lng).toBeUndefined();
+    expect(storedZones[0].display_radius_m).toBeUndefined();
+  });
+
+  it('scrubs persisted display coordinates from the previous build during startup', async () => {
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 9,
+        privacy_zones: [{
+          id: 'home',
+          label: 'Home',
+          radius_m: 100,
+          exclude_from_osrm: true,
+          masked_for_privacy: true,
+        }],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
     });
+    await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, [{
+      id: 'home',
+      label: 'Home',
+      radius_m: 100,
+      exclude_from_osrm: true,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 100,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      masked_for_privacy: true,
+      display_lat: 43.6502,
+      display_lng: -79.3797,
+      display_radius_m: 135,
+    }]);
+
+    await loadPrivacyZonesFromStorage(JSON.parse(values.get('drivesense_settings')));
+    const storedZones = await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []);
+
+    expect(storedZones[0].privacy_cell_hashes.length).toBeGreaterThan(0);
+    expect(storedZones[0].lat).toBeUndefined();
+    expect(storedZones[0].lng).toBeUndefined();
+    expect(storedZones[0].display_lat).toBeUndefined();
+    expect(storedZones[0].display_lng).toBeUndefined();
+    expect(storedZones[0].display_radius_m).toBeUndefined();
   });
 });

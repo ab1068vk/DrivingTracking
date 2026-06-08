@@ -85,12 +85,6 @@ const hasExactZoneGeometry = (zone = {}) => (
 
 const hasCellZoneGeometry = (zone = {}) => normalizePrivacyCellHashes(zone).length > 0;
 
-const hasDisplayZoneGeometry = (zone = {}) => (
-  finiteNumber(zone?.display_lat) != null &&
-  finiteNumber(zone?.display_lng) != null &&
-  Number(zone?.display_radius_m) > 0
-);
-
 const normalizePrivacyZones = (zones = []) => (
   Array.isArray(zones)
     ? zones
@@ -105,11 +99,6 @@ const normalizePrivacyZones = (zones = []) => (
           privacy_cell_size_m: Number(zone?.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
           privacy_cell_hashes: normalizePrivacyCellHashes(zone),
           masked_for_privacy: zone?.masked_for_privacy === true,
-          ...(hasDisplayZoneGeometry(zone) ? {
-            display_lat: Number(zone.display_lat),
-            display_lng: Number(zone.display_lng),
-            display_radius_m: Number(zone.display_radius_m),
-          } : {}),
         };
         if (hasExactZoneGeometry({ ...zone, radius_m: radiusM })) {
           const withGeometry = {
@@ -141,25 +130,17 @@ const redactedPrivacyZones = (zones = []) => (
   }))
 );
 
-const displaySafePrivacyZones = (zones = []) => (
-  normalizePrivacyZones(zones).map((zone) => {
-    const display = getPrivacyZoneDisplayCircle(zone);
-    return {
-      id: zone.id,
-      label: zone.label,
-      radius_m: zone.radius_m,
-      exclude_from_osrm: zone.exclude_from_osrm !== false,
-      privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
-      privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
-      privacy_cell_hashes: normalizePrivacyCellHashes(zone),
-      masked_for_privacy: true,
-      ...(display ? {
-        display_lat: display.lat,
-        display_lng: display.lng,
-        display_radius_m: display.radius_m,
-      } : {}),
-    };
-  })
+const cellOnlyPrivacyZones = (zones = []) => (
+  normalizePrivacyZones(zones).map((zone) => ({
+    id: zone.id,
+    label: zone.label,
+    radius_m: zone.radius_m,
+    exclude_from_osrm: zone.exclude_from_osrm !== false,
+    privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
+    privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
+    privacy_cell_hashes: normalizePrivacyCellHashes(zone),
+    masked_for_privacy: true,
+  }))
 );
 
 export function getPrivacyZones(settings = localSettings.get()) {
@@ -185,7 +166,7 @@ export async function getHydratedPrivacyZones(settings = localSettings.get()) {
 async function persistPrivacyZones(zones = []) {
   const normalized = normalizePrivacyZones(zones);
   privacyZonesMemory = normalized;
-  await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, displaySafePrivacyZones(normalized));
+  await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, cellOnlyPrivacyZones(normalized));
   await syncZonesToNative(normalized);
   return normalized;
 }
@@ -470,16 +451,6 @@ export function addExportNoise(lat, lng, zoneId = 'privacy-zone', exportSalt = c
 }
 
 export function getPrivacyZoneDisplayCircle(zone, offsetM = DISPLAY_CIRCLE_OFFSET_M, referencePoints = []) {
-  if (hasDisplayZoneGeometry(zone)) {
-    return {
-      ...zone,
-      lat: Number(zone.display_lat),
-      lng: Number(zone.display_lng),
-      radius_m: Number(zone.display_radius_m),
-      source_radius_m: Math.max(50, Math.min(1000, finiteNumber(zone?.radius_m) ?? 150)),
-    };
-  }
-
   const exactLat = finiteNumber(zone?.lat);
   const exactLng = finiteNumber(zone?.lng);
   const recoveredCenter = exactLat == null || exactLng == null
