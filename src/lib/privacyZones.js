@@ -85,6 +85,12 @@ const hasExactZoneGeometry = (zone = {}) => (
 
 const hasCellZoneGeometry = (zone = {}) => normalizePrivacyCellHashes(zone).length > 0;
 
+const hasDisplayZoneGeometry = (zone = {}) => (
+  finiteNumber(zone?.display_lat) != null &&
+  finiteNumber(zone?.display_lng) != null &&
+  Number(zone?.display_radius_m) > 0
+);
+
 const normalizePrivacyZones = (zones = []) => (
   Array.isArray(zones)
     ? zones
@@ -99,6 +105,11 @@ const normalizePrivacyZones = (zones = []) => (
           privacy_cell_size_m: Number(zone?.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
           privacy_cell_hashes: normalizePrivacyCellHashes(zone),
           masked_for_privacy: zone?.masked_for_privacy === true,
+          ...(hasDisplayZoneGeometry(zone) ? {
+            display_lat: Number(zone.display_lat),
+            display_lng: Number(zone.display_lng),
+            display_radius_m: Number(zone.display_radius_m),
+          } : {}),
         };
         if (hasExactZoneGeometry({ ...zone, radius_m: radiusM })) {
           const withGeometry = {
@@ -130,17 +141,25 @@ const redactedPrivacyZones = (zones = []) => (
   }))
 );
 
-const cellOnlyPrivacyZones = (zones = []) => (
-  normalizePrivacyZones(zones).map((zone) => ({
-    id: zone.id,
-    label: zone.label,
-    radius_m: zone.radius_m,
-    exclude_from_osrm: zone.exclude_from_osrm !== false,
-    privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
-    privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
-    privacy_cell_hashes: normalizePrivacyCellHashes(zone),
-    masked_for_privacy: true,
-  }))
+const displaySafePrivacyZones = (zones = []) => (
+  normalizePrivacyZones(zones).map((zone) => {
+    const display = getPrivacyZoneDisplayCircle(zone);
+    return {
+      id: zone.id,
+      label: zone.label,
+      radius_m: zone.radius_m,
+      exclude_from_osrm: zone.exclude_from_osrm !== false,
+      privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
+      privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
+      privacy_cell_hashes: normalizePrivacyCellHashes(zone),
+      masked_for_privacy: true,
+      ...(display ? {
+        display_lat: display.lat,
+        display_lng: display.lng,
+        display_radius_m: display.radius_m,
+      } : {}),
+    };
+  })
 );
 
 export function getPrivacyZones(settings = localSettings.get()) {
@@ -166,7 +185,7 @@ export async function getHydratedPrivacyZones(settings = localSettings.get()) {
 async function persistPrivacyZones(zones = []) {
   const normalized = normalizePrivacyZones(zones);
   privacyZonesMemory = normalized;
-  await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, cellOnlyPrivacyZones(normalized));
+  await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, displaySafePrivacyZones(normalized));
   await syncZonesToNative(normalized);
   return normalized;
 }
@@ -321,6 +340,63 @@ const cellCenterPoint = (y, x, latStep, lngStep) => ({
   lng: ((x + 0.5) * lngStep) - 180,
 });
 
+function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
+  const hashes = new Set(normalizePrivacyCellHashes(zone));
+  if (!hashes.size) return null;
+
+  const cellSizeM = Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M;
+  const savedMapCenter = localSettings.get()?.last_map_center;
+  const references = [...(Array.isArray(referencePoints) ? referencePoints : []), savedMapCenter]
+    .filter((point) => finiteNumber(point?.lat) != null && finiteNumber(point?.lng) != null);
+  const visited = new Set();
+  let seed = null;
+
+  for (const reference of references.slice(0, 600)) {
+    const cell = cellCoordinate(reference.lat, reference.lng, cellSizeM);
+    if (!cell) continue;
+    const searchCells = Math.max(4, Math.ceil((Number(zone.radius_m) || 150) / cell.cellSizeM) + 4);
+
+    for (let y = cell.y - searchCells; y <= cell.y + searchCells && !seed; y++) {
+      for (let x = cell.x - searchCells; x <= cell.x + searchCells; x++) {
+        const key = `${y}:${x}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        if (hashes.has(privacyCellHash(y, x, cell.cellSizeM))) {
+          seed = { ...cell, y, x };
+          break;
+        }
+      }
+    }
+    if (seed) break;
+  }
+
+  if (!seed) return null;
+
+  const queue = [{ y: seed.y, x: seed.x }];
+  const matched = [];
+  const explored = new Set();
+  while (queue.length && matched.length <= hashes.size) {
+    const current = queue.shift();
+    const key = `${current.y}:${current.x}`;
+    if (explored.has(key)) continue;
+    explored.add(key);
+    if (!hashes.has(privacyCellHash(current.y, current.x, seed.cellSizeM))) continue;
+
+    matched.push(cellCenterPoint(current.y, current.x, seed.latStep, seed.lngStep));
+    for (let y = current.y - 1; y <= current.y + 1; y++) {
+      for (let x = current.x - 1; x <= current.x + 1; x++) {
+        if (y !== current.y || x !== current.x) queue.push({ y, x });
+      }
+    }
+  }
+
+  if (!matched.length) return null;
+  return {
+    lat: matched.reduce((sum, point) => sum + point.lat, 0) / matched.length,
+    lng: matched.reduce((sum, point) => sum + point.lng, 0) / matched.length,
+  };
+}
+
 export function createPrivacyCellHashes(zone = {}, cellSizeM = PRIVACY_CELL_SIZE_M) {
   const lat = finiteNumber(zone?.lat);
   const lng = finiteNumber(zone?.lng);
@@ -393,9 +469,24 @@ export function addExportNoise(lat, lng, zoneId = 'privacy-zone', exportSalt = c
   };
 }
 
-export function getPrivacyZoneDisplayCircle(zone, offsetM = DISPLAY_CIRCLE_OFFSET_M) {
-  const lat = finiteNumber(zone?.lat);
-  const lng = finiteNumber(zone?.lng);
+export function getPrivacyZoneDisplayCircle(zone, offsetM = DISPLAY_CIRCLE_OFFSET_M, referencePoints = []) {
+  if (hasDisplayZoneGeometry(zone)) {
+    return {
+      ...zone,
+      lat: Number(zone.display_lat),
+      lng: Number(zone.display_lng),
+      radius_m: Number(zone.display_radius_m),
+      source_radius_m: Math.max(50, Math.min(1000, finiteNumber(zone?.radius_m) ?? 150)),
+    };
+  }
+
+  const exactLat = finiteNumber(zone?.lat);
+  const exactLng = finiteNumber(zone?.lng);
+  const recoveredCenter = exactLat == null || exactLng == null
+    ? recoverPrivacyZoneCenter(zone, referencePoints)
+    : null;
+  const lat = exactLat ?? recoveredCenter?.lat ?? null;
+  const lng = exactLng ?? recoveredCenter?.lng ?? null;
   if (lat == null || lng == null) return null;
 
   const safeOffsetM = Math.max(1, finiteNumber(offsetM) ?? DISPLAY_CIRCLE_OFFSET_M);
@@ -952,9 +1043,11 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   }
   const normalized = normalizePrivacyZones([proposed])[0];
   if (!normalized) throw new Error('Privacy zone needs a location before it can be saved.');
+  const proposedLat = finiteNumber(zone?.lat);
+  const proposedLng = finiteNumber(zone?.lng);
   const zoneChanged = !previous ||
-    previous.lat !== normalized.lat ||
-    previous.lng !== normalized.lng ||
+    previous.lat !== proposedLat ||
+    previous.lng !== proposedLng ||
     previous.radius_m !== normalized.radius_m ||
     previous.exclude_from_osrm !== normalized.exclude_from_osrm ||
     JSON.stringify(previous.privacy_cell_hashes || []) !== JSON.stringify(normalized.privacy_cell_hashes || []);

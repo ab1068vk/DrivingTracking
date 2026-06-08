@@ -291,9 +291,15 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
   );
   const visiblePrivacyZones = useMemo(
     () => privacySettings.show_privacy_circles === true
-      ? getPrivacyZones(privacySettings).map((zone) => getPrivacyZoneDisplayCircle(zone)).filter(Boolean)
+      ? getPrivacyZones(privacySettings)
+        .map((zone) => getPrivacyZoneDisplayCircle(
+          zone,
+          undefined,
+          [...(trip?.route_points || []), ...(secondaryTrip?.route_points || [])]
+        ))
+        .filter(Boolean)
       : [],
-    [privacySettings]
+    [privacySettings, secondaryTrip?.route_points, trip?.route_points]
   );
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;

@@ -26,6 +26,7 @@ import {
   syncZonesToNative,
   upsertPrivacyZone,
 } from '@/lib/privacyZones';
+import { getEncryptedJson } from '@/lib/securePayloadCrypto';
 import { localSettings } from '@/lib/trackingStore';
 
 vi.mock('@capacitor/core', () => ({
@@ -294,6 +295,30 @@ describe('privacyZones', () => {
     expect(masked.at(-1)).toBe(route[1]);
   });
 
+  it('recovers display-only geometry for a cell-only zone from nearby map points', () => {
+    const cellOnlyZone = {
+      id: 'home-cell',
+      label: 'Home',
+      radius_m: 100,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 100,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      masked_for_privacy: true,
+    };
+
+    const display = getPrivacyZoneDisplayCircle(cellOnlyZone, undefined, [
+      point(43.6522, -79.38, 20),
+    ]);
+
+    expect(display).toMatchObject({
+      id: 'home-cell',
+      source_radius_m: 100,
+      radius_m: 135,
+    });
+    expect(display.lat).toBeCloseTo(zone.lat, 2);
+    expect(display.lng).toBeCloseTo(zone.lng, 2);
+  });
+
   it('chooses the zone where the point is deepest inside when zones overlap', () => {
     const shallow = { id: 'shallow', label: 'Shallow', lat: 43.65, lng: -79.38, radius_m: 100 };
     const deep = { id: 'deep', label: 'Deep', lat: 43.65, lng: -79.38, radius_m: 250 };
@@ -447,6 +472,23 @@ describe('privacyZones', () => {
     expect(encryptedZones).toContain('"encrypted":true');
     expect(encryptedZones).not.toContain('43.65');
     expect(encryptedZones).not.toContain('-79.38');
+    const storedZones = await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []);
+    expect(storedZones).toEqual([
+      expect.objectContaining({
+        id: 'home',
+        radius_m: 100,
+        display_lat: expect.any(Number),
+        display_lng: expect.any(Number),
+        display_radius_m: 135,
+      }),
+    ]);
+    expect(storedZones[0].lat).toBeUndefined();
+    expect(storedZones[0].lng).toBeUndefined();
+    expect(getPrivacyZoneDisplayCircle(storedZones[0])).toMatchObject({
+      id: 'home',
+      source_radius_m: 100,
+      radius_m: 135,
+    });
   });
 
   it('migrates legacy plaintext privacy zones into encrypted storage and scrubs settings', async () => {
@@ -483,5 +525,22 @@ describe('privacyZones', () => {
     expect(encryptedZones).toContain('"encrypted":true');
     expect(encryptedZones).not.toContain('43.65');
     expect(encryptedZones).not.toContain('-79.38');
+    const storedZones = await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []);
+    expect(storedZones).toEqual([
+      expect.objectContaining({
+        id: 'home',
+        radius_m: 100,
+        display_lat: expect.any(Number),
+        display_lng: expect.any(Number),
+        display_radius_m: 135,
+      }),
+    ]);
+    expect(storedZones[0].lat).toBeUndefined();
+    expect(storedZones[0].lng).toBeUndefined();
+    expect(getPrivacyZoneDisplayCircle(storedZones[0])).toMatchObject({
+      id: 'home',
+      source_radius_m: 100,
+      radius_m: 135,
+    });
   });
 });

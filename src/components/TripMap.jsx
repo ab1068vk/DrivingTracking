@@ -438,13 +438,20 @@ function TripMapContent({
 
     layers.clearLayers();
 
-    const privacySettings = localSettings.get();
-    const displayPrivacyZones = privacySettings.show_privacy_circles === true
-      ? getPrivacyZones(privacySettings).map((zone) => getPrivacyZoneDisplayCircle(zone)).filter(Boolean)
-      : [];
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+    const privacySettings = localSettings.get();
+    const privacyDisplayReferences = [
+      ...routeSets.flatMap((route) => route.route_points || []),
+      currentLocation,
+      parkedLocation,
+    ];
+    const displayPrivacyZones = privacySettings.show_privacy_circles === true
+      ? getPrivacyZones(privacySettings)
+        .map((zone) => getPrivacyZoneDisplayCircle(zone, undefined, privacyDisplayReferences))
+        .filter(Boolean)
+      : [];
     const visiblePrivacyZones = getPrivacyZones(privacySettings);
     const validRoutes = routeSets
       .map((route) => {
@@ -942,6 +949,7 @@ function OfflineRoutePreview({
   const routeSets = Array.isArray(routes)
     ? routes
     : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+  const privacyDisplayReferences = routeSets.flatMap((route) => route.route_points || []);
   const maskedRoutes = routeSets.map((route) => ({
     ...route,
     route_points: prepareMapRoutePoints(
@@ -951,7 +959,7 @@ function OfflineRoutePreview({
   })).filter((route) => route.route_points.length > 1);
   const allPoints = maskedRoutes.flatMap((route) => route.route_points);
   const validPrivacyZones = (showPrivacyCircles ? getPrivacyZones(settings) : [])
-    .map((zone) => getPrivacyZoneDisplayCircle(zone))
+    .map((zone) => getPrivacyZoneDisplayCircle(zone, undefined, privacyDisplayReferences))
     .filter((zone) => Number.isFinite(zone.lat) && Number.isFinite(zone.lng));
   const zoneBounds = validPrivacyZones.flatMap((zone) => {
     const latDelta = zone.radius_m / 111320;
