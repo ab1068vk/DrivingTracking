@@ -7,10 +7,47 @@ const EARTH_RADIUS_M = 6371000;
 const DISPLAY_CIRCLE_OFFSET_M = 35;
 const EXPORT_NOISE_MIN_M = 10;
 const EXPORT_NOISE_MAX_M = 35;
+const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
 const PRIVACY_CELL_SIZE_M = 100;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
 export const ZONE_EVENT_GUARD_M = 50;
 const PRIVACY_CELL_STORAGE_GUARD_M = ZONE_EVENT_GUARD_M;
+export const KINEMATIC_FIELDS = Object.freeze([
+  'speed',
+  'speed_kmh',
+  'speedKmh',
+  'speed_mps',
+  'speedMps',
+  'speed_accuracy',
+  'speedAccuracy',
+  'obd_speed_kmh',
+  'heading',
+  'heading_accuracy',
+  'headingAccuracy',
+  'bearing',
+  'bearing_accuracy',
+  'bearingAccuracy',
+  'course',
+  'altitude',
+  'altitude_m',
+  'altitude_accuracy',
+  'altitudeAccuracy',
+  'vertical_speed',
+  'verticalSpeed',
+  'vertical_accuracy',
+  'verticalAccuracy',
+  'accuracy',
+  'horizontal_accuracy',
+  'horizontalAccuracy',
+  'accel_ms2',
+  'acceleration_ms2',
+  'acceleration_x',
+  'acceleration_y',
+  'acceleration_z',
+  'accelerationX',
+  'accelerationY',
+  'accelerationZ',
+]);
 export const PRIVACY_ZONES_SECURE_KEY = 'drivesense_privacy_zones_config_v1';
 export const NATIVE_PRIVACY_ZONES_KEY = 'privacy_zones_v1';
 export const NATIVE_PRIVACY_ZONES_CONTEXT = 'native:privacy_zones_v1';
@@ -432,6 +469,22 @@ export function createPrivacyExportSalt() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
+export function getBoundaryTimestampFuzz(zoneId = 'privacy-zone', exportSalt = '') {
+  const seed = hashCode(`tf_${zoneId}_${exportSalt}`);
+  const normalized = ((seed >>> 0) % 2000) / 2000;
+  return Math.round((normalized - 0.5) * 2 * TIMESTAMP_FUZZ_RANGE_MS);
+}
+
+function fuzzBoundaryTimestamp(timestamp, zoneId, exportSalt) {
+  if (timestamp == null) return null;
+  const ms = timestampMs({ timestamp });
+  if (ms == null) return timestamp;
+
+  const fuzzMs = getBoundaryTimestampFuzz(zoneId, exportSalt);
+  const fuzzedMs = ms + fuzzMs;
+  return typeof timestamp === 'number' ? fuzzedMs : new Date(fuzzedMs).toISOString();
+}
+
 export function addExportNoise(lat, lng, zoneId = 'privacy-zone', exportSalt = createPrivacyExportSalt(), pointKey = '') {
   const latitude = finiteNumber(lat);
   const longitude = finiteNumber(lng);
@@ -502,6 +555,18 @@ export function isInsidePrivacyZone(lat, lng, zones = getPrivacyZones()) {
   return Boolean(isPointInPrivacyZone({ lat, lng }, zones));
 }
 
+/**
+ * @param {Record<string, any>} point
+ * @returns {Record<string, any>}
+ */
+export function sanitizeKinematics(point = {}) {
+  const safe = { ...point };
+  KINEMATIC_FIELDS.forEach((field) => {
+    if (field in safe) safe[field] = null;
+  });
+  return safe;
+}
+
 export function redactRoutePointForPrivacyStorage(point = {}, zones = getPrivacyZones(), guardM = 0) {
   const zone = isPointInPrivacyZone(point, zones, guardM);
   if (!zone) return point;
@@ -510,10 +575,14 @@ export function redactRoutePointForPrivacyStorage(point = {}, zones = getPrivacy
     privacy_gap: true,
     privacy_live_redacted: true,
     timestamp: point?.timestamp ?? point?.time ?? new Date().toISOString(),
-    speed_kmh: point?.speed_kmh ?? point?.speed ?? null,
   });
 }
 
+/**
+ * @param {Record<string, any>} value
+ * @param {Record<string, any>} zone
+ * @param {Record<string, any>} extra
+ */
 function redactCoordinateFieldsForPrivacy(value = {}, zone, extra = {}) {
   const {
     lat,
@@ -525,7 +594,7 @@ function redactCoordinateFieldsForPrivacy(value = {}, zone, extra = {}) {
     matched_lat,
     matched_lng,
     ...rest
-  } = value || {};
+  } = sanitizeKinematics(value || {});
 
   return {
     ...rest,
@@ -538,6 +607,10 @@ function redactCoordinateFieldsForPrivacy(value = {}, zone, extra = {}) {
   };
 }
 
+/**
+ * @param {Record<string, any>} trip
+ * @param {Record<string, any>} settings
+ */
 export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSettings.get()) {
   if (!trip || typeof trip !== 'object') return trip;
   const zones = getPrivacyZones(settings);
@@ -566,6 +639,10 @@ export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSetting
   };
 }
 
+/**
+ * @param {Record<string, any>} trip
+ * @param {Record<string, any>} settings
+ */
 export async function sanitizeTripForPrivacyStorageAsync(trip = {}, settings = localSettings.get()) {
   if (!trip || typeof trip !== 'object') return trip;
   const zones = await getHydratedPrivacyZones(settings);
@@ -665,6 +742,11 @@ export function tripIdsAffectedByPrivacyZone(trips = [], zone) {
 }
 
 const privacyPurgePlaceholder = (point, zone) => ({
+  ...Object.fromEntries(
+    KINEMATIC_FIELDS
+      .filter((field) => field in (point || {}))
+      .map((field) => [field, null])
+  ),
   lat: null,
   lng: null,
   timestamp: point?.timestamp ?? point?.time ?? null,
@@ -674,6 +756,10 @@ const privacyPurgePlaceholder = (point, zone) => ({
   privacy_zone_label: zone.label,
 });
 
+/**
+ * @param {Record<string, any>} trip
+ * @param {Record<string, any>} zone
+ */
 export function purgeTripGpsWithinPrivacyZone(trip = {}, zone) {
   if (!zone || !trip || typeof trip !== 'object') {
     return { trip, changed: false, purgedPoints: 0, purgedEvents: 0 };
@@ -806,17 +892,13 @@ export function privacyBoundaryPoint(insidePoint, outsidePoint, zone) {
   const lng = interpolateValue(insidePoint.lng, outsidePoint.lng, ratio);
   if (lat == null || lng == null) return null;
 
-  return {
+  return sanitizeKinematics({
     ...outsidePoint,
     lat,
     lng,
-    speed_kmh: interpolateValue(insidePoint.speed_kmh, outsidePoint.speed_kmh, ratio) ?? outsidePoint.speed_kmh,
-    heading: interpolateValue(insidePoint.heading, outsidePoint.heading, ratio) ?? outsidePoint.heading,
-    bearing: interpolateValue(insidePoint.bearing, outsidePoint.bearing, ratio) ?? outsidePoint.bearing,
-    accuracy: interpolateValue(insidePoint.accuracy, outsidePoint.accuracy, ratio) ?? outsidePoint.accuracy,
     timestamp: interpolateTimestamp(insidePoint, outsidePoint, ratio),
     ...privacyMetadata(zone, true),
-  };
+  });
 }
 
 const pushBoundary = (masked, insidePoint, outsidePoint, zone) => {
@@ -835,16 +917,10 @@ const pushBoundary = (masked, insidePoint, outsidePoint, zone) => {
 const pushPrivacyGap = (masked, point, zone) => {
   const previous = masked.at(-1);
   if (previous?.privacy_gap && previous.privacy_zone_id === zone?.id) return;
-  masked.push({
-    lat: null,
-    lng: null,
+  masked.push(redactCoordinateFieldsForPrivacy(point, zone, {
     timestamp: point?.timestamp ?? point?.time ?? null,
-    speed_kmh: point?.speed_kmh ?? point?.speed ?? null,
-    masked_for_privacy: true,
     privacy_gap: true,
-    privacy_zone_id: zone?.id || 'privacy-zone',
-    privacy_zone_label: zone?.label || 'Private place',
-  });
+  }));
 };
 
 export function maskRoutePointsForPrivacy(routePoints = [], settings = localSettings.get()) {
@@ -852,11 +928,19 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
   // windows, including intersection-stop behavior, should run before this on
   // raw local points and persist aggregate scores rather than private coords.
   const zones = getPrivacyZones(settings);
-  if (!zones.length) return routePoints;
+  if (!zones.length) {
+    return (Array.isArray(routePoints) ? routePoints : [])
+      .map((point) => point?.masked_for_privacy === true ? sanitizeKinematics(point) : point);
+  }
 
   const masked = [];
   const points = Array.isArray(routePoints) ? routePoints : [];
   points.forEach((point, index) => {
+    if (point?.masked_for_privacy === true && point?.privacy_boundary !== true) {
+      masked.push(sanitizeKinematics(point));
+      return;
+    }
+
     const zone = isPointInPrivacyZone(point, zones);
     const previous = index > 0 ? points[index - 1] : null;
     const previousZone = previous ? isPointInPrivacyZone(previous, zones) : null;
@@ -892,6 +976,7 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
   return masked;
 }
 
+/** @param {Record<string, any>} point */
 const stripExportBoundaryGeometry = (point = {}) => {
   const {
     radius,
@@ -909,10 +994,11 @@ export function addExportNoiseToPrivacyBoundaries(routePoints = [], exportSalt =
   return (Array.isArray(routePoints) ? routePoints : []).map((point, index) => {
     if (!point?.privacy_boundary) return point;
     const boundary = stripExportBoundaryGeometry(point);
+    const zoneId = boundary.privacy_zone_id || boundary.zone_id || 'privacy-zone';
     const noisy = addExportNoise(
       boundary.lat,
       boundary.lng,
-      boundary.privacy_zone_id || boundary.zone_id || 'privacy-zone',
+      zoneId,
       exportSalt,
       `${index}:${boundary.timestamp || boundary.time || ''}`
     );
@@ -920,16 +1006,20 @@ export function addExportNoiseToPrivacyBoundaries(routePoints = [], exportSalt =
       ...boundary,
       lat: noisy.lat,
       lng: noisy.lng,
+      timestamp: fuzzBoundaryTimestamp(boundary.timestamp ?? boundary.time ?? null, zoneId, exportSalt),
       export_noised_for_privacy: true,
     };
   });
 }
 
-export function replacePrivacyBoundariesWithExportGaps(routePoints = []) {
+/**
+ * @param {Array<Record<string, any>>} routePoints
+ */
+export function replacePrivacyBoundariesWithExportGaps(routePoints = [], exportSalt = createPrivacyExportSalt()) {
   const output = [];
   (Array.isArray(routePoints) ? routePoints : []).forEach((point) => {
     if (!point?.privacy_boundary) {
-      output.push(point);
+      output.push(point?.masked_for_privacy === true ? sanitizeKinematics(point) : point);
       return;
     }
 
@@ -937,16 +1027,16 @@ export function replacePrivacyBoundariesWithExportGaps(routePoints = []) {
     const zoneId = point.privacy_zone_id || point.zone_id || 'privacy-zone';
     if (previous?.privacy_export_placeholder && previous.privacy_zone_id === zoneId) return;
 
-    output.push({
+    output.push(sanitizeKinematics({
       lat: null,
       lng: null,
-      timestamp: point.timestamp ?? point.time ?? null,
+      timestamp: fuzzBoundaryTimestamp(point.timestamp ?? point.time ?? null, zoneId, exportSalt),
       masked_for_privacy: true,
       privacy_gap: true,
       privacy_export_placeholder: true,
       privacy_zone_id: zoneId,
       privacy_zone_label: point.privacy_zone_label || point.zone_label || 'Private place',
-    });
+    }));
   });
   return output;
 }
@@ -970,26 +1060,98 @@ export function maskEventsForPrivacy(events = [], settings = localSettings.get()
   return filtered;
 }
 
+function publicSpeedSummaryForTrip(trip = {}, zones = []) {
+  const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const touchesPrivacyZone = rawRoutePoints.some((point) => (
+    point?.masked_for_privacy === true ||
+    point?.privacy_boundary === true ||
+    Boolean(isPointInPrivacyZone(point, zones))
+  ));
+  if (!touchesPrivacyZone) return {};
+
+  const publicSpeedSamples = rawRoutePoints
+    .filter((point) => (
+      point?.masked_for_privacy !== true &&
+      point?.privacy_boundary !== true &&
+      !isPointInPrivacyZone(point, zones)
+    ))
+    .map(publicPointSpeedKmh)
+    .filter(Number.isFinite);
+  const publicRunningSpeedSamples = publicSpeedSamples.filter((speed) => speed > 0);
+
+  return {
+    avg_speed_kmh: averageSpeed(publicSpeedSamples),
+    avg_running_speed_kmh: averageSpeed(publicRunningSpeedSamples),
+    max_speed_kmh: publicSpeedSamples.length ? roundSpeed(Math.max(...publicSpeedSamples)) : null,
+  };
+}
+
+function privacyZoneForExportEndpoint(point, zones = []) {
+  if (!point) return null;
+  const metadataZoneId = point.privacy_zone_id || point.zone_id;
+  if (point.masked_for_privacy === true && metadataZoneId) {
+    return { id: metadataZoneId };
+  }
+  return isPointInPrivacyZone(point, zones);
+}
+
 export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
+  const zones = getPrivacyZones(settings);
   return {
     ...trip,
+    ...publicSpeedSummaryForTrip(trip, zones),
     route_points: maskRoutePointsForPrivacy(Array.isArray(trip.route_points) ? trip.route_points : [], settings),
     driving_events: maskEventsForPrivacy(Array.isArray(trip.driving_events) ? trip.driving_events : [], settings),
-    start_address: trip.start_address && isPointInPrivacyZone((trip.route_points || [])[0], getPrivacyZones(settings)) ? null : trip.start_address,
-    end_address: trip.end_address && isPointInPrivacyZone((trip.route_points || []).at?.(-1), getPrivacyZones(settings)) ? null : trip.end_address,
+    start_address: trip.start_address && isPointInPrivacyZone((trip.route_points || [])[0], zones) ? null : trip.start_address,
+    end_address: trip.end_address && isPointInPrivacyZone((trip.route_points || []).at?.(-1), zones) ? null : trip.end_address,
   };
 }
 
 export function maskTripForPrivacyExport(trip = {}, settings = localSettings.get(), exportSalt = createPrivacyExportSalt()) {
+  const zones = getPrivacyZones(settings);
+  const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const startZone = privacyZoneForExportEndpoint(rawRoutePoints[0], zones);
+  const endZone = privacyZoneForExportEndpoint(rawRoutePoints.at?.(-1), zones);
   const masked = maskTripForPrivacy(trip, settings);
+  const shiftedFields = [
+    ...(startZone && masked.start_time != null ? ['start_time'] : []),
+    ...(endZone && masked.end_time != null ? ['end_time'] : []),
+  ];
   return {
     ...masked,
+    ...(startZone && masked.start_time != null ? {
+      start_time: fuzzBoundaryTimestamp(masked.start_time, startZone.id, exportSalt),
+    } : {}),
+    ...(endZone && masked.end_time != null ? {
+      end_time: fuzzBoundaryTimestamp(masked.end_time, endZone.id, exportSalt),
+    } : {}),
+    ...(shiftedFields.length ? {
+      privacy_time_shifted: true,
+      privacy_time_shifted_fields: shiftedFields,
+      privacy_time_shift_policy: 'bounded_private_zone_noise',
+    } : {}),
     route_points: replacePrivacyBoundariesWithExportGaps(
       Array.isArray(masked.route_points) ? masked.route_points : [],
       exportSalt
     ),
   };
 }
+
+function publicPointSpeedKmh(point = {}) {
+  const speedKmh = finiteNumber(point.speed_kmh ?? point.speedKmh);
+  if (speedKmh != null) return Math.max(0, speedKmh);
+  const speedMps = finiteNumber(point.speed_mps ?? point.speedMps);
+  if (speedMps != null) return Math.max(0, speedMps * 3.6);
+  const legacySpeed = finiteNumber(point.speed);
+  return legacySpeed == null ? null : Math.max(0, legacySpeed);
+}
+
+function averageSpeed(speeds = []) {
+  if (!speeds.length) return null;
+  return roundSpeed(speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length);
+}
+
+const roundSpeed = (speed) => Math.round(speed * 10) / 10;
 
 export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);

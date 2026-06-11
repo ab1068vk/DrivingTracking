@@ -37,7 +37,7 @@ let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 9;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 10;
 
 const settingsStorage = () => {
   try {
@@ -252,6 +252,13 @@ export const DEFAULT_SETTINGS = {
   tree_co2_kg_per_year: DEFAULT_TREE_CO2_KG_PER_YEAR,
   privacy_zones: [],
   show_privacy_circles: false,
+  allow_screen_capture: false,
+  app_lock_enabled: false,
+  privacy_zone_storage_requires_secure_device: true,
+  rasp_secure: true,
+  rasp_threats: [],
+  rasp_checked_at: '',
+  rasp_native: false,
   privacy_log_retention_hours: 24,
   privacy_zones_native_sync_status: '',
   privacy_zones_native_sync_failed_at: '',
@@ -415,6 +422,13 @@ const IMPORT_STRIPPED_KEYS = new Set([
   'privacy_zones_native_sync_status',
   'privacy_zones_native_sync_failed_at',
   'privacy_zones_native_sync_zone_count',
+  'allow_screen_capture',
+  'app_lock_enabled',
+  'privacy_zone_storage_requires_secure_device',
+  'rasp_secure',
+  'rasp_threats',
+  'rasp_checked_at',
+  'rasp_native',
 ]);
 
 const sanitizeImportedPrivacyZones = (zones) => (
@@ -424,7 +438,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
       .slice(0, 20)
       .map((zone, index) => {
         const radius = clampNumber(Number(zone.radius_m) || 150, 50, 1000);
-        /** @type {{id:string,label:string,radius_m:number,masked_for_privacy?:boolean}} */
+        /** @type {{id:string,label:string,radius_m:number,exclude_from_osrm:boolean,masked_for_privacy?:boolean}} */
         const sanitized = {
           id: typeof zone.id === 'string' ? zone.id.slice(0, 80) : `privacy_zone_import_${index}`,
           label: typeof zone.label === 'string' && zone.label.trim()

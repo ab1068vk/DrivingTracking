@@ -45,6 +45,35 @@ describe('tracking store default settings', () => {
     })).not.toHaveProperty('privacy_zones_native_sync_status');
   });
 
+  it('blocks screen capture by default and does not restore an insecure backup preference', () => {
+    expect(DEFAULT_SETTINGS.allow_screen_capture).toBe(false);
+    expect(DEFAULT_SETTINGS.app_lock_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.privacy_zone_storage_requires_secure_device).toBe(true);
+    expect(sanitizeImportedSettings({
+      allow_screen_capture: true,
+      app_lock_enabled: true,
+      privacy_zone_storage_requires_secure_device: false,
+    })).not.toHaveProperty('allow_screen_capture');
+    expect(sanitizeImportedSettings({
+      app_lock_enabled: true,
+    })).not.toHaveProperty('app_lock_enabled');
+    expect(sanitizeImportedSettings({
+      privacy_zone_storage_requires_secure_device: false,
+    })).not.toHaveProperty('privacy_zone_storage_requires_secure_device');
+  });
+
+  it('does not import device integrity status from backups', () => {
+    expect(DEFAULT_SETTINGS.rasp_secure).toBe(true);
+    expect(DEFAULT_SETTINGS.rasp_threats).toEqual([]);
+    expect(DEFAULT_SETTINGS.rasp_checked_at).toBe('');
+    expect(sanitizeImportedSettings({
+      rasp_secure: false,
+      rasp_threats: ['SU_BINARY'],
+      rasp_checked_at: '2026-06-11T12:00:00.000Z',
+      rasp_native: true,
+    })).not.toHaveProperty('rasp_secure');
+  });
+
   it('keeps calibration survey data local only', () => {
     expect(DEFAULT_SETTINGS.calibration_sharing_enabled).toBe(false);
     expect(DEFAULT_SETTINGS.legal_notice_ack_version).toBe(0);
@@ -131,7 +160,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(9);
+    expect(legacySunset.settings_defaults_version).toBe(10);
     expect(legacyCustom.night_end_time).toBe('06:00');
   });
 

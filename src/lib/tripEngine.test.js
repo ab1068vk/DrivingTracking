@@ -1904,9 +1904,13 @@ describe('tripEngine', () => {
     const privacyZone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
     const trip = {
       id: 'trip-csv-private-boundary',
+      avg_speed_kmh: 80,
+      avg_running_speed_kmh: 85,
+      max_speed_kmh: 120,
       route_points: [
-        point(43.65, -79.38, 0),
-        point(43.6522, -79.38, 20),
+        { ...point(43.65, -79.38, 0, 120), heading: 45, altitude: 100, accuracy: 4 },
+        point(43.6522, -79.38, 20, 20),
+        point(43.6532, -79.38, 40, 40),
       ],
       driving_events: [],
     };
@@ -1922,6 +1926,9 @@ describe('tripEngine', () => {
       const exportedPlaceholder = exportedRoute.find((routePoint) => routePoint.privacy_export_placeholder);
 
       expect(exactBoundary.lat).not.toBeNull();
+      expect(values[headers.indexOf('Avg Speed (km/h)')]).toBe('30');
+      expect(values[headers.indexOf('Avg Moving Speed (km/h)')]).toBe('30');
+      expect(values[headers.indexOf('Max Speed (km/h)')]).toBe('40');
       expect(exportedRoute.some((routePoint) => routePoint.privacy_boundary)).toBe(false);
       expect(exportedPlaceholder).toMatchObject({
         lat: null,

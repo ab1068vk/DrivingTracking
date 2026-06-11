@@ -523,10 +523,32 @@ export function buildDriveSenseBackup({
       masked_for_privacy: true,
     })),
   };
+  const maskedTrips = trips.map((trip) => {
+    const masked = /** @type {any} */ (maskTripForPrivacyExport(trip, settings, privacyExportSalt));
+    return {
+      ...masked,
+      route_points: Array.isArray(masked.route_points) ? masked.route_points : [],
+      driving_events: Array.isArray(masked.driving_events) ? masked.driving_events : [],
+      event_feedback: masked.event_feedback && typeof masked.event_feedback === 'object' ? masked.event_feedback : {},
+    };
+  });
+  const privacyShiftedTrips = maskedTrips.filter((trip) => trip?.privacy_time_shifted === true);
+  const privacyPlaceholderCount = maskedTrips.reduce((count, trip) => (
+    count + (Array.isArray(trip?.route_points)
+      ? trip.route_points.filter((point) => point?.privacy_export_placeholder === true).length
+      : 0)
+  ), 0);
   return {
     app: 'Road Sage',
     version: BACKUP_VERSION,
     exported_at: new Date().toISOString(),
+    privacy_export: {
+      timestamp_fuzzing_enabled: true,
+      timestamp_shift_policy: 'bounded_private_zone_noise',
+      shifted_trip_count: privacyShiftedTrips.length,
+      boundary_placeholder_count: privacyPlaceholderCount,
+      shifted_trip_ids: privacyShiftedTrips.map((trip) => trip.id).filter(Boolean).slice(0, 1000),
+    },
     settings: exportSettings,
     ui: {
       saved_trip_filters: savedTripFilters,
@@ -536,15 +558,7 @@ export function buildDriveSenseBackup({
       survey_markers: sanitizedCalibrationSurveyMarkers,
     },
     vehicles,
-    trips: trips.map((trip) => {
-      const masked = /** @type {any} */ (maskTripForPrivacyExport(trip, settings, privacyExportSalt));
-      return {
-        ...masked,
-        route_points: Array.isArray(masked.route_points) ? masked.route_points : [],
-        driving_events: Array.isArray(masked.driving_events) ? masked.driving_events : [],
-        event_feedback: masked.event_feedback && typeof masked.event_feedback === 'object' ? masked.event_feedback : {},
-      };
-    }),
+    trips: maskedTrips,
   };
 }
 

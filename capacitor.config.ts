@@ -6,6 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   android: {
     useLegacyBridge: true,
+    loggingBehavior: 'none',
   },
   plugins: {
     LocalNotifications: {

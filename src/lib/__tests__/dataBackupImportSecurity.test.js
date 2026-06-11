@@ -529,9 +529,14 @@ describe('backup export privacy', () => {
     const trip = {
       id: 'trip-private-boundary',
       status: 'completed',
+      start_time: '2026-01-01T12:00:00.000Z',
+      avg_speed_kmh: 80,
+      avg_running_speed_kmh: 85,
+      max_speed_kmh: 120,
       route_points: [
-        { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z' },
-        { lat: 43.6522, lng: -79.38, timestamp: '2026-01-01T12:00:20.000Z', radius_m: 999 },
+        { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z', speed_kmh: 120, heading: 45 },
+        { lat: 43.6522, lng: -79.38, timestamp: '2026-01-01T12:00:20.000Z', speed_kmh: 20, radius_m: 999 },
+        { lat: 43.6532, lng: -79.38, timestamp: '2026-01-01T12:00:40.000Z', speed_kmh: 40 },
       ],
       driving_events: [],
     };
@@ -541,6 +546,20 @@ describe('backup export privacy', () => {
     const exportedPlaceholder = backup.trips[0].route_points.find((point) => point.privacy_export_placeholder);
 
     expect(backup.trips[0].route_points.some((point) => point.privacy_boundary)).toBe(false);
+    expect(backup.privacy_export).toMatchObject({
+      timestamp_fuzzing_enabled: true,
+      timestamp_shift_policy: 'bounded_private_zone_noise',
+      shifted_trip_count: 1,
+      boundary_placeholder_count: 1,
+      shifted_trip_ids: ['trip-private-boundary'],
+    });
+    expect(backup.trips[0]).toMatchObject({
+      avg_speed_kmh: 30,
+      avg_running_speed_kmh: 30,
+      max_speed_kmh: 40,
+      privacy_time_shifted: true,
+      privacy_time_shifted_fields: ['start_time'],
+    });
     expect(exportedPlaceholder).toMatchObject({
       lat: null,
       lng: null,

@@ -82,7 +82,7 @@ describe('activeTripStore encryption', () => {
     expect(storedPoint).toMatchObject({
       lat: null,
       lng: null,
-      speed_kmh: 12,
+      speed_kmh: null,
       masked_for_privacy: true,
       privacy_gap: true,
       privacy_live_redacted: true,

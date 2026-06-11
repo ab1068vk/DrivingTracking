@@ -111,6 +111,13 @@ import {
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
 import { LEGAL_DISCLAIMER_SHORT, LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
+import {
+  APP_LOCK_SETTING_EVENT,
+  authenticateDevice,
+  getDeviceAuthenticationAvailability,
+} from '@/lib/biometricGate';
+import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -257,9 +264,22 @@ const PENALTY_SCALE_CALIBRATION = Object.freeze({
   key: 'PENALTY_SCALE_FACTOR',
   ...SCORING_CONSTANTS.PENALTY_SCALE_FACTOR,
 });
+const RASP_THREAT_LABELS = Object.freeze({
+  SU_BINARY: 'su binary',
+  TEST_KEYS: 'test-signed OS',
+  DEBUGGABLE: 'debuggable app',
+  ADB_ENABLED: 'USB debugging',
+  EMULATOR: 'emulator',
+});
 
 function calibrationStatusLabel(status) {
   return status === CALIBRATION_STATUSES.PROVISIONAL ? 'Provisional' : status;
+}
+
+function formatRaspThreat(threat) {
+  const value = String(threat || '');
+  if (value.startsWith('ROOT_APP:')) return `root manager: ${value.slice('ROOT_APP:'.length)}`;
+  return RASP_THREAT_LABELS[value] || value;
 }
 
 const calibrationLabelDate = (label = {}) => {
@@ -356,6 +376,8 @@ export default function Settings() {
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
+  const [integrity, setIntegrity] = useState(() => integrityStatusFromSettings(localSettings.get()));
+  const [integrityChecking, setIntegrityChecking] = useState(false);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -470,6 +492,111 @@ export default function Settings() {
     return updated;
   };
 
+  const updateScreenCaptureAllowed = async (allowed) => {
+    try {
+      if (allowed && !await requireSensitiveAuthentication('Verify to allow screenshots and screen sharing')) return;
+      await setScreenCaptureAllowed(allowed);
+      updateCfg({ allow_screen_capture: allowed });
+    } catch (error) {
+      logSystemFailure('settings_screen_capture_protection', error);
+      toast({
+        title: 'Screen capture setting not changed',
+        description: error?.message || 'Android could not update screen capture protection.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const requireSensitiveAuthentication = async (reason) => {
+    if (!isAndroid()) return true;
+    try {
+      const result = await authenticateDevice(reason);
+      if (result.verified) return true;
+      toast({
+        title: 'Authentication required',
+        description: result.cancelled ? 'Authentication was cancelled.' : 'Your identity could not be verified.',
+        variant: 'destructive',
+      });
+    } catch (error) {
+      logSystemFailure('settings_sensitive_action_authentication', error, { reason });
+      toast({
+        title: 'Authentication unavailable',
+        description: error?.message || 'Set up a device screen lock, fingerprint, or secure face unlock first.',
+        variant: 'destructive',
+      });
+    }
+    return false;
+  };
+
+  const updateAppLockEnabled = async (enabled) => {
+    if (enabled) {
+      try {
+        const availability = await getDeviceAuthenticationAvailability();
+        if (!availability.available) {
+          toast({
+            title: 'Device authentication not set up',
+            description: 'Set a device PIN, password, pattern, fingerprint, or secure face unlock first.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      } catch (error) {
+        logSystemFailure('settings_app_lock_availability', error);
+        toast({
+          title: 'Could not check device authentication',
+          description: error?.message || 'Try again after reopening Road Sage.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+    if (!await requireSensitiveAuthentication(enabled ? 'Verify to enable the Road Sage app lock' : 'Verify to disable the Road Sage app lock')) return;
+    updateCfg({ app_lock_enabled: enabled });
+    window.dispatchEvent(new CustomEvent(APP_LOCK_SETTING_EVENT, {
+      detail: { enabled, authenticated: true },
+    }));
+  };
+
+  const refreshDeviceIntegrity = async ({ showSuccess = true } = {}) => {
+    if (!isAndroid()) return;
+    setIntegrityChecking(true);
+    try {
+      const result = await checkIntegrity();
+      setIntegrity(result);
+      setCfg(localSettings.get());
+      if (showSuccess) {
+        toast({
+          title: result.secure ? 'Device integrity check passed' : 'Device security concern detected',
+          description: result.secure
+            ? 'No root, debug, emulator, or USB debugging signals were detected.'
+            : 'Privacy-zone display is allowed only if you turn it on, and new privacy-zone storage is blocked while the guard is on.',
+          variant: result.secure ? undefined : 'destructive',
+        });
+      }
+    } catch (error) {
+      logSystemFailure('settings_device_integrity_check', error);
+      toast({
+        title: 'Device integrity check failed',
+        description: error?.message || 'Road Sage could not query Android integrity signals.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIntegrityChecking(false);
+    }
+  };
+
+  const updateShowPrivacyCircles = (enabled) => {
+    if (enabled && integrity?.secure === false) {
+      toast({
+        title: 'Privacy circles can reveal sensitive places',
+        description: 'This device has integrity warnings. Road Sage will show only offset and expanded circles, but they can still hint at private locations.',
+        variant: 'destructive',
+        duration: 9000,
+      });
+    }
+    updateCfg({ show_privacy_circles: enabled });
+  };
+
   const showPrivacyNativeSyncFailure = (error, title = 'Privacy zone not saved') => {
     setCfg(localSettings.get());
     toast({
@@ -502,6 +629,11 @@ export default function Settings() {
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
   }, [cfg.osrm_map_matching_url]);
+
+  useEffect(() => {
+    if (!isAndroid()) return;
+    void refreshDeviceIntegrity({ showSuccess: false });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1120,6 +1252,16 @@ export default function Settings() {
   };
 
   const savePrivacyZone = async (location, sourceLabel) => {
+    if (integrity?.secure === false && cfg.privacy_zone_storage_requires_secure_device !== false) {
+      toast({
+        title: 'Privacy zone not saved',
+        description: 'This Android environment has integrity warnings. Turn off the secure-device storage guard only if you accept that rooted or debug-enabled devices can expose private places.',
+        variant: 'destructive',
+        duration: 9000,
+      });
+      return;
+    }
+
     const validation = validatePrivacyRadius(privacyDraft.radius_m);
     if (!validation.valid) {
       setPrivacyDraftRadiusError(validation.error);
@@ -1208,6 +1350,7 @@ export default function Settings() {
 
   const confirmDeletePrivacyZone = async () => {
     if (!privacyDeleteZone || privacyDeleteBusy) return;
+    if (!await requireSensitiveAuthentication('Verify to delete this privacy zone')) return;
     setPrivacyDeleteBusy(true);
 
     try {
@@ -1511,6 +1654,7 @@ export default function Settings() {
 
   const performExportBackup = async () => {
     if (!backupExportReady || backupExportBusy) return;
+    if (backupExportPlaintext && !await requireSensitiveAuthentication('Verify to export a readable backup')) return;
     setBackupExportBusy(true);
     recordSystemEvent('backup_export_confirmed', {
       output_format: backupExportPlaintext ? 'json' : 'encrypted',
@@ -1727,8 +1871,13 @@ export default function Settings() {
     (rescoreProgress?.status === 'pending' || rescoreProgress?.status === 'running');
   const privacyNativeSyncFailed = cfg.privacy_zones_native_sync_status === NATIVE_PRIVACY_SYNC_STATUS_FAILED;
   const osrmSharedPrivacyZones = privacyZones.filter((zone) => zone.exclude_from_osrm === false);
+  const integrityThreats = Array.isArray(integrity?.threats) ? integrity.threats : [];
+  const integrityThreatDetected = integrity?.secure === false || integrityThreats.length > 0;
+  const privacyZoneStorageBlocked = integrityThreatDetected && cfg.privacy_zone_storage_requires_secure_device !== false;
   const privacyHealthStatus = privacyNativeSyncFailed
     ? 'Android sync blocked'
+    : integrityThreatDetected
+    ? 'Device integrity warning'
     : privacyRescoreActive
     ? `${Math.max(0, rescoreTotal - rescoreCompleted)} trip${Math.max(0, rescoreTotal - rescoreCompleted) === 1 ? '' : 's'} re-scoring`
     : privacyZoneOverlaps.length
@@ -3351,6 +3500,88 @@ export default function Settings() {
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
+          {isAndroid() && (
+            <SettingRow
+              icon={Lock}
+              label="Require authentication to open Road Sage"
+              sublabel="Uses fingerprint, secure face unlock, or your device screen lock. Locks again after 5 minutes in the background."
+            >
+              <Checkbox
+                checked={cfg.app_lock_enabled === true}
+                onCheckedChange={(checked) => updateAppLockEnabled(checked === true)}
+                aria-label="Require authentication to open Road Sage"
+              />
+            </SettingRow>
+          )}
+          {isAndroid() && (
+            <SettingRow
+              icon={Smartphone}
+              label="Allow screenshots and screen sharing"
+              sublabel="Off by default. Turning this on can expose trip maps and private location history to other apps."
+            >
+              <Checkbox
+                checked={cfg.allow_screen_capture === true}
+                onCheckedChange={(checked) => updateScreenCaptureAllowed(checked === true)}
+                aria-label="Allow screenshots and screen sharing"
+              />
+            </SettingRow>
+          )}
+          {isAndroid() && (
+            <div className={`my-3 rounded-xl border p-3 text-sm ${
+              integrityThreatDetected
+                ? 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100'
+                : 'border-green-200 bg-green-50 text-green-900 dark:border-green-900/60 dark:bg-green-950/25 dark:text-green-100'
+            }`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 font-semibold">
+                    {integrityThreatDetected ? <AlertTriangle className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+                    Device integrity
+                  </div>
+                  <div className="mt-1 text-xs leading-relaxed">
+                    {integrityThreatDetected
+                      ? 'This device has signals that may allow other apps or users with elevated privileges to read private location data despite encryption.'
+                      : 'No root, debug, emulator, or USB debugging signals are currently reported by Android.'}
+                  </div>
+                  {integrityThreatDetected && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {integrityThreats.map((threat) => (
+                        <span key={threat} className="rounded-full bg-card/90 px-2 py-1 text-[11px] font-semibold">
+                          {formatRaspThreat(threat)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {integrityThreatDetected && (
+                    <div className="mt-2 text-xs">
+                      Privacy zones still mask trips. If you turn on privacy circles below, Road Sage will show offset, expanded outlines, but those outlines can still hint at private places on a debug or modified device.
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshDeviceIntegrity()}
+                  disabled={integrityChecking}
+                  className="shrink-0 rounded-lg border border-current/20 bg-card/80 px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                >
+                  {integrityChecking ? 'Checking...' : 'Check again'}
+                </button>
+              </div>
+            </div>
+          )}
+          {isAndroid() && (
+            <SettingRow
+              icon={Shield}
+              label="Block new privacy zones on compromised devices"
+              sublabel="On by default. Existing zones keep masking, but new zone storage is refused when root, debug, emulator, or USB debugging signals are detected."
+            >
+              <Checkbox
+                checked={cfg.privacy_zone_storage_requires_secure_device !== false}
+                onCheckedChange={(checked) => updateCfg({ privacy_zone_storage_requires_secure_device: checked === true })}
+                aria-label="Block new privacy zones on compromised devices"
+              />
+            </SettingRow>
+          )}
           <div className="my-3 rounded-xl border border-border bg-secondary/30 p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -3529,6 +3760,8 @@ export default function Settings() {
                 <span className={`rounded-full px-2 py-1 font-semibold ${
                   privacyNativeSyncFailed
                     ? 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-100'
+                    : integrityThreatDetected
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-100'
                     : privacyRescoreActive
                     ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-100'
                     : privacyZoneOverlaps.length || osrmSharedPrivacyZones.length
@@ -3541,6 +3774,11 @@ export default function Settings() {
               {privacyNativeSyncFailed && (
                 <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
                   Android did not receive the latest privacy zones, so background auto tracking is off until zones sync successfully.
+                </div>
+              )}
+              {integrityThreatDetected && (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                  Device integrity warnings are active. Privacy-zone display circles are allowed only if you turn them on, and new zone storage is blocked while the secure-device guard is on.
                 </div>
               )}
               {privacyRescoreActive && (
@@ -3578,11 +3816,11 @@ export default function Settings() {
             <SettingRow
               icon={Eye}
               label="Show privacy circles on map"
-              sublabel="Off by default. Zones remain active when their offset display outlines are hidden."
+              sublabel={integrityThreatDetected ? 'Allowed with warning. These offset circles can still hint at private places on a debug or modified device.' : 'Off by default. Zones remain active when their offset display outlines are hidden.'}
             >
               <Checkbox
                 checked={cfg.show_privacy_circles === true}
-                onCheckedChange={(checked) => updateCfg({ show_privacy_circles: checked === true })}
+                onCheckedChange={(checked) => updateShowPrivacyCircles(checked === true)}
                 aria-label="Show privacy circles on map"
               />
             </SettingRow>
@@ -3590,7 +3828,9 @@ export default function Settings() {
               <button
                 type="button"
                 onClick={addCurrentPrivacyZone}
-                className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+                disabled={privacyZoneStorageBlocked}
+                title={privacyZoneStorageBlocked ? 'Blocked by the secure-device privacy-zone guard. Use the help below to enable adding zones.' : 'Add a privacy zone at your current location'}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
                 <LocateFixed className="h-3.5 w-3.5" />
                 Add Current
@@ -3598,13 +3838,35 @@ export default function Settings() {
               <button
                 type="button"
                 onClick={() => savePrivacyZone(parkedLocation, 'Parked location')}
-                disabled={!parkedLocation}
+                disabled={!parkedLocation || privacyZoneStorageBlocked}
+                title={privacyZoneStorageBlocked ? 'Blocked by the secure-device privacy-zone guard. Use the help below to enable adding zones.' : !parkedLocation ? 'No parked location is saved yet.' : 'Add a privacy zone at your parked location'}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add Parked
               </button>
             </div>
+            {privacyZoneStorageBlocked && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                <div className="font-semibold">Add Current is disabled by the secure-device guard.</div>
+                <div className="mt-1">
+                  This debug/USB setup can expose private places more easily. To enable adding zones, either fix the warnings and tap Check again, or allow new privacy zones on this device.
+                </div>
+                <label className="mt-2 flex items-start gap-2 rounded-lg bg-card/70 p-2 font-medium">
+                  <Checkbox
+                    checked={false}
+                    onCheckedChange={(checked) => {
+                      if (checked === true) updateCfg({ privacy_zone_storage_requires_secure_device: false });
+                    }}
+                    aria-label="Allow adding privacy zones on this device despite integrity warnings"
+                    className="mt-0.5"
+                  />
+                  <span>
+                    I understand the risk. Allow adding privacy zones on this device.
+                  </span>
+                </label>
+              </div>
+            )}
             {privacyZones.length > 0 && (
               <div className="mt-3 space-y-2">
                 {privacyZones.map((zone) => (
@@ -3684,7 +3946,7 @@ export default function Settings() {
           <SettingRow
             icon={Download}
             label="Export Full Backup"
-            sublabel="Password-protected backup with trips, route points, events, vehicles, and settings"
+            sublabel="Backup with trips, route points, events, vehicles, settings, and privacy-shifted export timestamps near privacy zones"
             onClick={handleExportBackup}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -3886,6 +4148,9 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-relaxed text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
+              Backup timestamps near privacy zones may be slightly shifted to protect routines. Trip history inside Road Sage keeps the exact times.
+            </div>
             <label className="block text-sm font-medium">
               Password
               <div className="relative mt-1">

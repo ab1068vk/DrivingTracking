@@ -6,14 +6,18 @@ import {
   countTripsAffectedByPrivacyZone,
   createPrivacyCellHashes,
   findOverlappingZones,
+  getBoundaryTimestampFuzz,
   getPrivacyZoneDisplayCircle,
   isPointInPrivacyZone,
   isInsidePrivacyZone,
+  KINEMATIC_FIELDS,
   loadPrivacyZonesFromStorage,
   maskEventCoordinatesForPrivacy,
   maskEventsForPrivacy,
   maskRoutePointsForPrivacyExport,
   maskRoutePointsForPrivacy,
+  maskTripForPrivacy,
+  maskTripForPrivacyExport,
   mergePrivacyZones,
   NATIVE_PRIVACY_ZONES_KEY,
   NATIVE_PRIVACY_SYNC_STATUS_FAILED,
@@ -23,6 +27,7 @@ import {
   purgeGpsWithinPrivacyZone,
   purgeTripGpsWithinPrivacyZone,
   redactRoutePointForPrivacyStorage,
+  sanitizeKinematics,
   syncZonesToNative,
   upsertPrivacyZone,
 } from '@/lib/privacyZones';
@@ -71,8 +76,8 @@ describe('privacyZones', () => {
   });
 
   it('interpolates the route crossing at the circle boundary', () => {
-    const inside = point(43.65, -79.38, 0, 10);
-    const outside = point(43.6522, -79.38, 20, 40);
+    const inside = { ...point(43.65, -79.38, 0, 10), heading: 25, bearing: 30, altitude: 100, accuracy: 4 };
+    const outside = { ...point(43.6522, -79.38, 20, 40), heading: 45, bearing: 50, altitude: 110, accuracy: 6 };
 
     const boundary = privacyBoundaryPoint(inside, outside, zone);
 
@@ -82,6 +87,24 @@ describe('privacyZones', () => {
     expect(haversineDistance(boundary.lat, boundary.lng, zone.lat, zone.lng) * 1000).toBeCloseTo(100, 0);
     expect(new Date(boundary.timestamp).getTime()).toBeGreaterThan(new Date(inside.timestamp).getTime());
     expect(new Date(boundary.timestamp).getTime()).toBeLessThan(new Date(outside.timestamp).getTime());
+    expect(boundary).toMatchObject({
+      speed_kmh: null,
+      heading: null,
+      bearing: null,
+      altitude: null,
+      accuracy: null,
+    });
+  });
+
+  it('nulls every supported kinematic field without changing unrelated data', () => {
+    const raw = Object.fromEntries(KINEMATIC_FIELDS.map((field, index) => [field, index + 1]));
+    const sanitized = sanitizeKinematics({ ...raw, timestamp: '2026-01-01T12:00:00.000Z', road_type: 'urban' });
+
+    KINEMATIC_FIELDS.forEach((field) => expect(sanitized[field]).toBeNull());
+    expect(sanitized).toMatchObject({
+      timestamp: '2026-01-01T12:00:00.000Z',
+      road_type: 'urban',
+    });
   });
 
   it('clips start and end privacy zones without exposing interior points', () => {
@@ -117,7 +140,7 @@ describe('privacyZones', () => {
     expect(stored).toMatchObject({
       lat: null,
       lng: null,
-      speed_kmh: 12,
+      speed_kmh: null,
       masked_for_privacy: true,
       privacy_gap: true,
       privacy_live_redacted: true,
@@ -146,6 +169,26 @@ describe('privacyZones', () => {
     });
   });
 
+  it('nulls kinematics on previously masked points even when zone geometry is unavailable', () => {
+    const legacyMasked = {
+      lat: null,
+      lng: null,
+      speed_kmh: 55,
+      heading: 90,
+      accuracy: 5,
+      masked_for_privacy: true,
+      privacy_gap: true,
+      privacy_zone_id: 'deleted-zone',
+    };
+
+    expect(maskRoutePointsForPrivacy([legacyMasked], { privacy_zones: [] })[0]).toMatchObject({
+      speed_kmh: null,
+      heading: null,
+      accuracy: null,
+      masked_for_privacy: true,
+    });
+  });
+
   it('replaces export privacy boundaries with opaque placeholders', () => {
     const route = [
       point(43.65, -79.38, 0),
@@ -171,6 +214,102 @@ describe('privacyZones', () => {
     expect(JSON.stringify(exported)).not.toContain(String(exactBoundary.lat));
     expect(placeholder.radius_m).toBeUndefined();
     expect(placeholder.privacy_zone_radius_m).toBeUndefined();
+  });
+
+  it('fuzzes exported boundary timestamps with a stable per-export zone offset', () => {
+    const route = [
+      point(43.65, -79.38, 0),
+      point(43.6522, -79.38, 20),
+      point(43.6532, -79.38, 40),
+      point(43.65, -79.38, 60),
+    ];
+    const settings = { privacy_zones: [zone] };
+
+    const exactBoundary = maskRoutePointsForPrivacy(route, settings).find((item) => item.privacy_boundary);
+    const exported = maskRoutePointsForPrivacyExport(route, settings, 'same-export');
+    const repeated = maskRoutePointsForPrivacyExport(route, settings, 'same-export');
+    const nextExport = maskRoutePointsForPrivacyExport(route, settings, 'next-export');
+    const placeholder = exported.find((item) => item.privacy_export_placeholder);
+    const repeatedPlaceholder = repeated.find((item) => item.privacy_export_placeholder);
+    const nextPlaceholder = nextExport.find((item) => item.privacy_export_placeholder);
+    const exactMs = new Date(exactBoundary.timestamp).getTime();
+    const expectedFuzz = getBoundaryTimestampFuzz('home', 'same-export');
+
+    expect(placeholder.timestamp).toBe(repeatedPlaceholder.timestamp);
+    expect(new Date(placeholder.timestamp).getTime() - exactMs).toBe(expectedFuzz);
+    expect(Math.abs(expectedFuzz)).toBeLessThanOrEqual(3 * 60 * 1000);
+    expect(placeholder.timestamp).not.toBe(exactBoundary.timestamp);
+    expect(nextPlaceholder.timestamp).not.toBe(placeholder.timestamp);
+  });
+
+  it('fuzzes exported trip summary times only when the endpoint is private', () => {
+    const privateTrip = {
+      id: 'private-endpoints',
+      start_time: '2026-01-01T12:00:00.000Z',
+      end_time: '2026-01-01T12:01:00.000Z',
+      route_points: [
+        point(43.65, -79.38, 0),
+        point(43.6522, -79.38, 30),
+        point(43.65, -79.38, 60),
+      ],
+      driving_events: [],
+    };
+    const publicTrip = {
+      id: 'public-endpoints',
+      start_time: '2026-01-01T12:00:00.000Z',
+      end_time: '2026-01-01T12:01:00.000Z',
+      route_points: [
+        point(43.6522, -79.38, 0),
+        point(43.6532, -79.38, 60),
+      ],
+      driving_events: [],
+    };
+    const settings = { privacy_zones: [zone] };
+    const expectedFuzz = getBoundaryTimestampFuzz('home', 'same-export');
+
+    const exportedPrivate = maskTripForPrivacyExport(privateTrip, settings, 'same-export');
+    const repeatedPrivate = maskTripForPrivacyExport(privateTrip, settings, 'same-export');
+    const nextPrivate = maskTripForPrivacyExport(privateTrip, settings, 'next-export');
+    const exportedPublic = maskTripForPrivacyExport(publicTrip, settings, 'same-export');
+
+    expect(exportedPrivate.start_time).toBe(repeatedPrivate.start_time);
+    expect(new Date(exportedPrivate.start_time).getTime() - new Date(privateTrip.start_time).getTime()).toBe(expectedFuzz);
+    expect(new Date(exportedPrivate.end_time).getTime() - new Date(privateTrip.end_time).getTime()).toBe(expectedFuzz);
+    expect(Math.abs(expectedFuzz)).toBeLessThanOrEqual(3 * 60 * 1000);
+    expect(exportedPrivate.start_time).not.toBe(privateTrip.start_time);
+    expect(nextPrivate.start_time).not.toBe(exportedPrivate.start_time);
+    expect(exportedPrivate).toMatchObject({
+      privacy_time_shifted: true,
+      privacy_time_shifted_fields: ['start_time', 'end_time'],
+      privacy_time_shift_policy: 'bounded_private_zone_noise',
+    });
+    expect(maskTripForPrivacy(privateTrip, settings).start_time).toBe(privateTrip.start_time);
+    expect(exportedPublic.start_time).toBe(publicTrip.start_time);
+    expect(exportedPublic.end_time).toBe(publicTrip.end_time);
+    expect(exportedPublic.privacy_time_shifted).toBeUndefined();
+  });
+
+  it('exports speed summaries from public points only', () => {
+    const trip = {
+      avg_speed_kmh: 70,
+      avg_running_speed_kmh: 75,
+      max_speed_kmh: 120,
+      route_points: [
+        { ...point(43.65, -79.38, 0, 120), heading: 45 },
+        point(43.6522, -79.38, 20, 20),
+        point(43.6532, -79.38, 40, 40.04),
+      ],
+      driving_events: [],
+    };
+
+    const exported = maskTripForPrivacyExport(trip, { privacy_zones: [zone] }, 'export-salt');
+
+    expect(exported).toMatchObject({
+      avg_speed_kmh: 30,
+      avg_running_speed_kmh: 30,
+      max_speed_kmh: 40,
+    });
+    expect(exported.route_points.find((item) => item.privacy_export_placeholder)).not.toHaveProperty('speed_kmh', 120);
   });
 
   it('counts trips that would be exposed by privacy zone deletion', () => {

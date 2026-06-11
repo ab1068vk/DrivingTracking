@@ -4,17 +4,21 @@ import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
 import { useLocation } from 'react-router-dom';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { App as CapacitorApp } from '@capacitor/app';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { activeTripStore, applyThemeMode, localSettings } from '@/lib/trackingStore';
 import { loadPrivacyZonesFromStorage } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { recordSystemEvent } from '@/lib/systemLog';
-import { Route as RouteIcon } from 'lucide-react';
+import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
+import { APP_LOCK_SETTING_EVENT, authenticateDevice } from '@/lib/biometricGate';
+import { checkIntegrity } from '@/lib/rasp';
+import { Lock, Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
@@ -50,10 +54,41 @@ function AppLoading() {
   );
 }
 
+function AppLockScreen({ busy, error, onUnlock }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background p-6">
+      <div className="w-full max-w-sm rounded-3xl border border-border bg-card p-6 text-center shadow-xl">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Lock className="h-7 w-7" />
+        </div>
+        <h1 className="mt-4 text-xl font-semibold">Road Sage is locked</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Use your fingerprint, secure face unlock, or device screen lock to continue.
+        </p>
+        {error && <p className="mt-3 text-sm font-medium text-red-600 dark:text-red-400">{error}</p>}
+        <button
+          type="button"
+          onClick={onUnlock}
+          disabled={busy}
+          className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+        >
+          {busy ? 'Waiting for authentication...' : 'Unlock'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const [onboardingDone, setOnboardingDone] = useState(null);
   const [legalNoticeOpen, setLegalNoticeOpen] = useState(false);
+  const [appLockEnabled, setAppLockEnabled] = useState(false);
+  const [appLocked, setAppLocked] = useState(false);
+  const [appLockBusy, setAppLockBusy] = useState(false);
+  const [appLockError, setAppLockError] = useState('');
+  const unlockInProgressRef = useRef(false);
+  const backgroundedAtRef = useRef(0);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -63,6 +98,11 @@ const AuthenticatedApp = () => {
         .then(({ configureNotificationChannels }) => configureNotificationChannels())
         .catch(() => {});
       const settings = await localSettings.hydrateFromNative();
+      await setScreenCaptureAllowed(settings.allow_screen_capture === true).catch(() => {});
+      await checkIntegrity().catch(() => {});
+      const lockEnabled = isAndroid() && settings.app_lock_enabled === true;
+      setAppLockEnabled(lockEnabled);
+      setAppLocked(lockEnabled);
       await loadPrivacyZonesFromStorage(settings);
       await import('@/lib/localTripRepository')
         .then(({ migrateLegacyTripStorageToEncrypted }) => migrateLegacyTripStorageToEncrypted())
@@ -85,6 +125,66 @@ const AuthenticatedApp = () => {
       applyThemeMode(settings.dark_mode);
     };
     bootstrapSettings();
+  }, []);
+
+  const unlockApp = async () => {
+    if (unlockInProgressRef.current) return;
+    unlockInProgressRef.current = true;
+    setAppLockBusy(true);
+    setAppLockError('');
+    try {
+      const result = await authenticateDevice('Verify to open your private driving data');
+      if (result.verified) {
+        setAppLocked(false);
+        backgroundedAtRef.current = 0;
+      } else {
+        setAppLockError(result.cancelled ? 'Authentication was cancelled.' : 'Authentication was not verified.');
+      }
+    } catch (error) {
+      setAppLockError(error?.message || 'Device authentication is unavailable.');
+    } finally {
+      unlockInProgressRef.current = false;
+      setAppLockBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (appLocked) void unlockApp();
+  }, [appLocked]);
+
+  useEffect(() => {
+    if (!isAndroid()) return undefined;
+    let appStateListener;
+
+    CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (!appLockEnabled) return;
+      if (!isActive) {
+        backgroundedAtRef.current = Date.now();
+        return;
+      }
+      const backgroundedAt = backgroundedAtRef.current;
+      if (backgroundedAt && Date.now() - backgroundedAt >= 5 * 60 * 1000) {
+        setAppLocked(true);
+      }
+      backgroundedAtRef.current = 0;
+    }).then((listener) => {
+      appStateListener = listener;
+    }).catch(() => {});
+
+    return () => {
+      appStateListener?.remove?.();
+    };
+  }, [appLockEnabled]);
+
+  useEffect(() => {
+    const onAppLockSettingChanged = (event) => {
+      const enabled = event.detail?.enabled === true;
+      setAppLockEnabled(enabled);
+      setAppLocked(enabled && event.detail?.authenticated !== true);
+      if (!enabled) setAppLockError('');
+    };
+    window.addEventListener(APP_LOCK_SETTING_EVENT, onAppLockSettingChanged);
+    return () => window.removeEventListener(APP_LOCK_SETTING_EVENT, onAppLockSettingChanged);
   }, []);
 
   const acknowledgeLegalNotice = () => {
@@ -125,6 +225,10 @@ const AuthenticatedApp = () => {
 
   if (isLoadingPublicSettings || isLoadingAuth || onboardingDone === null) {
     return <AppLoading />;
+  }
+
+  if (appLocked) {
+    return <AppLockScreen busy={appLockBusy} error={appLockError} onUnlock={unlockApp} />;
   }
 
   if (authError) {
