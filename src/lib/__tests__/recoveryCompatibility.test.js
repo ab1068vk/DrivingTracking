@@ -95,10 +95,13 @@ describe('recovery compatibility', () => {
     expect(manifest).not.toContain('android:fullBackupContent=');
   });
 
-  it('does not bind exported backups to a specific app install', () => {
+  it('binds newly exported backups to a local signing key for tamper detection', () => {
     const backupSource = readProjectFile('src/lib/dataBackup.js');
+    const integritySource = readProjectFile('src/lib/exportIntegrity.js');
 
-    expect(backupSource).not.toContain('getOrCreateInstallHash');
-    expect(backupSource).not.toContain('integrity_check_failed');
+    expect(backupSource).toContain('signExport');
+    expect(backupSource).toContain('verifyAndUnwrapExport');
+    expect(integritySource).toContain('HMAC-SHA256');
+    expect(integritySource).toContain('ds_export_signing_key_v1');
   });
 });

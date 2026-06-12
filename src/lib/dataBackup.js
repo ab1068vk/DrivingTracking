@@ -20,6 +20,11 @@ import {
   encryptBackupText,
   isEncryptedBackupEnvelope,
 } from '@/lib/backupEnvelopeEncryption';
+import {
+  isSignedExportEnvelope,
+  signExport,
+  verifyAndUnwrapExport,
+} from '@/lib/exportIntegrity';
 
 /*
  * Backup schema history:
@@ -585,7 +590,16 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     ? requestedName.replace(/\.(json|drivesensebackup)$/i, ENCRYPTED_BACKUP_EXTENSION)
     : `${requestedName}${ENCRYPTED_BACKUP_EXTENSION}`;
   const outputName = safeFilename(encrypted ? encryptedName : requestedName);
-  const plaintext = JSON.stringify(backup, null, 2);
+  let signedBackup;
+  try {
+    signedBackup = await signExport(backup);
+  } catch (error) {
+    logSystemFailure('backup_export_sign', error, {
+      backup_version: BACKUP_VERSION,
+    });
+    throw error;
+  }
+  const plaintext = JSON.stringify(signedBackup, null, 2);
   let content = plaintext;
   if (encrypted) {
     recordSystemEvent('backup_export_encryption_started', {
@@ -622,6 +636,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     saved_filter_count: Array.isArray(savedFilters) ? savedFilters.length : 0,
     backup_version: BACKUP_VERSION,
     encrypted,
+    signed: true,
     output_format: encrypted ? 'encrypted' : 'json',
   }, { category: 'storage', title: 'Backup export started' });
 
@@ -639,9 +654,10 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
         byte_count: content.length,
         backup_version: BACKUP_VERSION,
         encrypted,
+        signed: true,
         output_format: encrypted ? 'encrypted' : 'json',
       }, { category: 'storage', title: 'Backup export completed' });
-      return { native: true, filename: outputName, uri: result.uri, backup, encrypted };
+      return { native: true, filename: outputName, uri: result.uri, backup, signedBackup, encrypted, signed: true };
     }
   } catch (error) {
     nativeFallbackError = error?.message || 'Native export failed.';
@@ -671,9 +687,19 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     byte_count: content.length,
     backup_version: BACKUP_VERSION,
     encrypted,
+    signed: true,
     output_format: encrypted ? 'encrypted' : 'json',
   }, { category: 'storage', title: 'Backup export completed' });
-  return { native: false, filename: outputName, backup, encrypted, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+  return {
+    native: false,
+    filename: outputName,
+    backup,
+    signedBackup,
+    encrypted,
+    signed: true,
+    nativeFallback: Boolean(nativeFallbackError),
+    nativeFallbackError,
+  };
 }
 
 export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
@@ -842,6 +868,48 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
       encrypted: true,
     }, { category: 'storage', title: 'Backup decrypted' });
   }
+
+  let signed = false;
+  let signatureSignedAt = null;
+  if (isSignedExportEnvelope(backupText)) {
+    signed = true;
+    try {
+      const signedExport = JSON.parse(backupText);
+      const verified = await verifyAndUnwrapExport(signedExport);
+      backupText = JSON.stringify(verified.payload);
+      signatureSignedAt = verified.signedAt;
+      recordSystemEvent('backup_import_signature_verified', {
+        byte_count: Number(file?.size) || backupText.length || 0,
+        encrypted,
+        signed: true,
+        signed_at: signatureSignedAt,
+      }, { category: 'storage', title: 'Backup signature verified' });
+    } catch (error) {
+      recordSystemEvent('backup_import_signature_rejected', {
+        byte_count: Number(file?.size) || backupText.length || 0,
+        encrypted,
+        signed: true,
+      }, {
+        category: 'storage',
+        severity: 'error',
+        title: 'Backup signature rejected',
+        message: 'Backup import stopped before writing data because the signature was invalid.',
+      });
+      throw error;
+    }
+  } else {
+    recordSystemEvent('backup_import_unsigned_legacy', {
+      byte_count: Number(file?.size) || backupText.length || 0,
+      encrypted,
+      signed: false,
+    }, {
+      category: 'storage',
+      severity: 'warn',
+      title: 'Unsigned backup import',
+      message: 'Legacy backup import continued without an export signature.',
+    });
+  }
+
   let backup;
   try {
     backup = parseDriveSenseBackup(backupText);
@@ -849,6 +917,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     logSystemFailure('backup_import_parse', error, {
       byte_count: Number(file?.size) || backupText.length || 0,
       encrypted,
+      signed,
     });
     throw error;
   }
@@ -922,6 +991,8 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     source_version: backup.sourceVersion,
     backup_version: backup.version,
     encrypted,
+    signed,
+    signature_signed_at: signatureSignedAt,
   }, {
     category: 'storage',
     severity: backup.warnings.length || privacyZonesNeedReconfiguration ? 'warn' : 'info',

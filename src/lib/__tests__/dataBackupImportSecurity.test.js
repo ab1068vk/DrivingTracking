@@ -16,6 +16,11 @@ import {
   encryptBackupText,
   isEncryptedBackupEnvelope,
 } from '@/lib/backupEnvelopeEncryption';
+import {
+  isSignedExportEnvelope,
+  signExport,
+  verifyExport,
+} from '@/lib/exportIntegrity';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
@@ -354,6 +359,45 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { passphrase });
     expect(imported).toMatchObject({ trips: 1, vehicles: 0 });
+  });
+
+  it('verifies signed backup envelopes before importing data', async () => {
+    const signed = await signExport({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [],
+      trips: [{ id: 'trip-signed', status: 'completed' }],
+    });
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify(signed)),
+    };
+
+    expect(isSignedExportEnvelope(signed)).toBe(true);
+    await expect(verifyExport(signed)).resolves.toMatchObject({ valid: true });
+
+    const imported = await importDriveSenseBackup(file);
+    expect(imported).toMatchObject({ trips: 1, vehicles: 0 });
+  });
+
+  it('rejects tampered signed backups before writing trips or vehicles', async () => {
+    const { tripService } = await import('@/api/trips');
+    const { vehicleService } = await import('@/api/vehicles');
+    const signed = await signExport({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      vehicles: [{ id: 'vehicle-original', name: 'Original' }],
+      trips: [{ id: 'trip-original', status: 'completed' }],
+    });
+    signed.payload.trips.push({ id: 'trip-fabricated', status: 'completed' });
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify(signed)),
+    };
+
+    await expect(importDriveSenseBackup(file)).rejects.toThrow('Backup signature invalid');
+    expect(tripService.upsertMany).not.toHaveBeenCalled();
+    expect(vehicleService.upsertMany).not.toHaveBeenCalled();
   });
 });
 

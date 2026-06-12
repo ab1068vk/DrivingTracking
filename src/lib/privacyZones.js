@@ -2,6 +2,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { clearMapMatchingCache } from '@/lib/mapMatching';
 import { encryptSensitiveValue, getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
+import { appendPrivacyEvent } from '@/lib/hashChainLog';
 
 const EARTH_RADIUS_M = 6371000;
 const DISPLAY_CIRCLE_OFFSET_M = 35;
@@ -55,6 +56,14 @@ export const NATIVE_PRIVACY_SYNC_FAILED_EVENT = 'drivesense:privacy-native-sync-
 export const NATIVE_PRIVACY_SYNC_STATUS_OK = 'ok';
 export const NATIVE_PRIVACY_SYNC_STATUS_FAILED = 'failed';
 let privacyZonesMemory = null;
+
+const appendPrivacyAuditEvent = (event) => {
+  void appendPrivacyEvent(event).catch((error) => {
+    logSystemFailure('privacy_audit_log_append', error, {
+      operation: event?.op || event?.operation || event?.type,
+    });
+  });
+};
 
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
@@ -310,6 +319,13 @@ async function failClosedAfterNativePrivacySyncFailure(error, zoneCount) {
     severity: 'warn',
     title: 'Native privacy-zone sync failed closed',
     message: 'Background auto tracking was turned off until Android receives the privacy-zone guard.',
+  });
+  appendPrivacyAuditEvent({
+    op: 'PRIVACY_ZONES_NATIVE_SYNC_FAIL_CLOSED',
+    details: {
+      zone_count: zoneCount,
+      native_tracking_stopped: nativeTrackingStopped === true,
+    },
   });
 
   if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
@@ -846,6 +862,20 @@ export async function purgeGpsWithinPrivacyZone(trips = [], zone, updateTrip) {
     }
   }
 
+  if (tripsAffected > 0) {
+    appendPrivacyAuditEvent({
+      op: 'PRIVATE_GPS_PURGED',
+      zoneId: zone?.id,
+      zoneLabel: zone?.label,
+      hiddenCount: pointsPurged + eventsPurged,
+      details: {
+        affected_trip_count: tripsAffected,
+        purged_point_count: pointsPurged,
+        purged_event_count: eventsPurged,
+      },
+    });
+  }
+
   return { tripsAffected, pointsPurged, eventsPurged, tripIdsAffected };
 }
 
@@ -972,6 +1002,15 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
       hidden_point_count: hiddenCount,
       privacy_zone_count: zones.length,
     }, { category: 'privacy', title: 'Privacy zone masked route points' });
+    appendPrivacyAuditEvent({
+      op: 'POINTS_SUPPRESSED',
+      hiddenCount,
+      details: {
+        point_count: points.length,
+        hidden_point_count: hiddenCount,
+        privacy_zone_count: zones.length,
+      },
+    });
   }
   return masked;
 }
@@ -1056,6 +1095,15 @@ export function maskEventsForPrivacy(events = [], settings = localSettings.get()
       hidden_event_count: hiddenCount,
       privacy_zone_count: zones.length,
     }, { category: 'privacy', title: 'Privacy zone masked driving events' });
+    appendPrivacyAuditEvent({
+      op: 'EVENTS_SUPPRESSED',
+      hiddenCount,
+      details: {
+        event_count: events.length,
+        hidden_event_count: hiddenCount,
+        privacy_zone_count: zones.length,
+      },
+    });
   }
   return filtered;
 }
@@ -1204,12 +1252,28 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     radius_m: normalized.radius_m,
     zone_count: next.length,
   }, { category: 'privacy', title: 'Privacy zone saved' });
+  appendPrivacyAuditEvent({
+    op: previous ? 'ZONE_UPDATED' : 'ZONE_SAVED',
+    zoneId: normalized.id,
+    zoneLabel: normalized.label,
+    details: {
+      zone_count: next.length,
+    },
+  });
   if (consentInvalidated) {
     recordSystemEvent('osrm_consent_invalidated', {
       reason: 'privacy_zone_changed',
       zone_id: normalized.id,
       zone_label: normalized.label,
     }, { category: 'osrm', severity: 'warn', title: 'OSRM consent needs review' });
+    appendPrivacyAuditEvent({
+      op: 'OSRM_CONSENT_INVALIDATED',
+      zoneId: normalized.id,
+      zoneLabel: normalized.label,
+      details: {
+        reason: 'privacy_zone_changed',
+      },
+    });
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('osrm-consent-required', {
         detail: { reason: 'new_privacy_zone', zoneLabel: normalized.label },
@@ -1227,5 +1291,12 @@ export async function removePrivacyZone(id, settings = localSettings.get()) {
     zone_id: id,
     zone_count: next.length,
   }, { category: 'privacy', title: 'Privacy zone removed' });
+  appendPrivacyAuditEvent({
+    op: 'ZONE_DELETED',
+    zoneId: id,
+    details: {
+      zone_count: next.length,
+    },
+  });
   return updated;
 }

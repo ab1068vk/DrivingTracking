@@ -2,6 +2,7 @@ import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { appendPrivacyEvent } from '@/lib/hashChainLog';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -23,6 +24,14 @@ const endpointOrigin = (endpoint) => {
   } catch {
     return '';
   }
+};
+
+const appendOsrmAuditEvent = (event) => {
+  void appendPrivacyEvent(event).catch((error) => {
+    logSystemFailure('privacy_audit_log_append', error, {
+      operation: event?.op || event?.operation || event?.type,
+    });
+  });
 };
 
 function routeCacheKey(segments = []) {
@@ -262,6 +271,10 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
   if (settings.map_matching_enabled === false) {
     recordSystemEvent('osrm_map_matching_skipped', { status: 'disabled' }, { category: 'osrm' });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED',
+      details: { status: 'disabled' },
+    });
     return { routePoints, status: 'disabled', provider: 'osrm', isOsrmDemoUrl };
   }
   if (!settings.osrm_map_matching_url) {
@@ -269,6 +282,13 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       status: 'needs_endpoint',
       reason: 'Route snapping is on, but no OSRM endpoint is set.',
     }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED',
+      details: {
+        status: 'needs_endpoint',
+        reason: 'Route snapping is on, but no OSRM endpoint is set.',
+      },
+    });
     return {
       routePoints,
       status: 'needs_endpoint',
@@ -283,6 +303,13 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       endpoint_origin: endpointOrigin(settings.osrm_map_matching_url),
       reason: 'The public OSRM demo is reference-only in Road Sage.',
     }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED',
+      details: {
+        status: 'public_demo_blocked',
+        reason: 'The public OSRM demo is reference-only in Road Sage.',
+      },
+    });
     return {
       routePoints,
       status: 'public_demo_blocked',
@@ -297,6 +324,13 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       endpoint_origin: endpointOrigin(settings.osrm_map_matching_url),
       reason: 'Route snapping needs OSRM data-sharing consent.',
     }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED',
+      details: {
+        status: 'needs_consent',
+        reason: 'Route snapping needs OSRM data-sharing consent.',
+      },
+    });
     return {
       routePoints,
       status: 'needs_consent',
@@ -313,6 +347,14 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       status: 'not_enough_points',
       point_count: validCount,
     }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
+    appendOsrmAuditEvent({
+      op: gapCount ? 'OSRM_SKIPPED_PRIVACY_GAPS' : 'OSRM_SKIPPED',
+      details: {
+        status: 'not_enough_points',
+        point_count: validCount,
+        privacy_gap_count: gapCount,
+      },
+    });
     return { routePoints, status: 'not_enough_points', provider: 'osrm', isOsrmDemoUrl };
   }
 
@@ -330,6 +372,13 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
         status: 'needs_endpoint',
         reason: 'The OSRM endpoint is not a valid URL.',
       }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
+      appendOsrmAuditEvent({
+        op: 'OSRM_SKIPPED',
+        details: {
+          status: 'needs_endpoint',
+          reason: 'The OSRM endpoint is not a valid URL.',
+        },
+      });
       return {
         routePoints,
         status: 'needs_endpoint',
@@ -383,11 +432,28 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       privacy_gap_count: result.privacy_gap_count,
       failure_count: failures.length,
     }, { category: 'osrm', severity: failures.length ? 'warn' : 'info' });
+    appendOsrmAuditEvent({
+      op: 'OSRM_MAP_MATCHING_COMPLETED',
+      details: {
+        status: result.status,
+        snapped_coverage: result.snapped_coverage,
+        segment_count: result.segment_count,
+        privacy_gap_count: result.privacy_gap_count,
+        failure_count: failures.length,
+      },
+    });
     return result;
   } catch (error) {
     logSystemFailure('osrm_map_matching', error, {
       endpoint_origin: endpointOrigin(settings.osrm_map_matching_url),
       point_count: Array.isArray(routePoints) ? routePoints.length : 0,
+    });
+    appendOsrmAuditEvent({
+      op: 'OSRM_MAP_MATCHING_FAILED',
+      details: {
+        status: 'unavailable',
+        point_count: Array.isArray(routePoints) ? routePoints.length : 0,
+      },
     });
     const detail = error?.message ? ` ${error.message}` : '';
     return {

@@ -111,6 +111,7 @@ import {
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
 import { LEGAL_DISCLAIMER_SHORT, LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { verifyChain } from '@/lib/hashChainLog';
 import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
 import {
   APP_LOCK_SETTING_EVENT,
@@ -378,6 +379,7 @@ export default function Settings() {
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const [integrity, setIntegrity] = useState(() => integrityStatusFromSettings(localSettings.get()));
   const [integrityChecking, setIntegrityChecking] = useState(false);
+  const [auditVerifying, setAuditVerifying] = useState(false);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -504,6 +506,37 @@ export default function Settings() {
         description: error?.message || 'Android could not update screen capture protection.',
         variant: 'destructive',
       });
+    }
+  };
+
+  const handleVerifyAuditLog = async () => {
+    setAuditVerifying(true);
+    try {
+      const result = await verifyChain();
+      recordSystemEvent('privacy_audit_log_verified', {
+        status: result.valid ? 'valid' : 'tampered',
+        reason: result.reason || '',
+      }, {
+        category: 'privacy',
+        severity: result.valid ? 'info' : 'warn',
+        title: result.valid ? 'Privacy audit log verified' : 'Privacy audit log tamper check failed',
+      });
+      toast({
+        title: result.valid ? 'Audit log intact' : 'Audit log tampered',
+        description: result.valid
+          ? `${result.length} entr${result.length === 1 ? 'y' : 'ies'} verified.`
+          : `Entry ${result.brokenAt}: ${result.reason}`,
+        variant: result.valid ? undefined : 'destructive',
+      });
+    } catch (error) {
+      logSystemFailure('privacy_audit_log_verify', error);
+      toast({
+        title: 'Audit log verification failed',
+        description: error?.message || 'Road Sage could not verify the privacy audit log.',
+        variant: 'destructive',
+      });
+    } finally {
+      setAuditVerifying(false);
     }
   };
 
@@ -3989,6 +4022,20 @@ export default function Settings() {
               <option value={24}>24 hours</option>
               <option value={72}>3 days</option>
             </select>
+          </SettingRow>
+          <SettingRow
+            icon={Check}
+            label="Verify Audit Log"
+            sublabel="Check the tamper-evident chain for privacy and OSRM decisions"
+          >
+            <button
+              type="button"
+              onClick={handleVerifyAuditLog}
+              disabled={auditVerifying}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+            >
+              {auditVerifying ? 'Checking...' : 'Verify'}
+            </button>
           </SettingRow>
           <SettingRow
             icon={Trash2}
