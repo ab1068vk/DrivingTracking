@@ -35,9 +35,13 @@ import {
   isEncryptedPayload,
   setEncryptedJson,
 } from '@/lib/securePayloadCrypto';
+import { isSecureDeleteTombstone, secureDelete } from '@/lib/encryptedStore';
+import { appendPrivacyEvent } from '@/lib/hashChainLog';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
+export const RAW_GPS_LIFECYCLE_STATE_KEY = 'drivesense_raw_gps_lifecycle_state_v1';
+export const RAW_GPS_LIFECYCLE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DB_NAME = 'drivesense_mobile';
 export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
 export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
@@ -210,13 +214,17 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
 
 const tripEncryptionContext = (id) => `trip:${String(id)}`;
 
-const encodeTripRecord = async (trip) => {
+const encodeTripRecord = async (trip, options = {}) => {
   const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
   return {
     id: storageTrip.id,
     start_time: storageTrip.start_time || '',
     status: storageTrip.status || '',
-    encrypted_payload: await encryptSensitiveValue(storageTrip, tripEncryptionContext(storageTrip.id)),
+    encrypted_payload: await encryptSensitiveValue(
+      storageTrip,
+      tripEncryptionContext(storageTrip.id),
+      options
+    ),
   };
 };
 
@@ -234,7 +242,8 @@ const readTripsFromDb = async (dbName) => {
   const db = await openDbByName(dbName);
   try {
     const tx = db.transaction(TRIP_STORE, 'readonly');
-    return decodeTripRecords(await idbRequest(tx.objectStore(TRIP_STORE).getAll()));
+    const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    return decodeTripRecords(records.filter((record) => !isSecureDeleteTombstone(record)));
   } finally {
     db.close();
   }
@@ -322,11 +331,19 @@ const migrateConfiguredDbName = () => {
 const getAllTrips = async () => {
   try {
     const db = await openDb();
-    const tx = db.transaction(TRIP_STORE, 'readonly');
-    const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+    const readTx = db.transaction(TRIP_STORE, 'readonly');
+    const records = await idbRequest(readTx.objectStore(TRIP_STORE).getAll());
+    const tombstones = records.filter(isSecureDeleteTombstone);
+    if (tombstones.length) {
+      const cleanupTx = db.transaction(TRIP_STORE, 'readwrite');
+      const store = cleanupTx.objectStore(TRIP_STORE);
+      tombstones.forEach((record) => store.delete(record.id));
+      await idbTransactionDone(cleanupTx);
+    }
     db.close();
-    const trips = await decodeTripRecords(records);
-    const legacyTrips = records.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
+    const liveRecords = records.filter((record) => !isSecureDeleteTombstone(record));
+    const trips = await decodeTripRecords(liveRecords);
+    const legacyTrips = liveRecords.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
     const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
     const sanitizedChanged = JSON.stringify(sanitizedTrips) !== JSON.stringify(trips);
     if (legacyTrips.length || sanitizedChanged) await writeTripsToDb(DB_NAME, sanitizedTrips);
@@ -351,7 +368,10 @@ export async function migrateLegacyTripStorageToEncrypted() {
       try {
         const tx = db.transaction(TRIP_STORE, 'readonly');
         const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
-        const legacyTrips = records.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
+        const legacyTrips = records.filter((record) => (
+          !isSecureDeleteTombstone(record) &&
+          !isEncryptedPayload(record?.encrypted_payload)
+        ));
         if (legacyTrips.length) {
           await writeTripsToDb(DB_NAME, legacyTrips);
           indexedDbRecordsMigrated = legacyTrips.length;
@@ -386,6 +406,52 @@ export async function migrateLegacyTripStorageToEncrypted() {
   }
 
   return { indexedDbRecordsMigrated, fallbackStoreMigrated };
+}
+
+export async function rotateTripEncryptionKey(targetKeyVersion, { yieldEvery = 20 } = {}) {
+  const normalizedTarget = Math.max(1, Number(targetKeyVersion) || 1);
+  let indexedDbRecordsRotated = 0;
+  let fallbackStoreRotated = false;
+  let processed = 0;
+
+  if (canUseIndexedDb()) {
+    const db = await openDb();
+    try {
+      const readTx = db.transaction(TRIP_STORE, 'readonly');
+      const records = await idbRequest(readTx.objectStore(TRIP_STORE).getAll());
+      for (const record of records) {
+        if (isSecureDeleteTombstone(record)) {
+          const cleanupTx = db.transaction(TRIP_STORE, 'readwrite');
+          await idbRequest(cleanupTx.objectStore(TRIP_STORE).delete(record.id));
+          continue;
+        }
+        if (Number(record?.encrypted_payload?.key_version) === normalizedTarget) continue;
+        const trip = await decodeTripRecord(record);
+        const encryptedRecord = await encodeTripRecord(trip, { keyVersion: normalizedTarget });
+        const writeTx = db.transaction(TRIP_STORE, 'readwrite');
+        await idbRequest(writeTx.objectStore(TRIP_STORE).put(encryptedRecord));
+        indexedDbRecordsRotated += 1;
+        processed += 1;
+        if (yieldEvery > 0 && processed % yieldEvery === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  const fallbackPayload = await getJson(TRIPS_KEY, null);
+  if (isEncryptedPayload(fallbackPayload) && Number(fallbackPayload.key_version) !== normalizedTarget) {
+    const fallbackTrips = await decryptSensitiveValue(fallbackPayload, `storage:${TRIPS_KEY}`);
+    await setEncryptedJson(TRIPS_KEY, fallbackTrips, { keyVersion: normalizedTarget });
+    fallbackStoreRotated = true;
+  } else if (Array.isArray(fallbackPayload)) {
+    await setEncryptedJson(TRIPS_KEY, fallbackPayload, { keyVersion: normalizedTarget });
+    fallbackStoreRotated = true;
+  }
+
+  return { indexedDbRecordsRotated, fallbackStoreRotated };
 }
 
 const putTrip = async (trip) => {
@@ -679,6 +745,8 @@ const rescoreTrip = (trip, vehicles = []) => {
 
 const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.get()), options = {}) => (
   trip?.status === 'completed' &&
+  trip?.privacy_mode !== 'summary_only' &&
+  !trip.route_data_expired_at &&
   (
     options.autoProvenanceTripIds?.has(trip.id) ||
     trip.needs_rescore ||
@@ -822,12 +890,23 @@ const importNativeCompletedTrips = async () => {
 const deleteTrip = async (id) => {
   try {
     const db = await openDb();
-    const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).delete(id));
-    db.close();
+    try {
+      const recordFound = await secureDelete(db, TRIP_STORE, id);
+      return {
+        recordFound,
+        deletionMethod: 'indexeddb_overwrite_then_delete',
+      };
+    } finally {
+      db.close();
+    }
   } catch {
     const trips = await getEncryptedJson(TRIPS_KEY, []);
-    await setEncryptedJson(TRIPS_KEY, trips.filter((trip) => String(trip.id) !== String(id)));
+    const remainingTrips = trips.filter((trip) => String(trip.id) !== String(id));
+    await setEncryptedJson(TRIPS_KEY, remainingTrips);
+    return {
+      recordFound: remainingTrips.length !== trips.length,
+      deletionMethod: 'encrypted_collection_rewrite',
+    };
   }
 };
 
@@ -846,6 +925,146 @@ const pruneExpiredTrips = async () => {
     await deleteTrip(trip.id);
   }
 };
+
+const coordinateFields = [
+  'lat',
+  'lng',
+  'latitude',
+  'longitude',
+  'original_lat',
+  'original_lng',
+  'matched_lat',
+  'matched_lng',
+];
+
+const stripCoordinates = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const next = { ...value };
+  coordinateFields.forEach((field) => {
+    delete next[field];
+  });
+  return next;
+};
+
+const stripCoordinatesFromList = (value) => (
+  Array.isArray(value) ? value.map(stripCoordinates) : value
+);
+
+export function expireTripRouteData(trip, retentionDays, expiredAt = Date.now()) {
+  if (!trip || typeof trip !== 'object' || trip.route_data_expired_at) return trip;
+  const routePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  if (!routePoints.length) return trip;
+
+  return {
+    ...trip,
+    route_points: [],
+    route_points_raw_count: Number(trip.route_points_raw_count) || routePoints.length,
+    route_points_map_count: 0,
+    driving_events: stripCoordinatesFromList(trip.driving_events),
+    phone_proxy_events: stripCoordinatesFromList(trip.phone_proxy_events),
+    phone_use_events: stripCoordinatesFromList(trip.phone_use_events),
+    native_phone_usage_events: stripCoordinatesFromList(trip.native_phone_usage_events),
+    native_tracking_timeline: stripCoordinatesFromList(trip.native_tracking_timeline),
+    start_address: null,
+    end_address: null,
+    route_data_expired_at: new Date(expiredAt).toISOString(),
+    route_data_retention_days: retentionDays,
+    route_data_expiration_reason: 'raw_gps_retention_policy',
+    needs_rescore: false,
+    updated_at: new Date(expiredAt).toISOString(),
+  };
+}
+
+export async function getRawGpsLifecycleStatus() {
+  const state = await getJson(RAW_GPS_LIFECYCLE_STATE_KEY, {});
+  return state && typeof state === 'object' ? state : {};
+}
+
+let rawGpsEnforcementPromise = null;
+
+export async function enforceRawGpsRetention({ force = false, now = Date.now() } = {}) {
+  if (rawGpsEnforcementPromise) return rawGpsEnforcementPromise;
+
+  rawGpsEnforcementPromise = (async () => {
+    const retentionDays = Number(localSettings.get().raw_gps_retention_days || 0);
+    const previous = await getRawGpsLifecycleStatus();
+    if (!retentionDays) {
+      return { enabled: false, purgedTrips: 0, purgedPoints: 0, lastRunAt: previous.lastRunAt || null };
+    }
+    if (!force && Number(previous.lastRunAt) > 0 && now - Number(previous.lastRunAt) < RAW_GPS_LIFECYCLE_INTERVAL_MS) {
+      return {
+        enabled: true,
+        skipped: true,
+        purgedTrips: 0,
+        purgedPoints: 0,
+        lastRunAt: Number(previous.lastRunAt),
+      };
+    }
+
+    const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+    const trips = await getAllTrips();
+    const expiredTrips = [];
+    let purgedPoints = 0;
+
+    for (const trip of trips) {
+      const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
+      if (
+        trip.status !== 'completed' ||
+        !Number.isFinite(when) ||
+        when <= 0 ||
+        when >= cutoff ||
+        trip.route_data_expired_at
+      ) continue;
+      const expired = expireTripRouteData(trip, retentionDays, now);
+      if (expired === trip) continue;
+      purgedPoints += Array.isArray(trip.route_points) ? trip.route_points.length : 0;
+      expiredTrips.push(expired);
+    }
+
+    if (expiredTrips.length) {
+      await putTrips(expiredTrips);
+      await invalidateTripDerivedCaches();
+      try {
+        await appendPrivacyEvent({
+          op: 'RAW_GPS_AUTO_PURGED',
+          details: {
+            purged_trip_count: expiredTrips.length,
+            purged_point_count: purgedPoints,
+            reason: `raw_gps_retention_${retentionDays}d`,
+          },
+        });
+      } catch (error) {
+        logSystemFailure('raw_gps_retention_audit_append', error, {
+          purged_trip_count: expiredTrips.length,
+        });
+      }
+      recordSystemEvent('raw_gps_retention_enforced', {
+        retention_days: retentionDays,
+        purged_trip_count: expiredTrips.length,
+        purged_point_count: purgedPoints,
+      }, {
+        category: 'privacy',
+        title: 'Expired route data removed',
+        message: `Removed route coordinates from ${expiredTrips.length} old trip${expiredTrips.length === 1 ? '' : 's'} while keeping summaries.`,
+      });
+    }
+
+    const state = {
+      lastRunAt: now,
+      retentionDays,
+      purgedTrips: expiredTrips.length,
+      purgedPoints,
+    };
+    await setJson(RAW_GPS_LIFECYCLE_STATE_KEY, state);
+    return { enabled: true, ...state };
+  })();
+
+  try {
+    return await rawGpsEnforcementPromise;
+  } finally {
+    rawGpsEnforcementPromise = null;
+  }
+}
 
 const sortTrips = (trips, sort) => {
   const field = sort?.replace('-', '') || 'start_time';
@@ -915,8 +1134,24 @@ export const localTripRepository = {
   },
 
   async delete(id) {
-    await deleteTrip(id);
-    return { success: true };
+    const result = await deleteTrip(id);
+    recordSystemEvent('secure_trip_deletion_completed', {
+      deletion_method: result.deletionMethod,
+      record_found: result.recordFound,
+      encrypted_at_rest: true,
+      physical_media_guarantee: false,
+    }, {
+      category: 'storage',
+      title: 'Secure trip deletion completed',
+      message: result.recordFound
+        ? 'The encrypted trip record was overwritten or rewritten before logical removal.'
+        : 'No matching local trip record remained to delete.',
+    });
+    return {
+      success: true,
+      deletion_method: result.deletionMethod,
+      record_found: result.recordFound,
+    };
   },
 
   async upsertMany(trips = []) {

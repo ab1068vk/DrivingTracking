@@ -135,4 +135,33 @@ describe('activeTripStore encryption', () => {
     expect(values.get('drivesense_active_trip')).not.toContain('43.65');
     expect(values.get('drivesense_active_trip')).not.toContain('-79.38');
   });
+
+  it('does not recover a private trip after the active trip store is cleared and flushed', async () => {
+    const values = new Map();
+    vi.stubGlobal('indexedDB', undefined);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    activeTripStore.set({
+      start_time: '2026-06-13T12:00:00.000Z',
+      status: 'active',
+      privacy_mode: 'summary_only',
+      private_trip_summary: {
+        distance_m: 1000,
+        duration_seconds: 300,
+        gps_points_processed: 30,
+        gps_points_stored: 0,
+      },
+    });
+    await activeTripStore.flush();
+
+    activeTripStore.clear();
+    await activeTripStore.flush();
+
+    expect(values.has('drivesense_active_trip')).toBe(false);
+    await expect(activeTripStore.hydrate()).resolves.toBeNull();
+  });
 });

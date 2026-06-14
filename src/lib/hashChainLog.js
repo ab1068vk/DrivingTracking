@@ -23,6 +23,7 @@ const DETAIL_ALLOWLIST = new Set([
   'purged_trip_count',
   'reason',
   'segment_count',
+  'service',
   'snapped_coverage',
   'status',
   'trip_count',

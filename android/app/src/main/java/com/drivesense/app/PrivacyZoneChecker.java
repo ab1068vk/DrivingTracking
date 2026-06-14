@@ -180,7 +180,8 @@ final class PrivacyZoneChecker {
                     return new ZoneParseResult(
                         new JSONArray(DriveSensePayloadCrypto.decrypt(
                             payload.getString("ciphertext"),
-                            PRIVACY_ZONES_CONTEXT
+                            PRIVACY_ZONES_CONTEXT,
+                            payload.optInt("key_version", 0)
                         )),
                         true,
                         false

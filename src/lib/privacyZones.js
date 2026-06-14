@@ -2,7 +2,10 @@ import { localSettings } from '@/lib/trackingStore';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { clearMapMatchingCache } from '@/lib/mapMatching';
 import { encryptSensitiveValue, getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
+import { secureSetPreference } from '@/lib/secureBridge';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
+import { SecureGpsBuffer } from '@/lib/SecureGpsBuffer';
+import { applyDifferentialPrivacyToAggregates } from '@/lib/differentialPrivacy';
 
 const EARTH_RADIUS_M = 6371000;
 const DISPLAY_CIRCLE_OFFSET_M = 35;
@@ -11,6 +14,7 @@ const EXPORT_NOISE_MAX_M = 35;
 const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
 const PRIVACY_CELL_SIZE_M = 100;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
+export const ZONE_STATS_KEY = 'drivesense_privacy_zone_stats_v1';
 export const ZONE_EVENT_GUARD_M = 50;
 const PRIVACY_CELL_STORAGE_GUARD_M = ZONE_EVENT_GUARD_M;
 export const KINEMATIC_FIELDS = Object.freeze([
@@ -56,6 +60,7 @@ export const NATIVE_PRIVACY_SYNC_FAILED_EVENT = 'drivesense:privacy-native-sync-
 export const NATIVE_PRIVACY_SYNC_STATUS_OK = 'ok';
 export const NATIVE_PRIVACY_SYNC_STATUS_FAILED = 'failed';
 let privacyZonesMemory = null;
+let zoneStatsWriteQueue = Promise.resolve();
 
 const appendPrivacyAuditEvent = (event) => {
   void appendPrivacyEvent(event).catch((error) => {
@@ -64,6 +69,184 @@ const appendPrivacyAuditEvent = (event) => {
     });
   });
 };
+
+const startOfDay = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+};
+
+const startOfWeek = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - date.getDay());
+  return date.getTime();
+};
+
+const defaultZoneStats = () => ({
+  hiddenAllTime: 0,
+  hiddenToday: 0,
+  hiddenWeek: 0,
+  eventsAllTime: 0,
+  eventsToday: 0,
+  eventsWeek: 0,
+  addressesLeaked: 0,
+  lastActive: null,
+  dailyReset: startOfDay(),
+  weeklyReset: startOfWeek(),
+});
+
+const readZoneStats = async () => {
+  try {
+    const stats = await getEncryptedJson(ZONE_STATS_KEY, {});
+    return stats && typeof stats === 'object' && !Array.isArray(stats) ? stats : {};
+  } catch {
+    return {};
+  }
+};
+
+export async function incrementZoneStats(zoneId, field, count = 1) {
+  const safeId = String(zoneId || '').trim();
+  const safeField = field === 'events' ? 'events' : field === 'addressesLeaked' ? 'addressesLeaked' : 'hidden';
+  const amount = Math.max(0, Math.round(Number(count) || 0));
+  if (!safeId || amount <= 0) return null;
+
+  zoneStatsWriteQueue = zoneStatsWriteQueue.catch(() => {}).then(async () => {
+    const stats = await readZoneStats();
+    const item = { ...defaultZoneStats(), ...(stats[safeId] || {}) };
+    const today = startOfDay();
+    const week = startOfWeek();
+    if (Number(item.dailyReset) < today) {
+      item.hiddenToday = 0;
+      item.eventsToday = 0;
+      item.dailyReset = today;
+    }
+    if (Number(item.weeklyReset) < week) {
+      item.hiddenWeek = 0;
+      item.eventsWeek = 0;
+      item.weeklyReset = week;
+    }
+
+    if (safeField === 'hidden') {
+      item.hiddenToday += amount;
+      item.hiddenWeek += amount;
+      item.hiddenAllTime += amount;
+    } else if (safeField === 'events') {
+      item.eventsToday += amount;
+      item.eventsWeek += amount;
+      item.eventsAllTime += amount;
+    } else {
+      item.addressesLeaked += amount;
+    }
+    item.lastActive = Date.now();
+
+    const nextStats = { ...stats, [safeId]: item };
+    await setEncryptedJson(ZONE_STATS_KEY, nextStats);
+    return item;
+  });
+
+  return zoneStatsWriteQueue;
+}
+
+const zoneStatsTimestampMs = (value, fallback = null) => {
+  const parsed = new Date(value ?? fallback ?? 0).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.get()) {
+  const zones = getPrivacyZones(settings);
+  const today = startOfDay();
+  const week = startOfWeek();
+  const statsByZone = new Map(zones.map((zone) => [zone.id, {
+    ...zone,
+    today: { hidden: 0, events: 0, addresses: 0 },
+    week: { hidden: 0, events: 0, addresses: 0 },
+    allTime: { hidden: 0, events: 0 },
+    riskLevel: 'Low',
+    lastActive: null,
+  }]));
+
+  for (const trip of Array.isArray(trips) ? trips : []) {
+    const tripTime = zoneStatsTimestampMs(trip?.end_time, trip?.start_time);
+    const countProtected = (items, field, predicate) => {
+      for (const item of Array.isArray(items) ? items : []) {
+        if (!predicate(item)) continue;
+        const zone = statsByZone.get(item?.privacy_zone_id);
+        if (!zone) continue;
+        const itemTime = zoneStatsTimestampMs(item?.timestamp ?? item?.time, tripTime);
+        zone.allTime[field] += 1;
+        if (itemTime >= week) zone.week[field] += 1;
+        if (itemTime >= today) zone.today[field] += 1;
+        zone.lastActive = Math.max(Number(zone.lastActive) || 0, itemTime || tripTime) || null;
+      }
+    };
+
+    countProtected(trip?.route_points, 'hidden', (point) => (
+      point?.masked_for_privacy === true &&
+      point?.privacy_boundary !== true &&
+      Boolean(point?.privacy_zone_id)
+    ));
+    countProtected(trip?.driving_events, 'events', (event) => (
+      event?.privacy_event_redacted === true && Boolean(event?.privacy_zone_id)
+    ));
+  }
+
+  return Array.from(statsByZone.values());
+}
+
+export async function getZoneStatsSnapshot(settings = localSettings.get(), trips = null) {
+  if (Array.isArray(trips)) return deriveZoneStatsFromTrips(trips, settings);
+  const zones = getPrivacyZones(settings);
+  let snapshot = [];
+  zoneStatsWriteQueue = zoneStatsWriteQueue.catch(() => {}).then(async () => {
+    const stats = await readZoneStats();
+    const today = startOfDay();
+    const week = startOfWeek();
+    let changed = false;
+    const normalizedStats = { ...stats };
+
+    snapshot = zones.map((zone) => {
+      const item = { ...defaultZoneStats(), ...(stats[zone.id] || {}) };
+      if (Number(item.dailyReset) < today) {
+        item.hiddenToday = 0;
+        item.eventsToday = 0;
+        item.dailyReset = today;
+        changed = true;
+      }
+      if (Number(item.weeklyReset) < week) {
+        item.hiddenWeek = 0;
+        item.eventsWeek = 0;
+        item.weeklyReset = week;
+        changed = true;
+      }
+      normalizedStats[zone.id] = item;
+
+      return {
+        ...zone,
+        today: {
+          hidden: item.hiddenToday || 0,
+          events: item.eventsToday || 0,
+          addresses: item.addressesLeaked || 0,
+        },
+        week: {
+          hidden: item.hiddenWeek || 0,
+          events: item.eventsWeek || 0,
+          addresses: item.addressesLeaked || 0,
+        },
+        allTime: {
+          hidden: item.hiddenAllTime || 0,
+          events: item.eventsAllTime || 0,
+        },
+        riskLevel: 'Low',
+        lastActive: item.lastActive || null,
+      };
+    });
+
+    if (changed) await setEncryptedJson(ZONE_STATS_KEY, normalizedStats);
+  });
+  await zoneStatsWriteQueue;
+  return snapshot;
+}
 
 const finiteNumber = (value) => {
   if (value == null || value === '') return null;
@@ -267,12 +450,22 @@ export async function syncZonesToNative(zones = getPrivacyZones()) {
       throw new Error('No privacy-zone cell guard is available for native sync.');
     }
 
-    const encryptedNativeZones = await encryptSensitiveValue(nativeZones, NATIVE_PRIVACY_ZONES_CONTEXT);
-    const { Preferences } = await import('@capacitor/preferences');
-    await Preferences.set({
-      key: NATIVE_PRIVACY_ZONES_KEY,
-      value: JSON.stringify(encryptedNativeZones),
-    });
+    const serializedNativeZones = JSON.stringify(nativeZones);
+    if (Capacitor.getPlatform() === 'android') {
+      await secureSetPreference({
+        key: NATIVE_PRIVACY_ZONES_KEY,
+        value: serializedNativeZones,
+        context: NATIVE_PRIVACY_ZONES_CONTEXT,
+        encryptAtRest: true,
+      });
+    } else {
+      const encryptedNativeZones = await encryptSensitiveValue(nativeZones, NATIVE_PRIVACY_ZONES_CONTEXT);
+      const { Preferences } = await import('@capacitor/preferences');
+      await Preferences.set({
+        key: NATIVE_PRIVACY_ZONES_KEY,
+        value: JSON.stringify(encryptedNativeZones),
+      });
+    }
     localSettings.update({
       privacy_zones_native_sync_status: NATIVE_PRIVACY_SYNC_STATUS_OK,
       privacy_zones_native_sync_failed_at: '',
@@ -965,54 +1158,106 @@ export function maskRoutePointsForPrivacy(routePoints = [], settings = localSett
 
   const masked = [];
   const points = Array.isArray(routePoints) ? routePoints : [];
-  points.forEach((point, index) => {
-    if (point?.masked_for_privacy === true && point?.privacy_boundary !== true) {
-      masked.push(sanitizeKinematics(point));
-      return;
+  const coordinateBuffer = new SecureGpsBuffer(points);
+
+  try {
+    for (let index = 0; index < points.length; index++) {
+      const point = points[index];
+      if (point?.masked_for_privacy === true && point?.privacy_boundary !== true) {
+        masked.push(sanitizeKinematics(point));
+        continue;
+      }
+
+      const zone = isPointInPrivacyZone(coordinateBuffer.get(index), zones);
+      const previous = index > 0 ? points[index - 1] : null;
+      const previousZone = previous ? isPointInPrivacyZone(coordinateBuffer.get(index - 1), zones) : null;
+
+      if (!zone && previousZone) {
+        if (hasExactZoneGeometry(previousZone)) pushBoundary(masked, previous, point, previousZone);
+      }
+
+      if (!zone) {
+        masked.push(point);
+        continue;
+      }
+
+      if (previous && !previousZone) {
+        if (hasExactZoneGeometry(zone)) pushBoundary(masked, point, previous, zone);
+        else pushPrivacyGap(masked, point, zone);
+        continue;
+      }
+
+      if (!hasExactZoneGeometry(zone)) {
+        pushPrivacyGap(masked, point, zone);
+      }
     }
 
-    const zone = isPointInPrivacyZone(point, zones);
-    const previous = index > 0 ? points[index - 1] : null;
-    const previousZone = previous ? isPointInPrivacyZone(previous, zones) : null;
-
-    if (!zone && previousZone) {
-      if (hasExactZoneGeometry(previousZone)) pushBoundary(masked, previous, point, previousZone);
-    }
-
-    if (!zone) {
-      masked.push(point);
-      return;
-    }
-
-    if (previous && !previousZone) {
-      if (hasExactZoneGeometry(zone)) pushBoundary(masked, point, previous, zone);
-      else pushPrivacyGap(masked, point, zone);
-      return;
-    }
-
-    if (!hasExactZoneGeometry(zone)) {
-      pushPrivacyGap(masked, point, zone);
-    }
-  });
-
-  const hiddenCount = points.length - masked.filter((point) => !point?.privacy_boundary).length;
-  if (hiddenCount > 0) {
-    recordSystemEvent('privacy_route_masked', {
-      route_point_count: points.length,
-      hidden_point_count: hiddenCount,
-      privacy_zone_count: zones.length,
-    }, { category: 'privacy', title: 'Privacy zone masked route points' });
-    appendPrivacyAuditEvent({
-      op: 'POINTS_SUPPRESSED',
-      hiddenCount,
-      details: {
-        point_count: points.length,
-        hidden_point_count: hiddenCount,
-        privacy_zone_count: zones.length,
-      },
-    });
+    return masked;
+  } finally {
+    coordinateBuffer.zero();
   }
-  return masked;
+}
+
+export function maskEventsForPrivacy(events = [], settings = localSettings.get()) {
+  const zones = getPrivacyZones(settings);
+  if (!zones.length) return events;
+  const sourceEvents = Array.isArray(events) ? events : [];
+  const coordinateBuffer = new SecureGpsBuffer(sourceEvents);
+
+  try {
+    const filtered = sourceEvents.filter((event, index) => (
+      !shouldMaskEventForPrivacy(coordinateBuffer.get(index), zones)
+    ));
+    return filtered;
+  } finally {
+    coordinateBuffer.zero();
+  }
+}
+
+function publicSpeedSummaryForTrip(trip = {}, zones = []) {
+  const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const coordinateBuffer = new SecureGpsBuffer(rawRoutePoints);
+
+  try {
+    const touchesPrivacyZone = rawRoutePoints.some((point, index) => (
+      point?.masked_for_privacy === true ||
+      point?.privacy_boundary === true ||
+      Boolean(isPointInPrivacyZone(coordinateBuffer.get(index), zones))
+    ));
+    if (!touchesPrivacyZone) return {};
+
+    const publicSpeedSamples = rawRoutePoints
+      .filter((point, index) => (
+        point?.masked_for_privacy !== true &&
+        point?.privacy_boundary !== true &&
+        !isPointInPrivacyZone(coordinateBuffer.get(index), zones)
+      ))
+      .map(publicPointSpeedKmh)
+      .filter(Number.isFinite);
+    const publicRunningSpeedSamples = publicSpeedSamples.filter((speed) => speed > 0);
+
+    return {
+      avg_speed_kmh: averageSpeed(publicSpeedSamples),
+      avg_running_speed_kmh: averageSpeed(publicRunningSpeedSamples),
+      max_speed_kmh: publicSpeedSamples.length ? roundSpeed(Math.max(...publicSpeedSamples)) : null,
+    };
+  } finally {
+    coordinateBuffer.zero();
+  }
+}
+
+function privacyZoneForExportEndpoint(point, zones = []) {
+  if (!point) return null;
+  const metadataZoneId = point.privacy_zone_id || point.zone_id;
+  if (point.masked_for_privacy === true && metadataZoneId) {
+    return { id: metadataZoneId };
+  }
+  const coordinateBuffer = new SecureGpsBuffer([point]);
+  try {
+    return isPointInPrivacyZone(coordinateBuffer.get(0), zones);
+  } finally {
+    coordinateBuffer.zero();
+  }
 }
 
 /** @param {Record<string, any>} point */
@@ -1084,74 +1329,16 @@ export function maskRoutePointsForPrivacyExport(routePoints = [], settings = loc
   return replacePrivacyBoundariesWithExportGaps(maskRoutePointsForPrivacy(routePoints, settings), exportSalt);
 }
 
-export function maskEventsForPrivacy(events = [], settings = localSettings.get()) {
-  const zones = getPrivacyZones(settings);
-  if (!zones.length) return events;
-  const filtered = events.filter((event) => !shouldMaskEventForPrivacy(event, zones));
-  const hiddenCount = events.length - filtered.length;
-  if (hiddenCount > 0) {
-    recordSystemEvent('privacy_events_masked', {
-      event_count: events.length,
-      hidden_event_count: hiddenCount,
-      privacy_zone_count: zones.length,
-    }, { category: 'privacy', title: 'Privacy zone masked driving events' });
-    appendPrivacyAuditEvent({
-      op: 'EVENTS_SUPPRESSED',
-      hiddenCount,
-      details: {
-        event_count: events.length,
-        hidden_event_count: hiddenCount,
-        privacy_zone_count: zones.length,
-      },
-    });
-  }
-  return filtered;
-}
-
-function publicSpeedSummaryForTrip(trip = {}, zones = []) {
-  const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
-  const touchesPrivacyZone = rawRoutePoints.some((point) => (
-    point?.masked_for_privacy === true ||
-    point?.privacy_boundary === true ||
-    Boolean(isPointInPrivacyZone(point, zones))
-  ));
-  if (!touchesPrivacyZone) return {};
-
-  const publicSpeedSamples = rawRoutePoints
-    .filter((point) => (
-      point?.masked_for_privacy !== true &&
-      point?.privacy_boundary !== true &&
-      !isPointInPrivacyZone(point, zones)
-    ))
-    .map(publicPointSpeedKmh)
-    .filter(Number.isFinite);
-  const publicRunningSpeedSamples = publicSpeedSamples.filter((speed) => speed > 0);
-
-  return {
-    avg_speed_kmh: averageSpeed(publicSpeedSamples),
-    avg_running_speed_kmh: averageSpeed(publicRunningSpeedSamples),
-    max_speed_kmh: publicSpeedSamples.length ? roundSpeed(Math.max(...publicSpeedSamples)) : null,
-  };
-}
-
-function privacyZoneForExportEndpoint(point, zones = []) {
-  if (!point) return null;
-  const metadataZoneId = point.privacy_zone_id || point.zone_id;
-  if (point.masked_for_privacy === true && metadataZoneId) {
-    return { id: metadataZoneId };
-  }
-  return isPointInPrivacyZone(point, zones);
-}
-
 export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
+  const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
   return {
     ...trip,
     ...publicSpeedSummaryForTrip(trip, zones),
-    route_points: maskRoutePointsForPrivacy(Array.isArray(trip.route_points) ? trip.route_points : [], settings),
+    route_points: maskRoutePointsForPrivacy(rawRoutePoints, settings),
     driving_events: maskEventsForPrivacy(Array.isArray(trip.driving_events) ? trip.driving_events : [], settings),
-    start_address: trip.start_address && isPointInPrivacyZone((trip.route_points || [])[0], zones) ? null : trip.start_address,
-    end_address: trip.end_address && isPointInPrivacyZone((trip.route_points || []).at?.(-1), zones) ? null : trip.end_address,
+    start_address: trip.start_address && privacyZoneForExportEndpoint(rawRoutePoints[0], zones) ? null : trip.start_address,
+    end_address: trip.end_address && privacyZoneForExportEndpoint(rawRoutePoints.at?.(-1), zones) ? null : trip.end_address,
   };
 }
 
@@ -1160,18 +1347,27 @@ export function maskTripForPrivacyExport(trip = {}, settings = localSettings.get
   const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
   const startZone = privacyZoneForExportEndpoint(rawRoutePoints[0], zones);
   const endZone = privacyZoneForExportEndpoint(rawRoutePoints.at?.(-1), zones);
-  const masked = maskTripForPrivacy(trip, settings);
+  const masked = /** @type {Record<string, any>} */ (maskTripForPrivacy(trip, settings));
+  const exportTrip = (startZone || endZone || rawRoutePoints.some((point) => (
+    point?.masked_for_privacy === true ||
+    point?.privacy_boundary === true ||
+    point?.privacy_gap === true ||
+    Boolean(point?.privacy_zone_id) ||
+    Boolean(isPointInPrivacyZone(point, zones))
+  )))
+    ? applyDifferentialPrivacyToAggregates(masked)
+    : masked;
   const shiftedFields = [
-    ...(startZone && masked.start_time != null ? ['start_time'] : []),
-    ...(endZone && masked.end_time != null ? ['end_time'] : []),
+    ...(startZone && exportTrip.start_time != null ? ['start_time'] : []),
+    ...(endZone && exportTrip.end_time != null ? ['end_time'] : []),
   ];
   return {
-    ...masked,
-    ...(startZone && masked.start_time != null ? {
-      start_time: fuzzBoundaryTimestamp(masked.start_time, startZone.id, exportSalt),
+    ...exportTrip,
+    ...(startZone && exportTrip.start_time != null ? {
+      start_time: fuzzBoundaryTimestamp(exportTrip.start_time, startZone.id, exportSalt),
     } : {}),
-    ...(endZone && masked.end_time != null ? {
-      end_time: fuzzBoundaryTimestamp(masked.end_time, endZone.id, exportSalt),
+    ...(endZone && exportTrip.end_time != null ? {
+      end_time: fuzzBoundaryTimestamp(exportTrip.end_time, endZone.id, exportSalt),
     } : {}),
     ...(shiftedFields.length ? {
       privacy_time_shifted: true,
@@ -1179,7 +1375,7 @@ export function maskTripForPrivacyExport(trip = {}, settings = localSettings.get
       privacy_time_shift_policy: 'bounded_private_zone_noise',
     } : {}),
     route_points: replacePrivacyBoundariesWithExportGaps(
-      Array.isArray(masked.route_points) ? masked.route_points : [],
+      Array.isArray(exportTrip.route_points) ? exportTrip.route_points : [],
       exportSalt
     ),
   };

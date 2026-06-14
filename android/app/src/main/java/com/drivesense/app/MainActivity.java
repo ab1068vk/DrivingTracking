@@ -12,6 +12,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ScreenSecurityPlugin.class);
         registerPlugin(BiometricAuthPlugin.class);
         registerPlugin(RaspPlugin.class);
+        registerPlugin(SecureBridgePlugin.class);
+        registerPlugin(RoadDataQueuePlugin.class);
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
     }

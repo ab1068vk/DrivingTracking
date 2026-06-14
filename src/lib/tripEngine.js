@@ -2,7 +2,8 @@ import { saveExportToDownloads } from './nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from './systemLog';
 import { clamp, pearsonCorrelation } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
-import { createPrivacyExportSalt, maskEventCoordinatesForPrivacy, maskTripForPrivacyExport } from './privacyZones';
+import { createPrivacyExportSalt, isPointInPrivacyZone, maskEventCoordinatesForPrivacy, maskTripForPrivacyExport } from './privacyZones';
+import { applyDifferentialPrivacyToAggregates } from './differentialPrivacy';
 import {
   COMPONENT_METRIC_KEYS,
   CSV_METRIC_COLUMNS,
@@ -1292,6 +1293,24 @@ export function calculateRouteSummary(points, startTime, endTime, thresholds = D
   const { events, phoneUse } = detectDrivingEvents(cleaned, thresholds, endTime);
   const scores = calculateTripScores(events, stats, cleaned, thresholds, stats.duration_seconds, phoneUse, { endTime });
   return { points: cleaned, stats, events, scores };
+}
+
+function tripTouchesPrivacyZone(routePoints = [], zones = []) {
+  const points = Array.isArray(routePoints) ? routePoints : [];
+  if (!points.length) return false;
+  return points.some((point) => (
+    point?.masked_for_privacy === true ||
+    point?.privacy_boundary === true ||
+    point?.privacy_gap === true ||
+    Boolean(point?.privacy_zone_id) ||
+    (Array.isArray(zones) && zones.length > 0 && Boolean(isPointInPrivacyZone(point, zones)))
+  ));
+}
+
+export function applyDifferentialPrivacyToTripAggregates(trip = {}, routePoints = trip?.route_points, zones = []) {
+  if (!trip || typeof trip !== 'object' || /** @type {any} */ (trip)._dpApplied === true) return trip;
+  if (!tripTouchesPrivacyZone(routePoints, zones)) return trip;
+  return applyDifferentialPrivacyToAggregates(trip);
 }
 
 function generatedTripId(prefix = 'trip') {

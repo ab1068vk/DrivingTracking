@@ -48,4 +48,10 @@ describe('TripCard score provenance display', () => {
     expect(html).toContain('aria-label="Open trip: Untitled trip"');
     expect(html).toContain('aria-label="Add Untitled trip to favorites"');
   });
+
+  it('labels trips with differential privacy aggregate noise', () => {
+    const html = renderToStaticMarkup(<TripCard trip={{ ...trip('calibrated'), _dpApplied: true }} />);
+
+    expect(html).toContain('Privacy-estimated near protected zones');
+  });
 });

@@ -37,7 +37,7 @@ let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 10;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 11;
 
 const settingsStorage = () => {
   try {
@@ -141,6 +141,7 @@ export const DEFAULT_SETTINGS = {
   auto_tracking_enabled: false,
   activity_permission_granted: false,
   data_retention_days: 365,
+  raw_gps_retention_days: 90,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -330,6 +331,11 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.external_context_auto_fetch_consented_at = '';
   }
 
+  if (version < 11 && parsed.raw_gps_retention_days == null) {
+    // Preserve existing installs until the user explicitly enables earlier route expiry.
+    merged.raw_gps_retention_days = 0;
+  }
+
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
@@ -338,7 +344,8 @@ export function migrateDefaultSettings(parsed = {}) {
 }
 
 const IMPORT_NUMBER_RANGES = {
-  data_retention_days: [1, 3650],
+  data_retention_days: [0, 3650],
+  raw_gps_retention_days: [0, 3650],
   threshold_harsh_brake_ms2: [2, 8],
   threshold_rapid_accel_ms2: [0.5, 15],
   threshold_stop_start_decel_ms2: [0.5, 15],
@@ -786,8 +793,9 @@ export const activeTripStore = {
   },
   set(trip) {
     activeTripMemory = sanitizeTripForPrivacyStorage(trip);
+    const tripSnapshot = activeTripMemory;
     activeTripWriteQueue = activeTripWriteQueue
-      .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, activeTripMemory))
+      .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, tripSnapshot))
       .catch(() => {});
   },
   clear() {

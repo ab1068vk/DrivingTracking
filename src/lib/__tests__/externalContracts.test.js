@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/requestObfuscator', () => ({
+  enqueueLocationRequest: (_tag, fn) => fn(),
+}));
+
 import { resetRetryCircuits } from '@/lib/retry';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, loadOsmSpeedLimitWays } from '@/lib/speedLimitSource';

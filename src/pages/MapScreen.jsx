@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { tripService } from '@/api/trips';
-import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
 import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
@@ -14,14 +15,15 @@ import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
-  buildOpenSourceTripContextPatch,
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
   isOsrmMapMatchingConfigured,
 } from '@/lib/openSourceTripContext';
+import { runRoadContextRefresh } from '@/lib/roadContextQueue';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
+import { pinnedFetch } from '@/lib/pinnedFetch';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -62,6 +64,7 @@ const tripPointSummary = (trip) => {
 
 export default function MapScreen() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [showCurrentLoc, setShowCurrentLoc] = useState(false);
@@ -99,10 +102,9 @@ export default function MapScreen() {
     mutationFn: async () => {
       if (!selectedTrip) throw new Error('Select a trip first.');
       setOsmFetchStatus('Preparing road data');
-      const patch = await buildOpenSourceTripContextPatch(selectedTrip, localSettings.get(), {
+      return runRoadContextRefresh(selectedTrip, localSettings.get(), {
         onProgress: setOsmFetchStatus,
       });
-      return tripService.update(selectedTrip.id, patch);
     },
     onSuccess: (updatedTrip) => {
       if (updatedTrip) {
@@ -291,7 +293,7 @@ export default function MapScreen() {
     if (!stored.address) {
       try {
         const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        const response = await pinnedFetch(url, { headers: { Accept: 'application/json' } });
         if (response.ok) {
           const data = await response.json();
           next = { ...stored, address: data.display_name || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
@@ -402,6 +404,16 @@ export default function MapScreen() {
                 </div>
               </div>
             )}
+            {privacyZones.length > 0 && !parkedLocation && (
+              <button
+                type="button"
+                onClick={() => navigate('/privacy-intelligence')}
+                className="absolute bottom-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-primary shadow backdrop-blur transition-colors hover:bg-card"
+              >
+                <Shield className="h-3.5 w-3.5" />
+                Privacy
+              </button>
+            )}
           </div>
         )}
 
@@ -463,7 +475,7 @@ export default function MapScreen() {
                   : selectedHasSpeedLimits
                     ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
                     : contextMutation.isPending
-                      ? osmFetchStatus || 'Getting road data...'
+                      ? osmFetchStatus || 'Queued privately...'
                       : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to get road data`}
               </div>
             </button>
@@ -492,12 +504,12 @@ export default function MapScreen() {
               <div className="font-semibold text-foreground">What Get Road Data does</div>
               <div className="mt-1">For this selected trip only:</div>
               <div className="mt-2 grid gap-1">
-                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'asks OpenStreetMap for road names and posted/default limits near the route.'}</div>
-                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'asks Open-Meteo for privacy-safe route point/date weather.'}</div>
+                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'queues an OpenStreetMap lookup with a randomized privacy delay.'}</div>
+                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'queues a privacy-safe Open-Meteo lookup with a randomized privacy delay.'}</div>
                 <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint and consent are saved in Settings.'}</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-                {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : selectedLayerEffect}
+                {contextMutation.isPending ? osmFetchStatus || 'Queued privately...' : selectedLayerEffect}
               </div>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 <span>Speed limits: {selectedSpeedLimitStatus.replace(/_/g, ' ')}</span>
@@ -519,7 +531,7 @@ export default function MapScreen() {
                 disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
-                {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
+                {contextMutation.isPending ? osmFetchStatus || 'Queued privately...' : 'Get Road Data'}
               </button>
               {contextMutation.isError && (
                 <div className="mt-2 text-orange-600 dark:text-orange-300">

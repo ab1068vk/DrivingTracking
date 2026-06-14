@@ -143,6 +143,7 @@ describe('tracking store default settings', () => {
   it('uses the shared fixed-hour night fallback by default', () => {
     expect(DEFAULT_SETTINGS.night_start_time).toBe('22:00');
     expect(DEFAULT_SETTINGS.night_end_time).toBe('05:00');
+    expect(DEFAULT_SETTINGS.raw_gps_retention_days).toBe(90);
   });
 
   it('migrates legacy sunset defaults without overwriting custom night windows', () => {
@@ -160,8 +161,10 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(10);
+    expect(legacySunset.settings_defaults_version).toBe(11);
+    expect(legacySunset.raw_gps_retention_days).toBe(0);
     expect(legacyCustom.night_end_time).toBe('06:00');
+    expect(legacyCustom.raw_gps_retention_days).toBe(0);
   });
 
   it('migrates unsupported proxy setting names to neutral metric names', () => {

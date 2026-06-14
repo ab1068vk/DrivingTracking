@@ -28,6 +28,10 @@ export default function TripCard({
   const safetyScore = getTripComponentScore(trip, 'safety');
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const unavailableScore = overallScore.value == null;
+  const privateTrip = trip.privacy_mode === 'summary_only';
+  const scoreUnavailableMessage = privateTrip
+    ? 'Score unavailable because this private trip saved no route data'
+    : SCORE_UNAVAILABLE_MESSAGE;
   const { color, label: scoreLabel, bg } = unavailableScore
     ? { color: 'text-muted-foreground', label: 'Unavailable', bg: 'bg-secondary' }
     : getScoreColor(overallScore.value);
@@ -114,6 +118,13 @@ export default function TripCard({
             )}
           </div>
 
+          {privateTrip && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+              <ShieldAlert className="h-3.5 w-3.5" />
+              Private trip - summary only
+            </div>
+          )}
+
           {displayTags.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {displayTags.map((tagId) => {
@@ -170,7 +181,12 @@ export default function TripCard({
 
           {unavailableScore && (
             <div className="mt-2 text-xs font-medium text-muted-foreground">
-              {SCORE_UNAVAILABLE_MESSAGE}
+              {scoreUnavailableMessage}
+            </div>
+          )}
+          {trip._dpApplied && (
+            <div className="mt-2 text-xs font-medium text-muted-foreground">
+              ~ Privacy-estimated near protected zones
             </div>
           )}
         </div>
@@ -178,7 +194,7 @@ export default function TripCard({
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div
             className={`w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}
-            title={unavailableScore ? SCORE_UNAVAILABLE_MESSAGE : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
+            title={unavailableScore ? scoreUnavailableMessage : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
           >
             <span className={`font-grotesk font-bold text-lg ${color}`}>
               {formatScoreWithProvenance(overallScore.value, trip.score_provenance)}

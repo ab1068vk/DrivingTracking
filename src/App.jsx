@@ -18,6 +18,7 @@ import { recordSystemEvent } from '@/lib/systemLog';
 import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
 import { APP_LOCK_SETTING_EVENT, authenticateDevice } from '@/lib/biometricGate';
 import { checkIntegrity } from '@/lib/rasp';
+import { checkAndRotateEncryptionKey } from '@/lib/keyRotationManager';
 import { Lock, Route as RouteIcon } from 'lucide-react';
 
 import Layout from '@/components/Layout';
@@ -33,6 +34,7 @@ const TripDetail = lazy(() => import('@/pages/TripDetail'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
 const Reports = lazy(() => import('@/pages/Report'));
 const Settings = lazy(() => import('@/pages/Settings'));
+const PrivacyIntelligence = lazy(() => import('@/pages/PrivacyIntelligence'));
 const AndroidReference = showDebugRoutes ? lazy(() => import('@/pages/AndroidReference')) : null;
 const Vehicles = lazy(() => import('@/pages/Vehicles'));
 const Achievements = lazy(() => import('@/pages/Achievements'));
@@ -105,9 +107,16 @@ const AuthenticatedApp = () => {
       setAppLocked(lockEnabled);
       await loadPrivacyZonesFromStorage(settings);
       await import('@/lib/localTripRepository')
-        .then(({ migrateLegacyTripStorageToEncrypted }) => migrateLegacyTripStorageToEncrypted())
+        .then(async ({ enforceRawGpsRetention, migrateLegacyTripStorageToEncrypted }) => {
+          await migrateLegacyTripStorageToEncrypted();
+          await enforceRawGpsRetention();
+        })
         .catch(() => {});
+      await checkAndRotateEncryptionKey().catch(() => {});
       await activeTripStore.hydrate();
+      import('@/lib/roadContextQueue')
+        .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
+        .catch(() => {});
       import('@/lib/rescoringWorker')
         .then(({ startRescoringWorker }) => startRescoringWorker())
         .catch(() => {});
@@ -157,6 +166,15 @@ const AuthenticatedApp = () => {
     let appStateListener;
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) {
+        checkAndRotateEncryptionKey().catch(() => {});
+        import('@/lib/roadContextQueue')
+          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
+          .catch(() => {});
+        import('@/lib/localTripRepository')
+          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
+          .catch(() => {});
+      }
       if (!appLockEnabled) return;
       if (!isActive) {
         backgroundedAtRef.current = Date.now();
@@ -175,6 +193,22 @@ const AuthenticatedApp = () => {
       appStateListener?.remove?.();
     };
   }, [appLockEnabled]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkAndRotateEncryptionKey().catch(() => {});
+        import('@/lib/roadContextQueue')
+          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
+          .catch(() => {});
+        import('@/lib/localTripRepository')
+          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
+          .catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
 
   useEffect(() => {
     const onAppLockSettingChanged = (event) => {
@@ -265,6 +299,7 @@ const AuthenticatedApp = () => {
           <Route path="/diagnostics" element={<Diagnostics />} />
           <Route path="/system-logs" element={<SystemLogs />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/privacy-intelligence" element={<PrivacyIntelligence />} />
           {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
           <Route path="/vehicles" element={<Vehicles />} />
         </Route>

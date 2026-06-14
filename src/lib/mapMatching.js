@@ -3,6 +3,8 @@ import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
+import { pinnedFetch } from '@/lib/pinnedFetch';
+import { logTransmission } from '@/lib/transmissionLog';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -173,7 +175,7 @@ export async function checkOsrmEndpointHealth(endpoint) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OSRM_HEALTH_TIMEOUT_MS);
-    const response = await fetch(osrmHealthCheckUrl(url.toString()), { signal: controller.signal })
+    const response = await pinnedFetch(osrmHealthCheckUrl(url.toString()), { signal: controller.signal })
       .finally(() => clearTimeout(timeout));
     if (!response.ok) {
       recordSystemEvent('osrm_health_unreachable', {
@@ -230,10 +232,21 @@ const osrmTimeoutMs = (settings = {}) => {
 
 async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIMEOUT_MS) {
   const sampled = samplePoints(segment);
+  await logTransmission({
+    service: 'osrm',
+    type: 'Route matching',
+    sentCoords: `${sampled.length} sampled coordinates`,
+    protections: ['zone-masked route', 'explicit consent'],
+    offsetMeters: null,
+    bytesOut: osrmMatchUrl(sampled, endpoint).length,
+    status: 'safe',
+    tripId: null,
+    zonesSuppressed: [],
+  });
   const response = await withRetry('osrm-map-matching', async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
+    return pinnedFetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
       .finally(() => clearTimeout(timeout));
   });
   if (!response.ok) throw new Error(`OSRM match failed (${response.status})`);
@@ -343,6 +356,19 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
   const validCount = segments.reduce((count, segment) => count + segment.length, 0);
   if (!matchableSegments.length) {
+    await logTransmission({
+      service: 'osrm',
+      type: 'Route matching',
+      sentCoords: null,
+      protections: [gapCount ? 'privacy gaps left no route segment to send' : 'not enough public points - request blocked'],
+      offsetMeters: null,
+      bytesOut: 0,
+      status: 'blocked',
+      tripId: null,
+      zonesSuppressed: routePoints
+        .map((point) => point?.privacy_zone_label)
+        .filter(Boolean),
+    });
     recordSystemEvent('osrm_map_matching_failed', {
       status: 'not_enough_points',
       point_count: validCount,

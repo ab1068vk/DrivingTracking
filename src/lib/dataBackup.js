@@ -3,6 +3,7 @@ import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { createPrivacyExportSalt, getPrivacyZones, maskTripForPrivacyExport } from '@/lib/privacyZones';
+import { commitZoneForExportSync, createExportId } from '@/lib/exportCommitment';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -25,6 +26,7 @@ import {
   signExport,
   verifyAndUnwrapExport,
 } from '@/lib/exportIntegrity';
+import { logTransmission } from '@/lib/transmissionLog';
 
 /*
  * Backup schema history:
@@ -36,13 +38,15 @@ import {
  * v6: legacy lane_change events are relabelled as heading_deviation_legacy.
  * v7: local post-trip calibration labels and survey markers are preserved.
  * v8: privacy zone cell hashes are omitted from backups; zones must be re-entered after restore.
+ * v9: exports include a per-export id and privacy-zone commitments without zone coordinates.
  *
  * Every import is migrated one version at a time before it is sanitized and
  * merged. Coordinates omitted for privacy zones are intentionally not restored.
  */
-export const BACKUP_VERSION = 8;
+export const BACKUP_VERSION = 9;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage backup that is 50 MB or smaller.';
+export const BACKUP_SIGNATURE_INVALID_CODE = 'BACKUP_SIGNATURE_INVALID';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 export const MAX_IMPORTED_STRING_LENGTH = 5000;
@@ -94,6 +98,9 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'route_points',
   'route_points_raw_count',
   'route_points_map_count',
+  'route_data_expired_at',
+  'route_data_retention_days',
+  'route_data_expiration_reason',
   'driving_events',
   'event_feedback',
   'duration_seconds',
@@ -518,9 +525,12 @@ export function buildDriveSenseBackup({
   const sanitizedCalibrationLabels = sanitizeCalibrationLabels(calibrationLabels);
   const sanitizedCalibrationSurveyMarkers = sanitizeCalibrationSurveyMarkers(calibrationSurveyMarkers);
   const privacyExportSalt = createPrivacyExportSalt();
+  const exportId = createExportId();
+  const privacyZones = getPrivacyZones(settings);
+  const zoneCommitments = privacyZones.map((zone) => commitZoneForExportSync(zone, exportId));
   const exportSettings = {
     ...settings,
-    privacy_zones: getPrivacyZones(settings).map((zone) => ({
+    privacy_zones: privacyZones.map((zone) => ({
       id: zone.id,
       label: zone.label,
       radius_m: zone.radius_m,
@@ -546,14 +556,18 @@ export function buildDriveSenseBackup({
   return {
     app: 'Road Sage',
     version: BACKUP_VERSION,
+    export_id: exportId,
     exported_at: new Date().toISOString(),
     privacy_export: {
       timestamp_fuzzing_enabled: true,
       timestamp_shift_policy: 'bounded_private_zone_noise',
+      zone_commitment_scheme: 'sha256_zone_center_export_salt_v1',
+      zone_commitment_count: zoneCommitments.length,
       shifted_trip_count: privacyShiftedTrips.length,
       boundary_placeholder_count: privacyPlaceholderCount,
       shifted_trip_ids: privacyShiftedTrips.map((trip) => trip.id).filter(Boolean).slice(0, 1000),
     },
+    zone_commitments: zoneCommitments,
     settings: exportSettings,
     ui: {
       saved_trip_filters: savedTripFilters,
@@ -599,6 +613,17 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     });
     throw error;
   }
+  await logTransmission({
+    service: 'export',
+    type: encrypted ? 'Encrypted full backup' : 'Full backup',
+    sentCoords: '0 - zone coordinates excluded, boundary points committed',
+    protections: ['HMAC-signed', 'commitment scheme', 'no zone centers included'],
+    offsetMeters: null,
+    bytesOut: JSON.stringify(signedBackup).length,
+    status: 'safe',
+    tripId: null,
+    zonesSuppressed: getPrivacyZones(settings).map((zone) => zone.label),
+  });
   const plaintext = JSON.stringify(signedBackup, null, 2);
   let content = plaintext;
   if (encrypted) {
@@ -755,6 +780,17 @@ export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
           ? migrated.calibration
           : { labels: [], survey_markers: {} },
       };
+    } else if (version === 8) {
+      migrated = {
+        ...migrated,
+        export_id: typeof migrated.export_id === 'string' ? migrated.export_id : null,
+        privacy_export: {
+          ...(isPlainObject(migrated.privacy_export) ? migrated.privacy_export : {}),
+          zone_commitment_scheme: migrated.privacy_export?.zone_commitment_scheme || null,
+          zone_commitment_count: Number(migrated.privacy_export?.zone_commitment_count) || 0,
+        },
+        zone_commitments: Array.isArray(migrated.zone_commitments) ? migrated.zone_commitments : [],
+      };
     }
     version += 1;
   }
@@ -797,7 +833,15 @@ export function parseDriveSenseBackup(text) {
   };
 }
 
-export async function importDriveSenseBackup(file, { includeSettings = true, acknowledgeTruncation = false, passphrase = null } = {}) {
+export async function importDriveSenseBackup(
+  file,
+  {
+    includeSettings = true,
+    acknowledgeTruncation = false,
+    passphrase = null,
+    allowUnverifiedSignedBackup = false,
+  } = {}
+) {
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     recordSystemEvent('backup_import_rejected', {
       reason: 'file_too_large',
@@ -871,10 +915,11 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
 
   let signed = false;
   let signatureSignedAt = null;
+  let signatureRecovered = false;
   if (isSignedExportEnvelope(backupText)) {
     signed = true;
+    const signedExport = JSON.parse(backupText);
     try {
-      const signedExport = JSON.parse(backupText);
       const verified = await verifyAndUnwrapExport(signedExport);
       backupText = JSON.stringify(verified.payload);
       signatureSignedAt = verified.signedAt;
@@ -895,7 +940,24 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
         title: 'Backup signature rejected',
         message: 'Backup import stopped before writing data because the signature was invalid.',
       });
-      throw error;
+      if (!allowUnverifiedSignedBackup) {
+        error.code = BACKUP_SIGNATURE_INVALID_CODE;
+        throw error;
+      }
+      backupText = JSON.stringify(signedExport.payload);
+      signatureSignedAt = signedExport.signed_at || null;
+      signatureRecovered = true;
+      recordSystemEvent('backup_import_signature_recovery_accepted', {
+        byte_count: Number(file?.size) || backupText.length || 0,
+        encrypted,
+        signed: true,
+        signed_at: signatureSignedAt,
+      }, {
+        category: 'storage',
+        severity: 'warn',
+        title: 'Backup signature recovery accepted',
+        message: 'Readable backup payload imported after explicit user confirmation.',
+      });
     }
   } else {
     recordSystemEvent('backup_import_unsigned_legacy', {
@@ -937,12 +999,13 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
   const importedTrips = await tripService.upsertMany(backup.trips);
 
-  const privacyZonesNeedReconfiguration = includeSettings && Array.isArray(backup.settings?.privacy_zones)
+  const shouldImportSettings = includeSettings && !signatureRecovered;
+  const privacyZonesNeedReconfiguration = shouldImportSettings && Array.isArray(backup.settings?.privacy_zones)
     ? backup.settings.privacy_zones.filter((zone) => zone && typeof zone === 'object').length
     : 0;
 
   let importedSettings = false;
-  if (includeSettings && backup.settings) {
+  if (shouldImportSettings && backup.settings) {
     const sanitizedSettings = sanitizeImportedSettings(backup.settings);
     importedSettings = Object.keys(sanitizedSettings).length > 0;
     if (importedSettings) localSettings.update(sanitizedSettings);
@@ -992,6 +1055,8 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     backup_version: backup.version,
     encrypted,
     signed,
+    signature_recovered: signatureRecovered,
+    settings_skipped_for_signature_recovery: signatureRecovered && includeSettings,
     signature_signed_at: signatureSignedAt,
   }, {
     category: 'storage',
@@ -1010,5 +1075,7 @@ export async function importDriveSenseBackup(file, { includeSettings = true, ack
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
+    signatureRecovered,
+    settingsSkippedForSignatureRecovery: signatureRecovered && includeSettings,
   };
 }

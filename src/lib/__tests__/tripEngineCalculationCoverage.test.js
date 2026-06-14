@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CLOSE_PROXIMITY_DECAY_BASE,
   DEFAULT_THRESHOLDS,
@@ -9,6 +9,7 @@ import {
   STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN,
   STOP_START_NORMALISATION_WINDOW_KM,
   SVI_DEFAULTS,
+  applyDifferentialPrivacyToTripAggregates,
   calculateAcceleration,
   calculateAggressiveDrivingScore,
   calculateBearing,
@@ -56,6 +57,10 @@ const headingDriftPointsAtHour = (hour) => Array.from({ length: 31 }, (_, index)
 }));
 
 describe('trip engine calculation coverage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('keeps base geometry calculations finite and direction-aware', () => {
     expect(calculateSpeedKmh(1, 60)).toBe(60);
     expect(calculateAcceleration(36, 72, 10)).toBeCloseTo(1, 1);
@@ -184,6 +189,44 @@ describe('trip engine calculation coverage', () => {
 
     expect(scores.harsh_brakes_count).toBe(0);
     expect(scores.driving_events).toEqual([]);
+  });
+
+  it('adds differential privacy noise only to aggregates for zone-touched trips', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.75);
+    const privacyZones = [{ id: 'home', lat: 43.65, lng: -79.38, radius_m: 100 }];
+    const route = [
+      point(0),
+      point(1),
+      point(2),
+    ];
+    const trip = {
+      distance_km: 10,
+      avg_speed_kmh: 50,
+      idle_time_seconds: 60,
+      harsh_brakes_count: 1,
+      phone_use_window_count: 0,
+      route_points: route,
+    };
+
+    const publicTrip = applyDifferentialPrivacyToTripAggregates(trip, [point(20), point(21)], privacyZones);
+    const privateTrip = applyDifferentialPrivacyToTripAggregates(trip, route, privacyZones);
+
+    expect(publicTrip).toBe(trip);
+    expect(privateTrip).toMatchObject({
+      _dpApplied: true,
+      distance_km: 10.26,
+      avg_speed_kmh: 52.1,
+      idle_time_seconds: 112,
+      harsh_brakes_count: 2,
+      phone_use_window_count: 1,
+    });
+    expect(privateTrip.differential_privacy.noised_fields).toEqual(expect.arrayContaining([
+      'distance_km',
+      'avg_speed_kmh',
+      'idle_time_seconds',
+      'harsh_brakes_count',
+      'phone_use_window_count',
+    ]));
   });
 
   it('maps speed coefficient of variation to stable eco speed-stability scores', () => {

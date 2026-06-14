@@ -413,11 +413,14 @@ export async function notifyTripStarted(trip = {}) {
   const granted = await requestNotificationPermission();
   if (!granted) return;
 
+  const privateTrip = trip?.privacy_mode === 'summary_only';
   const tripKey = trip?.id || trip?.start_time || 'active';
   return scheduleNotification({
       id: TRIP_STARTED_ID,
-      title: 'Trip started',
-      body: 'Road Sage is recording your route.',
+      title: privateTrip ? 'Private trip started' : 'Trip started',
+      body: privateTrip
+        ? 'Road Sage is calculating a summary without saving route coordinates.'
+        : 'Road Sage is recording your route.',
       channelId: SUMMARY_CHANNEL_ID,
       extra: { type: 'trip_started', tripId: trip?.id || null },
     }, {

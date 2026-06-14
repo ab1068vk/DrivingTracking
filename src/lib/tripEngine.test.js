@@ -1917,6 +1917,7 @@ describe('tripEngine', () => {
 
     localSettings.update({ privacy_zones: [privacyZone] });
     try {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
       const exactBoundary = maskRoutePointsForPrivacy(trip.route_points, { privacy_zones: [privacyZone] })
         .find((routePoint) => routePoint.privacy_boundary);
       const lines = tripsToCSV([trip]).split('\n');

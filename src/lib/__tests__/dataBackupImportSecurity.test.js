@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_SIGNATURE_INVALID_CODE,
   BACKUP_WRONG_PASSWORD_CODE,
   buildDriveSenseBackup,
   importDriveSenseBackup,
@@ -395,9 +396,44 @@ describe('backup trip import sanitization', () => {
       text: vi.fn(async () => JSON.stringify(signed)),
     };
 
-    await expect(importDriveSenseBackup(file)).rejects.toThrow('Backup signature invalid');
+    await expect(importDriveSenseBackup(file)).rejects.toMatchObject({
+      code: BACKUP_SIGNATURE_INVALID_CODE,
+      message: expect.stringContaining('Backup signature invalid'),
+    });
     expect(tripService.upsertMany).not.toHaveBeenCalled();
     expect(vehicleService.upsertMany).not.toHaveBeenCalled();
+  });
+
+  it('can explicitly recover the payload from a signed readable backup after signature key loss', async () => {
+    const { localSettings } = await import('@/lib/trackingStore');
+    const updateSettingsSpy = vi.spyOn(localSettings, 'update');
+    const signed = await signExport({
+      app: 'Road Sage',
+      version: BACKUP_VERSION,
+      settings: {
+        automatic_context_fetch_enabled: true,
+        weather_context_enabled: true,
+        speed_limit_lookup_enabled: true,
+      },
+      vehicles: [],
+      trips: [{ id: 'trip-reinstall-recovery', status: 'completed' }],
+    });
+    signed.signature = signed.signature.replace(/.$/, signed.signature.endsWith('A') ? 'B' : 'A');
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify(signed)),
+    };
+
+    const imported = await importDriveSenseBackup(file, { allowUnverifiedSignedBackup: true });
+
+    expect(imported).toMatchObject({
+      trips: 1,
+      vehicles: 0,
+      signatureRecovered: true,
+      settings: false,
+      settingsSkippedForSignatureRecovery: true,
+    });
+    expect(updateSettingsSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -444,6 +480,12 @@ describe('backup schema migrations', () => {
       ...v6,
       version: BACKUP_VERSION,
       calibration: { labels: [], survey_markers: {} },
+      export_id: null,
+      privacy_export: {
+        zone_commitment_scheme: null,
+        zone_commitment_count: 0,
+      },
+      zone_commitments: [],
     });
   });
 
@@ -467,6 +509,30 @@ describe('backup schema migrations', () => {
     expect(parsed.version).toBe(BACKUP_VERSION);
     expect(parsed.sourceVersion).toBe(7);
     expect(parsed.trips[0].id).toBe('trip-v7');
+  });
+
+  it('migrates v8 backups with empty commitment metadata', () => {
+    const v8 = {
+      app: 'Road Sage',
+      version: 8,
+      vehicles: [],
+      trips: [{ id: 'trip-v8', status: 'completed' }],
+      privacy_export: {
+        timestamp_fuzzing_enabled: true,
+      },
+    };
+
+    expect(migrateBackup(v8, 8)).toEqual({
+      ...v8,
+      version: BACKUP_VERSION,
+      export_id: null,
+      privacy_export: {
+        timestamp_fuzzing_enabled: true,
+        zone_commitment_scheme: null,
+        zone_commitment_count: 0,
+      },
+      zone_commitments: [],
+    });
   });
 
   it('rejects backups newer than the current schema', () => {
@@ -496,8 +562,8 @@ describe('backup calibration labels', () => {
     vi.clearAllMocks();
   });
 
-  it('exports and parses local survey labels and trip markers', () => {
-    const backup = buildDriveSenseBackup({
+  it('exports and parses local survey labels and trip markers', async () => {
+    const backup = await buildDriveSenseBackup({
       trips: [{ id: 'trip-calibration', status: 'completed' }],
       vehicles: [],
       calibrationLabels: [{
@@ -566,7 +632,8 @@ describe('backup calibration labels', () => {
 });
 
 describe('backup export privacy', () => {
-  it('replaces exported privacy boundaries with opaque placeholders', () => {
+  it('replaces exported privacy boundaries with opaque placeholders', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const settings = {
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
     };
@@ -586,13 +653,16 @@ describe('backup export privacy', () => {
     };
     const exactBoundary = maskTripForPrivacy(trip, settings).route_points.find((point) => point.privacy_boundary);
 
-    const backup = buildDriveSenseBackup({ trips: [trip], vehicles: [], settings });
+    const backup = await buildDriveSenseBackup({ trips: [trip], vehicles: [], settings });
     const exportedPlaceholder = backup.trips[0].route_points.find((point) => point.privacy_export_placeholder);
+    const [zoneCommitment] = backup.zone_commitments;
 
     expect(backup.trips[0].route_points.some((point) => point.privacy_boundary)).toBe(false);
     expect(backup.privacy_export).toMatchObject({
       timestamp_fuzzing_enabled: true,
       timestamp_shift_policy: 'bounded_private_zone_noise',
+      zone_commitment_scheme: 'sha256_zone_center_export_salt_v1',
+      zone_commitment_count: 1,
       shifted_trip_count: 1,
       boundary_placeholder_count: 1,
       shifted_trip_ids: ['trip-private-boundary'],
@@ -623,5 +693,33 @@ describe('backup export privacy', () => {
     });
     expect(backup.settings.privacy_zones[0].privacy_cell_hashes).toBeUndefined();
     expect(JSON.stringify(backup.settings.privacy_zones)).not.toContain('privacy_cell_hashes');
+    expect(zoneCommitment).toMatchObject({
+      zone_id: 'home',
+      zone_label: 'Home',
+      zone_radius_m: 100,
+      export_id: backup.export_id,
+    });
+    expect(zoneCommitment.commitment).toEqual(expect.any(String));
+    expect(zoneCommitment).not.toHaveProperty('lat');
+    expect(zoneCommitment).not.toHaveProperty('lng');
+    expect(zoneCommitment).not.toHaveProperty('latitude');
+    expect(zoneCommitment).not.toHaveProperty('longitude');
+    expect(zoneCommitment).not.toHaveProperty('salt');
+    expect(JSON.stringify(backup.zone_commitments)).not.toContain('43.65');
+    expect(JSON.stringify(backup.zone_commitments)).not.toContain('-79.38');
+  });
+
+  it('generates unlinkable privacy-zone commitments for repeated exports', async () => {
+    const settings = {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
+    };
+
+    const first = await buildDriveSenseBackup({ trips: [], vehicles: [], settings });
+    const second = await buildDriveSenseBackup({ trips: [], vehicles: [], settings });
+
+    expect(first.export_id).not.toBe(second.export_id);
+    expect(first.zone_commitments[0].commitment).not.toBe(second.zone_commitments[0].commitment);
+    expect(first.zone_commitments[0].export_id).toBe(first.export_id);
+    expect(second.zone_commitments[0].export_id).toBe(second.export_id);
   });
 });

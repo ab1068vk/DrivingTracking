@@ -56,7 +56,9 @@ class DriveSenseNativeTripStore {
     }
 
     static void clearCompletedTrips(Context context) {
-        saveCompletedTrips(context, "[]");
+        if (!SecureDeleteHelper.overwriteAndRemovePreference(prefs(context), KEY_COMPLETED_TRIPS)) {
+            saveCompletedTrips(context, "[]");
+        }
     }
 
     private static void saveCompletedTrips(Context context, String raw) {
@@ -105,7 +107,11 @@ class DriveSenseNativeTripStore {
             } else {
                 JSONObject wrapper = new JSONObject(stored);
                 if (wrapper.optBoolean("encrypted", false) && wrapper.has("ciphertext")) {
-                    raw = DriveSensePayloadCrypto.decrypt(wrapper.getString("ciphertext"), contextName);
+                    raw = DriveSensePayloadCrypto.decrypt(
+                        wrapper.getString("ciphertext"),
+                        contextName,
+                        wrapper.optInt("key_version", 0)
+                    );
                 } else {
                     raw = stored;
                 }
@@ -146,11 +152,19 @@ class DriveSenseNativeTripStore {
     }
 
     static void clearLastParkedLocation(Context context) {
-        prefs(context).edit().remove(KEY_LAST_PARKED).apply();
-        context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(SHARED_LAST_PARKED_KEY)
-            .apply();
+        SharedPreferences nativePreferences = prefs(context);
+        if (!SecureDeleteHelper.overwriteAndRemovePreference(nativePreferences, KEY_LAST_PARKED)) {
+            nativePreferences.edit().remove(KEY_LAST_PARKED).apply();
+        }
+
+        SharedPreferences sharedPreferences =
+            context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
+        if (!SecureDeleteHelper.overwriteAndRemovePreference(
+            sharedPreferences,
+            SHARED_LAST_PARKED_KEY
+        )) {
+            sharedPreferences.edit().remove(SHARED_LAST_PARKED_KEY).apply();
+        }
     }
 
     static String newTripId() {

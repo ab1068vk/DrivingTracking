@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Open-Meteo forecast API. Pins generated from the live chain on 2026-06-12. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">api.open-meteo.com</domain>
+        <pin-set expiration="2027-03-01">
+            <pin digest="SHA-256">YAFPPxCwfYpnCvumZr5iRwQxdLb9dak90Qvb33ma0Fo=</pin>
+            <pin digest="SHA-256">kZwN96eHtZftBWrOZUsd6cA4es80n3NzSk/XtYz2EqQ=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!-- Open-Meteo archive API. Pins generated from the live chain on 2026-06-12. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">archive-api.open-meteo.com</domain>
+        <pin-set expiration="2028-08-01">
+            <pin digest="SHA-256">Bhlw8LnAlZsTwkhXA0Qn5Kk7WmvoeEhHuk+juIQZaVQ=</pin>
+            <pin digest="SHA-256">brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!-- OpenStreetMap Overpass primary endpoint. Pins generated from the live chain on 2026-06-12. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">overpass-api.de</domain>
+        <pin-set expiration="2027-03-01">
+            <pin digest="SHA-256">uAD+342sjrC9Pc6amj8vUGZtGKiuGOTK5FVAKN9AzMg=</pin>
+            <pin digest="SHA-256">iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!-- OpenStreetMap Overpass fallback endpoint. Pins generated from the live chain on 2026-06-12. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">overpass.kumi.systems</domain>
+        <pin-set expiration="2028-08-01">
+            <pin digest="SHA-256">Psda1h1uTCa01j78YJ7feYiyTyUstFDOhS9D8fDqfT0=</pin>
+            <pin digest="SHA-256">LoMHBotttiDko50Gi13uXW71eIy7LAttI+rYT8wXF4w=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!-- OpenStreetMap Nominatim reverse geocoding. Pins generated from the live chain on 2026-06-12. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">nominatim.openstreetmap.org</domain>
+        <pin-set expiration="2028-08-01">
+            <pin digest="SHA-256">aYxG28Ea4Ja2f1RoVh73ANdittYvAQ5f+d4eJmfUt8o=</pin>
+            <pin digest="SHA-256">LoMHBotttiDko50Gi13uXW71eIy7LAttI+rYT8wXF4w=</pin>
+        </pin-set>
+    </domain-config>
+
+</network-security-config>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -24,6 +25,8 @@ import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
+  enforceRawGpsRetention,
+  getRawGpsLifecycleStatus,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
@@ -52,6 +55,7 @@ import {
 import { syncReminderNotifications } from '@/lib/notificationService';
 import {
   BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_SIGNATURE_INVALID_CODE,
   BACKUP_TOO_LARGE_MESSAGE,
   BACKUP_WRONG_PASSWORD_CODE,
   exportDriveSenseBackup,
@@ -332,6 +336,7 @@ function validatePrivacyRadius(value) {
 }
 
 export default function Settings() {
+  const navigate = useNavigate();
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
@@ -380,6 +385,8 @@ export default function Settings() {
   const [integrity, setIntegrity] = useState(() => integrityStatusFromSettings(localSettings.get()));
   const [integrityChecking, setIntegrityChecking] = useState(false);
   const [auditVerifying, setAuditVerifying] = useState(false);
+  const [rawGpsLifecycleStatus, setRawGpsLifecycleStatus] = useState(null);
+  const [rawGpsLifecycleBusy, setRawGpsLifecycleBusy] = useState(false);
   const importInputRef = useRef(null);
   const qc = useQueryClient();
 
@@ -434,6 +441,7 @@ export default function Settings() {
 
   useEffect(() => {
     scheduleRescoringQueue({ rescoreTrip: rescoreTripForQueue });
+    getRawGpsLifecycleStatus().then(setRawGpsLifecycleStatus).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -877,7 +885,7 @@ export default function Settings() {
       return;
     }
     const ok = typeof window === 'undefined' || window.confirm(
-      'Automatic road data sends route-area boxes to OpenStreetMap and a privacy-safe route point/date to Open-Meteo whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
+      'Automatic road data queues OpenStreetMap and Open-Meteo lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
     );
     if (!ok) return;
     updateCfg({
@@ -1064,6 +1072,55 @@ export default function Settings() {
   const updateRetention = async (days) => {
     updateCfg({ data_retention_days: days });
     await qc.invalidateQueries();
+  };
+
+  const updateRawGpsRetention = (days) => {
+    const currentDays = Number(cfg.raw_gps_retention_days || 0);
+    if (days === currentDays) return;
+
+    if (days > 0 && typeof window !== 'undefined') {
+      const periodLabel = days >= 365 && days % 365 === 0
+        ? `${days / 365} year${days === 365 ? '' : 's'}`
+        : `${days} days`;
+      const confirmed = window.confirm(
+        `Set raw GPS retention to ${periodLabel}? On the next cleanup, trips older than ${periodLabel} will permanently lose their route line on the map and playback. Scores, distance, duration, and summaries will remain. Existing backup files are not changed.`
+      );
+      if (!confirmed) return;
+    }
+
+    updateCfg({ raw_gps_retention_days: days });
+  };
+
+  const runRawGpsRetentionNow = async () => {
+    const retentionDays = Number(cfg.raw_gps_retention_days || 0);
+    const periodLabel = retentionDays >= 365 && retentionDays % 365 === 0
+      ? `${retentionDays / 365} year${retentionDays === 365 ? '' : 's'}`
+      : `${retentionDays} days`;
+    if (typeof window !== 'undefined' && !window.confirm(
+      `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`
+    )) return;
+
+    setRawGpsLifecycleBusy(true);
+    try {
+      const result = await enforceRawGpsRetention({ force: true });
+      setRawGpsLifecycleStatus(result);
+      await qc.invalidateQueries();
+      toast({
+        title: 'Route retention enforced',
+        description: result.enabled
+          ? `Expired route data was removed from ${result.purgedTrips || 0} trip${result.purgedTrips === 1 ? '' : 's'}.`
+          : 'Raw GPS expiration is currently off.',
+      });
+    } catch (error) {
+      logSystemFailure('settings_raw_gps_retention_enforcement', error);
+      toast({
+        title: 'Route retention failed',
+        description: 'Old route data could not be removed.',
+        variant: 'destructive',
+      });
+    } finally {
+      setRawGpsLifecycleBusy(false);
+    }
   };
 
   const showPrivacyPolicy = () => {
@@ -1725,12 +1782,23 @@ export default function Settings() {
     }
   };
 
-  const finishImportBackup = async (file, { passphrase = null, acknowledgeTruncation = false } = {}) => {
-    let result = await importDriveSenseBackup(file, { passphrase, acknowledgeTruncation });
+  const finishImportBackup = async (
+    file,
+    { passphrase = null, acknowledgeTruncation = false, allowUnverifiedSignedBackup = false } = {}
+  ) => {
+    let result = await importDriveSenseBackup(file, {
+      passphrase,
+      acknowledgeTruncation,
+      allowUnverifiedSignedBackup,
+    });
     if (result.requiresAcknowledgement) {
       const affected = result.truncatedNoteTripCount;
       if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
-      result = await importDriveSenseBackup(file, { passphrase, acknowledgeTruncation: true });
+      result = await importDriveSenseBackup(file, {
+        passphrase,
+        acknowledgeTruncation: true,
+        allowUnverifiedSignedBackup,
+      });
     }
     setCfg(localSettings.get());
     applyThemeMode(localSettings.get().dark_mode);
@@ -1739,12 +1807,14 @@ export default function Settings() {
       title: 'Import complete',
       description: result.truncatedFields
         ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
+        : result.signatureRecovered
+        ? `${result.trips} trips and ${result.vehicles} vehicles merged from a readable backup whose old signature could not be verified. Settings were not imported.`
         : !result.savedFiltersRestored && result.savedFilters
         ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
         : result.privacy_zones_need_reconfiguration
         ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
         : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
-      variant: result.truncatedFields || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
+      variant: result.truncatedFields || result.signatureRecovered || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
     });
     setBackupImportOpen(false);
     setPendingBackupImportFile(null);
@@ -1782,6 +1852,16 @@ export default function Settings() {
           severity: 'warn',
           title: 'Backup wrong password message shown',
         });
+        return;
+      }
+      if (error?.code === BACKUP_SIGNATURE_INVALID_CODE) {
+        const recover = confirm('This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.');
+        if (recover) {
+          await finishImportBackup(pendingBackupImportFile, {
+            passphrase: backupImportPassphrase,
+            allowUnverifiedSignedBackup: true,
+          });
+        }
         return;
       }
       logSystemFailure('backup_import', error, {
@@ -1829,6 +1909,13 @@ export default function Settings() {
           severity: 'warn',
           title: 'Backup unlock dialog opened',
         });
+        return;
+      }
+      if (error?.code === BACKUP_SIGNATURE_INVALID_CODE) {
+        const recover = confirm('This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.');
+        if (recover) {
+          await finishImportBackup(file, { allowUnverifiedSignedBackup: true });
+        }
         return;
       }
       logSystemFailure('backup_import', error, {
@@ -3414,7 +3501,7 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="Get posted speed limits"
-          sublabel="When you tap Get Road Data, sends route-area boxes to OpenStreetMap for road names and speed limits"
+          sublabel="Queues route-area boxes with a randomized privacy delay before contacting OpenStreetMap"
         >
           <Toggle
             value={cfg.speed_limit_lookup_enabled !== false}
@@ -3449,7 +3536,7 @@ export default function Settings() {
         <SettingRow
           icon={Droplets}
           label="Get trip weather"
-          sublabel="When you tap Get Road Data, sends a privacy-safe route point and date to Open-Meteo"
+          sublabel="Queues a privacy-safe route point and date with a randomized privacy delay before contacting Open-Meteo"
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
@@ -3473,13 +3560,13 @@ export default function Settings() {
               <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.speed_limit_lookup_enabled === false
                 ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
-                : `sends route-area boxes to OpenStreetMap Overpass and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
+                : `queues route-area boxes with a randomized privacy delay before contacting OpenStreetMap Overpass and adding road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
             </div>
             <div>
               <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.weather_context_enabled === false
                 ? 'skips Open-Meteo; scores do not get weather adjustment.'
-                : 'sends a privacy-safe route point and date to Open-Meteo and can adjust scores for rain, snow, fog, or freezing weather.'}
+                : 'queues a privacy-safe route point and date with a randomized privacy delay before contacting Open-Meteo, then can adjust scores for rain, snow, fog, or freezing weather.'}
             </div>
             <div>
               <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}:</span>{' '}
@@ -3532,6 +3619,21 @@ export default function Settings() {
             onClick={showPrivacyPolicy}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </SettingRow>
+          <SettingRow
+            icon={Shield}
+            label="Privacy Intelligence"
+            sublabel="See outbound data records, active protections, privacy-zone counters, and audit-chain health"
+            onClick={() => navigate('/privacy-intelligence')}
+          >
+            <div className="flex items-center gap-2">
+              {privacyHealthStatus !== 'Healthy' && (
+                <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                  Review
+                </span>
+              )}
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            </div>
           </SettingRow>
           {isAndroid() && (
             <SettingRow
@@ -3735,7 +3837,9 @@ export default function Settings() {
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">Mask sensitive places from maps, CSV exports, and backups.</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Mask sensitive places from maps, CSV exports, and backups. Local trip totals are not randomized; privacy-protected exports add small random noise to aggregate values.
+                </div>
               </div>
               <span className="rounded-full bg-card px-2 py-1 text-xs font-semibold">{privacyZones.length}</span>
             </div>
@@ -3995,7 +4099,7 @@ export default function Settings() {
           <SettingRow
             icon={Info}
             label="Data Retention"
-            sublabel="Keep local trip history on this device"
+            sublabel="Delete the entire trip after this period"
           >
             <select
               value={cfg.data_retention_days}
@@ -4022,6 +4126,38 @@ export default function Settings() {
               <option value={24}>24 hours</option>
               <option value={72}>3 days</option>
             </select>
+          </SettingRow>
+          <SettingRow
+            icon={MapPin}
+            label="Raw GPS Retention"
+            sublabel="Remove route coordinates while keeping scores, distance, duration, and other summaries"
+          >
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <select
+                value={Number(cfg.raw_gps_retention_days || 0)}
+                onChange={(event) => updateRawGpsRetention(Number(event.target.value))}
+                className="bg-card border border-border rounded-lg text-xs px-2 py-1"
+              >
+                <option value={0}>Off</option>
+                <option value={30}>30 days</option>
+                <option value={90}>90 days</option>
+                <option value={180}>180 days</option>
+                <option value={365}>1 year</option>
+              </select>
+              <button
+                type="button"
+                onClick={runRawGpsRetentionNow}
+                disabled={rawGpsLifecycleBusy || !Number(cfg.raw_gps_retention_days)}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              >
+                {rawGpsLifecycleBusy ? 'Running...' : 'Run now'}
+              </button>
+              <span className="w-full text-right text-[11px] text-muted-foreground">
+                Last run: {rawGpsLifecycleStatus?.lastRunAt
+                  ? new Date(rawGpsLifecycleStatus.lastRunAt).toLocaleString()
+                  : 'Never'}. Existing backup files are not changed.
+              </span>
+            </div>
           </SettingRow>
           <SettingRow
             icon={Check}

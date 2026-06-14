@@ -2,12 +2,14 @@ import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
 import { withRetry } from '@/lib/retry';
 import { getPrivacyZones } from '@/lib/privacyZones';
+import { pinnedFetch } from '@/lib/pinnedFetch';
+import { logTransmission } from '@/lib/transmissionLog';
+import { enqueueLocationRequest } from '@/lib/requestObfuscator';
 
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const FALLBACK_OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.ru/api/interpreter',
 ];
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_BBOX_SPAN_DEG = 0.8;
@@ -248,6 +250,21 @@ function overpassQuery(bounds) {
   `;
 }
 
+function overpassNativeRequest(bounds, settings = {}) {
+  const url = [
+    settings.overpass_speed_limit_url,
+    OVERPASS_URL,
+    ...FALLBACK_OVERPASS_URLS,
+  ].find(Boolean);
+  const body = new URLSearchParams({ data: overpassQuery(bounds) }).toString();
+  return {
+    url,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body,
+  };
+}
+
 async function fetchOverpassWays(bounds, settings = {}) {
   const urls = uniqueBy([
     settings.overpass_speed_limit_url,
@@ -268,11 +285,23 @@ async function fetchOverpassWays(bounds, settings = {}) {
 async function fetchOverpassWaysFromUrl(bounds, url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
+  const queryString = overpassQuery(bounds);
   try {
-    const response = await withRetry(`overpass-speed-limit:${url}`, () => fetch(url, {
+    await logTransmission({
+      service: 'overpass',
+      type: 'Speed limit query',
+      sentCoords: 'Bounding box',
+      protections: ['privacy-zone excluded bbox', 'zone guard +50m'],
+      offsetMeters: null,
+      bytesOut: queryString.length,
+      status: 'safe',
+      tripId: null,
+      zonesSuppressed: [],
+    });
+    const response = await withRetry(`overpass-speed-limit:${url}`, () => pinnedFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: new URLSearchParams({ data: overpassQuery(bounds) }),
+      body: new URLSearchParams({ data: queryString }),
       signal: controller.signal,
     }));
     if (!response.ok) throw new Error(`Overpass request failed (${response.status})`);
@@ -291,7 +320,14 @@ async function loadCachedWaysForBounds(bounds, settings, cache, nextCache) {
     return { ways: cached.ways || [], status: 'cache_hit', error: null };
   }
   try {
-    const ways = normalizeWays(await fetchOverpassWays(bounds, settings), settings);
+    const ways = normalizeWays(
+      await enqueueLocationRequest(
+        'overpass',
+        () => fetchOverpassWays(bounds, settings),
+        overpassNativeRequest(bounds, settings)
+      ),
+      settings
+    );
     nextCache[key] = { savedAt: Date.now(), ways };
     return { ways, status: ways.length ? 'fetched' : 'no_tagged_ways', error: null };
   } catch (error) {
@@ -381,6 +417,19 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   const safeRoutePoints = privacySafeRoutePoints(routePoints, privacyZones);
   const bounds = routeBounds(safeRoutePoints);
   if (!bounds) {
+    if (privacyZones.length && routePoints.length) {
+      await logTransmission({
+        service: 'overpass',
+        type: 'Speed limit query',
+        sentCoords: null,
+        protections: ['all route points inside privacy guard - request blocked'],
+        offsetMeters: null,
+        bytesOut: 0,
+        status: 'blocked',
+        tripId: null,
+        zonesSuppressed: privacyZones.map((zone) => zone.label),
+      });
+    }
     return {
       ways: [],
       status: 'empty_route',

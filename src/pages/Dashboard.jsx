@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
-  ParkingSquare, CheckCircle2, PhoneCall
+  ParkingSquare, CheckCircle2, PhoneCall, Shield, Trash2
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
@@ -111,12 +111,74 @@ import {
   maskEventsForPrivacy,
   redactRoutePointForPrivacyStorage,
 } from '@/lib/privacyZones';
+import { appendPrivacyEvent } from '@/lib/hashChainLog';
+import {
+  PRIVATE_TRIP_MODE,
+  buildPrivateTripRecord,
+  createPrivateTripRuntime,
+  isPrivateTrip,
+  processPrivateTripPoint,
+} from '@/lib/privateTripMode';
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
+const MANUAL_SPARSE_GPS_MIN_SECONDS = 30;
+const MANUAL_SPARSE_GPS_MIN_SPEED_KMH = 10;
+const RECOVERABLE_TRIP_STATES = new Set([TRIP_STATES.CANDIDATE, TRIP_STATES.CONFIRMED]);
 const AUTO_START_TRIGGER_SECONDS = 2;
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
 const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
+
+function isRecoverableActiveTrip(trip) {
+  if (!trip || typeof trip !== 'object') return false;
+  if (trip.status !== 'active') return false;
+  if (trip.end_time) return false;
+  return RECOVERABLE_TRIP_STATES.has(trip.trip_state);
+}
+
+function hasUsableCoordinates(point, thresholds = DEFAULT_THRESHOLDS) {
+  const lat = Number(point?.lat);
+  const lng = Number(point?.lng);
+  const accuracy = point?.accuracy == null ? null : Number(point.accuracy);
+  return Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    (accuracy == null || !Number.isFinite(accuracy) || accuracy <= thresholds.MAX_GPS_ACCURACY_M);
+}
+
+function reviewManualTripSave({ points = [], stats = {}, startTime, endTime, thresholds = DEFAULT_THRESHOLDS } = {}) {
+  const startMs = new Date(startTime).getTime();
+  const endMs = new Date(endTime).getTime();
+  const wallClockSeconds = Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? Math.max(0, Math.round((endMs - startMs) / 1000))
+    : 0;
+  const durationSeconds = Math.max(Number(stats.duration_seconds) || 0, wallClockSeconds);
+  const distanceKm = Number(stats.distance_km) || 0;
+  const coordinatePoints = (points || []).filter((point) => hasUsableCoordinates(point, thresholds));
+  const movingSpeedSamples = coordinatePoints.filter((point) => (
+    Number(point?.speed_kmh) >= MANUAL_SPARSE_GPS_MIN_SPEED_KMH
+  ));
+
+  if (durationSeconds < MIN_MANUAL_SAVE_SECONDS) {
+    return { shouldSave: false, reason: 'manual_duration_too_short' };
+  }
+
+  if (distanceKm >= DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM) {
+    return { shouldSave: true, reason: 'manual_distance_confirmed' };
+  }
+
+  if (
+    durationSeconds >= MANUAL_SPARSE_GPS_MIN_SECONDS &&
+    coordinatePoints.length >= 2 &&
+    (
+      movingSpeedSamples.length >= 2 ||
+      Number(stats.max_speed_kmh) >= MANUAL_SPARSE_GPS_MIN_SPEED_KMH
+    )
+  ) {
+    return { shouldSave: true, reason: 'manual_sparse_gps_vehicle_speed' };
+  }
+
+  return { shouldSave: false, reason: 'manual_no_movement_evidence' };
+}
 
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
@@ -135,6 +197,7 @@ export default function Dashboard() {
   const stoppedAnchorRef = useRef(null);
   const lastMovingSpeedRef = useRef(0);
   const autoEndingTripRef = useRef(false);
+  const endingTripRef = useRef(false);
   const locationPermissionEndingRef = useRef(false);
   const endTripRef = useRef(null);
   const timerRef = useRef(null);
@@ -144,6 +207,7 @@ export default function Dashboard() {
   const lastStayAlertAtRef = useRef(0);
   const lastProximityAlertRef = useRef(0);
   const inferredSpeedZonesRef = useRef([]);
+  const privateTripRuntimeRef = useRef(null);
   const [settings, setSettings] = useState(() => localSettings.get());
   const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
   const [pendingStartOptions, setPendingStartOptions] = useState(null);
@@ -214,6 +278,7 @@ export default function Dashboard() {
       stoppedAnchorRef.current = null;
       lastMovingSpeedRef.current = 0;
       autoEndingTripRef.current = false;
+      endingTripRef.current = false;
       incidentAlertRef.current = 0;
       inferredSpeedZonesRef.current = [];
       setHazardMessage(null);
@@ -284,7 +349,10 @@ export default function Dashboard() {
   // Resume active trip from session (crash recovery)
   useEffect(() => {
     const recovered = activeTripStore.get();
-    if (recovered) {
+    if (isRecoverableActiveTrip(recovered)) {
+      if (isPrivateTrip(recovered)) {
+        privateTripRuntimeRef.current = createPrivateTripRuntime(recovered.private_trip_summary);
+      }
       activeTripRef.current = recovered;
       trackingRef.current = true;
       setActiveTrip(recovered);
@@ -292,6 +360,15 @@ export default function Dashboard() {
       startTimer(new Date(recovered.start_time));
       // Re-attach GPS
       startGPS();
+    } else if (recovered) {
+      recordTrackingDiagnostic({
+        type: 'trip_recovery_ignored',
+        title: 'Stored active trip ignored on startup',
+        reason: 'not_recoverable_active_trip',
+        trip_state: recovered.trip_state || null,
+      });
+      activeTripStore.clear();
+      activeTripStore.flush().catch(() => {});
     }
     return () => {
       stopTimer();
@@ -316,7 +393,9 @@ export default function Dashboard() {
 
   const discardCandidateTrip = useCallback(async (trip, decision) => {
     const cfg = localSettings.get();
-    locationService.current?.stop();
+    endingTripRef.current = true;
+    trackingRef.current = false;
+    await locationService.current?.stop();
     locationService.current = null;
     sensorFusionRef.current?.stop();
     await activityStopRef.current?.();
@@ -336,9 +415,12 @@ export default function Dashboard() {
       near_parked_location: trip?.candidate_near_parked === true,
     });
     activeTripStore.clear();
+    await activeTripStore.flush();
     activeTripRef.current = null;
     trackingRef.current = false;
     autoEndingTripRef.current = false;
+    endingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
     setActiveTrip(null);
     setTracking(false);
     setElapsed(0);
@@ -432,14 +514,85 @@ export default function Dashboard() {
     const cfg = localSettings.get();
     const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
     if (!locationService.current) {
-      locationService.current = createDrivingTrackingService({ background: useBackground });
+      locationService.current = createDrivingTrackingService({
+        background: useBackground,
+        privateMode: isPrivateTrip(activeTripRef.current),
+      });
     }
     locationService.current.start(
       async (point) => {
         setCurrentLocation(point);
         setLocationError(null);
+        if (endingTripRef.current || !trackingRef.current || !activeTripRef.current) return;
         const latestSettings = localSettings.get();
         const tripBeforePoint = activeTripRef.current;
+        if (isPrivateTrip(tripBeforePoint)) {
+          privateTripRuntimeRef.current ||= createPrivateTripRuntime(tripBeforePoint.private_trip_summary);
+          const privateSummary = processPrivateTripPoint(
+            privateTripRuntimeRef.current,
+            point,
+            tripBeforePoint.start_time
+          );
+          const updated = {
+            ...tripBeforePoint,
+            private_trip_summary: privateSummary,
+          };
+          if (endingTripRef.current || !trackingRef.current) return;
+          activeTripStore.set(updated);
+          activeTripRef.current = updated;
+          setActiveTrip(updated);
+
+          const speed = Number(point.speed_kmh) || 0;
+          const nowMs = Date.now();
+          if (speed >= 15) {
+            lastMovingSpeedRef.current = speed;
+            stillSinceRef.current = null;
+            stoppedAnchorRef.current = null;
+            return;
+          }
+          if (speed >= 5) lastMovingSpeedRef.current = speed;
+
+          stillSinceRef.current ??= nowMs;
+          stoppedAnchorRef.current ??= { lat: point.lat, lng: point.lng };
+          const stillSeconds = (nowMs - stillSinceRef.current) / 1000;
+          const recentPoints = privateTripRuntimeRef.current.recentPoints.filter((routePoint) => (
+            new Date(routePoint.timestamp).getTime() >= stillSinceRef.current - 5000
+          ));
+          const gpsPositionDriftM = computeGpsPositionDrift(
+            stoppedAnchorRef.current.lat,
+            stoppedAnchorRef.current.lng,
+            recentPoints
+          );
+          const activityStopDecision = shouldAutoStopTracking({
+            activity: latestActivityRef.current,
+            currentSpeedKmh: speed,
+            stillSeconds,
+            gpsPositionDriftM,
+            lastMovingSpeedKmh: lastMovingSpeedRef.current,
+            nowMs,
+            returnReason: true,
+          });
+          const gpsParked = speed < 2 && (
+            (stillSeconds >= 90 && gpsPositionDriftM < 5) ||
+            (stillSeconds >= 180 && gpsPositionDriftM < 20) ||
+            stillSeconds >= 300
+          );
+          if (activityStopDecision.shouldStop || gpsParked) {
+            recordTrackingDiagnostic({
+              type: 'auto_stop',
+              title: 'Private trip auto-ended',
+              reason: activityStopDecision.shouldStop
+                ? activityStopDecision.reason || 'activity_parked'
+                : 'gps_parked',
+              speed_kmh: Math.round(speed),
+              stopped_seconds: Math.round(stillSeconds),
+              drift_m: Math.round(gpsPositionDriftM),
+            });
+            autoEndingTripRef.current = true;
+            endTripRef.current?.();
+          }
+          return;
+        }
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
         const latestPrivacyZones = getPrivacyZones(latestSettings);
         const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
@@ -518,6 +671,7 @@ export default function Dashboard() {
         }
         if (tripBeforePoint) {
           const updated = { ...tripBeforePoint, route_points: routePointsWithLatest };
+          if (endingTripRef.current || !trackingRef.current) return;
           activeTripStore.set(updated);
           activeTripRef.current = updated;
           setActiveTrip(updated);
@@ -653,17 +807,26 @@ export default function Dashboard() {
     autoStarted = false,
     bypassFatigueWarning = false,
     candidate = false,
+    privateTrip = false,
     initialPoint = null,
     nearParkedLocation = false,
     triggerReason = null,
   } = {}) => {
-    if (trackingRef.current) return;
+    if (trackingRef.current || endingTripRef.current) return;
     autoEndingTripRef.current = false;
+    endingTripRef.current = false;
     locationPermissionEndingRef.current = false;
 
     const cfg = localSettings.get();
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
-      setPendingStartOptions({ autoStarted });
+      setPendingStartOptions({
+        autoStarted,
+        candidate,
+        privateTrip,
+        initialPoint,
+        nearParkedLocation,
+        triggerReason,
+      });
       setFatigueDialogOpen(true);
       return;
     }
@@ -718,11 +881,12 @@ export default function Dashboard() {
       return;
     }
 
+    const summaryOnlyPrivateTrip = privateTrip === true && !autoStarted && !candidate;
     const startTime = initialPoint?.timestamp || new Date().toISOString();
-    const storedInitialPoint = initialPoint
+    const storedInitialPoint = initialPoint && !summaryOnlyPrivateTrip
       ? redactRoutePointForPrivacyStorage(initialPoint, getPrivacyZones(cfg))
       : null;
-    const phoneUsageAccessStatus = isAndroid()
+    const phoneUsageAccessStatus = !summaryOnlyPrivateTrip && isAndroid()
       ? await getAndroidUsageAccessStatus().catch(() => null)
       : null;
     const phoneUsageAccessGrantedAtStart = phoneUsageAccessStatus?.usageAccessGranted === true;
@@ -732,6 +896,18 @@ export default function Dashboard() {
       trip_state: candidate ? TRIP_STATES.CANDIDATE : TRIP_STATES.CONFIRMED,
       route_points: storedInitialPoint ? [storedInitialPoint] : [],
       driving_events: [],
+      ...(summaryOnlyPrivateTrip ? {
+        privacy_mode: PRIVATE_TRIP_MODE,
+        private_trip_summary: {
+          distance_m: 0,
+          duration_seconds: 0,
+          avg_speed_kmh: 0,
+          avg_running_speed_kmh: 0,
+          max_speed_kmh: 0,
+          gps_points_processed: 0,
+          gps_points_stored: 0,
+        },
+      } : {}),
       background_tracking: useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
       resume_native_auto: !autoStarted && useBackground && isAndroid(),
@@ -739,10 +915,13 @@ export default function Dashboard() {
       candidate_first_point: candidate && storedInitialPoint ? storedInitialPoint : null,
       candidate_near_parked: candidate ? nearParkedLocation === true : false,
       candidate_trigger_reason: triggerReason,
-      native_phone_usage_access_granted: phoneUsageAccessGrantedAtStart,
-      native_phone_usage_access_checked_at: phoneUsageAccessStatus ? new Date().toISOString() : null,
+      ...(!summaryOnlyPrivateTrip ? {
+        native_phone_usage_access_granted: phoneUsageAccessGrantedAtStart,
+        native_phone_usage_access_checked_at: phoneUsageAccessStatus ? new Date().toISOString() : null,
+      } : {}),
     };
 
+    privateTripRuntimeRef.current = summaryOnlyPrivateTrip ? createPrivateTripRuntime() : null;
     activeTripStore.set(tripData);
     if (candidate) {
       recordTrackingDiagnostic({
@@ -776,7 +955,7 @@ export default function Dashboard() {
     trackingRef.current = true;
     setActiveTrip(tripData);
     setTracking(true);
-    if (cfg.sensor_fusion_enabled !== false) {
+    if (!summaryOnlyPrivateTrip && cfg.sensor_fusion_enabled !== false) {
       sensorFusionRef.current = createMotionSensorFusion();
       sensorFusionRef.current.start().catch(() => {});
     }
@@ -793,6 +972,14 @@ export default function Dashboard() {
     if (!candidate) {
       notifyTripStarted(tripData);
       scheduleLongTripReminder(tripData.start_time);
+    }
+    if (summaryOnlyPrivateTrip) {
+      void appendPrivacyEvent({
+        op: 'PRIVATE_TRIP_STARTED',
+        details: { status: 'summary_only' },
+      }).catch((error) => {
+        logError('private_trip_audit_start', error);
+      });
     }
   }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
 
@@ -827,12 +1014,61 @@ export default function Dashboard() {
     }
   };
 
+  const handleDiscardPrivateTrip = async () => {
+    const trip = activeTripRef.current || activeTrip;
+    if (!isPrivateTrip(trip)) return;
+    if (typeof window !== 'undefined' && !window.confirm('Discard this private trip? No trip summary will be saved.')) return;
+
+    const cfg = localSettings.get();
+    endingTripRef.current = true;
+    trackingRef.current = false;
+    await locationService.current?.stop();
+    locationService.current = null;
+    sensorFusionRef.current?.stop();
+    sensorFusionRef.current = null;
+    await activityStopRef.current?.();
+    activityStopRef.current = null;
+    latestActivityRef.current = null;
+    stopTimer();
+    await cancelLongTripReminder();
+
+    void appendPrivacyEvent({
+      op: 'PRIVATE_TRIP_DISCARDED',
+      hiddenCount: trip.private_trip_summary?.gps_points_processed || 0,
+      details: {
+        point_count: trip.private_trip_summary?.gps_points_processed || 0,
+        status: 'discarded',
+      },
+    }).catch((error) => {
+      logError('private_trip_audit_discard', error);
+    });
+
+    activeTripStore.clear();
+    await activeTripStore.flush();
+    privateTripRuntimeRef.current = null;
+    activeTripRef.current = null;
+    trackingRef.current = false;
+    autoEndingTripRef.current = false;
+    endingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
+    setActiveTrip(null);
+    setTracking(false);
+    setElapsed(0);
+    setLocationError('Private trip discarded. No trip summary was saved.');
+    if (isAndroid() && !cfg.tracking_paused && (trip.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+      await startNativeAutoTracking().catch(() => {});
+    }
+    refreshTrackingStatusContext();
+  };
+
   const handleEndTrip = async () => {
     let tripToEnd = activeTripRef.current || activeTrip;
-    if (!tripToEnd) return;
+    if (!tripToEnd || endingTripRef.current) return;
     const endingForLocationPermissionLoss = locationPermissionEndingRef.current;
 
-    locationService.current?.stop();
+    endingTripRef.current = true;
+    trackingRef.current = false;
+    await locationService.current?.stop();
     locationService.current = null;
     sensorFusionRef.current?.stop();
     stopTimer();
@@ -840,6 +1076,56 @@ export default function Dashboard() {
 
     let endTime = new Date().toISOString();
     const cfg = localSettings.get();
+    if (isPrivateTrip(tripToEnd)) {
+      const completedTrip = buildPrivateTripRecord(tripToEnd, endTime);
+      const savedTrip = await tripService.create(completedTrip);
+      activeTripStore.clear();
+      await activeTripStore.flush();
+      privateTripRuntimeRef.current = null;
+      activeTripRef.current = null;
+      trackingRef.current = false;
+      setActiveTrip(null);
+      setTracking(false);
+      setElapsed(0);
+      recordTrackingDiagnostic({
+        type: 'trip_ended',
+        title: 'Private trip summary saved',
+        reason: autoEndingTripRef.current ? 'private_trip_auto_stop' : 'private_trip_manual_end',
+        tripId: savedTrip?.id,
+        duration_seconds: completedTrip.duration_seconds,
+        distance_km: completedTrip.distance_km,
+        route_points_raw_count: 0,
+        route_points_clean_count: 0,
+      });
+      await appendPrivacyEvent({
+        op: 'PRIVATE_TRIP_SAVED',
+        tripId: savedTrip?.id,
+        hiddenCount: tripToEnd.private_trip_summary?.gps_points_processed || 0,
+        details: {
+          point_count: tripToEnd.private_trip_summary?.gps_points_processed || 0,
+          status: 'summary_only',
+        },
+      }).catch((error) => {
+        logError('private_trip_audit_save', error, { tripId: savedTrip?.id });
+      });
+
+      await activityStopRef.current?.();
+      activityStopRef.current = null;
+      latestActivityRef.current = null;
+      trackingRef.current = false;
+      autoEndingTripRef.current = false;
+      endingTripRef.current = false;
+      locationPermissionEndingRef.current = false;
+      setActiveTrip(null);
+      setTracking(false);
+      setElapsed(0);
+      if (isAndroid() && !cfg.tracking_paused && (tripToEnd.resume_native_auto || cfg.tracking_mode === 'background_auto')) {
+        await startNativeAutoTracking().catch(() => {});
+      }
+      refreshTrackingStatusContext();
+      refetch();
+      return;
+    }
     const thresholds = buildDrivingThresholds(cfg);
     const rawPoints = tripToEnd.route_points || [];
     let cleanedPoints = cleanRoutePoints(rawPoints, thresholds);
@@ -870,9 +1156,11 @@ export default function Dashboard() {
         activityStopRef.current = null;
         latestActivityRef.current = null;
         activeTripStore.clear();
+        await activeTripStore.flush();
         activeTripRef.current = null;
         trackingRef.current = false;
         autoEndingTripRef.current = false;
+        endingTripRef.current = false;
         locationPermissionEndingRef.current = false;
         setActiveTrip(null);
         setTracking(false);
@@ -935,18 +1223,38 @@ export default function Dashboard() {
     const preliminaryStats = calculateTripStats(cleanedPoints, tripToEnd.start_time, endTime, thresholds);
 
     const isManualTrip = tripToEnd.start_source !== 'auto';
+    const manualSaveReview = isManualTrip
+      ? reviewManualTripSave({
+        points: cleanedPoints,
+        stats: preliminaryStats,
+        startTime: tripToEnd.start_time,
+        endTime,
+        thresholds,
+      })
+      : null;
     const shouldDiscard = isManualTrip
-      ? pts.length < 2 ||
-        preliminaryStats.duration_seconds < MIN_MANUAL_SAVE_SECONDS ||
-        preliminaryStats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM
+      ? !manualSaveReview.shouldSave
       : preliminaryStats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
         preliminaryStats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
+
+    if (manualSaveReview?.shouldSave && manualSaveReview.reason !== 'manual_distance_confirmed') {
+      recordTrackingDiagnostic({
+        type: 'ending_review',
+        title: 'Manual trip kept with sparse GPS movement evidence',
+        reason: manualSaveReview.reason,
+        trip_state: TRIP_STATES.ENDING_REVIEW,
+        duration_seconds: Math.round(preliminaryStats.duration_seconds || 0),
+        distance_km: preliminaryStats.distance_km || 0,
+        max_speed_kmh: Math.round(preliminaryStats.max_speed_kmh || 0),
+        route_points_clean_count: cleanedPoints.length,
+      });
+    }
 
     if (shouldDiscard) {
       recordTrackingDiagnostic({
         type: 'trip_discarded',
         title: 'Trip discarded',
-        reason: isManualTrip ? 'manual_too_short' : 'auto_too_short',
+        reason: isManualTrip ? manualSaveReview.reason : 'auto_too_short',
         duration_seconds: Math.round(preliminaryStats.duration_seconds || 0),
         distance_km: preliminaryStats.distance_km || 0,
       });
@@ -954,9 +1262,11 @@ export default function Dashboard() {
       activityStopRef.current = null;
       latestActivityRef.current = null;
       activeTripStore.clear();
+      await activeTripStore.flush();
       activeTripRef.current = null;
       trackingRef.current = false;
       autoEndingTripRef.current = false;
+      endingTripRef.current = false;
       locationPermissionEndingRef.current = false;
       setActiveTrip(null);
       setTracking(false);
@@ -1118,8 +1428,14 @@ export default function Dashboard() {
       score_confidence_flag: scoreConfidenceFlag,
       tracking_timeline: Array.isArray(tripToEnd.timeline) ? tripToEnd.timeline : [],
     };
-
     const savedTrip = await tripService.create(completedTrip);
+    activeTripStore.clear();
+    await activeTripStore.flush();
+    activeTripRef.current = null;
+    trackingRef.current = false;
+    setActiveTrip(null);
+    setTracking(false);
+    setElapsed(0);
     recordTrackingDiagnostic({
       type: 'trip_ended',
       title: 'Trip saved',
@@ -1180,9 +1496,11 @@ export default function Dashboard() {
     activityStopRef.current = null;
     latestActivityRef.current = null;
     activeTripStore.clear();
+    await activeTripStore.flush();
     activeTripRef.current = null;
     trackingRef.current = false;
     autoEndingTripRef.current = false;
+    endingTripRef.current = false;
     locationPermissionEndingRef.current = false;
     setActiveTrip(null);
     setTracking(false);
@@ -1398,6 +1716,7 @@ export default function Dashboard() {
 
   const units = settings.units || 'metric';
   const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;
+  const activeTripIsPrivate = isPrivateTrip(activeTrip);
   const handleTrackingSetupAction = async (action) => {
     if (action === 'location') await requestForegroundLocationPermission();
     if (action === 'activity') await requestActivityRecognitionPermission();
@@ -1722,7 +2041,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse" />
                   <span className="text-white/80 text-sm font-medium">
-                    {activeTripIsCandidate ? 'Checking Movement' : 'Trip Active'}
+                    {activeTripIsCandidate ? 'Checking Movement' : activeTripIsPrivate ? 'Private Trip Active' : 'Trip Active'}
                   </span>
                 </div>
                 <div className="font-grotesk font-bold text-4xl">{formatDuration(elapsed)}</div>
@@ -1731,6 +2050,8 @@ export default function Dashboard() {
                     activeTrip?.candidate_near_parked
                       ? 'Hidden candidate near parked car'
                       : 'Hidden candidate validating movement'
+                  ) : activeTripIsPrivate ? (
+                    `${formatDistance((activeTrip?.private_trip_summary?.distance_m || 0) / 1000, units)} \u00b7 ${formatSpeed(activeTrip?.private_trip_summary?.avg_running_speed_kmh || 0, units)} avg`
                   ) : activeTrip?.route_points?.length ? (
                     (() => {
                       const stats = calculateTripStats(
@@ -1767,7 +2088,19 @@ export default function Dashboard() {
               );
             })()}
 
-            {(activeTrip?.route_points?.length > 0 || currentLocation) && (
+            {activeTripIsPrivate && (
+              <div className="mb-4 flex items-start gap-2 rounded-xl border border-white/20 bg-slate-950/30 px-3 py-2 text-sm text-white/90">
+                <Shield className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <div>
+                  <div className="font-semibold">Summary only</div>
+                  <div className="mt-0.5 text-xs text-white/70">
+                    GPS is used temporarily for live distance and position. Route coordinates, addresses, driving events, and scores are not saved.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!activeTripIsPrivate && (activeTrip?.route_points?.length > 0 || currentLocation) && (
               <div className="mb-4 overflow-hidden rounded-2xl border border-white/15 bg-white/10">
                 <TripMap
                   routePoints={activeTrip?.route_points || []}
@@ -1824,13 +2157,26 @@ export default function Dashboard() {
               </div>
             )}
 
-            <button
-              onClick={handleEndTrip}
-              className="w-full py-3 bg-white/15 hover:bg-white/25 backdrop-blur rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
-            >
-              <Square className="w-4 h-4" />
-              End Trip
-            </button>
+            <div className={activeTripIsPrivate ? 'grid grid-cols-2 gap-3' : ''}>
+              {activeTripIsPrivate && (
+                <button
+                  onClick={handleDiscardPrivateTrip}
+                  className="flex min-w-0 items-center justify-center gap-2 rounded-xl border border-white/20 bg-slate-950/25 px-3 py-3 font-semibold text-white/85 transition-colors hover:bg-slate-950/40"
+                >
+                  <Trash2 className="h-4 w-4 flex-shrink-0" />
+                  <span className="min-w-0 truncate">Discard</span>
+                </button>
+              )}
+              <button
+                onClick={handleEndTrip}
+                className={`${activeTripIsPrivate ? 'px-3 text-sm leading-tight sm:text-base' : ''} flex w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-white/15 py-3 font-semibold transition-colors hover:bg-white/25 backdrop-blur`}
+              >
+                <Square className="h-4 w-4 flex-shrink-0" />
+                <span className={activeTripIsPrivate ? 'min-w-0 whitespace-nowrap' : ''}>
+                  {activeTripIsPrivate ? 'Save Summary' : 'End Trip'}
+                </span>
+              </button>
+            </div>
           </motion.div>
         ) : (
           <motion.div
@@ -1841,7 +2187,7 @@ export default function Dashboard() {
             className="bg-card border border-border rounded-3xl p-6 shadow-sm"
           >
             <div className="flex items-center gap-4">
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="text-muted-foreground text-sm mb-1">Ready to drive?</div>
                 <div className="font-grotesk font-bold text-xl">Start a new trip</div>
                 <div className="text-muted-foreground text-xs mt-1">Tap to begin tracking your route</div>
@@ -1853,6 +2199,19 @@ export default function Dashboard() {
                 <Play className="w-7 h-7 text-white ml-0.5" />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => handleStartTrip({ privateTrip: true })}
+              className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-secondary/50 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-secondary"
+            >
+              <div className="rounded-xl bg-slate-900 p-2 text-white dark:bg-slate-700">
+                <Shield className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Start Private Trip</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">Save distance and duration only. No route, addresses, events, or score.</div>
+              </div>
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2134,7 +2493,7 @@ export default function Dashboard() {
         {trackingExplanationPanel}
         {trackingReadinessPanel}
       </div>
-      {tracking && !activeTripIsCandidate && settings.live_coaching_enabled !== false && (
+      {tracking && !activeTripIsCandidate && !activeTripIsPrivate && settings.live_coaching_enabled !== false && (
         <LiveCoachOverlay
           currentRoutePoints={activeTrip?.route_points || []}
           currentEvents={activeTrip?.driving_events || []}

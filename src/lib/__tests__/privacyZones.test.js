@@ -5,9 +5,11 @@ import { cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
 import {
   countTripsAffectedByPrivacyZone,
   createPrivacyCellHashes,
+  deriveZoneStatsFromTrips,
   findOverlappingZones,
   getBoundaryTimestampFuzz,
   getPrivacyZoneDisplayCircle,
+  getZoneStatsSnapshot,
   isPointInPrivacyZone,
   isInsidePrivacyZone,
   KINEMATIC_FIELDS,
@@ -30,8 +32,11 @@ import {
   sanitizeKinematics,
   syncZonesToNative,
   upsertPrivacyZone,
+  ZONE_STATS_KEY,
 } from '@/lib/privacyZones';
 import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
+import { secureSetPreference } from '@/lib/secureBridge';
+import { SecureGpsBuffer } from '@/lib/SecureGpsBuffer';
 import { localSettings } from '@/lib/trackingStore';
 
 vi.mock('@capacitor/core', () => ({
@@ -48,6 +53,11 @@ vi.mock('@capacitor/preferences', () => ({
   },
 }));
 
+vi.mock('@/lib/secureBridge', () => ({
+  secureCall: vi.fn(async () => ({ ciphertext: 'mock-ciphertext' })),
+  secureSetPreference: vi.fn(async () => ({ stored: true })),
+}));
+
 const zone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
 const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
   lat,
@@ -58,7 +68,10 @@ const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
 
 describe('privacyZones', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
+    Capacitor.isNativePlatform.mockReturnValue(false);
+    Capacitor.getPlatform.mockReturnValue('web');
     vi.unstubAllGlobals();
   });
 
@@ -73,6 +86,30 @@ describe('privacyZones', () => {
     expect(offsetM).toBeCloseTo(35, 0);
     expect(display.radius_m).toBe(zone.radius_m + 35);
     expect(display.source_radius_m).toBe(zone.radius_m);
+  });
+
+  it('stores GPS coordinates in a zeroable typed buffer', () => {
+    const buffer = new SecureGpsBuffer([{
+      latitude: 43.65,
+      longitude: -79.38,
+      timestamp: '2026-01-01T12:00:00.000Z',
+      speed: 12,
+      heading: 90,
+    }]);
+
+    expect(buffer.length).toBe(1);
+    expect(buffer.get(0)).toMatchObject({
+      lat: 43.65,
+      lng: -79.38,
+      latitude: 43.65,
+      longitude: -79.38,
+      speed_kmh: 12,
+      heading: 90,
+    });
+
+    buffer.zero();
+
+    expect(buffer.get(0)).toBeNull();
   });
 
   it('interpolates the route crossing at the circle boundary', () => {
@@ -290,6 +327,7 @@ describe('privacyZones', () => {
   });
 
   it('exports speed summaries from public points only', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const trip = {
       avg_speed_kmh: 70,
       avg_running_speed_kmh: 75,
@@ -310,6 +348,30 @@ describe('privacyZones', () => {
       max_speed_kmh: 40,
     });
     expect(exported.route_points.find((item) => item.privacy_export_placeholder)).not.toHaveProperty('speed_kmh', 120);
+  });
+
+  it('keeps local distance exact and adds aggregate noise only to privacy-protected exports', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.75);
+    const trip = {
+      distance_km: 10,
+      route_points: [
+        point(43.65, -79.38, 0),
+        point(43.6522, -79.38, 30),
+      ],
+      driving_events: [],
+    };
+    const settings = { privacy_zones: [zone] };
+
+    const localTrip = maskTripForPrivacy(trip, settings);
+    const exportedTrip = maskTripForPrivacyExport(trip, settings, 'export-salt');
+
+    expect(localTrip.distance_km).toBe(10);
+    expect(localTrip.differential_privacy).toBeUndefined();
+    expect(exportedTrip.distance_km).toBe(10.26);
+    expect(exportedTrip.differential_privacy).toMatchObject({
+      applied: true,
+      scope: 'export',
+    });
   });
 
   it('counts trips that would be exposed by privacy zone deletion', () => {
@@ -382,6 +444,64 @@ describe('privacyZones', () => {
     const masked = maskEventsForPrivacy(events, { privacy_zones: [zone] });
 
     expect(masked).toEqual([events[1]]);
+  });
+
+  it('derives zone activity from saved redacted trip records without render-time overcounting', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
+    const protectedAt = '2026-06-13T14:00:00.000Z';
+    const trips = [{
+      id: 'protected-trip',
+      start_time: protectedAt,
+      route_points: [
+        { lat: null, lng: null, timestamp: protectedAt, masked_for_privacy: true, privacy_gap: true, privacy_zone_id: zone.id },
+        { lat: 43.6532, lng: -79.38, timestamp: protectedAt },
+      ],
+      driving_events: [
+        { type: 'harsh_brake', lat: null, lng: null, timestamp: protectedAt, masked_for_privacy: true, privacy_event_redacted: true, privacy_zone_id: zone.id },
+      ],
+    }];
+
+    const [first] = deriveZoneStatsFromTrips(trips, { privacy_zones: [zone] });
+    const [second] = deriveZoneStatsFromTrips(trips, { privacy_zones: [zone] });
+
+    expect(first.today).toMatchObject({ hidden: 1, events: 1 });
+    expect(first.week).toMatchObject({ hidden: 1, events: 1 });
+    expect(first.lastActive).toBe(Date.parse(protectedAt));
+    expect(second).toEqual(first);
+  });
+
+  it('resets expired daily and weekly zone counters when the dashboard reads them', async () => {
+    await getZoneStatsSnapshot({ privacy_zones: [zone] });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-14T12:00:00.000Z'));
+    await setEncryptedJson(ZONE_STATS_KEY, {
+      home: {
+        hiddenAllTime: 12,
+        hiddenToday: 5,
+        hiddenWeek: 9,
+        eventsAllTime: 4,
+        eventsToday: 2,
+        eventsWeek: 3,
+        addressesLeaked: 0,
+        lastActive: Date.parse('2026-06-06T12:00:00.000Z'),
+        dailyReset: Date.parse('2026-06-06T00:00:00.000Z'),
+        weeklyReset: Date.parse('2026-06-01T00:00:00.000Z'),
+      },
+    });
+
+    const [stats] = await getZoneStatsSnapshot({ privacy_zones: [zone] });
+    const stored = await getEncryptedJson(ZONE_STATS_KEY, {});
+
+    expect(stats.today).toMatchObject({ hidden: 0, events: 0 });
+    expect(stats.week).toMatchObject({ hidden: 0, events: 0 });
+    expect(stats.allTime).toMatchObject({ hidden: 12, events: 4 });
+    expect(stored.home).toMatchObject({
+      hiddenToday: 0,
+      hiddenWeek: 0,
+      eventsToday: 0,
+      eventsWeek: 0,
+    });
   });
 
   it('omits events inside the privacy-zone event guard', () => {
@@ -494,14 +614,17 @@ describe('privacyZones', () => {
 
   it('syncs sanitized privacy zones to native preferences', async () => {
     Capacitor.isNativePlatform.mockReturnValue(true);
+    Capacitor.getPlatform.mockReturnValue('android');
     vi.stubGlobal('window', {});
 
     await syncZonesToNative([zone, { id: 'bad', label: 'Bad', lat: null, lng: -79.38, radius_m: 100 }]);
 
-    expect(Preferences.set).toHaveBeenCalledTimes(1);
-    const payload = Preferences.set.mock.calls[0][0];
+    expect(Preferences.set).not.toHaveBeenCalled();
+    expect(secureSetPreference).toHaveBeenCalledTimes(1);
+    const payload = secureSetPreference.mock.calls[0][0];
     expect(payload.key).toBe(NATIVE_PRIVACY_ZONES_KEY);
-    expect(payload.value).toContain('"encrypted":true');
+    expect(payload.context).toBe('native:privacy_zones_v1');
+    expect(payload.encryptAtRest).toBe(true);
     expect(payload.value).not.toContain('43.65');
     expect(payload.value).not.toContain('-79.38');
     expect(payload.value).not.toContain('"lat"');
@@ -510,7 +633,8 @@ describe('privacyZones', () => {
 
   it('fails closed and pauses native tracking settings when native privacy sync fails', async () => {
     Capacitor.isNativePlatform.mockReturnValue(true);
-    Preferences.set.mockRejectedValueOnce(new Error('native preferences unavailable'));
+    Capacitor.getPlatform.mockReturnValue('android');
+    secureSetPreference.mockRejectedValueOnce(new Error('native preferences unavailable'));
     const values = new Map([[
       'drivesense_settings',
       JSON.stringify({

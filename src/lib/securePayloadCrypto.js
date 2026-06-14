@@ -1,12 +1,15 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { getNativePlatform, isAndroid, isNativePlatform } from '@/lib/nativePlatform';
-import nativeCrypto from '@/lib/driveSenseNativePlugin';
+import { secureCall } from '@/lib/secureBridge';
 
 const ENCRYPTION_VERSION = 1;
+const DEFAULT_KEY_VERSION = 1;
+const LEGACY_ANDROID_KEY_VERSION = 0;
+export const ENCRYPTION_KEY_META_KEY = 'drivesense_encryption_key_meta';
 const KEY_DB_NAME = 'drivesense_secure_keys';
 const KEY_STORE_NAME = 'keys';
-const KEY_RECORD_ID = 'gps_payload_key_v1';
-let webKeyPromise = null;
+const keyRecordId = (version) => `gps_payload_key_v${version}`;
+const webKeyPromises = new Map();
 
 const cryptoApi = () => {
   const api = globalThis.crypto;
@@ -50,7 +53,7 @@ const idbRequest = (request) => new Promise((resolve, reject) => {
   request.onerror = () => reject(request.error);
 });
 
-const loadOrCreateWebKey = async () => {
+const loadOrCreateWebKey = async (version) => {
   const api = cryptoApi();
   const db = await openKeyDb();
   if (!db) {
@@ -58,12 +61,13 @@ const loadOrCreateWebKey = async () => {
   }
 
   try {
-    const existing = await idbRequest(db.transaction(KEY_STORE_NAME, 'readonly').objectStore(KEY_STORE_NAME).get(KEY_RECORD_ID));
+    const recordId = keyRecordId(version);
+    const existing = await idbRequest(db.transaction(KEY_STORE_NAME, 'readonly').objectStore(KEY_STORE_NAME).get(recordId));
     if (existing?.key) return existing.key;
 
     const key = await api.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
     await idbRequest(db.transaction(KEY_STORE_NAME, 'readwrite').objectStore(KEY_STORE_NAME).put({
-      id: KEY_RECORD_ID,
+      id: recordId,
       key,
       created_at: new Date().toISOString(),
     }));
@@ -73,15 +77,37 @@ const loadOrCreateWebKey = async () => {
   }
 };
 
-const getWebKey = () => {
-  if (!webKeyPromise) {
-    webKeyPromise = loadOrCreateWebKey().catch((error) => {
-      webKeyPromise = null;
+const getWebKey = (version) => {
+  if (!webKeyPromises.has(version)) {
+    const promise = loadOrCreateWebKey(version).catch((error) => {
+      webKeyPromises.delete(version);
       throw error;
     });
+    webKeyPromises.set(version, promise);
   }
-  return webKeyPromise;
+  return webKeyPromises.get(version);
 };
+
+const deleteWebKey = async (version) => {
+  const db = await openKeyDb();
+  webKeyPromises.delete(version);
+  if (!db) return;
+  try {
+    await idbRequest(
+      db.transaction(KEY_STORE_NAME, 'readwrite').objectStore(KEY_STORE_NAME).delete(keyRecordId(version))
+    );
+  } finally {
+    db.close();
+  }
+};
+
+export async function getActiveEncryptionKeyVersion() {
+  const meta = await getJson(ENCRYPTION_KEY_META_KEY, null);
+  return Math.max(
+    DEFAULT_KEY_VERSION,
+    Number(meta?.pendingVersion || meta?.version || DEFAULT_KEY_VERSION) || DEFAULT_KEY_VERSION
+  );
+}
 
 const assertSupportedNativeCrypto = () => {
   if (!isNativePlatform() || isAndroid()) return;
@@ -97,13 +123,44 @@ export const isEncryptedPayload = (value) => (
   typeof value?.ciphertext === 'string'
 );
 
-export async function encryptSensitiveValue(value, context = 'drivesense') {
-  const plaintext = JSON.stringify(value);
+export async function ensureEncryptionKeyVersion(version) {
+  const normalizedVersion = Math.max(DEFAULT_KEY_VERSION, Number(version) || DEFAULT_KEY_VERSION);
   if (isAndroid()) {
-    const result = await nativeCrypto.encryptSensitivePayload({ plaintext, context });
+    await secureCall('SecureBridge', 'ensureSensitivePayloadKey', { keyVersion: normalizedVersion });
+    return normalizedVersion;
+  }
+  assertSupportedNativeCrypto();
+  await getWebKey(normalizedVersion);
+  return normalizedVersion;
+}
+
+export async function deleteEncryptionKeyVersion(version) {
+  const normalizedVersion = Number(version);
+  if (!Number.isInteger(normalizedVersion) || normalizedVersion < DEFAULT_KEY_VERSION) return;
+  if (isAndroid()) {
+    await secureCall('SecureBridge', 'deleteSensitivePayloadKey', { keyVersion: normalizedVersion });
+    return;
+  }
+  assertSupportedNativeCrypto();
+  await deleteWebKey(normalizedVersion);
+}
+
+export async function encryptSensitiveValue(value, context = 'drivesense', options = {}) {
+  const plaintext = JSON.stringify(value);
+  const keyVersion = Math.max(
+    DEFAULT_KEY_VERSION,
+    Number(options.keyVersion || await getActiveEncryptionKeyVersion()) || DEFAULT_KEY_VERSION
+  );
+  if (isAndroid()) {
+    const result = await secureCall('SecureBridge', 'encryptSensitivePayload', {
+      plaintext,
+      context,
+      keyVersion,
+    });
     return {
       encrypted: true,
       version: ENCRYPTION_VERSION,
+      key_version: keyVersion,
       algorithm: 'AES-256-GCM',
       key_provider: 'android-keystore',
       ciphertext: result.ciphertext,
@@ -112,7 +169,7 @@ export async function encryptSensitiveValue(value, context = 'drivesense') {
   assertSupportedNativeCrypto();
 
   const api = cryptoApi();
-  const key = await getWebKey();
+  const key = await getWebKey(keyVersion);
   const iv = api.getRandomValues(new Uint8Array(12));
   const additionalData = new TextEncoder().encode(context);
   const ciphertext = await api.subtle.encrypt(
@@ -123,6 +180,7 @@ export async function encryptSensitiveValue(value, context = 'drivesense') {
   return {
     encrypted: true,
     version: ENCRYPTION_VERSION,
+    key_version: keyVersion,
     algorithm: 'AES-256-GCM',
     key_provider: 'webcrypto-nonextractable',
     iv: bytesToBase64(iv),
@@ -134,16 +192,21 @@ export async function decryptSensitiveValue(payload, context = 'drivesense') {
   if (!isEncryptedPayload(payload)) return payload;
 
   if (isAndroid()) {
-    const result = await nativeCrypto.decryptSensitivePayload({
+    const keyVersion = Number.isInteger(Number(payload.key_version))
+      ? Number(payload.key_version)
+      : LEGACY_ANDROID_KEY_VERSION;
+    const result = await secureCall('SecureBridge', 'decryptSensitivePayload', {
       ciphertext: payload.ciphertext,
       context,
+      keyVersion,
     });
     return JSON.parse(result.plaintext);
   }
   assertSupportedNativeCrypto();
 
   const api = cryptoApi();
-  const key = await getWebKey();
+  const keyVersion = Math.max(DEFAULT_KEY_VERSION, Number(payload.key_version) || DEFAULT_KEY_VERSION);
+  const key = await getWebKey(keyVersion);
   const plaintext = await api.subtle.decrypt(
     {
       name: 'AES-GCM',
@@ -167,11 +230,24 @@ export async function getEncryptedJson(key, fallback) {
   return stored;
 }
 
-export async function setEncryptedJson(key, value) {
-  const encrypted = await encryptSensitiveValue(value, `storage:${key}`);
+export async function setEncryptedJson(key, value, options = {}) {
+  const encrypted = await encryptSensitiveValue(value, `storage:${key}`, options);
   await setJson(key, encrypted);
 }
 
 export async function removeEncryptedJson(key) {
   await removeJson(key);
+}
+
+export async function rotateEncryptedJsonKey(key, targetKeyVersion) {
+  const stored = await getJson(key, null);
+  if (stored == null) return false;
+  const normalizedTarget = Math.max(DEFAULT_KEY_VERSION, Number(targetKeyVersion) || DEFAULT_KEY_VERSION);
+  if (isEncryptedPayload(stored) && Number(stored.key_version) === normalizedTarget) return false;
+
+  const value = isEncryptedPayload(stored)
+    ? await decryptSensitiveValue(stored, `storage:${key}`)
+    : stored;
+  await setEncryptedJson(key, value, { keyVersion: normalizedTarget });
+  return true;
 }

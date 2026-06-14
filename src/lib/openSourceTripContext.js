@@ -11,10 +11,16 @@ import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weat
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { isAndroid } from '@/lib/nativePlatform';
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
 };
+
+const PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS = 11 * 60 * 1000;
+export const ROAD_CONTEXT_QUEUED_STATUS = isAndroid()
+  ? 'Queued privately with a randomized delay; continues after swipe-away'
+  : 'Queued privately with a randomized delay';
 
 const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
   const id = setTimeout(() => reject(new Error(message)), ms);
@@ -106,10 +112,10 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     '',
   ];
   if (settings.speed_limit_lookup_enabled !== false) {
-    lines.push('- Speed limits: sends route-area boxes to OpenStreetMap Overpass and gets road names, road geometry, and maxspeed tags.');
+    lines.push('- Speed limits: queues route-area boxes with a randomized privacy delay, then gets road names, road geometry, and maxspeed tags from OpenStreetMap Overpass.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: sends a privacy-safe route latitude/longitude rounded to 4 decimals plus the trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
+    lines.push('- Weather: queues a privacy-safe route point and trip date with a randomized privacy delay before contacting Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     const zones = getPrivacyZones(settings);
@@ -155,10 +161,10 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const thresholds = buildDrivingThresholds(settings);
   const privacyZones = getPrivacyZones(settings);
-  stage(onProgress, 'Getting weather');
+  stage(onProgress, ROAD_CONTEXT_QUEUED_STATUS);
   const weatherPromise = timeout(
     fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
-    12000,
+    PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS,
     'Weather lookup timed out'
   ).catch((error) => ({
     provider: 'open-meteo',
@@ -203,10 +209,10 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     originalPoints,
     mapMatchingContext.routePoints || []
   );
-  stage(onProgress, 'Getting speed limits from OpenStreetMap');
+  stage(onProgress, ROAD_CONTEXT_QUEUED_STATUS);
   const speedLimitContext = await timeout(
     annotateRouteSpeedLimits(routePoints, settings),
-    18000,
+    PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS,
     'OpenStreetMap speed-limit lookup timed out'
   ).catch((error) => ({
     routePoints,

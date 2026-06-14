@@ -5,6 +5,9 @@ import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { pinnedFetch } from '@/lib/pinnedFetch';
+import { logTransmission } from '@/lib/transmissionLog';
+import { enqueueLocationRequest } from '@/lib/requestObfuscator';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -193,7 +196,7 @@ function parseOpenMeteoHourlyTime(time, utcOffsetSeconds) {
   return localAsUtcMs - utcOffsetSeconds * 1000;
 }
 
-async function fetchOpenMeteoWeather({ lat, lng, date }) {
+function openMeteoUrl({ lat, lng, date }) {
   const startDate = dayKey(date);
   const tripDate = new Date(startDate);
   const today = new Date(dayKey(Date.now()));
@@ -205,11 +208,28 @@ async function fetchOpenMeteoWeather({ lat, lng, date }) {
   url.searchParams.set('start_date', startDate);
   url.searchParams.set('end_date', startDate);
   url.searchParams.set('timezone', 'auto');
+  return url;
+}
+
+async function fetchOpenMeteoWeather({ lat, lng, date, tripId = null, zonesSuppressed = [] }) {
+  const startDate = dayKey(date);
+  const url = openMeteoUrl({ lat, lng, date });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await withRetry('open-meteo-weather', () => fetch(url, { signal: controller.signal }));
+    await logTransmission({
+      service: 'open-meteo',
+      type: 'Weather lookup',
+      sentCoords: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      protections: ['privacy-zone buffer +100m', 'rounded to 4 decimals'],
+      offsetMeters: null,
+      bytesOut: url.toString().length,
+      status: 'safe',
+      tripId,
+      zonesSuppressed,
+    });
+    const response = await withRetry('open-meteo-weather', () => pinnedFetch(url, { signal: controller.signal }));
     if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`);
     return response.json();
   } catch (error) {
@@ -287,6 +307,19 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
         ? WEATHER_SKIPPED_ALL_POINTS_PRIVATE
         : 'No usable route points were available.',
     }, { category: 'weather', severity: 'warn', title: 'Operation failed: weather_context' });
+    if (privacyZones.length && hasRoutePoints) {
+      await logTransmission({
+        service: 'open-meteo',
+        type: 'Weather lookup',
+        sentCoords: null,
+        protections: ['all route points inside privacy buffer - request blocked'],
+        offsetMeters: null,
+        bytesOut: 0,
+        status: 'blocked',
+        tripId: null,
+        zonesSuppressed: privacyZones.map((zone) => zone.label),
+      });
+    }
     return unavailableWeatherContext(privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route', {
       ...(privacyZones.length && hasRoutePoints
         ? { weather_context: null, weather_skipped_reason: WEATHER_SKIPPED_ALL_POINTS_PRIVATE }
@@ -304,7 +337,17 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
   const historical = Number.isFinite(tripDate.getTime()) && tripDate < today;
   const maxAge = historical ? HISTORICAL_CACHE_MAX_AGE_MS : CACHE_MAX_AGE_MS;
   if (!data || Date.now() - cached.savedAt > maxAge) {
-    data = await fetchOpenMeteoWeather({ lat: center.lat, lng: center.lng, date: startTime });
+    const weatherRequest = {
+      lat: center.lat,
+      lng: center.lng,
+      date: startTime,
+      zonesSuppressed: privacyZones.map((zone) => zone.label),
+    };
+    data = await enqueueLocationRequest(
+      'weather',
+      () => fetchOpenMeteoWeather(weatherRequest),
+      { url: openMeteoUrl(weatherRequest).toString(), method: 'GET' }
+    );
     status = 'fetched';
     await setJson(WEATHER_CACHE_KEY, {
       ...cache,

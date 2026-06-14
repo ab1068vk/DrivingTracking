@@ -4,6 +4,8 @@ import {
   DB_NAME,
   DB_NAME_META_KEY,
   DB_VERSION,
+  enforceRawGpsRetention,
+  expireTripRouteData,
   localTripRepository,
   migrateIndexedDbName,
   migrateLegacyTripStorageToEncrypted,
@@ -67,6 +69,7 @@ class FakeObjectStore {
 
   put(value) {
     return makeIdbRequest(() => {
+      this.state.putHistory.push(value);
       this.state.records.set(value[this.keyPath], value);
       queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
       return value[this.keyPath];
@@ -84,6 +87,7 @@ class FakeObjectStore {
   delete(id) {
     return makeIdbRequest(() => {
       this.state.records.delete(id);
+      queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
       return undefined;
     });
   }
@@ -124,6 +128,7 @@ class FakeDatabase {
       indexes: new Set(),
       indexKeyPaths: new Map(),
       records: new Map(),
+      putHistory: [],
       databaseState: this.state,
     };
     this.state.stores.set(name, store);
@@ -200,6 +205,97 @@ describe('localTripRepository IndexedDB migrations', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('expires route coordinates while preserving trip summaries', () => {
+    const expired = expireTripRouteData({
+      id: 'old-trip',
+      status: 'completed',
+      score_overall: 88,
+      distance_km: 12.4,
+      duration_seconds: 1800,
+      start_address: 'Private start',
+      end_address: 'Private end',
+      route_points: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 40 },
+        { latitude: 43.66, longitude: -79.39, speed_kmh: 45 },
+      ],
+      driving_events: [{ type: 'harsh_brake', lat: 43.65, lng: -79.38, value: -4.2 }],
+      native_tracking_timeline: [{ type: 'location', latitude: 43.65, longitude: -79.38 }],
+      needs_rescore: true,
+    }, 90, Date.parse('2026-06-13T12:00:00.000Z'));
+
+    expect(expired).toMatchObject({
+      score_overall: 88,
+      distance_km: 12.4,
+      duration_seconds: 1800,
+      route_points: [],
+      route_points_raw_count: 2,
+      route_points_map_count: 0,
+      start_address: null,
+      end_address: null,
+      route_data_expired_at: '2026-06-13T12:00:00.000Z',
+      route_data_retention_days: 90,
+      needs_rescore: false,
+    });
+    expect(expired.driving_events[0]).toEqual({ type: 'harsh_brake', value: -4.2 });
+    expect(expired.native_tracking_timeline[0]).toEqual({ type: 'location' });
+  });
+
+  it('enforces raw GPS retention once per day without deleting trip summaries', async () => {
+    const now = Date.parse('2026-06-13T12:00:00.000Z');
+    const values = new Map();
+    vi.stubGlobal('indexedDB', undefined);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    values.set('drivesense_settings', JSON.stringify({
+      settings_defaults_version: 11,
+      data_retention_days: 0,
+      raw_gps_retention_days: 90,
+      privacy_zones: [],
+    }));
+    values.set('drivesense_trips', JSON.stringify([{
+      id: 'eligible-old-trip',
+      status: 'completed',
+      start_time: '2025-12-01T10:00:00.000Z',
+      end_time: '2025-12-01T10:30:00.000Z',
+      route_points: [
+        { lat: 43.65, lng: -79.38, timestamp: '2025-12-01T10:00:00.000Z' },
+        { lat: 43.66, lng: -79.39, timestamp: '2025-12-01T10:30:00.000Z' },
+      ],
+      driving_events: [{ type: 'harsh_brake', lat: 43.655, lng: -79.385, value: -4 }],
+      score_overall: 91,
+      distance_km: 18.2,
+      duration_seconds: 1800,
+    }, {
+      id: 'old-draft',
+      status: 'draft',
+      start_time: '2025-12-01T10:00:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    }]));
+
+    const first = await enforceRawGpsRetention({ force: true, now });
+    const second = await enforceRawGpsRetention({ now: now + 60 * 60 * 1000 });
+    const trips = await localTripRepository.listAll();
+    const expired = trips.find((trip) => trip.id === 'eligible-old-trip');
+    const draft = trips.find((trip) => trip.id === 'old-draft');
+
+    expect(first).toMatchObject({ enabled: true, purgedTrips: 1, purgedPoints: 2, lastRunAt: now });
+    expect(second).toMatchObject({ enabled: true, skipped: true, purgedTrips: 0 });
+    expect(expired).toMatchObject({
+      score_overall: 91,
+      distance_km: 18.2,
+      duration_seconds: 1800,
+      route_points: [],
+      route_data_retention_days: 90,
+      needs_rescore: false,
+    });
+    expect(expired.driving_events[0]).toEqual({ type: 'harsh_brake', value: -4 });
+    expect(draft.route_points).toHaveLength(1);
   });
 
   it('opens an empty IndexedDB and creates the trip store with required indexes', async () => {
@@ -282,6 +378,36 @@ describe('localTripRepository IndexedDB migrations', () => {
       privacy_event_redacted: true,
       privacy_zone_id: 'home',
     });
+  });
+
+  it('commits random replacement data before deleting an IndexedDB trip', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+
+    await localTripRepository.create({
+      id: 'secure-delete-trip',
+      status: 'draft',
+      start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
+    });
+    const result = await localTripRepository.delete('secure-delete-trip');
+
+    const store = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    const tombstone = store.putHistory.at(-1);
+    expect(result).toEqual({
+      success: true,
+      deletion_method: 'indexeddb_overwrite_then_delete',
+      record_found: true,
+    });
+    expect(store.records.has('secure-delete-trip')).toBe(false);
+    expect(tombstone).toMatchObject({
+      id: 'secure-delete-trip',
+      status: 'secure-delete-pending',
+      _secure_delete_tombstone: true,
+    });
+    expect(tombstone.random_padding).toMatch(/^[a-f0-9]{8192,}$/);
+    expect(JSON.stringify(tombstone)).not.toContain('43.6532');
+    expect(JSON.stringify(tombstone)).not.toContain('-79.3832');
   });
 
   it('hydrates cell-only privacy zones before repository writes', async () => {

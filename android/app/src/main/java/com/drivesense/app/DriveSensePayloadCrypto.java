@@ -16,23 +16,29 @@ import javax.crypto.spec.GCMParameterSpec;
 final class DriveSensePayloadCrypto {
     private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
     private static final String KEY_ALIAS = "drivesense_gps_key_v1";
+    private static final String ROTATING_KEY_ALIAS_PREFIX = "drivesense_gps_payload_key_v";
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
     private static final int TAG_LENGTH_BITS = 128;
     private static final String STORED_PREFIX = "enc:v1:";
 
     private DriveSensePayloadCrypto() {}
 
-    private static SecretKey getOrCreateKey() throws Exception {
+    private static String aliasForVersion(int keyVersion) {
+        return keyVersion <= 0 ? KEY_ALIAS : ROTATING_KEY_ALIAS_PREFIX + keyVersion;
+    }
+
+    private static SecretKey getOrCreateKey(int keyVersion) throws Exception {
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
         keyStore.load(null);
-        KeyStore.Entry existing = keyStore.getEntry(KEY_ALIAS, null);
+        String alias = aliasForVersion(keyVersion);
+        KeyStore.Entry existing = keyStore.getEntry(alias, null);
         if (existing instanceof KeyStore.SecretKeyEntry) {
             return ((KeyStore.SecretKeyEntry) existing).getSecretKey();
         }
 
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE);
         generator.init(new KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
+            alias,
             KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -44,8 +50,12 @@ final class DriveSensePayloadCrypto {
     }
 
     static String encrypt(String plaintext, String context) throws Exception {
+        return encrypt(plaintext, context, 0);
+    }
+
+    static String encrypt(String plaintext, String context, int keyVersion) throws Exception {
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey());
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(keyVersion));
         if (context != null) {
             cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
         }
@@ -59,6 +69,10 @@ final class DriveSensePayloadCrypto {
     }
 
     static String decrypt(String payloadBase64, String context) throws Exception {
+        return decrypt(payloadBase64, context, 0);
+    }
+
+    static String decrypt(String payloadBase64, String context, int keyVersion) throws Exception {
         byte[] payload = Base64.decode(payloadBase64, Base64.NO_WRAP);
         ByteBuffer buffer = ByteBuffer.wrap(payload);
         int ivLength = Byte.toUnsignedInt(buffer.get());
@@ -71,7 +85,7 @@ final class DriveSensePayloadCrypto {
         buffer.get(ciphertext);
 
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(TAG_LENGTH_BITS, iv));
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(keyVersion), new GCMParameterSpec(TAG_LENGTH_BITS, iv));
         if (context != null) {
             cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
         }
@@ -89,5 +103,18 @@ final class DriveSensePayloadCrypto {
 
     static boolean isEncryptedStoredValue(String stored) {
         return stored != null && stored.startsWith(STORED_PREFIX);
+    }
+
+    static void ensureKeyVersion(int keyVersion) throws Exception {
+        if (keyVersion <= 0) throw new IllegalArgumentException("Invalid rotating key version.");
+        getOrCreateKey(keyVersion);
+    }
+
+    static void deleteKeyVersion(int keyVersion) throws Exception {
+        if (keyVersion <= 0) return;
+        KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
+        keyStore.load(null);
+        String alias = aliasForVersion(keyVersion);
+        if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias);
     }
 }

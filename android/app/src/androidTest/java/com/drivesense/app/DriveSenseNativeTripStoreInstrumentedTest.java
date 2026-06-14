@@ -89,6 +89,18 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
+    public void completedTripsAreRemovedAfterBestEffortOverwrite() throws Exception {
+        JSONObject trip = new JSONObject();
+        trip.put("id", "native-trip-delete");
+        DriveSenseNativeTripStore.addCompletedTrip(context, trip);
+
+        DriveSenseNativeTripStore.clearCompletedTrips(context);
+
+        assertFalse(DriveSenseNativeTripStore.prefs(context).contains("completed_trips"));
+        assertEquals(0, DriveSenseNativeTripStore.getCompletedTrips(context).length());
+    }
+
+    @Test
     public void diagnosticEventsArePrependedAndCapped() throws Exception {
         for (int i = 0; i < 125; i++) {
             JSONObject event = new JSONObject();

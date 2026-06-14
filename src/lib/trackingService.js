@@ -45,7 +45,7 @@ export async function getCurrentLocation() {
   });
 }
 
-export function createDrivingTrackingService({ background = false } = {}) {
+export function createDrivingTrackingService({ background = false, privateMode = false } = {}) {
   let watcherId = null;
   let webWatcherId = null;
   let previousPoint = null;
@@ -130,8 +130,10 @@ export function createDrivingTrackingService({ background = false } = {}) {
         if (background && isNativePlatform()) {
           watcherId = await BackgroundGeolocation.addWatcher(
             {
-              backgroundTitle: 'Road Sage tracking active',
-              backgroundMessage: 'Road Sage is recording your driving route. Tap Stop Tracking in the app when done.',
+              backgroundTitle: privateMode ? 'Road Sage private trip active' : 'Road Sage tracking active',
+              backgroundMessage: privateMode
+                ? 'Road Sage is calculating a trip summary. Route coordinates are not saved.'
+                : 'Road Sage is recording your driving route. Tap Stop Tracking in the app when done.',
               requestPermissions: false,
               stale: false,
               distanceFilter: 5,

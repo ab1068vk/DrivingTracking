@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
 import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
-  Building, Shuffle, Home, Waves, ShieldCheck, Focus, TimerReset, Tag,
+  Building, Shuffle, Home, Waves, Shield, ShieldCheck, Focus, TimerReset, Tag,
   ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info,
   StickyNote, X
 } from 'lucide-react';
@@ -38,11 +38,11 @@ import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimat
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
-  buildOpenSourceTripContextPatch,
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
 } from '@/lib/openSourceTripContext';
+import { runRoadContextRefresh } from '@/lib/roadContextQueue';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
   speedLimitDefaultCountryKey,
@@ -287,10 +287,9 @@ export default function TripDetail() {
   const contextMutation = useMutation({
     mutationFn: async () => {
       setOsmFetchStatus('Preparing road data');
-      const patch = await buildOpenSourceTripContextPatch(trip, localSettings.get(), {
+      return runRoadContextRefresh(trip, localSettings.get(), {
         onProgress: setOsmFetchStatus,
       });
-      return tripService.update(id, patch);
     },
     onSuccess: (updatedTrip) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
@@ -716,6 +715,9 @@ export default function TripDetail() {
   const primaryAvgSpeedKmh = trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0;
   // FIX: Use moving average speed as the primary Avg Speed metric.
   const estimatedPrivateDistanceKm = Math.max(0, Number(trip.estimated_private_distance_km) || 0);
+  const dpAggregateNote = trip._dpApplied
+    ? '~ Statistics are privacy-estimated for trips near protected zones'
+    : null;
   const showOverallAvgSpeed = (trip.idle_time_seconds || 0) > 60;
   // FIX: Show overall average only when there was meaningful stopped time.
   const trafficIdleSeconds = trip.traffic_idle_seconds ?? Math.max(0, (trip.idle_time_seconds || 0) - (trip.sustained_idle_seconds || 0));
@@ -738,8 +740,14 @@ export default function TripDetail() {
       ? 'Stopped'
       : 'Ended while moving';
   const tripMapPointCount = trip.route_points?.length || 0;
+  const summaryOnlyPrivateTrip = trip.privacy_mode === 'summary_only';
   const tripRawPointCount = Number(trip.route_points_raw_count) || tripMapPointCount;
-  const tripPointSummary = tripRawPointCount !== tripMapPointCount
+  const routeDataExpired = Boolean(trip.route_data_expired_at);
+  const tripPointSummary = summaryOnlyPrivateTrip
+    ? 'No GPS coordinates were stored for this private trip'
+    : routeDataExpired
+    ? `Route data expired after ${trip.route_data_retention_days || 'the configured retention period'} days`
+    : tripRawPointCount !== tripMapPointCount
     ? `${tripRawPointCount} recorded GPS readings - ${tripMapPointCount} map/playback points`
     : `${tripMapPointCount} GPS readings`;
   const speedLimitLayerEffect = osmSpeedLimitPoints.length > 0
@@ -1190,6 +1198,32 @@ export default function TripDetail() {
 
       {/* Map */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+        {summaryOnlyPrivateTrip && (
+          <div className="mb-3 rounded-2xl border border-slate-300 bg-slate-100 p-3 text-sm text-slate-800 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <div className="flex items-start gap-2">
+              <Shield className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div>
+                <div className="font-semibold">Private trip - summary only</div>
+                <div className="mt-0.5 text-xs">
+                  Road Sage used GPS temporarily during the trip but never saved route coordinates, addresses, driving events, or route-based scores.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {routeDataExpired && (
+          <div className="mb-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 shadow-sm dark:border-blue-800/60 dark:bg-blue-950/30 dark:text-blue-200">
+            <div className="flex items-start gap-2">
+              <Shield className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div>
+                <div className="font-semibold">Route data expired</div>
+                <div className="mt-0.5 text-xs">
+                  GPS coordinates were removed on {new Date(trip.route_data_expired_at).toLocaleDateString()}. Scores and trip summaries were kept.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {hasLocationPermissionLoss && (
           <div className="mb-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 shadow-sm dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-200">
             <div className="flex items-start gap-2">
@@ -1232,7 +1266,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get / Refresh Road Data'}
+            {contextMutation.isPending ? osmFetchStatus || 'Queued privately...' : 'Get / Refresh Road Data'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -1265,15 +1299,15 @@ export default function TripDetail() {
             {tripPointSummary}. Get Road Data checks online map/weather services for this trip. Show Speed-Limit Layer only changes the colors after speed limits are available.
           </div>
           <div className="mt-2 grid gap-1">
-            <div>Get Road Data: checks the enabled options below for this trip.</div>
-            <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'sends route-area boxes to OpenStreetMap for road names and posted/default limits.'}</div>
-            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'sends a privacy-safe route point and date to Open-Meteo.'}</div>
+            <div>Get Road Data: queues weather and speed-limit lookups with a randomized privacy delay.</div>
+            <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'queues route-area boxes before contacting OpenStreetMap for road names and posted/default limits.'}</div>
+            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'queues a privacy-safe route point and date before contacting Open-Meteo.'}</div>
             <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint and consent are saved in Settings.'}</div>
             <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>
           <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : speedLimitLayerEffect}
+            {contextMutation.isPending ? osmFetchStatus || 'Queued privately...' : speedLimitLayerEffect}
           </div>
           {mapMatchingContext?.status === 'disabled' && (
             <div className="mt-2 rounded-xl bg-background/60 px-3 py-2">
@@ -1286,18 +1320,28 @@ export default function TripDetail() {
             {contextMutation.error?.message || 'Could not get road data.'}
           </div>
         )}
-        <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
-          <TripMap
-            routePoints={trip.route_points || []}
-            events={mapEvents}
-            showCorneringHeatmap={showCorneringHeatmap}
-            showSpeedLimits={showSpeedLimitsOnMap}
-            showRouteRisk={routeRiskSegments.length > 0}
-            routeRiskSegments={routeRiskSegments}
-            rawPointCount={trip.route_points_raw_count}
-            height="300px"
-          />
-        </div>
+        {summaryOnlyPrivateTrip ? (
+          <div className="flex h-[180px] items-center justify-center rounded-2xl border border-dashed border-border bg-secondary/30 px-6 text-center text-sm text-muted-foreground">
+            Map and playback are unavailable because this trip was recorded in summary-only private mode.
+          </div>
+        ) : routeDataExpired ? (
+          <div className="flex h-[180px] items-center justify-center rounded-2xl border border-dashed border-border bg-secondary/30 px-6 text-center text-sm text-muted-foreground">
+            Map and playback are unavailable because this trip's route coordinates reached their retention limit.
+          </div>
+        ) : (
+          <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
+            <TripMap
+              routePoints={trip.route_points || []}
+              events={mapEvents}
+              showCorneringHeatmap={showCorneringHeatmap}
+              showSpeedLimits={showSpeedLimitsOnMap}
+              showRouteRisk={routeRiskSegments.length > 0}
+              routeRiskSegments={routeRiskSegments}
+              rawPointCount={trip.route_points_raw_count}
+              height="300px"
+            />
+          </div>
+        )}
       </motion.div>
 
       <motion.div
@@ -1495,9 +1539,12 @@ export default function TripDetail() {
               icon: Navigation,
               label: 'Distance',
               value: formatDistance(trip.distance_km || 0, units),
-              subValue: estimatedPrivateDistanceKm > 0
-                ? `~${formatDistance(estimatedPrivateDistanceKm, units)} traveled within privacy zones (estimated)`
-                : null,
+              subValue: [
+                estimatedPrivateDistanceKm > 0
+                  ? `~${formatDistance(estimatedPrivateDistanceKm, units)} traveled within privacy zones (estimated)`
+                  : null,
+                dpAggregateNote,
+              ].filter(Boolean).join(' · ') || null,
             },
             { icon: Clock, label: 'Duration', value: formatDuration(trip.duration_seconds) },
             {
