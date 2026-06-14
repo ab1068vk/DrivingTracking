@@ -528,7 +528,7 @@ describe('privacyZones', () => {
       label: 'Home',
       radius_m: 100,
       privacy_cell_schema: 'global_grid_v1',
-      privacy_cell_size_m: 100,
+      privacy_cell_size_m: 50,
       privacy_cell_hashes: createPrivacyCellHashes(zone),
       masked_for_privacy: true,
     };
@@ -554,13 +554,38 @@ describe('privacyZones', () => {
     expect(masked.at(-1)).toBe(route[1]);
   });
 
+  it('keeps newly generated cell guards close to the configured privacy radius', () => {
+    const generatedZone = {
+      id: 'tight-home-cell',
+      label: 'Home',
+      radius_m: 100,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 50,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      masked_for_privacy: true,
+    };
+    const pointAbout170mNorth = point(43.65153, -79.38);
+
+    expect(haversineDistance(
+      pointAbout170mNorth.lat,
+      pointAbout170mNorth.lng,
+      zone.lat,
+      zone.lng
+    ) * 1000).toBeGreaterThan(160);
+    expect(isInsidePrivacyZone(
+      pointAbout170mNorth.lat,
+      pointAbout170mNorth.lng,
+      [generatedZone]
+    )).toBe(false);
+  });
+
   it('recovers display-only geometry for a cell-only zone from nearby map points', () => {
     const cellOnlyZone = {
       id: 'home-cell',
       label: 'Home',
       radius_m: 100,
       privacy_cell_schema: 'global_grid_v1',
-      privacy_cell_size_m: 100,
+      privacy_cell_size_m: 50,
       privacy_cell_hashes: createPrivacyCellHashes(zone),
       masked_for_privacy: true,
     };
@@ -629,6 +654,7 @@ describe('privacyZones', () => {
     expect(payload.value).not.toContain('-79.38');
     expect(payload.value).not.toContain('"lat"');
     expect(payload.value).not.toContain('"lng"');
+    expect(JSON.parse(payload.value)[0].privacy_cell_size_m).toBe(50);
   });
 
   it('fails closed and pauses native tracking settings when native privacy sync fails', async () => {
@@ -824,7 +850,7 @@ describe('privacyZones', () => {
       radius_m: 100,
       exclude_from_osrm: true,
       privacy_cell_schema: 'global_grid_v1',
-      privacy_cell_size_m: 100,
+      privacy_cell_size_m: 50,
       privacy_cell_hashes: createPrivacyCellHashes(zone),
       masked_for_privacy: true,
       display_lat: 43.6502,

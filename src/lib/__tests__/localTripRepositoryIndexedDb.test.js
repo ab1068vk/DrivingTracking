@@ -10,6 +10,7 @@ import {
   migrateIndexedDbName,
   migrateLegacyTripStorageToEncrypted,
   normalizeRetiredTripEventTypes,
+  preserveNativePrivacyAggregateStats,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
   TRIP_SCHEMA_VERSION,
@@ -205,6 +206,38 @@ describe('localTripRepository IndexedDB migrations', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('preserves native pre-redaction distance when privacy gaps shorten the visible route', () => {
+    const reconciled = preserveNativePrivacyAggregateStats({
+      start_source: 'native_auto',
+      distance_km: 4.5,
+      avg_speed_kmh: 32.1,
+      duration_seconds: 506,
+      route_points: [
+        { lat: 43.65, lng: -79.38, timestamp: '2026-06-14T16:00:00.000Z' },
+        {
+          lat: null,
+          lng: null,
+          timestamp: '2026-06-14T16:08:00.000Z',
+          masked_for_privacy: true,
+          privacy_gap: true,
+        },
+      ],
+    }, {
+      distance_km: 3.8,
+      estimated_private_distance_km: 0,
+      avg_speed_kmh: 27,
+      duration_seconds: 506,
+    });
+
+    expect(reconciled).toMatchObject({
+      distance_km: 4.5,
+      estimated_private_distance_km: 0.7,
+      avg_speed_kmh: 32.1,
+      duration_seconds: 506,
+      distance_provenance: 'native_pre_privacy_redaction',
+    });
   });
 
   it('expires route coordinates while preserving trip summaries', () => {
@@ -426,7 +459,7 @@ describe('localTripRepository IndexedDB migrations', () => {
       label: 'Home',
       radius_m: 120,
       privacy_cell_schema: 'global_grid_v1',
-      privacy_cell_size_m: 100,
+      privacy_cell_size_m: 50,
       privacy_cell_hashes: createPrivacyCellHashes({ lat: 43.65, lng: -79.38, radius_m: 120 }),
       masked_for_privacy: true,
     };

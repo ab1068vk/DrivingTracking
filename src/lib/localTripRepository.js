@@ -688,6 +688,49 @@ const migrateRetiredTripEventTypesOnce = async () => {
   return { changed: changedTrips.length, alreadyRan: false };
 };
 
+const NATIVE_AGGREGATE_FIELDS = Object.freeze([
+  'avg_speed_kmh',
+  'avg_running_speed_kmh',
+  'max_speed_kmh',
+  'idle_time_seconds',
+  'gap_seconds',
+  'wall_clock_duration_seconds',
+  'duration_seconds',
+  'night_driving',
+]);
+
+export const preserveNativePrivacyAggregateStats = (trip = {}, calculatedStats = {}) => {
+  const nativeTrip = trip?.start_source === 'native_auto' || trip?.imported_from_native === true;
+  const routePoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
+  const hasPrivacyGap = routePoints.some((point) => (
+    point?.masked_for_privacy === true ||
+    point?.privacy_gap === true ||
+    point?.privacy_live_redacted === true
+  ));
+  const nativeDistanceKm = Number(trip?.distance_km);
+  if (!nativeTrip || !hasPrivacyGap || !Number.isFinite(nativeDistanceKm) || nativeDistanceKm < 0) {
+    return calculatedStats;
+  }
+
+  const publicDistanceKm = Math.max(0, Number(calculatedStats?.distance_km) || 0);
+  const next = {
+    ...calculatedStats,
+    distance_km: nativeDistanceKm,
+    estimated_private_distance_km: Math.round(
+      Math.min(nativeDistanceKm, Math.max(
+        Number(calculatedStats?.estimated_private_distance_km) || 0,
+        nativeDistanceKm - publicDistanceKm
+      )) * 1000
+    ) / 1000,
+    distance_provenance: 'native_pre_privacy_redaction',
+  };
+
+  NATIVE_AGGREGATE_FIELDS.forEach((field) => {
+    if (trip[field] != null) next[field] = trip[field];
+  });
+  return next;
+};
+
 export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
   const reviewed = feedback && typeof feedback === 'object' ? feedback : {};
   let removed = 0;
@@ -713,10 +756,13 @@ const rescoreTrip = (trip, vehicles = []) => {
     : null;
   const phoneUsageAccessProvenance = buildPhoneUsageAccessProvenance(trip, currentPhoneUsageAccessGranted);
   const provenanceStatus = getScoreProvenanceStatus(trip, thresholds);
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
-    ...trip,
-    raw_route_points: routePoints,
-  });
+  const stats = preserveNativePrivacyAggregateStats(
+    trip,
+    calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
+      ...trip,
+      raw_route_points: routePoints,
+    })
+  );
   const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
   const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
@@ -848,10 +894,13 @@ const importNativeCompletedTrips = async () => {
       const settings = localSettings.get();
       const thresholds = buildDrivingThresholds(settings);
       const privacyZones = getPrivacyZones(settings);
-      const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
-        ...trip,
-        raw_route_points: routePoints,
-      });
+      const stats = preserveNativePrivacyAggregateStats(
+        trip,
+        calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
+          ...trip,
+          raw_route_points: routePoints,
+        })
+      );
       const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
       const phoneUse = mergedPhoneUseForTrip(trip, routePoints, stats, detectedPhoneUse);
       const motionSamples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];

@@ -12,11 +12,11 @@ const DISPLAY_CIRCLE_OFFSET_M = 35;
 const EXPORT_NOISE_MIN_M = 10;
 const EXPORT_NOISE_MAX_M = 35;
 const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
-const PRIVACY_CELL_SIZE_M = 100;
+const PRIVACY_CELL_SIZE_M = 50;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
 export const ZONE_STATS_KEY = 'drivesense_privacy_zone_stats_v1';
 export const ZONE_EVENT_GUARD_M = 50;
-const PRIVACY_CELL_STORAGE_GUARD_M = ZONE_EVENT_GUARD_M;
+const PRIVACY_CELL_STORAGE_GUARD_M = 0;
 export const KINEMATIC_FIELDS = Object.freeze([
   'speed',
   'speed_kmh',

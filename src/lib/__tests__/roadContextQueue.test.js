@@ -60,6 +60,9 @@ describe('road context recovery queue', () => {
     expect(state.updateTrip).toHaveBeenCalledWith(state.trip.id, {
       speed_limit_context: { status: 'fetched' },
     });
+    expect(state.buildPatch).toHaveBeenCalledWith(state.trip, {}, {
+      immediateRequests: true,
+    });
     expect(state.storage.get(ROAD_CONTEXT_QUEUE_STORAGE_KEY)).toEqual([]);
   });
 

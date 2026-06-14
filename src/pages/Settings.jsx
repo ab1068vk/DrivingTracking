@@ -3532,7 +3532,7 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="Get posted speed limits"
-          sublabel="Queues route-area boxes with a randomized privacy delay before contacting OpenStreetMap"
+          sublabel="Uses privacy-filtered route-area boxes. Automatic lookups are delayed; manual Get Road Data runs immediately."
         >
           <Toggle
             value={cfg.speed_limit_lookup_enabled !== false}
@@ -3567,7 +3567,7 @@ export default function Settings() {
         <SettingRow
           icon={Droplets}
           label="Get trip weather"
-          sublabel="Queues a privacy-safe route point and date with a randomized privacy delay before contacting Open-Meteo"
+          sublabel="Uses a privacy-safe route point and date. Automatic lookups are delayed; manual Get Road Data runs immediately."
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
@@ -3591,13 +3591,13 @@ export default function Settings() {
               <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.speed_limit_lookup_enabled === false
                 ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
-                : `queues route-area boxes with a randomized privacy delay before contacting OpenStreetMap Overpass and adding road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
+                : `immediately sends privacy-filtered route-area boxes to OpenStreetMap Overpass after confirmation and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
             </div>
             <div>
               <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.weather_context_enabled === false
                 ? 'skips Open-Meteo; scores do not get weather adjustment.'
-                : 'queues a privacy-safe route point and date with a randomized privacy delay before contacting Open-Meteo, then can adjust scores for rain, snow, fog, or freezing weather.'}
+                : 'immediately sends a privacy-safe route point and date to Open-Meteo after confirmation, then can adjust scores for rain, snow, fog, or freezing weather.'}
             </div>
             <div>
               <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}:</span>{' '}
@@ -3614,7 +3614,7 @@ export default function Settings() {
             <div>
               <span className="font-semibold text-foreground">Automatic road-data fetching {isExternalContextAutoFetchEnabled(cfg) ? 'ON' : 'OFF'}:</span>{' '}
               {isExternalContextAutoFetchEnabled(cfg)
-                ? 'new saved trips fetch OpenStreetMap speed limits and Open-Meteo weather automatically; OSRM still waits for manual Get Road Data.'
+                ? 'new saved trips queue OpenStreetMap speed limits and Open-Meteo weather with randomized privacy timing; OSRM still waits for manual Get Road Data.'
                 : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
             </div>
           </div>
@@ -3669,7 +3669,7 @@ export default function Settings() {
           <SettingRow
             icon={Clock}
             label="Request timing obfuscation"
-            sublabel="Batches weather and road-data requests with randomized delays."
+            sublabel="Randomizes automatic post-trip request timing. Manual Get Road Data runs immediately."
           >
             <Toggle
               value={cfg.request_obfuscation_enabled !== false}

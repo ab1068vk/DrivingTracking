@@ -112,10 +112,10 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     '',
   ];
   if (settings.speed_limit_lookup_enabled !== false) {
-    lines.push('- Speed limits: queues route-area boxes with a randomized privacy delay, then gets road names, road geometry, and maxspeed tags from OpenStreetMap Overpass.');
+    lines.push('- Speed limits: immediately sends privacy-filtered route-area boxes, then gets road names, road geometry, and maxspeed tags from OpenStreetMap Overpass.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: queues a privacy-safe route point and trip date with a randomized privacy delay before contacting Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
+    lines.push('- Weather: immediately sends a privacy-safe route point and trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     const zones = getPrivacyZones(settings);
@@ -140,7 +140,11 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
 
 export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get(), options = {}) {
   if (!trip) throw new Error('Trip not loaded');
-  const { onProgress } = options;
+  const { onProgress, immediateRequests = false } = options;
+  const requestSettings = immediateRequests
+    ? { ...settings, request_obfuscation_enabled: false }
+    : settings;
+  const lookupStatus = immediateRequests ? 'Getting privacy-filtered road data' : ROAD_CONTEXT_QUEUED_STATUS;
 
   const originalPoints = trip.route_points || [];
   const recordedPointCount = Number(trip.route_points_raw_count) || originalPoints.length;
@@ -161,9 +165,9 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
 
   const thresholds = buildDrivingThresholds(settings);
   const privacyZones = getPrivacyZones(settings);
-  stage(onProgress, ROAD_CONTEXT_QUEUED_STATUS);
+  stage(onProgress, lookupStatus);
   const weatherPromise = timeout(
-    fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, settings),
+    fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, requestSettings),
     PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS,
     'Weather lookup timed out'
   ).catch((error) => ({
@@ -209,9 +213,9 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     originalPoints,
     mapMatchingContext.routePoints || []
   );
-  stage(onProgress, ROAD_CONTEXT_QUEUED_STATUS);
+  stage(onProgress, lookupStatus);
   const speedLimitContext = await timeout(
-    annotateRouteSpeedLimits(routePoints, settings),
+    annotateRouteSpeedLimits(routePoints, requestSettings),
     PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS,
     'OpenStreetMap speed-limit lookup timed out'
   ).catch((error) => ({

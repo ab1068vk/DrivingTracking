@@ -111,6 +111,23 @@ public class DriveSenseAutoTrackingServiceTest {
         assertEquals(noiseFloorCase.getDouble("expectedNoiseFloorM"), actual, 0.0d);
     }
 
+    @Test
+    public void nativeLiveAlertMathUsesConfiguredThresholds() {
+        assertFalse(DriveSenseAutoTrackingService.shouldTriggerSpeedAlert(105d, 100d, 5d));
+        assertTrue(DriveSenseAutoTrackingService.shouldTriggerSpeedAlert(106d, 100d, 5d));
+
+        assertEquals(
+            -5d,
+            DriveSenseAutoTrackingService.calculateLongitudinalAccelerationMs2(72d, 36d, 2_000L),
+            0.0001d
+        );
+        assertEquals(
+            0.4944d,
+            DriveSenseAutoTrackingService.calculateLateralG(40d, 50d, 2_000L),
+            0.001d
+        );
+    }
+
     private static JSONObject loadParityFixture() throws Exception {
         try (InputStream stream = DriveSenseAutoTrackingServiceTest.class
             .getClassLoader()

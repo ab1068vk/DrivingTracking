@@ -18,7 +18,6 @@ import android.hardware.SensorManager;
 import android.location.Location;
 import android.os.Build;
 import android.os.IBinder;
-import android.speech.tts.TextToSpeech;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -121,6 +120,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long ANDROID_USAGE_ACCESS_LOOKBACK_MS = 120_000L;
     private static final double SUSTAINED_TURN_HEADING_CHANGE_DEG = 35.0d;
     private static final float TTS_SPEECH_RATE = 0.95f;
+    private static final float TTS_VOLUME = 0.95f;
+    private static final long SPEED_ALERT_SUSTAINED_MS = 5_000L;
+    private static final long SPEED_ALERT_COOLDOWN_MS = 60_000L;
+    private static final long MANOEUVRE_ALERT_COOLDOWN_MS = 30_000L;
+    private static final long IDLE_ALERT_COOLDOWN_MS = 5 * 60_000L;
+    private static final long FATIGUE_ALERT_COOLDOWN_MS = 30 * 60_000L;
+    private static final long LIVE_EVENT_MAX_SAMPLE_GAP_MS = 6_000L;
+    private static final double LIVE_EVENT_MAX_ACCURACY_M = 25.0d;
+    private static final double LIVE_EVENT_MIN_SPEED_KMH = 15.0d;
+    private static final double SHARP_TURN_MIN_HEADING_CHANGE_DEG = 12.0d;
+    private static final double STANDARD_GRAVITY_MS2 = 9.80665d;
     private static final long MAX_TERMINAL_IDLE_SECONDS = 1800L;
     private static final int MAX_NATIVE_MOTION_SAMPLES = 5000;
     private static final long MOTION_SAMPLE_MIN_INTERVAL_MS = 100L;
@@ -153,8 +163,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastNativeProxyWindowMs = 0L;
     private long lastNativePhoneWindowMs = 0L;
     private long lastLiveNotificationMs = 0L;
-    private TextToSpeech textToSpeech;
-    private boolean textToSpeechReady = false;
+    private DriveSenseSpeechController speechController;
+    private long speedingSinceMs = 0L;
+    private long lastSpeedAlertMs = 0L;
+    private long lastHarshBrakeAlertMs = 0L;
+    private long lastRapidAccelAlertMs = 0L;
+    private long lastCorneringAlertMs = 0L;
+    private long lastIdleAlertMs = 0L;
+    private long lastFatigueAlertMs = 0L;
     private String nativeAutoStartReason = "";
     private String lastNativeAutoStopReason = "";
     private boolean candidateTrip = false;
@@ -179,6 +195,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         super.onCreate();
         startForeground(NOTIF_ID_TRACKING_START, buildNotification("Ready when you start moving"));
         ensureSafetyAlertsChannel();
+        speechController = new DriveSenseSpeechController(this);
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -245,12 +262,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         stopLocationUpdates();
         stopMotionSensors();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
-        if (textToSpeech != null) {
-            textToSpeech.stop();
-            textToSpeech.shutdown();
-            textToSpeech = null;
-            textToSpeechReady = false;
-        }
+        if (speechController != null) speechController.shutdown();
         super.onDestroy();
     }
 
@@ -504,6 +516,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastNativeProxyWindowMs = 0L;
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
+        resetNativeAlertState();
         nativeAutoStartReason = reason;
         lastNativeAutoStopReason = "";
         candidateTrip = true;
@@ -599,6 +612,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return;
         }
 
+        Location priorLocation = previousLocation;
+        double priorSpeedKmh = lastKnownSpeedKmh;
         double speedKmh = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : 0d;
         if (previousLocation != null) {
             long dtMs = Math.max(1L, location.getTime() - previousLocation.getTime());
@@ -623,6 +638,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (candidateTrip) {
             reviewCandidate(false);
             if (!isTripActive()) return;
+        }
+        if (!candidateTrip) {
+            evaluateNativeLiveAlerts(priorLocation, location, priorSpeedKmh, speedKmh);
         }
 
         if (speedKmh >= STATIONARY_SPEED_KMH) {
@@ -832,6 +850,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         candidateNearParked = false;
         candidateConfirmedMs = 0L;
         lastLiveNotificationMs = 0L;
+        resetNativeAlertState();
         recentHeadings.clear();
         resetMotionState();
         stopMotionSensors();
@@ -934,6 +953,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         maxDriftSinceStopM = 0.0d;
         candidateTrip = false;
         lastLiveNotificationMs = 0L;
+        resetNativeAlertState();
         recentHeadings.clear();
         resetMotionState();
         stopMotionSensors();
@@ -1263,31 +1283,130 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private void speakNativeAlert(String text, boolean interrupt) {
         if (text == null || text.trim().isEmpty()) return;
-        if (textToSpeech != null && textToSpeechReady) {
-            speakNativeAlertNow(text, interrupt);
+        if (speechController == null) speechController = new DriveSenseSpeechController(this);
+        speechController.speak(text, TTS_SPEECH_RATE, 1.0f, TTS_VOLUME, interrupt, null);
+    }
+
+    private void evaluateNativeLiveAlerts(
+        @Nullable Location priorLocation,
+        Location location,
+        double priorSpeedKmh,
+        double speedKmh
+    ) {
+        if (!isSettingEnabled("voice_alerts_enabled", true) ||
+            !isSettingEnabled("live_coaching_enabled", true)) {
+            speedingSinceMs = 0L;
             return;
         }
-        if (textToSpeech == null) {
-            textToSpeech = new TextToSpeech(this, status -> {
-                if (status == TextToSpeech.SUCCESS && textToSpeech != null) {
-                    textToSpeech.setLanguage(Locale.getDefault());
-                    textToSpeech.setSpeechRate(TTS_SPEECH_RATE);
-                    textToSpeechReady = true;
-                    speakNativeAlertNow(text, interrupt);
-                }
-            });
+
+        long now = System.currentTimeMillis();
+        double speedLimitKmh = getSettingDouble("threshold_speeding_kmh", 100.0d);
+        double speedMarginKmh = getSettingDouble("threshold_speed_over_kmh", 5.0d);
+        if (isSettingEnabled("speed_warning_enabled", true) &&
+            shouldTriggerSpeedAlert(speedKmh, speedLimitKmh, speedMarginKmh)) {
+            if (speedingSinceMs == 0L) speedingSinceMs = now;
+            if (now - speedingSinceMs >= SPEED_ALERT_SUSTAINED_MS &&
+                now - lastSpeedAlertMs >= SPEED_ALERT_COOLDOWN_MS) {
+                speakNativeAlert(
+                    String.format(
+                        Locale.US,
+                        "Speed warning. You are driving %d kilometers per hour. Ease off toward the configured %d kilometer per hour limit.",
+                        Math.round(speedKmh),
+                        Math.round(speedLimitKmh)
+                    )
+                );
+                lastSpeedAlertMs = now;
+            }
+        } else {
+            speedingSinceMs = 0L;
+        }
+
+        long fatigueThresholdMs = Math.max(
+            1L,
+            Math.round(getSettingDouble("threshold_long_drive_minutes", 120.0d))
+        ) * 60_000L;
+        if (activeStartMs > 0L && now - activeStartMs >= fatigueThresholdMs &&
+            now - lastFatigueAlertMs >= FATIGUE_ALERT_COOLDOWN_MS) {
+            speakNativeAlert("Long drive reminder. Plan a break soon when it is safe.");
+            lastFatigueAlertMs = now;
+        }
+
+        if (stillSinceMs > 0L && now - stillSinceMs >= 5 * 60_000L &&
+            now - lastIdleAlertMs >= IDLE_ALERT_COOLDOWN_MS) {
+            speakNativeAlert("Idling reminder. Keep the trip moving when conditions allow.");
+            lastIdleAlertMs = now;
+        }
+
+        if (priorLocation == null) return;
+        long priorMs = priorLocation.getTime();
+        long currentMs = location.getTime();
+        long dtMs = currentMs - priorMs;
+        if (dtMs <= 0L || dtMs > LIVE_EVENT_MAX_SAMPLE_GAP_MS) return;
+        if (accuracyOf(priorLocation) > LIVE_EVENT_MAX_ACCURACY_M ||
+            accuracyOf(location) > LIVE_EVENT_MAX_ACCURACY_M) return;
+
+        double accelerationMs2 = calculateLongitudinalAccelerationMs2(priorSpeedKmh, speedKmh, dtMs);
+        double harshBrakeThreshold = getSettingDouble("threshold_harsh_brake_ms2", 3.5d);
+        double rapidAccelThreshold = getSettingDouble("threshold_rapid_accel_ms2", 3.0d);
+        if (accelerationMs2 <= -harshBrakeThreshold &&
+            priorSpeedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
+            now - lastHarshBrakeAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
+            speakNativeAlert("Hard braking detected. Open your following space and brake earlier.");
+            lastHarshBrakeAlertMs = now;
+            return;
+        }
+        if (accelerationMs2 >= rapidAccelThreshold &&
+            speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
+            now - lastRapidAccelAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
+            speakNativeAlert("Rapid acceleration detected. Ease into the throttle.");
+            lastRapidAccelAlertMs = now;
+            return;
+        }
+
+        double priorBearing = priorLocation.hasBearing()
+            ? priorLocation.getBearing()
+            : priorLocation.bearingTo(location);
+        double currentBearing = location.hasBearing() ? location.getBearing() : priorBearing;
+        double headingChange = Math.abs(signedHeadingDiff(priorBearing, currentBearing));
+        double lateralG = calculateLateralG(speedKmh, headingChange, dtMs);
+        double sharpTurnThreshold = getSettingDouble("threshold_sharp_turn_g_low", 0.35d);
+        if (headingChange >= SHARP_TURN_MIN_HEADING_CHANGE_DEG &&
+            speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
+            lateralG >= sharpTurnThreshold &&
+            now - lastCorneringAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
+            speakNativeAlert("Sharp cornering detected. Slow before the turn and steer smoothly.");
+            lastCorneringAlertMs = now;
         }
     }
 
-    private void speakNativeAlertNow(String text, boolean interrupt) {
-        if (textToSpeech == null) return;
-        String utteranceId = "drivesense_phone_use_" + System.currentTimeMillis();
-        int queueMode = interrupt ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            textToSpeech.speak(text, queueMode, null, utteranceId);
-        } else {
-            textToSpeech.speak(text, queueMode, null);
-        }
+    static boolean shouldTriggerSpeedAlert(double speedKmh, double limitKmh, double marginKmh) {
+        return Double.isFinite(speedKmh) &&
+            Double.isFinite(limitKmh) &&
+            Double.isFinite(marginKmh) &&
+            limitKmh > 0d &&
+            speedKmh > limitKmh + Math.max(0d, marginKmh);
+    }
+
+    static double calculateLongitudinalAccelerationMs2(double previousSpeedKmh, double speedKmh, long dtMs) {
+        if (dtMs <= 0L) return 0d;
+        return ((speedKmh - previousSpeedKmh) / 3.6d) / (dtMs / 1000d);
+    }
+
+    static double calculateLateralG(double speedKmh, double headingChangeDeg, long dtMs) {
+        if (dtMs <= 0L || speedKmh <= 0d || headingChangeDeg <= 0d) return 0d;
+        double speedMs = speedKmh / 3.6d;
+        double angularVelocityRadS = Math.toRadians(headingChangeDeg) / (dtMs / 1000d);
+        return Math.abs(speedMs * angularVelocityRadS) / STANDARD_GRAVITY_MS2;
+    }
+
+    private void resetNativeAlertState() {
+        speedingSinceMs = 0L;
+        lastSpeedAlertMs = 0L;
+        lastHarshBrakeAlertMs = 0L;
+        lastRapidAccelAlertMs = 0L;
+        lastCorneringAlertMs = 0L;
+        lastIdleAlertMs = 0L;
+        lastFatigueAlertMs = 0L;
     }
 
     private double signedHeadingDiff(double h1, double h2) {
@@ -1514,6 +1633,19 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             JSONObject settings = new JSONObject(raw);
             if (!settings.has(key) || settings.isNull(key)) return defaultValue;
             return settings.optBoolean(key, defaultValue);
+        } catch (Exception ignored) {
+            return defaultValue;
+        }
+    }
+
+    private double getSettingDouble(String key, double defaultValue) {
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SETTINGS_KEY, null);
+            if (raw == null || raw.trim().isEmpty()) return defaultValue;
+            JSONObject settings = new JSONObject(raw);
+            if (!settings.has(key) || settings.isNull(key)) return defaultValue;
+            double value = settings.optDouble(key, defaultValue);
+            return Double.isFinite(value) ? value : defaultValue;
         } catch (Exception ignored) {
             return defaultValue;
         }

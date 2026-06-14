@@ -10,12 +10,10 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
-import android.speech.tts.TextToSpeech;
 import android.util.Base64;
 
 import com.getcapacitor.JSObject;
@@ -39,7 +37,6 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 
 @CapacitorPlugin(
     name = "DriveSenseActivityRecognition",
@@ -58,12 +55,12 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private static WeakReference<DriveSenseActivityRecognitionPlugin> instance;
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
-    private TextToSpeech textToSpeech;
-    private boolean textToSpeechReady = false;
+    private DriveSenseSpeechController speechController;
 
     @Override
     public void load() {
         instance = new WeakReference<>(this);
+        speechController = new DriveSenseSpeechController(getContext());
         activityClient = ActivityRecognition.getClient(getContext());
         Intent intent = new Intent(getContext(), DriveSenseActivityReceiver.class);
         activityIntent = PendingIntent.getBroadcast(
@@ -76,12 +73,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
-        if (textToSpeech != null) {
-            textToSpeech.stop();
-            textToSpeech.shutdown();
-            textToSpeech = null;
-            textToSpeechReady = false;
-        }
+        if (speechController != null) speechController.shutdown();
         super.handleOnDestroy();
     }
 
@@ -176,27 +168,19 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         float rate = floatParam(call, "rate", 0.95f, 0.5f, 1.4f);
         float pitch = floatParam(call, "pitch", 1.0f, 0.75f, 1.25f);
         float volume = floatParam(call, "volume", 0.95f, 0.0f, 1.0f);
-        int queueMode = "flush".equals(call.getString("queueMode", "add"))
-            ? TextToSpeech.QUEUE_FLUSH
-            : TextToSpeech.QUEUE_ADD;
-
-        if (textToSpeech != null && textToSpeechReady) {
-            applySpeechTuning(rate, pitch);
-            speakNow(text, volume, queueMode);
-            call.resolve();
-            return;
-        }
-
-        textToSpeech = new TextToSpeech(getContext(), status -> {
-            if (status != TextToSpeech.SUCCESS || textToSpeech == null) {
-                call.reject("Android text-to-speech is unavailable.");
-                return;
+        boolean interrupt = "flush".equals(call.getString("queueMode", "add")) ||
+            Boolean.TRUE.equals(call.getBoolean("interrupt", false));
+        if (speechController == null) speechController = new DriveSenseSpeechController(getContext());
+        speechController.speak(text, rate, pitch, volume, interrupt, new DriveSenseSpeechController.Callback() {
+            @Override
+            public void onAccepted() {
+                call.resolve();
             }
-            textToSpeech.setLanguage(Locale.getDefault());
-            applySpeechTuning(rate, pitch);
-            textToSpeechReady = true;
-            speakNow(text, volume, queueMode);
-            call.resolve();
+
+            @Override
+            public void onError(String message) {
+                call.reject(message);
+            }
         });
     }
 
@@ -217,24 +201,6 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         double value = call.getData().optDouble(key, fallback);
         if (Double.isNaN(value) || Double.isInfinite(value)) return fallback;
         return (float) Math.max(min, Math.min(max, value));
-    }
-
-    private void applySpeechTuning(float rate, float pitch) {
-        if (textToSpeech == null) return;
-        textToSpeech.setSpeechRate(rate);
-        textToSpeech.setPitch(pitch);
-    }
-
-    private void speakNow(String text, float volume, int queueMode) {
-        if (textToSpeech == null) return;
-        String utteranceId = "roadsage_" + System.currentTimeMillis();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            Bundle params = new Bundle();
-            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume);
-            textToSpeech.speak(text, queueMode, params, utteranceId);
-        } else {
-            textToSpeech.speak(text, queueMode, null);
-        }
     }
 
     @PluginMethod

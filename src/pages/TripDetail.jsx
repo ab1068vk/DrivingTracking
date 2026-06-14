@@ -1266,7 +1266,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? osmFetchStatus || 'Queued privately...' : 'Get / Refresh Road Data'}
+            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get / Refresh Road Data'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -1299,7 +1299,7 @@ export default function TripDetail() {
             {tripPointSummary}. Get Road Data checks online map/weather services for this trip. Show Speed-Limit Layer only changes the colors after speed limits are available.
           </div>
           <div className="mt-2 grid gap-1">
-            <div>Get Road Data: queues weather and speed-limit lookups with a randomized privacy delay.</div>
+            <div>Get Road Data: runs weather and speed-limit lookups immediately after confirmation.</div>
             <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'queues route-area boxes before contacting OpenStreetMap for road names and posted/default limits.'}</div>
             <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'queues a privacy-safe route point and date before contacting Open-Meteo.'}</div>
             <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint and consent are saved in Settings.'}</div>
@@ -1307,7 +1307,7 @@ export default function TripDetail() {
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>
           <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
-            {contextMutation.isPending ? osmFetchStatus || 'Queued privately...' : speedLimitLayerEffect}
+            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : speedLimitLayerEffect}
           </div>
           {mapMatchingContext?.status === 'disabled' && (
             <div className="mt-2 rounded-xl bg-background/60 px-3 py-2">

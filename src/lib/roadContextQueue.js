@@ -36,7 +36,10 @@ export async function runRoadContextRefresh(trip, settings = localSettings.get()
   const job = (async () => {
     await rememberTrip(tripId);
     recordSystemEvent('road_context_job_queued', { trip_id: tripId }, { category: 'road_context' });
-    const patch = await buildOpenSourceTripContextPatch(trip, settings, options);
+    const patch = await buildOpenSourceTripContextPatch(trip, settings, {
+      ...options,
+      immediateRequests: options.immediateRequests !== false,
+    });
     const updatedTrip = await tripService.update(tripId, patch);
     await forgetTrip(tripId);
     recordSystemEvent('road_context_job_completed', { trip_id: tripId }, { category: 'road_context' });
