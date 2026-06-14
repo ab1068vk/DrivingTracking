@@ -139,6 +139,39 @@ const timeMs = (value) => {
   return Number.isFinite(ts) ? ts : null;
 };
 
+const ROUTE_GAP_SECONDS = 120;
+
+const isRouteGapSegment = (prev, curr) => {
+  if (!prev || !curr) return false;
+  if (curr.tracking_gap === true || curr.route_gap === true) return true;
+  const prevMs = timeMs(prev.timestamp ?? prev.time);
+  const currMs = timeMs(curr.timestamp ?? curr.time);
+  return prevMs != null && currMs != null && currMs > prevMs &&
+    (currMs - prevMs) / 1000 > ROUTE_GAP_SECONDS;
+};
+
+const splitRoutePointSegments = (points = []) => {
+  const segments = [];
+  let current = [];
+
+  (points || []).forEach((point) => {
+    if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lng)) return;
+    if (current.length > 0 && isRouteGapSegment(current[current.length - 1], point)) {
+      if (current.length > 1) segments.push(current);
+      current = [point];
+      return;
+    }
+    current.push(point);
+  });
+
+  if (current.length > 1) segments.push(current);
+  return segments;
+};
+
+const routePointSegmentsToLatLngs = (segments = []) => (
+  segments.map((segment) => segment.map((point) => [point.lat, point.lng]))
+);
+
 const routeTelemetry = (points = []) => {
   const clean = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   if (!clean.length) {
@@ -146,9 +179,11 @@ const routeTelemetry = (points = []) => {
   }
 
   let distanceKm = 0;
-  for (let i = 1; i < clean.length; i++) {
-    distanceKm += haversineDistance(clean[i - 1].lat, clean[i - 1].lng, clean[i].lat, clean[i].lng);
-  }
+  splitRoutePointSegments(clean).forEach((segment) => {
+    for (let i = 1; i < segment.length; i++) {
+      distanceKm += haversineDistance(segment[i - 1].lat, segment[i - 1].lng, segment[i].lat, segment[i].lng);
+    }
+  });
 
   const speeds = clean.map((point) => Number(point.speed_kmh)).filter(Number.isFinite);
   const firstTime = timeMs(clean[0].timestamp);
@@ -501,32 +536,37 @@ function TripMapContent({
       const bounds = window.L.latLngBounds([]);
 
       validRoutes.forEach((route) => {
+        const pointSegments = splitRoutePointSegments(route.route_points);
+        const latLngSegments = routePointSegmentsToLatLngs(pointSegments);
         const latLngs = route.route_points.map(p => [p.lat, p.lng]);
         latLngs.forEach((latLng) => bounds.extend(latLng));
 
         const timeline = route.selected || !Array.isArray(routes)
           ? buildPlaybackTimeline(route.route_points, mapEvents)
           : null;
-        const speedSegments = timeline?.segments?.length
-          ? timeline.segments
+        const speedSegments = timeline
+          ? timeline.segments || []
           : route.selected || !Array.isArray(routes)
             ? buildSpeedSegments(route.route_points)
             : [];
 
         if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
-          window.L.polyline(latLngs, {
-            color: '#0f172a',
-            weight: 7,
-            opacity: 0.16,
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }).addTo(layers);
+          latLngSegments.forEach((segmentLatLngs) => {
+            window.L.polyline(segmentLatLngs, {
+              color: '#0f172a',
+              weight: 7,
+              opacity: 0.16,
+              smoothFactor: 1.5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }).addTo(layers);
+          });
 
           for (let i = 1; i < route.route_points.length - 1; i++) {
             const prev = route.route_points[i - 1];
             const curr = route.route_points[i];
             const next = route.route_points[i + 1];
+            if (isRouteGapSegment(prev, curr) || isRouteGapSegment(curr, next)) continue;
             const dtPrev = (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
             const dtNext = (new Date(next.timestamp).getTime() - new Date(curr.timestamp).getTime()) / 1000;
             if (dtPrev <= 0 || dtNext <= 0 || dtPrev > 15 || dtNext > 15) continue;
@@ -568,14 +608,16 @@ function TripMapContent({
             }
           }
         } else if (speedSegments.length > 0) {
-          window.L.polyline(latLngs, {
-            color: '#0f172a',
-            weight: route.selected ? 9 : 6,
-            opacity: route.selected ? 0.18 : 0.10,
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }).addTo(layers);
+          latLngSegments.forEach((segmentLatLngs) => {
+            window.L.polyline(segmentLatLngs, {
+              color: '#0f172a',
+              weight: route.selected ? 9 : 6,
+              opacity: route.selected ? 0.18 : 0.10,
+              smoothFactor: 1.5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }).addTo(layers);
+          });
           speedSegments.forEach((segment) => {
             const from = segment.from;
             const to = segment.to;
@@ -608,6 +650,7 @@ function TripMapContent({
             for (let i = 1; i < route.route_points.length; i++) {
               const prev = route.route_points[i - 1];
               const curr = route.route_points[i];
+              if (isRouteGapSegment(prev, curr)) continue;
               const limit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
               if (!Number.isFinite(limit) || limit <= 0) continue;
               const speed = Number(curr.speed_kmh ?? prev.speed_kmh) || 0;
@@ -631,16 +674,18 @@ function TripMapContent({
             }
           }
         } else {
-          window.L.polyline(latLngs, {
-            color: route.color,
-            weight: route.selected ? 6 : 4,
-            opacity: route.opacity,
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          })
-            .bindPopup(route.label ? `<b>${escapeHtml(route.label)}</b>` : 'Trip route')
-            .addTo(layers);
+          latLngSegments.forEach((segmentLatLngs) => {
+            window.L.polyline(segmentLatLngs, {
+              color: route.color,
+              weight: route.selected ? 6 : 4,
+              opacity: route.opacity,
+              smoothFactor: 1.5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            })
+              .bindPopup(route.label ? `<b>${escapeHtml(route.label)}</b>` : 'Trip route')
+              .addTo(layers);
+          });
         }
       });
 

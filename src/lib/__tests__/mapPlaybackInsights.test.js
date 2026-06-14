@@ -104,6 +104,22 @@ describe('mapPlaybackInsights', () => {
     expect(untimed).toHaveLength(2);
   });
 
+  it('marks long GPS gaps and excludes the straight-line jump from playback distance', () => {
+    const route = [
+      point(0, 40, { lat: 43.65, timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 40, { lat: 43.651, timestamp: '2026-01-01T12:00:10.000Z' }),
+      point(2, 0, { lat: 45.9, timestamp: '2026-01-01T15:00:00.000Z' }),
+      point(3, 40, { lat: 45.901, timestamp: '2026-01-01T15:00:10.000Z' }),
+    ];
+
+    const prepared = prepareMapRoutePoints(route, { maxPoints: null, smooth: false });
+    const timeline = buildPlaybackTimeline(prepared, []);
+
+    expect(prepared[2].tracking_gap).toBe(true);
+    expect(timeline.stats.distanceKm).toBeLessThan(0.3);
+    expect(timeline.segments.every((segment) => segment.durationSeconds <= 120)).toBe(true);
+  });
+
   it('drops privacy-masked null coordinates instead of treating them as zero-zero', () => {
     const maskedRoute = [
       { lat: null, lng: null, speed_kmh: 20, timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toISOString() },

@@ -459,7 +459,7 @@ const sanitizeImportedPrivacyZones = (zones) => (
             ? zone.label.trim().slice(0, 80)
             : 'Private place',
           radius_m: radius,
-          exclude_from_osrm: zone.exclude_from_osrm !== false,
+          exclude_from_osrm: true,
           masked_for_privacy: true,
         };
         return sanitized;

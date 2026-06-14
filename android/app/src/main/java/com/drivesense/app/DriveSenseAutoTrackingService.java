@@ -623,7 +623,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             double reportedSpeed = location.hasSpeed() ? speedKmh : impliedSpeed;
             if (isNoise(distanceM, impliedSpeed, reportedSpeed, accuracyOf(previousLocation), accuracyOf(location)) && dtMs < 45_000L) return;
             if (impliedSpeed > MAX_SPEED_KMH || reportedSpeed > MAX_SPEED_KMH) return;
-            if (!location.hasSpeed()) speedKmh = reliableSpeed(impliedSpeed, reportedSpeed);
+            speedKmh = reliableSpeed(impliedSpeed, reportedSpeed);
         }
         lastKnownSpeedKmh = speedKmh;
         lastLocationMs = location.getTime() > 0L ? location.getTime() : System.currentTimeMillis();
@@ -1064,18 +1064,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 curr.optDouble("lng")
             );
             if (!Double.isFinite(distance)) continue;
-            stats.distanceKm += distance;
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
             long dt = (currMs - prevMs) / 1000L;
             if (dt <= 0L) continue;
             double impliedSpeed = distance / (dt / 3600d);
             double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
-            stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, reportedSpeed);
             if (dt > STATS_MAX_SAMPLE_GAP_SECONDS) {
                 stats.gapSeconds += dt;
                 continue;
             }
+            if (impliedSpeed > MAX_SPEED_KMH || reportedSpeed > MAX_SPEED_KMH) continue;
 
             double distanceM = distance * 1000d;
             if (isNoise(distanceM, impliedSpeed, reportedSpeed, prev.optDouble("accuracy", 0d), curr.optDouble("accuracy", 0d))) {
@@ -1083,6 +1082,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             }
 
             double speed = reliableSpeed(impliedSpeed, reportedSpeed);
+            stats.distanceKm += distance;
+            stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
             stats.speedSamples += 1;
 
             if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
@@ -1130,10 +1131,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private double reliableSpeed(double impliedSpeedKmh, double reportedSpeedKmh) {
-        boolean reportedCloseToImplied = impliedSpeedKmh >= STATIONARY_SPEED_KMH ||
-            reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH ||
-            Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12d;
-        return Math.max(0d, reportedCloseToImplied ? reportedSpeedKmh : impliedSpeedKmh);
+        boolean reportedCloseToImplied = Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12d;
+        boolean reportedTooLowForMovement = reportedSpeedKmh < MIN_TRUSTED_SPEED_KMH &&
+            impliedSpeedKmh >= MIN_TRUSTED_SPEED_KMH &&
+            !reportedCloseToImplied;
+        boolean reportedStationaryWhileMoving = reportedSpeedKmh < STATIONARY_SPEED_KMH &&
+            impliedSpeedKmh >= MIN_TRUSTED_SPEED_KMH;
+        return Math.max(0d, (reportedTooLowForMovement || reportedStationaryWhileMoving)
+            ? impliedSpeedKmh
+            : reportedSpeedKmh);
     }
 
     private void startMotionSensors() {

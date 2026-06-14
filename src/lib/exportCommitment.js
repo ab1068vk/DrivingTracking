@@ -101,7 +101,6 @@ const sha256Bytes = (material) => {
 
 const zoneLatitude = (zone = {}) => finiteNumber(zone.latitude ?? zone.lat);
 const zoneLongitude = (zone = {}) => finiteNumber(zone.longitude ?? zone.lng);
-const zoneRadius = (zone = {}) => finiteNumber(zone.radius_m ?? zone.radius);
 
 export function createExportId() {
   return bytesToBase64(randomBytes(16));
@@ -110,7 +109,6 @@ export function createExportId() {
 export function commitZoneForExportSync(zone = {}, exportId = createExportId()) {
   const latitude = zoneLatitude(zone);
   const longitude = zoneLongitude(zone);
-  const radiusM = zoneRadius(zone);
   const salt = randomBytes(32);
   const saltMaterial = bytesToBase64(salt);
   const centerMaterial = latitude != null && longitude != null
@@ -118,8 +116,6 @@ export function commitZoneForExportSync(zone = {}, exportId = createExportId()) 
     : 'redacted-zone-center';
   const material = [
     centerMaterial,
-    Number.isFinite(radiusM) ? radiusM.toFixed(2) : '',
-    String(zone.id || ''),
     String(exportId || ''),
     saltMaterial,
   ].join('|');
@@ -127,9 +123,7 @@ export function commitZoneForExportSync(zone = {}, exportId = createExportId()) 
 
   salt.fill(0);
   return {
-    zone_id: String(zone.id || ''),
-    zone_label: String(zone.label || 'Private place'),
-    zone_radius_m: Number.isFinite(radiusM) ? radiusM : null,
+    zone_ref: 'private_area',
     commitment: bytesToBase64(hashBytes),
     export_id: exportId,
   };

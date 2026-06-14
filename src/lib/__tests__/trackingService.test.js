@@ -81,4 +81,38 @@ describe('trackingService web geolocation watcher', () => {
       code: 1,
     });
   });
+
+  it('derives live speed from movement when the device reports zero speed', async () => {
+    const { createDrivingTrackingService } = await import('@/lib/trackingService');
+    let watchSuccess;
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        geolocation: {
+          getCurrentPosition: vi.fn((success) => success(samplePosition)),
+          watchPosition: vi.fn((success) => {
+            watchSuccess = success;
+            return 43;
+          }),
+          clearWatch: vi.fn(),
+        },
+      },
+      configurable: true,
+    });
+    const onPoint = vi.fn();
+    const service = createDrivingTrackingService();
+
+    await service.start(onPoint, vi.fn());
+    watchSuccess({
+      coords: {
+        latitude: 43.6542,
+        longitude: -79.3832,
+        speed: 0,
+        accuracy: 8,
+      },
+      timestamp: Date.UTC(2026, 0, 1, 12, 0, 10),
+    });
+
+    expect(onPoint).toHaveBeenCalledTimes(2);
+    expect(onPoint.mock.calls.at(-1)[0].speed_kmh).toBeGreaterThan(35);
+  });
 });

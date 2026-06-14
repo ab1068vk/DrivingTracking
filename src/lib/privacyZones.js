@@ -14,6 +14,8 @@ const EXPORT_NOISE_MAX_M = 35;
 const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
 const PRIVACY_CELL_SIZE_M = 50;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
+const EXPORT_PRIVACY_ZONE_ID = 'private_area';
+const EXPORT_PRIVACY_ZONE_LABEL = 'Private area';
 export const ZONE_STATS_KEY = 'drivesense_privacy_zone_stats_v1';
 export const ZONE_EVENT_GUARD_M = 50;
 const PRIVACY_CELL_STORAGE_GUARD_M = 0;
@@ -323,7 +325,7 @@ const normalizePrivacyZones = (zones = []) => (
           id: String(zone?.id || `pz_${Date.now().toString(36)}`),
           label: String(zone?.label || 'Private place').trim() || 'Private place',
           radius_m: radiusM,
-          exclude_from_osrm: zone?.exclude_from_osrm !== false,
+          exclude_from_osrm: true,
           privacy_cell_schema: zone?.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
           privacy_cell_size_m: Number(zone?.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
           privacy_cell_hashes: normalizePrivacyCellHashes(zone),
@@ -354,7 +356,7 @@ const redactedPrivacyZones = (zones = []) => (
     id: String(zone.id || ''),
     label: String(zone.label || 'Private place'),
     radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
-    exclude_from_osrm: zone.exclude_from_osrm !== false,
+    exclude_from_osrm: true,
     masked_for_privacy: true,
   }))
 );
@@ -364,7 +366,7 @@ const cellOnlyPrivacyZones = (zones = []) => (
     id: zone.id,
     label: zone.label,
     radius_m: zone.radius_m,
-    exclude_from_osrm: zone.exclude_from_osrm !== false,
+    exclude_from_osrm: true,
     privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
     privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
     privacy_cell_hashes: normalizePrivacyCellHashes(zone),
@@ -760,6 +762,83 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 
   return bestZone || findCellPrivacyZoneForPoint(point, cellOnlyZones);
 }
 
+function clampNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(min, Math.min(max, number));
+}
+
+function boundsToCellRange(bounds, cellSizeM = PRIVACY_CELL_SIZE_M, guardM = 0) {
+  const south = clampNumber(bounds?.south, -90, 90);
+  const west = clampNumber(bounds?.west, -180, 180);
+  const north = clampNumber(bounds?.north, -90, 90);
+  const east = clampNumber(bounds?.east, -180, 180);
+  if (south == null || west == null || north == null || east == null) return null;
+
+  const minLat = Math.min(south, north);
+  const maxLat = Math.max(south, north);
+  const minLng = Math.min(west, east);
+  const maxLng = Math.max(west, east);
+  const midLat = (minLat + maxLat) / 2;
+  const latitudeCosine = Math.max(0.01, Math.abs(Math.cos(midLat * Math.PI / 180)));
+  const latPad = Math.max(0, Number(guardM) || 0) / 111320;
+  const lngPad = Math.max(0, Number(guardM) || 0) / (111320 * latitudeCosine);
+  const southWest = cellCoordinate(minLat - latPad, minLng - lngPad, cellSizeM);
+  const northEast = cellCoordinate(maxLat + latPad, maxLng + lngPad, cellSizeM);
+  if (!southWest || !northEast) return null;
+
+  return {
+    minY: Math.min(southWest.y, northEast.y),
+    maxY: Math.max(southWest.y, northEast.y),
+    minX: Math.min(southWest.x, northEast.x),
+    maxX: Math.max(southWest.x, northEast.x),
+    cellSizeM: southWest.cellSizeM,
+  };
+}
+
+export function boundsOverlapPrivacyZone(bounds, zones = getPrivacyZones(), guardM = 0) {
+  if (!bounds || typeof bounds !== 'object') return false;
+  const south = clampNumber(bounds.south, -90, 90);
+  const west = clampNumber(bounds.west, -180, 180);
+  const north = clampNumber(bounds.north, -90, 90);
+  const east = clampNumber(bounds.east, -180, 180);
+  if (south == null || west == null || north == null || east == null) return false;
+
+  const minLat = Math.min(south, north);
+  const maxLat = Math.max(south, north);
+  const minLng = Math.min(west, east);
+  const maxLng = Math.max(west, east);
+  const guard = Math.max(0, Number(guardM) || 0);
+
+  for (const zone of Array.isArray(zones) ? zones : []) {
+    if (hasExactZoneGeometry(zone)) {
+      const nearest = {
+        lat: Math.max(minLat, Math.min(maxLat, Number(zone.lat))),
+        lng: Math.max(minLng, Math.min(maxLng, Number(zone.lng))),
+      };
+      if (distanceM(nearest, zone) <= Number(zone.radius_m || 150) + guard) return true;
+      continue;
+    }
+
+    const hashes = normalizePrivacyCellHashes(zone);
+    if (!hashes.length) return true;
+
+    const range = boundsToCellRange(bounds, zone.privacy_cell_size_m || PRIVACY_CELL_SIZE_M, guard);
+    if (!range) return true;
+    const cellCount = (range.maxY - range.minY + 1) * (range.maxX - range.minX + 1);
+    if (cellCount > 20000) return true;
+
+    const zoneHashes = new Set(hashes);
+    for (let y = range.minY; y <= range.maxY; y++) {
+      for (let x = range.minX; x <= range.maxX; x++) {
+        if (zoneHashes.has(privacyCellHash(y, x, range.cellSizeM))) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export function isInsidePrivacyZone(lat, lng, zones = getPrivacyZones()) {
   return Boolean(isPointInPrivacyZone({ lat, lng }, zones));
 }
@@ -895,7 +974,7 @@ export function mergePrivacyZones(a, b) {
   const base = {
     id: `pz_merge_${Date.now().toString(36)}`,
     label: `${a.label || 'Zone'} + ${b.label || 'Zone'}`,
-    exclude_from_osrm: a.exclude_from_osrm !== false && b.exclude_from_osrm !== false,
+    exclude_from_osrm: true,
   };
 
   if (d + bRadius <= aRadius) {
@@ -1269,10 +1348,21 @@ const stripExportBoundaryGeometry = (point = {}) => {
     zone_radius_m,
     privacy_radius_m,
     privacy_zone_radius_m,
+    zone_id,
+    zone_label,
+    privacy_zone_id,
+    privacy_zone_label,
+    privacy_zone_name,
     ...rest
   } = point;
   return rest;
 };
+
+const sanitizePrivacyPointForExport = (point = {}) => ({
+  ...sanitizeKinematics(stripExportBoundaryGeometry(point)),
+  privacy_zone_id: EXPORT_PRIVACY_ZONE_ID,
+  privacy_zone_label: EXPORT_PRIVACY_ZONE_LABEL,
+});
 
 export function addExportNoiseToPrivacyBoundaries(routePoints = [], exportSalt = createPrivacyExportSalt()) {
   return (Array.isArray(routePoints) ? routePoints : []).map((point, index) => {
@@ -1303,23 +1393,23 @@ export function replacePrivacyBoundariesWithExportGaps(routePoints = [], exportS
   const output = [];
   (Array.isArray(routePoints) ? routePoints : []).forEach((point) => {
     if (!point?.privacy_boundary) {
-      output.push(point?.masked_for_privacy === true ? sanitizeKinematics(point) : point);
+      output.push(point?.masked_for_privacy === true || point?.privacy_gap === true
+        ? sanitizePrivacyPointForExport(point)
+        : point);
       return;
     }
 
     const previous = output.at(-1);
     const zoneId = point.privacy_zone_id || point.zone_id || 'privacy-zone';
-    if (previous?.privacy_export_placeholder && previous.privacy_zone_id === zoneId) return;
+    if (previous?.privacy_export_placeholder) return;
 
-    output.push(sanitizeKinematics({
+    output.push(sanitizePrivacyPointForExport({
       lat: null,
       lng: null,
       timestamp: fuzzBoundaryTimestamp(point.timestamp ?? point.time ?? null, zoneId, exportSalt),
       masked_for_privacy: true,
       privacy_gap: true,
       privacy_export_placeholder: true,
-      privacy_zone_id: zoneId,
-      privacy_zone_label: point.privacy_zone_label || point.zone_label || 'Private place',
     }));
   });
   return output;
@@ -1403,7 +1493,7 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     id: zone.id || `pz_${Date.now().toString(36)}`,
     label: String(zone.label || 'Private place').trim() || 'Private place',
     radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
-    exclude_from_osrm: zone.exclude_from_osrm !== false,
+    exclude_from_osrm: true,
     ...(finiteNumber(zone.lat) != null && finiteNumber(zone.lng) != null ? {
       lat: Number(zone.lat),
       lng: Number(zone.lng),

@@ -19,6 +19,7 @@ const watchOptions = {
 };
 
 const GEOLOCATION_PERMISSION_DENIED = 1;
+const ROUTE_GAP_SECONDS = 120;
 
 function isPermissionDeniedError(error) {
   const browserPermissionDenied = typeof GeolocationPositionError !== 'undefined'
@@ -55,7 +56,11 @@ export function createDrivingTrackingService({ background = false, privateMode =
     if (!shouldAcceptLocationPoint(point, previousPoint)) return;
     const segment = calculateSegmentMetrics(previousPoint, point);
     const normalizedPoint = previousPoint
-      ? { ...point, speed_kmh: segment.reliableSpeedKmh }
+      ? {
+          ...point,
+          speed_kmh: segment.reliableSpeedKmh,
+          ...(segment.dt > ROUTE_GAP_SECONDS ? { tracking_gap: true } : {}),
+        }
       : { ...point, speed_kmh: point.speed_kmh != null && point.speed_kmh >= 5 ? point.speed_kmh : 0 };
     previousPoint = normalizedPoint;
     onPoint(normalizedPoint);

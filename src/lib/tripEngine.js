@@ -56,6 +56,9 @@ const OBD_IDLE_RPM_MIN = 500;
 const OBD_OVER_REV_RPM = 3500;
 const OBD_HIGH_THROTTLE_PCT = 75;
 const OBD_ECO_PENALTY_MAX = 15;
+const MAX_REASONABLE_GPS_SPEED_KMH = 220;
+const MAX_REASONABLE_OBD_SPEED_KMH = 260;
+const ROUTE_GAP_SECONDS = 120;
 /**
  * Provisional brake-turn manoeuvre alert score decay per detected GPS proxy event.
  * Not calibrated to incident, crash, or following-distance outcome data.
@@ -848,10 +851,15 @@ export function calculateSegmentMetrics(previousPoint, point, thresholds = DEFAU
 
   let reliableSpeedKmh = impliedSpeedKmh;
   if (!isNoise && reportedSpeedKmh != null) {
-    const reportedCloseToImplied = impliedSpeedKmh >= stationarySpeed ||
-      reportedSpeedKmh >= trustedSpeed ||
-      Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12;
-    reliableSpeedKmh = reportedCloseToImplied ? reportedSpeedKmh : impliedSpeedKmh;
+    const reportedCloseToImplied = Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12;
+    const reportedTooLowForMovement = reportedSpeedKmh < trustedSpeed &&
+      impliedSpeedKmh >= trustedSpeed &&
+      !reportedCloseToImplied;
+    const reportedStationaryWhileMoving = reportedSpeedKmh < stationarySpeed &&
+      impliedSpeedKmh >= trustedSpeed;
+    reliableSpeedKmh = reportedTooLowForMovement || reportedStationaryWhileMoving
+      ? impliedSpeedKmh
+      : reportedSpeedKmh;
   }
 
   return {
@@ -932,8 +940,8 @@ export function normalizeLocationPoint(input) {
 export function shouldAcceptLocationPoint(point, previousPoint = null, thresholds = DEFAULT_THRESHOLDS) {
   if (!point || !hasValidCoordinates(point)) return false;
   if (point.accuracy != null && point.accuracy > thresholds.MAX_GPS_ACCURACY_M) return false;
-  if (Number.isFinite(Number(point.speed_kmh)) && Number(point.speed_kmh) > 220) return false;
-  if (Number.isFinite(Number(point.obd_speed_kmh)) && Number(point.obd_speed_kmh) > 260) return false;
+  if (Number.isFinite(Number(point.speed_kmh)) && Number(point.speed_kmh) > MAX_REASONABLE_GPS_SPEED_KMH) return false;
+  if (Number.isFinite(Number(point.obd_speed_kmh)) && Number(point.obd_speed_kmh) > MAX_REASONABLE_OBD_SPEED_KMH) return false;
   if (!previousPoint) return true;
 
   const dt = (new Date(point.timestamp).getTime() - new Date(previousPoint.timestamp).getTime()) / 1000;
@@ -944,7 +952,7 @@ export function shouldAcceptLocationPoint(point, previousPoint = null, threshold
 
   const impliedSpeed = segment.impliedSpeedKmh;
   const reportedSpeed = segment.reportedSpeedKmh ?? impliedSpeed;
-  if (impliedSpeed > 220 || reportedSpeed > 220) return false;
+  if (impliedSpeed > MAX_REASONABLE_GPS_SPEED_KMH || reportedSpeed > MAX_REASONABLE_GPS_SPEED_KMH) return false;
 
   return true;
 }
@@ -965,8 +973,14 @@ export function cleanRoutePoints(points, thresholds = DEFAULT_THRESHOLDS) {
       return accepted;
     }
     if (shouldAcceptLocationPoint(point, previousAcceptedGpsPoint, thresholds)) {
-      accepted.push(point);
-      previousAcceptedGpsPoint = point;
+      const segment = previousAcceptedGpsPoint
+        ? calculateSegmentMetrics(previousAcceptedGpsPoint, point, thresholds)
+        : null;
+      const acceptedPoint = segment?.dt > ROUTE_GAP_SECONDS
+        ? { ...point, tracking_gap: true }
+        : point;
+      accepted.push(acceptedPoint);
+      previousAcceptedGpsPoint = acceptedPoint;
     }
     return accepted;
   }, []);
@@ -1396,7 +1410,7 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
 // ─── Event Detection ───────────────────────────────────────────────────────────
 function finiteVehicleSpeed(value) {
   const speed = Number(value);
-  return Number.isFinite(speed) && speed >= 0 && speed <= 260 ? speed : null;
+  return Number.isFinite(speed) && speed >= 0 && speed <= MAX_REASONABLE_OBD_SPEED_KMH ? speed : null;
 }
 
 function obdSpeedTimestampMs(point) {
@@ -5548,12 +5562,6 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
   for (let i = 1; i < routePoints.length; i++) {
     const p = routePoints[i - 1];
     const c = routePoints[i];
-    const rawDistance = haversineDistance(p.lat, p.lng, c.lat, c.lng);
-    if (Number.isFinite(rawDistance)) totalDistance += rawDistance;
-
-    const rawSpeed = Number(c.speed_kmh) || 0;
-    if (rawSpeed > maxSpeed) maxSpeed = rawSpeed;
-
     const segment = calculateSegmentMetrics(p, c, thresholds);
     if (segment.dt <= 0) {
       flushIdleRun();
@@ -5577,9 +5585,13 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       continue;
     }
 
+    totalDistance += segment.distanceKm;
     const currPointSpeed = reliablePointSpeed(routePoints, i, thresholds);
     const currRawSpeed = pointSpeedKmh(routePoints[i], thresholds);
-    const spd = currPointSpeed ?? (currRawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh);
+    const spd = currPointSpeed == null
+      ? (currRawSpeed == null ? segment.reliableSpeedKmh : segment.impliedSpeedKmh)
+      : Math.max(currPointSpeed, segment.reliableSpeedKmh);
+    if (spd > maxSpeed) maxSpeed = spd;
     if (spd >= thresholds.STATIONARY_SPEED_KMH) {
       movingSeconds += segment.dt;
       flushIdleRun();

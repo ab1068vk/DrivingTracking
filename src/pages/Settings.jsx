@@ -1552,28 +1552,6 @@ export default function Settings() {
     }
   };
 
-  const updatePrivacyZoneOsrmExclusion = async (zone, excluded) => {
-    const updatedZone = {
-      ...zone,
-      exclude_from_osrm: excluded === true,
-    };
-    try {
-      const updated = await upsertPrivacyZone(updatedZone, cfg);
-      setCfg(updated);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-      toast({
-        title: excluded ? 'Zone excluded from OSRM' : 'Zone allowed for OSRM',
-        description: excluded
-          ? `${zone.label} will be removed from route-snapping requests.`
-          : `${zone.label} may be sent to your configured OSRM endpoint after consent review.`,
-        variant: excluded ? undefined : 'destructive',
-      });
-    } catch (error) {
-      showPrivacyNativeSyncFailure(error, 'Privacy zone OSRM setting not saved');
-    }
-  };
-
   const mergeOverlappingPrivacyZones = async (pair) => {
     const mergedZone = mergePrivacyZones(pair.a, pair.b);
     if (!mergedZone) {
@@ -2011,7 +1989,6 @@ export default function Settings() {
   const privacyRescoreActive = isPrivacyRescoreReason(rescoreProgress?.reason) &&
     (rescoreProgress?.status === 'pending' || rescoreProgress?.status === 'running');
   const privacyNativeSyncFailed = cfg.privacy_zones_native_sync_status === NATIVE_PRIVACY_SYNC_STATUS_FAILED;
-  const osrmSharedPrivacyZones = privacyZones.filter((zone) => zone.exclude_from_osrm === false);
   const integrityThreats = Array.isArray(integrity?.threats) ? integrity.threats : [];
   const integrityThreatDetected = integrity?.secure === false || integrityThreats.length > 0;
   const privacyZoneStorageBlocked = integrityThreatDetected && cfg.privacy_zone_storage_requires_secure_device !== false;
@@ -2022,10 +1999,8 @@ export default function Settings() {
     : privacyRescoreActive
     ? `${Math.max(0, rescoreTotal - rescoreCompleted)} trip${Math.max(0, rescoreTotal - rescoreCompleted) === 1 ? '' : 's'} re-scoring`
     : privacyZoneOverlaps.length
-      ? `${privacyZoneOverlaps.length} overlap${privacyZoneOverlaps.length === 1 ? '' : 's'} to review`
-      : osrmSharedPrivacyZones.length
-        ? `${osrmSharedPrivacyZones.length} OSRM-shared zone${osrmSharedPrivacyZones.length === 1 ? '' : 's'}`
-        : 'Protected';
+    ? `${privacyZoneOverlaps.length} overlap${privacyZoneOverlaps.length === 1 ? '' : 's'} to review`
+    : 'Protected';
 
   return (
     <div className="space-y-4 pb-6">
@@ -3947,7 +3922,7 @@ export default function Settings() {
                 <div>
                   <div className="font-semibold">Privacy Health</div>
                   <div className="mt-0.5 text-muted-foreground">
-                    {privacyZones.length} zone{privacyZones.length === 1 ? '' : 's'} - {osrmSharedPrivacyZones.length} allowed for OSRM - {privacyZoneOverlaps.length} overlap{privacyZoneOverlaps.length === 1 ? '' : 's'}
+                    {privacyZones.length} zone{privacyZones.length === 1 ? '' : 's'} - all excluded from OSRM - {privacyZoneOverlaps.length} overlap{privacyZoneOverlaps.length === 1 ? '' : 's'}
                   </div>
                 </div>
                 <span className={`rounded-full px-2 py-1 font-semibold ${
@@ -3957,7 +3932,7 @@ export default function Settings() {
                     ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-100'
                     : privacyRescoreActive
                     ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-100'
-                    : privacyZoneOverlaps.length || osrmSharedPrivacyZones.length
+                    : privacyZoneOverlaps.length
                       ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-100'
                       : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100'
                 }`}>
@@ -4067,22 +4042,10 @@ export default function Settings() {
                     <div className="min-w-0">
                       <div className="truncate font-semibold">{zone.label}</div>
                       <div className="text-muted-foreground">
-                        {Math.round(zone.radius_m)} m mask radius - {zone.exclude_from_osrm === false ? 'allowed for OSRM' : 'excluded from OSRM'}
+                        {Math.round(zone.radius_m)} m mask radius - always excluded from OSRM
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                      <label className={`flex h-8 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-semibold ${
-                        zone.exclude_from_osrm === false
-                          ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
-                          : 'border-border bg-background text-muted-foreground'
-                      }`}>
-                        <Checkbox
-                          checked={zone.exclude_from_osrm !== false}
-                          onCheckedChange={(checked) => updatePrivacyZoneOsrmExclusion(zone, checked === true)}
-                          aria-label={`Exclude ${zone.label} from OSRM`}
-                        />
-                        Exclude
-                      </label>
                       <input
                         type="number"
                         inputMode="numeric"

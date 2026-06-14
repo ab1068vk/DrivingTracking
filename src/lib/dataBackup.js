@@ -513,6 +513,15 @@ const migrateLegacyLaneChangeTrip = (trip) => {
   };
 };
 
+const privacyZoneExportPlaceholders = (zones = []) => (
+  (Array.isArray(zones) ? zones : []).map((_, index) => ({
+    id: `private_area_${index + 1}`,
+    label: 'Private area',
+    masked_for_privacy: true,
+    reconfiguration_required: true,
+  }))
+);
+
 export function buildDriveSenseBackup({
   trips = [],
   vehicles = [],
@@ -530,13 +539,7 @@ export function buildDriveSenseBackup({
   const zoneCommitments = privacyZones.map((zone) => commitZoneForExportSync(zone, exportId));
   const exportSettings = {
     ...settings,
-    privacy_zones: privacyZones.map((zone) => ({
-      id: zone.id,
-      label: zone.label,
-      radius_m: zone.radius_m,
-      exclude_from_osrm: zone.exclude_from_osrm !== false,
-      masked_for_privacy: true,
-    })),
+    privacy_zones: privacyZoneExportPlaceholders(privacyZones),
   };
   const maskedTrips = trips.map((trip) => {
     const masked = /** @type {any} */ (maskTripForPrivacyExport(trip, settings, privacyExportSalt));
@@ -561,8 +564,9 @@ export function buildDriveSenseBackup({
     privacy_export: {
       timestamp_fuzzing_enabled: true,
       timestamp_shift_policy: 'bounded_private_zone_noise',
-      zone_commitment_scheme: 'sha256_zone_center_export_salt_v1',
+      zone_commitment_scheme: 'sha256_zone_center_export_salt_v2',
       zone_commitment_count: zoneCommitments.length,
+      zone_placeholder_count: privacyZones.length,
       shifted_trip_count: privacyShiftedTrips.length,
       boundary_placeholder_count: privacyPlaceholderCount,
       shifted_trip_ids: privacyShiftedTrips.map((trip) => trip.id).filter(Boolean).slice(0, 1000),
@@ -617,17 +621,18 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     service: 'export',
     type: encrypted ? 'Encrypted full backup' : 'Full backup',
     coordinateDisclosure: 'committed',
-    privacyTransformVerified: !JSON.stringify(
-      signedBackup?.payload?.zone_commitments || []
-    ).match(/"lat(?:itude)?"|"lng"|"longitude"/i),
+    privacyTransformVerified: !JSON.stringify({
+      zoneCommitments: signedBackup?.payload?.zone_commitments || [],
+      privacyZones: signedBackup?.payload?.settings?.privacy_zones || [],
+    }).match(/"lat(?:itude)?"|"lng"|"longitude"|"radius(?:_m)?"|"zone_radius_m"|"label":"(?!Private area")/i),
     privacyTransformSource: 'dataBackup.js:buildDriveSenseBackup',
-    sentCoords: '0 - zone coordinates excluded, boundary points committed',
-    protections: ['HMAC-signed', 'commitment scheme', 'no zone centers included'],
+    sentCoords: '0 - zone coordinates and ranges excluded, boundary points committed',
+    protections: ['HMAC-signed', 'commitment scheme', 'no zone centers or ranges included'],
     offsetMeters: null,
     bytesOut: JSON.stringify(signedBackup).length,
     status: 'safe',
     tripId: null,
-    zonesSuppressed: getPrivacyZones(settings).map((zone) => zone.label),
+    zonesSuppressed: privacyZoneExportPlaceholders(getPrivacyZones(settings)).map((zone) => zone.label),
   });
   const plaintext = JSON.stringify(signedBackup, null, 2);
   let content = plaintext;

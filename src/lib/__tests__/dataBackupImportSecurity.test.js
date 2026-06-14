@@ -661,8 +661,9 @@ describe('backup export privacy', () => {
     expect(backup.privacy_export).toMatchObject({
       timestamp_fuzzing_enabled: true,
       timestamp_shift_policy: 'bounded_private_zone_noise',
-      zone_commitment_scheme: 'sha256_zone_center_export_salt_v1',
+      zone_commitment_scheme: 'sha256_zone_center_export_salt_v2',
       zone_commitment_count: 1,
+      zone_placeholder_count: 1,
       shifted_trip_count: 1,
       boundary_placeholder_count: 1,
       shifted_trip_ids: ['trip-private-boundary'],
@@ -680,26 +681,28 @@ describe('backup export privacy', () => {
       masked_for_privacy: true,
       privacy_gap: true,
       privacy_export_placeholder: true,
-      privacy_zone_id: 'home',
+      privacy_zone_id: 'private_area',
+      privacy_zone_label: 'Private area',
     });
     expect(JSON.stringify(backup.trips[0].route_points)).not.toContain(String(exactBoundary.lat));
     expect(exportedPlaceholder.radius_m).toBeUndefined();
     expect(backup.settings.privacy_zones[0]).toMatchObject({
-      id: 'home',
-      label: 'Home',
-      radius_m: 100,
-      exclude_from_osrm: true,
+      id: 'private_area_1',
+      label: 'Private area',
       masked_for_privacy: true,
+      reconfiguration_required: true,
     });
+    expect(backup.settings.privacy_zones[0].radius_m).toBeUndefined();
     expect(backup.settings.privacy_zones[0].privacy_cell_hashes).toBeUndefined();
     expect(JSON.stringify(backup.settings.privacy_zones)).not.toContain('privacy_cell_hashes');
     expect(zoneCommitment).toMatchObject({
-      zone_id: 'home',
-      zone_label: 'Home',
-      zone_radius_m: 100,
+      zone_ref: 'private_area',
       export_id: backup.export_id,
     });
     expect(zoneCommitment.commitment).toEqual(expect.any(String));
+    expect(zoneCommitment).not.toHaveProperty('zone_id');
+    expect(zoneCommitment).not.toHaveProperty('zone_label');
+    expect(zoneCommitment).not.toHaveProperty('zone_radius_m');
     expect(zoneCommitment).not.toHaveProperty('lat');
     expect(zoneCommitment).not.toHaveProperty('lng');
     expect(zoneCommitment).not.toHaveProperty('latitude');
@@ -707,6 +710,9 @@ describe('backup export privacy', () => {
     expect(zoneCommitment).not.toHaveProperty('salt');
     expect(JSON.stringify(backup.zone_commitments)).not.toContain('43.65');
     expect(JSON.stringify(backup.zone_commitments)).not.toContain('-79.38');
+    expect(JSON.stringify(backup)).not.toContain('"radius_m":100');
+    expect(JSON.stringify(backup)).not.toContain('"zone_radius_m"');
+    expect(JSON.stringify(backup)).not.toContain('"label":"Home"');
   });
 
   it('generates unlinkable privacy-zone commitments for repeated exports', async () => {

@@ -5,6 +5,7 @@ const MIN_STOP_SECONDS = 60;
 const MAX_VISUAL_ACCURACY_M = 100;
 const MAX_VISUAL_SPEED_KMH = 230;
 const MAX_SEGMENT_JUMP_SPEED_KMH = 240;
+const MAX_VISUAL_SEGMENT_GAP_SECONDS = 120;
 const MAX_SMOOTHING_ACCURACY_M = 45;
 const DEFAULT_RENDER_POINTS = 700;
 
@@ -77,7 +78,15 @@ export const cleanRoutePoints = (points = []) => {
   (Array.isArray(points) ? points : [])
     .map(normalizeRoutePoint)
     .forEach((point) => {
-      if (shouldKeepVisualPoint(point, accepted.at(-1))) accepted.push(point);
+      const previous = accepted.at(-1);
+      if (!shouldKeepVisualPoint(point, previous)) return;
+
+      const prevMs = pointTimeMs(previous);
+      const currMs = pointTimeMs(point);
+      const hasRouteGap = point?.tracking_gap === true ||
+        point?.route_gap === true ||
+        (previous && prevMs != null && currMs != null && (currMs - prevMs) / 1000 > MAX_VISUAL_SEGMENT_GAP_SECONDS);
+      accepted.push(hasRouteGap ? { ...point, tracking_gap: true } : point);
     });
   return accepted;
 };
@@ -271,13 +280,16 @@ export function buildPlaybackTimeline(points = [], events = []) {
     const prev = clean[i - 1];
     const curr = clean[i];
     const distanceKm = haversineDistance(prev.lat, prev.lng, curr.lat, curr.lng);
-    totalDistanceKm += distanceKm;
-
     const prevMs = pointTimeMs(prev);
     const currMs = pointTimeMs(curr);
     const durationSeconds = prevMs != null && currMs != null && currMs > prevMs
       ? (currMs - prevMs) / 1000
       : 0;
+    if (curr.tracking_gap === true || durationSeconds > MAX_VISUAL_SEGMENT_GAP_SECONDS) {
+      cumulativeDistancesKm.push(totalDistanceKm);
+      continue;
+    }
+    totalDistanceKm += distanceKm;
     const speedKmh = segmentSpeed(prev, curr, distanceKm, durationSeconds);
     maxSpeedKmh = Math.max(maxSpeedKmh, speedKmh);
 

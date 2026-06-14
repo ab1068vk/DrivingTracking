@@ -1,7 +1,7 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { haversineDistance } from '@/lib/tripEngine';
 import { withRetry } from '@/lib/retry';
-import { getPrivacyZones } from '@/lib/privacyZones';
+import { boundsOverlapPrivacyZone, getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { pinnedFetch } from '@/lib/pinnedFetch';
 import { logTransmission } from '@/lib/transmissionLog';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
@@ -20,6 +20,7 @@ const MAX_CORRIDOR_SAMPLE_POINTS = 180;
 const CORRIDOR_PAD_DEG = 0.006;
 const ZONE_GUARD_M = 50;
 const ALL_POINTS_PRIVATE_REASON = 'all_points_private';
+const PRIVACY_BOUNDS_OVERLAP_REASON = 'privacy_bounds_overlap';
 export const DEFAULT_SPEED_LIMIT_COUNTRY = 'global';
 export const SPEED_LIMIT_DEFAULT_COUNTRY_LABELS = Object.freeze({
   global: 'Global',
@@ -121,24 +122,45 @@ export async function clearOsmSpeedLimitCache() {
 }
 
 function isInsidePrivacyGuard(point, zones = []) {
-  return zones.some((zone) => {
-    const lat = Number(zone?.lat);
-    const lng = Number(zone?.lng);
-    const radiusM = Number(zone?.radius_m);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM) || radiusM <= 0) return false;
-    return haversineDistance(point.lat, point.lng, lat, lng) * 1000 <= radiusM + ZONE_GUARD_M;
-  });
+  return Boolean(isPointInPrivacyZone(point, zones, ZONE_GUARD_M));
 }
 
 function finiteRoutePoints(points = []) {
   return points.filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
 }
 
+function isPublicRoadDataPoint(point, privacyZones = []) {
+  return Number.isFinite(point?.lat) &&
+    Number.isFinite(point?.lng) &&
+    point?.masked_for_privacy !== true &&
+    point?.privacy_boundary !== true &&
+    point?.privacy_gap !== true &&
+    !isInsidePrivacyGuard(point, privacyZones);
+}
+
 function privacySafeRoutePoints(points = [], privacyZones = []) {
   const valid = finiteRoutePoints(points);
   return privacyZones.length
-    ? valid.filter((point) => !isInsidePrivacyGuard(point, privacyZones))
+    ? valid.filter((point) => isPublicRoadDataPoint(point, privacyZones))
     : valid;
+}
+
+function privacySafeRouteSegments(points = [], privacyZones = []) {
+  if (!privacyZones.length) return [finiteRoutePoints(points)];
+  const segments = [];
+  let current = [];
+  for (const point of Array.isArray(points) ? points : []) {
+    if (isPublicRoadDataPoint(point, privacyZones)) {
+      current.push(point);
+      continue;
+    }
+    if (current.length) {
+      segments.push(current);
+      current = [];
+    }
+  }
+  if (current.length) segments.push(current);
+  return segments;
 }
 
 function hasFiniteBounds(bounds) {
@@ -162,9 +184,12 @@ function routeBounds(points = [], pad = 0.01) {
   return hasFiniteBounds(bounds) ? bounds : null;
 }
 
-function skippedReasonForMissingBounds(routePoints = [], privacyZones = [], safePoints = []) {
+function skippedReasonForMissingBounds(routePoints = [], privacyZones = [], safePoints = [], queryBounds = null) {
   const inputPoints = Array.isArray(routePoints) ? routePoints : [];
   if (privacyZones.length && inputPoints.length && !safePoints.length) return ALL_POINTS_PRIVATE_REASON;
+  if (privacyZones.length && inputPoints.length && safePoints.length && Array.isArray(queryBounds) && !queryBounds.length) {
+    return PRIVACY_BOUNDS_OVERLAP_REASON;
+  }
   return null;
 }
 
@@ -237,6 +262,20 @@ function corridorBounds(routePoints = []) {
     if (bounds) chunks.push(bounds);
   }
   return uniqueBy(chunks, cacheKeyForBounds);
+}
+
+function privacySafeQueryBounds(routePoints = [], privacyZones = []) {
+  const segments = privacySafeRouteSegments(routePoints, privacyZones);
+  const candidates = segments.flatMap((segment) => {
+    const bounds = routeBounds(segment, CORRIDOR_PAD_DEG);
+    if (!bounds) return [];
+    const span = bboxSpan(bounds);
+    return span.lat <= DIRECT_BBOX_SPAN_DEG && span.lng <= DIRECT_BBOX_SPAN_DEG
+      ? [bounds]
+      : corridorBounds(segment);
+  });
+  return uniqueBy(candidates, cacheKeyForBounds)
+    .filter((bounds) => !boundsOverlapPrivacyZone(bounds, privacyZones, ZONE_GUARD_M));
 }
 
 function overpassQuery(bounds) {
@@ -460,16 +499,34 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   const cache = await getJson(SPEED_LIMIT_CACHE_KEY, {});
   const nextCache = { ...cache };
   const span = bboxSpan(bounds);
-  const queryBounds = span.lat <= DIRECT_BBOX_SPAN_DEG && span.lng <= DIRECT_BBOX_SPAN_DEG
-    ? [bounds]
-    : corridorBounds(safeRoutePoints);
+  const queryBounds = privacyZones.length
+    ? privacySafeQueryBounds(routePoints, privacyZones)
+    : span.lat <= DIRECT_BBOX_SPAN_DEG && span.lng <= DIRECT_BBOX_SPAN_DEG
+      ? [bounds]
+      : corridorBounds(safeRoutePoints);
 
   if (!queryBounds.length) {
+    if (privacyZones.length && routePoints.length) {
+      await logTransmission({
+        service: 'overpass',
+        type: 'Speed limit query',
+        coordinateDisclosure: 'blocked',
+        privacyTransformVerified: true,
+        privacyTransformSource: 'speedLimitSource.js:boundsOverlapPrivacyZone',
+        sentCoords: null,
+        protections: ['road-data bounding box would overlap privacy guard - request blocked'],
+        offsetMeters: null,
+        bytesOut: 0,
+        status: 'blocked',
+        tripId: null,
+        zonesSuppressed: privacyZones.map((zone) => zone.label),
+      });
+    }
     return {
       ways: [],
       status: 'empty_route',
       source: 'openstreetmap_overpass',
-      skipped_reason: skippedReasonForMissingBounds(routePoints, privacyZones, safeRoutePoints),
+      skipped_reason: skippedReasonForMissingBounds(routePoints, privacyZones, safeRoutePoints, queryBounds),
     };
   }
 

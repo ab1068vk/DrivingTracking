@@ -70,9 +70,9 @@
     }
   ],
   "expectedStats": {
-    "distance_km": 0.403,
-    "avg_speed_kmh": 16.1,
-    "avg_running_speed_kmh": 24.2,
+    "distance_km": 0.4,
+    "avg_speed_kmh": 16,
+    "avg_running_speed_kmh": 24,
     "max_speed_kmh": 36,
     "idle_time_seconds": 20,
     "gap_seconds": 140,
@@ -81,9 +81,9 @@
     "night_driving": false
   },
   "expectedParityResult": {
-    "distanceKm": 0.403,
+    "distanceKm": 0.4,
     "durationSeconds": 90,
-    "avgSpeedKmh": 16.1,
+    "avgSpeedKmh": 16,
     "nightDriving": false,
     "noiseFloorM": 18
   }

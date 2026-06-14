@@ -48,12 +48,11 @@ export const isExternalContextAutoFetchEnabled = (settings = {}) => (
 
 export function buildPrivacySafeOsrmRoute(routePoints = [], settings = {}) {
   const zones = getPrivacyZones(settings);
-  const excludedZones = zones.filter((zone) => zone.exclude_from_osrm !== false);
-  if (!excludedZones.length) return routePoints;
+  if (!zones.length) return routePoints;
 
   const masked = maskRoutePointsForPrivacy(routePoints, {
     ...settings,
-    privacy_zones: excludedZones,
+    privacy_zones: zones,
   });
   return masked.reduce((safePoints, point) => {
     const previous = safePoints.at(-1);
@@ -119,12 +118,7 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     const zones = getPrivacyZones(settings);
-    const exposedZones = zones.filter((zone) => zone.exclude_from_osrm === false);
-    const excludedZones = zones.length - exposedZones.length;
-    lines.push(`- Snap route to roads: excludes ${excludedZones} privacy zone(s) and exact boundary points, then sends sampled GPS coordinate pairs to your configured OSRM endpoint, one request per public route segment.`);
-    if (exposedZones.length) {
-      lines.push(`- ${exposedZones.length} privacy zone(s) are allowed for OSRM by your per-zone settings.`);
-    }
+    lines.push(`- Snap route to roads: excludes ${zones.length} privacy zone(s) and exact boundary points, then sends sampled public GPS coordinate pairs to your configured OSRM endpoint, one request per public route segment.`);
   } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
@@ -180,13 +174,12 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }));
 
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
-  const osrmExcludedPrivacyZones = privacyZones.filter((zone) => zone.exclude_from_osrm !== false);
   const osrmRoutePoints = buildPrivacySafeOsrmRoute(originalPoints, settings);
   const osrmValidPointCount = osrmRoutePoints.filter((point) => (
     Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng))
   )).length;
   stage(onProgress, osrmConfigured ? 'Snapping route to roads with OSRM' : 'Skipping route snapping');
-  const mapMatchingContext = osrmConfigured && osrmExcludedPrivacyZones.length > 0 && osrmValidPointCount < 2
+  const mapMatchingContext = osrmConfigured && privacyZones.length > 0 && osrmValidPointCount < 2
     ? {
       routePoints: originalPoints,
       status: 'privacy_zones_excluded',
@@ -195,7 +188,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       confidence: null,
       snapped_coverage: 0,
       privacy_gap_count: osrmRoutePoints.filter((point) => point?.privacy_gap).length,
-      osrm_exposed_privacy_zone_count: privacyZones.length - osrmExcludedPrivacyZones.length,
+      osrm_exposed_privacy_zone_count: 0,
     }
     : await timeout(
       mapMatchRoute(osrmRoutePoints, settings),
@@ -269,8 +262,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       confidence: mapMatchingContext.confidence ?? null,
       snapped_coverage: mapMatchingContext.snapped_coverage ?? 0,
       privacy_gap_count: mapMatchingContext.privacy_gap_count ?? 0,
-      privacy_zone_count: osrmExcludedPrivacyZones.length,
-      osrm_exposed_privacy_zone_count: privacyZones.length - osrmExcludedPrivacyZones.length,
+      privacy_zone_count: privacyZones.length,
+      osrm_exposed_privacy_zone_count: 0,
       error: mapMatchingContext.error,
       isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl === true || isPublicOsrmDemoUrl(settings.osrm_map_matching_url),
     },

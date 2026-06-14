@@ -98,6 +98,39 @@ describe('trip engine calculation coverage', () => {
     }).discarded).toBe(true);
   });
 
+  it('infers vehicle movement when GPS reports zero speed but coordinates move', () => {
+    const route = Array.from({ length: 6 }, (_, index) => point(index, {
+      lat: 43.65 + index * 0.001,
+      speed_kmh: 0,
+    }));
+    const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp);
+
+    expect(stats.distance_km).toBeGreaterThan(0.5);
+    expect(stats.max_speed_kmh).toBeGreaterThan(35);
+    expect(validateCandidateTrip({
+      points: route,
+      startTime: route[0].timestamp,
+      now: route.at(-1).timestamp,
+    }).confirmed).toBe(true);
+  });
+
+  it('excludes stale GPS jumps from distance and marks the route break', () => {
+    const route = [
+      point(0, { lat: 43.65, speed_kmh: 40, timestamp: at(0) }),
+      point(1, { lat: 43.651, speed_kmh: 40, timestamp: at(10) }),
+      point(2, { lat: 45.9, speed_kmh: 0, timestamp: at(3 * 60 * 60) }),
+      point(3, { lat: 45.901, speed_kmh: 40, timestamp: at(3 * 60 * 60 + 10) }),
+    ];
+
+    const clean = cleanRoutePoints(route);
+    const stats = calculateTripStats(clean, route[0].timestamp, route.at(-1).timestamp);
+
+    expect(clean[2].tracking_gap).toBe(true);
+    expect(stats.distance_km).toBeLessThan(0.3);
+    expect(stats.gap_seconds).toBeGreaterThan(120);
+    expect(stats.max_speed_kmh).toBeLessThan(80);
+  });
+
   it('estimates distance traveled through privacy-zone masked gaps', () => {
     const route = [
       point(0, {

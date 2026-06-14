@@ -112,6 +112,40 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
+    public void nativeStatsInferSpeedFromMovingCoordinatesWhenReportedSpeedIsZero() throws Exception {
+        JSONArray points = new JSONArray();
+        long startMs = Instant.parse("2026-01-01T12:00:00Z").toEpochMilli();
+        points.put(routePoint(43.650, -79.380, startMs, 0d));
+        points.put(routePoint(43.651, -79.380, startMs + 10_000L, 0d));
+        points.put(routePoint(43.652, -79.380, startMs + 20_000L, 0d));
+        points.put(routePoint(43.653, -79.380, startMs + 30_000L, 0d));
+        points.put(routePoint(43.654, -79.380, startMs + 40_000L, 0d));
+        points.put(routePoint(43.655, -79.380, startMs + 50_000L, 0d));
+
+        Object stats = calculateStats(points, startMs, startMs + 50_000L);
+
+        assertTrue(doubleField(stats, "distanceKm") > 0.5d);
+        assertTrue(doubleField(stats, "maxSpeedKmh") > 35d);
+        assertTrue(doubleField(stats, "avgRunningSpeedKmh") > 35d);
+    }
+
+    @Test
+    public void nativeStatsIgnoreLongGpsGapDistance() throws Exception {
+        JSONArray points = new JSONArray();
+        long startMs = Instant.parse("2026-01-01T12:00:00Z").toEpochMilli();
+        points.put(routePoint(43.650, -79.380, startMs, 40d));
+        points.put(routePoint(43.651, -79.380, startMs + 10_000L, 40d));
+        points.put(routePoint(45.900, -79.380, startMs + 3 * 60 * 60 * 1000L, 0d));
+        points.put(routePoint(45.901, -79.380, startMs + 3 * 60 * 60 * 1000L + 10_000L, 40d));
+
+        Object stats = calculateStats(points, startMs, startMs + 3 * 60 * 60 * 1000L + 10_000L);
+
+        assertTrue(doubleField(stats, "distanceKm") < 0.3d);
+        assertTrue(longField(stats, "gapSeconds") > 120L);
+        assertTrue(doubleField(stats, "maxSpeedKmh") < 80d);
+    }
+
+    @Test
     public void nativeLiveAlertMathUsesConfiguredThresholds() {
         assertFalse(DriveSenseAutoTrackingService.shouldTriggerSpeedAlert(105d, 100d, 5d));
         assertTrue(DriveSenseAutoTrackingService.shouldTriggerSpeedAlert(106d, 100d, 5d));
@@ -181,6 +215,28 @@ public class DriveSenseAutoTrackingServiceTest {
         assertEquals(expected.getLong("idle_time_seconds"), longField(stats, "idleSeconds"));
         assertEquals(expected.getLong("duration_seconds"), longField(stats, "durationSeconds"));
         assertEquals(expected.getBoolean("night_driving"), booleanField(stats, "nightDriving"));
+    }
+
+    private static Object calculateStats(JSONArray points, long startMs, long endMs) throws Exception {
+        DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
+        Method calculateStats = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+            "calculateStats",
+            JSONArray.class,
+            long.class,
+            long.class
+        );
+        calculateStats.setAccessible(true);
+        return calculateStats.invoke(service, points, startMs, endMs);
+    }
+
+    private static JSONObject routePoint(double lat, double lng, long timestampMs, double speedKmh) throws Exception {
+        JSONObject point = new JSONObject();
+        point.put("lat", lat);
+        point.put("lng", lng);
+        point.put("timestamp", Instant.ofEpochMilli(timestampMs).toString());
+        point.put("speed_kmh", speedKmh);
+        point.put("accuracy", 5d);
+        return point;
     }
 
     private static long longConstant(String name) throws Exception {

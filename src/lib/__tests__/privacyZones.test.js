@@ -245,12 +245,42 @@ describe('privacyZones', () => {
       masked_for_privacy: true,
       privacy_gap: true,
       privacy_export_placeholder: true,
-      privacy_zone_id: 'home',
+      privacy_zone_id: 'private_area',
+      privacy_zone_label: 'Private area',
     });
     expect(exported.some((item) => item.privacy_boundary)).toBe(false);
     expect(JSON.stringify(exported)).not.toContain(String(exactBoundary.lat));
+    expect(JSON.stringify(exported)).not.toContain('Home');
     expect(placeholder.radius_m).toBeUndefined();
     expect(placeholder.privacy_zone_radius_m).toBeUndefined();
+  });
+
+  it('genericizes already-masked privacy gaps during export', () => {
+    const exported = maskRoutePointsForPrivacyExport([
+      {
+        lat: null,
+        lng: null,
+        masked_for_privacy: true,
+        privacy_gap: true,
+        privacy_zone_id: 'home',
+        privacy_zone_label: 'Home',
+        radius_m: 100,
+        privacy_zone_radius_m: 100,
+        speed_kmh: 44,
+      },
+    ], { privacy_zones: [] }, 'export-salt');
+
+    expect(exported[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      masked_for_privacy: true,
+      privacy_gap: true,
+      privacy_zone_id: 'private_area',
+      privacy_zone_label: 'Private area',
+      speed_kmh: null,
+    });
+    expect(JSON.stringify(exported)).not.toContain('Home');
+    expect(JSON.stringify(exported)).not.toContain('radius_m');
   });
 
   it('fuzzes exported boundary timestamps with a stable per-export zone offset', () => {
@@ -739,7 +769,7 @@ describe('privacyZones', () => {
       removeItem: vi.fn((key) => values.delete(key)),
     });
 
-    const updated = await upsertPrivacyZone(zone, JSON.parse(values.get('drivesense_settings')));
+    const updated = await upsertPrivacyZone({ ...zone, exclude_from_osrm: false }, JSON.parse(values.get('drivesense_settings')));
     const storedSettings = JSON.parse(values.get('drivesense_settings'));
     const encryptedZones = values.get(PRIVACY_ZONES_SECURE_KEY);
 
@@ -781,7 +811,7 @@ describe('privacyZones', () => {
       'drivesense_settings',
       JSON.stringify({
         settings_defaults_version: 9,
-        privacy_zones: [zone],
+        privacy_zones: [{ ...zone, exclude_from_osrm: false }],
       }),
     ]]);
     vi.stubGlobal('localStorage', {

@@ -124,8 +124,8 @@ const settingBackedControls = () => {
         : osrmOutdated
           ? 'Consent predates a privacy-zone change'
           : osrmUnguarded
-            ? 'At least one privacy zone permits OSRM sharing'
-            : 'Consent is current and privacy-zone exclusion is configured',
+            ? 'OSRM endpoint blocking near privacy zones is off'
+            : 'Consent is current and privacy zones are always excluded',
       riskIfMissing: 'Raw public route coordinates may be sent without current consent or zone exclusion.',
       userAction: 'Review OSRM sharing in Settings.',
       developerAction: null,

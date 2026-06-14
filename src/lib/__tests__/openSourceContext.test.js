@@ -67,6 +67,7 @@ describe('open-source trip context', () => {
     expect(message).toContain('OpenStreetMap Overpass');
     expect(message).toContain('Open-Meteo');
     expect(message).toContain('Snap route to roads');
+    expect(message).not.toContain('allowed for OSRM');
   });
 
   it('identifies the public OSRM demo endpoint as reference text only', () => {
@@ -203,7 +204,7 @@ describe('open-source trip context', () => {
     expect(safe.every((point) => !point.masked_for_privacy || point.privacy_gap)).toBe(true);
   });
 
-  it('allows a zone to opt into OSRM exposure explicitly', () => {
+  it('ignores legacy OSRM exposure flags and still excludes privacy zones', () => {
     const route = [
       { lat: 43.648, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z' },
       { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:10.000Z' },
@@ -220,7 +221,9 @@ describe('open-source trip context', () => {
       }],
     });
 
-    expect(safe).toBe(route);
+    expect(safe.some((point) => point.lat === 43.65 && point.lng === -79.38)).toBe(false);
+    expect(safe.filter((point) => point.privacy_gap)).toHaveLength(1);
+    expect(safe.every((point) => point?.exclude_from_osrm !== false)).toBe(true);
   });
 
   it('produces no OSRM coordinates when every route point is private', () => {

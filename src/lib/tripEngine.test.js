@@ -205,9 +205,9 @@ describe('tripEngine', () => {
   it('keeps first-commit distance and max-speed stats for recorded points', () => {
     const points = [
       point(43.6532, -79.3832, 0, 0, 12),
-      point(43.653235, -79.383225, 12, 16, 18),
-      point(43.65318, -79.38326, 30, 14, 20),
-      point(43.65322, -79.38321, 50, 15, 18),
+      point(43.6535, -79.383225, 12, 16, 18),
+      point(43.65375, -79.38326, 30, 14, 20),
+      point(43.654, -79.38321, 50, 15, 18),
     ];
 
     const stats = calculateTripStats(points, points[0].timestamp, points[3].timestamp);
@@ -217,7 +217,7 @@ describe('tripEngine', () => {
     expect(stats.max_speed_kmh).toBe(16);
   });
 
-  it('keeps raw max speed while avoiding spike-generated speeding events', () => {
+  it('filters raw max-speed spikes while avoiding spike-generated speeding events', () => {
     const points = [40, 42, 180, 43, 41].map((speed, index) => (
       point(43.6532 + index * 0.001, -79.3832, index * 10, speed, 6)
     ));
@@ -225,7 +225,7 @@ describe('tripEngine', () => {
     const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
     const events = detectDrivingEvents(points).events;
 
-    expect(stats.max_speed_kmh).toBe(180);
+    expect(stats.max_speed_kmh).toBe(43);
     expect(events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
@@ -1937,7 +1937,7 @@ describe('tripEngine', () => {
         privacy_gap: true,
         masked_for_privacy: true,
         privacy_export_placeholder: true,
-        privacy_zone_id: 'home',
+        privacy_zone_id: 'private_area',
       });
       expect(JSON.stringify(exportedRoute)).not.toContain(String(exactBoundary.lat));
     } finally {

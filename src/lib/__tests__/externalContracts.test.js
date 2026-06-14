@@ -136,14 +136,33 @@ describe('external service contracts', () => {
     });
   });
 
-  it('excludes privacy-zone boundary points from Overpass bounding boxes', async () => {
+  it('blocks Overpass bounding boxes that would overlap a privacy zone guard', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const boundaryPoint = { lat: 43, lng: -79.00123, privacy_boundary: true };
+    const publicPoint = { lat: 43.005, lng: -79 };
+    const result = await loadOsmSpeedLimitWays([boundaryPoint, publicPoint], {
+      overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ways: [],
+      status: 'empty_route',
+      source: 'openstreetmap_overpass',
+      skipped_reason: 'privacy_bounds_overlap',
+    });
+  });
+
+  it('allows Overpass bounding boxes that stay outside privacy zone guards', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({ elements: [] }),
     })));
 
     const boundaryPoint = { lat: 43, lng: -79.00123, privacy_boundary: true };
-    const publicPoint = { lat: 43.005, lng: -79 };
+    const publicPoint = { lat: 43.02, lng: -79 };
     await loadOsmSpeedLimitWays([boundaryPoint, publicPoint], {
       overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
@@ -154,10 +173,10 @@ describe('external service contracts', () => {
     const query = new URLSearchParams(String(options.body)).get('data');
     const [, rawBbox] = query.match(/\]\(([^)]+)\);/) || [];
     const [south, west, north, east] = rawBbox.split(',').map(Number);
-    expect(south).toBeCloseTo(42.995, 6);
-    expect(west).toBeCloseTo(-79.01, 6);
-    expect(north).toBeCloseTo(43.015, 6);
-    expect(east).toBeCloseTo(-78.99, 6);
+    expect(south).toBeGreaterThan(43.01);
+    expect(west).toBeCloseTo(-79.006, 6);
+    expect(north).toBeCloseTo(43.026, 6);
+    expect(east).toBeCloseTo(-78.994, 6);
   });
 
   it('skips Overpass when every route point is inside a privacy-zone guard', async () => {
