@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const requestState = vi.hoisted(() => ({
+  enqueueLocationRequest: vi.fn((_tag, fn) => fn()),
+}));
+
 vi.mock('@/lib/requestObfuscator', () => ({
-  enqueueLocationRequest: (_tag, fn) => fn(),
+  enqueueLocationRequest: requestState.enqueueLocationRequest,
 }));
 
 import { resetRetryCircuits } from '@/lib/retry';
@@ -29,6 +33,8 @@ describe('external service contracts', () => {
     stubStorage();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-23T16:00:00.000Z'));
+    requestState.enqueueLocationRequest.mockReset();
+    requestState.enqueueLocationRequest.mockImplementation((_tag, fn) => fn());
   });
 
   afterEach(() => {
@@ -99,6 +105,35 @@ describe('external service contracts', () => {
       fallback_country: 'gb',
     });
     expect(result.fallback_country).toBe('gb');
+  });
+
+  it('accepts the Android background queue Overpass response envelope', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    requestState.enqueueLocationRequest.mockResolvedValueOnce({
+      elements: [{
+        id: 303,
+        tags: { highway: 'residential', maxspeed: '35 mph', name: 'Queued Street' },
+        geometry: [
+          { lat: 43.6499, lon: -79.3801 },
+          { lat: 43.6510, lon: -79.3803 },
+        ],
+      }],
+    });
+
+    const result = await annotateRouteSpeedLimits(route, {
+      overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'fetched',
+      coverage: expect.any(Number),
+    });
+    expect(result.routePoints[0]).toMatchObject({
+      speed_limit_kmh: 56,
+      speed_limit_source: 'openstreetmap',
+      speed_limit_road_name: 'Queued Street',
+    });
   });
 
   it('excludes privacy-zone boundary points from Overpass bounding boxes', async () => {

@@ -346,7 +346,14 @@ export function defaultSpeedLimitKmhForOsmHighway(highway, settings = {}, countr
   return speedLimitDefaultsForCountry(profileSettings)[value] ?? null;
 }
 
-function normalizeWays(elements = [], settings = {}) {
+function overpassElementsFromResult(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.elements)) return result.elements;
+  return [];
+}
+
+function normalizeWays(result = [], settings = {}) {
+  const elements = overpassElementsFromResult(result);
   const defaultCountry = speedLimitDefaultCountryKey(settings);
   return elements
     .map((element) => {
