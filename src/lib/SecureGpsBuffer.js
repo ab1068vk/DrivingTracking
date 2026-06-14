@@ -1,4 +1,7 @@
 const GPS_POINT_WIDTH = 5;
+let zeroCallCount = 0;
+
+export const getSecureGpsBufferZeroCallCount = () => zeroCallCount;
 
 const finiteNumber = (value) => {
   if (value == null || value === '') return 0;
@@ -48,6 +51,7 @@ export class SecureGpsBuffer {
     if (this._buf) {
       this._buf.fill(0);
       this._buf = null;
+      zeroCallCount += 1;
     }
   }
 

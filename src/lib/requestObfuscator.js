@@ -1,4 +1,6 @@
 import { runNativeRoadDataRequest } from '@/lib/nativeRoadDataQueue';
+import { pinnedFetch } from '@/lib/pinnedFetch';
+import { localSettings } from '@/lib/trackingStore';
 
 const BATCH_MIN_MS = 3 * 60 * 1000;
 const BATCH_MAX_MS = 9 * 60 * 1000;
@@ -9,6 +11,9 @@ const DECOY_MAX_COUNT = 3;
 
 let queue = [];
 let timer = null;
+let lastBatchAt = null;
+let lastBatchSize = 0;
+let initialized = false;
 
 function randomUnit() {
   if (globalThis.crypto?.getRandomValues) {
@@ -34,13 +39,9 @@ function shuffle(items) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fireDecoy() {
+async function fireFirstPartyDecoy() {
   try {
-    await fetch(`https://httpbin.org/get?t=${Date.now()}`, {
-      cache: 'no-store',
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-    });
+    await pinnedFetch('https://api.open-meteo.com/v1/forecast?latitude=0&longitude=0&current_weather=true');
   } catch {
     // Decoys are best-effort and must not affect real request outcomes.
   }
@@ -57,10 +58,13 @@ async function flushBatch() {
   queue = [];
   if (!batch.length) return;
 
-  const decoys = Array.from(
-    { length: randomInt(DECOY_MIN_COUNT, DECOY_MAX_COUNT) },
-    () => ({ tag: 'decoy', fn: fireDecoy, resolve: null, reject: null })
-  );
+  const decoyMode = localSettings.get()?.decoy_traffic_mode || 'off';
+  const decoys = decoyMode === 'first_party'
+    ? Array.from(
+      { length: randomInt(DECOY_MIN_COUNT, DECOY_MAX_COUNT) },
+      () => ({ tag: 'decoy', fn: fireFirstPartyDecoy, resolve: null, reject: null })
+    )
+    : [];
   const items = shuffle([...batch, ...decoys]);
 
   for (let index = 0; index < items.length; index += 1) {
@@ -75,12 +79,16 @@ async function flushBatch() {
       await sleep(randomInt(INTER_REQUEST_MIN_MS, INTER_REQUEST_MAX_MS));
     }
   }
+  lastBatchAt = Date.now();
+  lastBatchSize = items.length;
+  initialized = true;
 }
 
 export function enqueueLocationRequest(tag, fn, nativeRequest = null) {
   if (typeof fn !== 'function') {
     return Promise.reject(new TypeError('Location request must be a function.'));
   }
+  if (localSettings.get()?.request_obfuscation_enabled === false) return fn();
 
   if (nativeRequest?.url) {
     const delay = randomInt(BATCH_MIN_MS, BATCH_MAX_MS);
@@ -106,6 +114,20 @@ export function resetRequestObfuscatorForTests() {
   if (timer) clearTimeout(timer);
   timer = null;
   queue = [];
+  lastBatchAt = null;
+  lastBatchSize = 0;
+  initialized = false;
+}
+
+export function getObfuscatorQueueStatus() {
+  const settings = localSettings.get();
+  return {
+    enabled: settings?.request_obfuscation_enabled !== false,
+    decoyMode: settings?.decoy_traffic_mode || 'off',
+    initialized,
+    lastBatchAt,
+    lastBatchSize,
+  };
 }
 
 export const REQUEST_OBFUSCATION_TIMING = Object.freeze({

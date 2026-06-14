@@ -45,6 +45,9 @@ describe('transmissionLog', () => {
     const record = await logTransmission({
       service: 'open-meteo',
       type: 'Weather lookup',
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'test',
       sentCoords: '43.6500, -79.3800',
       protections: ['rounded to 4 decimals'],
       bytesOut: 123.4,
@@ -82,7 +85,11 @@ describe('transmissionLog', () => {
       })),
     ];
 
-    await logTransmission({ service: 'export', type: 'Full backup' });
+    await logTransmission({
+      service: 'export',
+      type: 'Full backup',
+      coordinateDisclosure: 'committed',
+    });
     const loaded = await loadTransmissionLog();
 
     expect(loaded).toHaveLength(500);
@@ -96,6 +103,7 @@ describe('transmissionLog', () => {
       logTransmission({
         service: 'osrm',
         type: `Route matching ${index}`,
+        coordinateDisclosure: 'raw',
         status: 'safe',
       })
     )));
@@ -106,10 +114,35 @@ describe('transmissionLog', () => {
   });
 
   it('clears the encrypted log after queued writes finish', async () => {
-    const pending = logTransmission({ service: 'overpass', type: 'Speed limit query' });
+    const pending = logTransmission({
+      service: 'overpass',
+      type: 'Speed limit query',
+      coordinateDisclosure: 'bounding_box',
+    });
     await clearTransmissionLog();
     await pending;
 
     expect(await loadTransmissionLog()).toEqual([]);
+    expect(mocks.appendPrivacyEvent).toHaveBeenCalledWith({ op: 'TRANSMISSION_LOG_CLEARED' });
+  });
+
+  it('rejects records without a typed coordinate disclosure', async () => {
+    await expect(logTransmission({ service: 'test' })).rejects.toThrow('invalid coordinateDisclosure');
+  });
+
+  it('migrates legacy claims without retroactively verifying them', async () => {
+    mocks.stored = [{
+      id: 'legacy',
+      status: 'safe',
+      sentCoords: '43.6500, -79.3800',
+      protections: ['zone-guard +100m', 'rounded to 4dp'],
+      expiresAt: Date.now() + 60_000,
+    }];
+    expect((await loadTransmissionLog())[0]).toMatchObject({
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified: false,
+      privacyTransformSource: 'migrated_from_v1',
+      schemaVersion: 2,
+    });
   });
 });

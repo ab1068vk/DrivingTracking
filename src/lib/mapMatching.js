@@ -5,6 +5,7 @@ import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { pinnedFetch } from '@/lib/pinnedFetch';
 import { logTransmission } from '@/lib/transmissionLog';
+import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -235,6 +236,9 @@ async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIME
   await logTransmission({
     service: 'osrm',
     type: 'Route matching',
+    coordinateDisclosure: 'raw',
+    privacyTransformVerified: true,
+    privacyTransformSource: 'mapMatching.js:splitAtNullPoints',
     sentCoords: `${sampled.length} sampled coordinates`,
     protections: ['zone-masked route', 'explicit consent'],
     offsetMeters: null,
@@ -352,6 +356,35 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
+  if (settings.osrm_block_near_any_zone !== false) {
+    const zones = getPrivacyZones(settings);
+    const endpoints = [routePoints[0], routePoints.at?.(-1)].filter(Boolean);
+    const nearPrivateEndpoint = endpoints.some((point) => (
+      point?.masked_for_privacy === true ||
+      point?.privacy_gap === true ||
+      Boolean(isPointInPrivacyZone(point, zones, 100))
+    ));
+    if (nearPrivateEndpoint) {
+      await logTransmission({
+        service: 'osrm',
+        type: 'Route matching',
+        coordinateDisclosure: 'blocked',
+        privacyTransformVerified: true,
+        privacyTransformSource: 'mapMatching.js:osrm_block_near_any_zone',
+        sentCoords: null,
+        protections: ['route endpoint near privacy zone - request blocked'],
+        bytesOut: 0,
+        status: 'blocked',
+        zonesSuppressed: zones.map((zone) => zone.label),
+      });
+      return {
+        routePoints,
+        status: 'blocked_private_endpoint',
+        provider: 'osrm',
+        isOsrmDemoUrl,
+      };
+    }
+  }
   const { segments, mergedTemplate, gapCount } = splitAtNullPoints(routePoints);
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
   const validCount = segments.reduce((count, segment) => count + segment.length, 0);
@@ -359,6 +392,9 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
     await logTransmission({
       service: 'osrm',
       type: 'Route matching',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'mapMatching.js:splitAtNullPoints',
       sentCoords: null,
       protections: [gapCount ? 'privacy gaps left no route segment to send' : 'not enough public points - request blocked'],
       offsetMeters: null,

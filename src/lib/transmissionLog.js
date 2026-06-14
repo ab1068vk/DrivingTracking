@@ -6,6 +6,15 @@ export const TRANSMISSION_LOG_KEY = 'drivesense_transmission_log_v1';
 
 const MAX_ENTRIES = 500;
 const EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+export const COORDINATE_DISCLOSURE_VALUES = Object.freeze([
+  'none',
+  'blocked',
+  'raw',
+  'rounded',
+  'bounding_box',
+  'masked',
+  'committed',
+]);
 let logWriteQueue = Promise.resolve();
 
 const safeText = (value, fallback = '') => (
@@ -32,6 +41,7 @@ export async function loadTransmissionLog() {
     const now = Date.now();
     return log
       .filter((entry) => Number(entry?.expiresAt) > now)
+      .map(migrateTransmissionEntry)
       .slice(-MAX_ENTRIES);
   } catch (error) {
     logSystemFailure('transmission_log_load', error);
@@ -44,15 +54,27 @@ export async function clearTransmissionLog() {
     .catch(() => {})
     .then(() => setEncryptedJson(TRANSMISSION_LOG_KEY, []));
   await logWriteQueue;
+  await appendPrivacyEvent({ op: 'TRANSMISSION_LOG_CLEARED' });
 }
 
 export async function logTransmission(entry = {}) {
+  if (!COORDINATE_DISCLOSURE_VALUES.includes(entry.coordinateDisclosure)) {
+    throw new Error(
+      `logTransmission: invalid coordinateDisclosure "${entry.coordinateDisclosure}". ` +
+      `Expected one of: ${COORDINATE_DISCLOSURE_VALUES.join(', ')}`
+    );
+  }
   const now = Date.now();
   const record = {
     id: generateId(),
     timestamp: now,
     service: safeText(entry.service, 'unknown'),
     type: safeText(entry.type, 'Outbound request'),
+    coordinateDisclosure: entry.coordinateDisclosure,
+    privacyTransformVerified: entry.privacyTransformVerified === true,
+    privacyTransformSource: entry.privacyTransformSource == null
+      ? null
+      : safeText(entry.privacyTransformSource),
     sentCoords: entry.sentCoords == null ? null : safeText(entry.sentCoords),
     protections: safeArray(entry.protections),
     offsetMeters: entry.offsetMeters == null ? null : safeNumber(entry.offsetMeters, null),
@@ -62,6 +84,7 @@ export async function logTransmission(entry = {}) {
     tripId: entry.tripId == null ? null : safeText(entry.tripId),
     zonesSuppressed: safeArray(entry.zonesSuppressed),
     expiresAt: now + EXPIRY_MS,
+    schemaVersion: 2,
   };
 
   try {
@@ -100,3 +123,26 @@ export async function logTransmission(entry = {}) {
 }
 
 export { loadTransmissionLog as loadLog };
+
+export function migrateTransmissionEntry(entry = {}) {
+  if (entry.schemaVersion === 2 && COORDINATE_DISCLOSURE_VALUES.includes(entry.coordinateDisclosure)) {
+    return entry;
+  }
+  const protections = safeArray(entry.protections);
+  const joined = protections.join(' ');
+  let coordinateDisclosure = 'raw';
+  if (entry.status === 'blocked') coordinateDisclosure = 'blocked';
+  else if (!entry.sentCoords) coordinateDisclosure = 'none';
+  else if (/bbox|bounding/i.test(joined)) coordinateDisclosure = 'bounding_box';
+  else if (/round|guard|offset|buffer/i.test(joined)) coordinateDisclosure = 'rounded';
+  else if (/commit/i.test(joined)) coordinateDisclosure = 'committed';
+  else if (/mask|scrub/i.test(joined)) coordinateDisclosure = 'masked';
+  return {
+    ...entry,
+    protections,
+    coordinateDisclosure,
+    privacyTransformVerified: false,
+    privacyTransformSource: 'migrated_from_v1',
+    schemaVersion: 2,
+  };
+}

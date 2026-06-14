@@ -3,24 +3,38 @@ import {
   summarizeAudit,
   summarizeZones,
   transmissionPrivacyLevel,
+  computePrivacyScoreFromControls,
 } from '@/lib/privacyIntelligence';
 
 describe('privacy intelligence summaries', () => {
   afterEach(() => vi.useRealTimers());
 
   it('classifies blocked, protected, and raw outbound location data', () => {
-    expect(transmissionPrivacyLevel({ status: 'blocked', sentCoords: 'Bounding box' })).toBe('blocked');
-    expect(transmissionPrivacyLevel({ status: 'safe', sentCoords: null, protections: [] })).toBe('none');
+    expect(transmissionPrivacyLevel({ coordinateDisclosure: 'blocked' })).toBe('blocked');
+    expect(transmissionPrivacyLevel({ coordinateDisclosure: 'none' })).toBe('none');
     expect(transmissionPrivacyLevel({
-      status: 'safe',
-      sentCoords: 'Bounding box',
-      protections: ['privacy-zone excluded bbox'],
+      coordinateDisclosure: 'bounding_box',
+      privacyTransformVerified: true,
     })).toBe('protected');
     expect(transmissionPrivacyLevel({
-      status: 'safe',
-      sentCoords: '24 sampled coordinates',
-      protections: ['explicit consent'],
+      coordinateDisclosure: 'raw',
     })).toBe('raw');
+    expect(transmissionPrivacyLevel({
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified: false,
+    })).toBe('unverified');
+  });
+
+  it('excludes not-applicable controls and renormalizes applicable layers', () => {
+    const score = computePrivacyScoreFromControls([
+      { category: 'device', status: 'not_applicable', weight: 3 },
+      { category: 'network', status: 'ok', weight: 1 },
+      { category: 'inference', status: 'unknown', weight: 1 },
+      { category: 'integrity', status: 'configured', weight: 1 },
+    ]);
+    expect(score.layers.find((layer) => layer.id === 'device').score).toBeNull();
+    expect(score.summary.unknown).toBe(1);
+    expect(score.overall).toBe(53);
   });
 
   it('summarizes saved zone protection across time windows', () => {

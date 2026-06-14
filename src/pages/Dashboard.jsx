@@ -145,6 +145,19 @@ function hasUsableCoordinates(point, thresholds = DEFAULT_THRESHOLDS) {
     (accuracy == null || !Number.isFinite(accuracy) || accuracy <= thresholds.MAX_GPS_ACCURACY_M);
 }
 
+/**
+ * @param {{
+ *   points?: Array<Record<string, any>>,
+ *   stats?: {
+ *     duration_seconds?: number,
+ *     distance_km?: number,
+ *     max_speed_kmh?: number,
+ *   },
+ *   startTime?: string | number | Date,
+ *   endTime?: string | number | Date,
+ *   thresholds?: typeof DEFAULT_THRESHOLDS,
+ * }} options
+ */
 function reviewManualTripSave({ points = [], stats = {}, startTime, endTime, thresholds = DEFAULT_THRESHOLDS } = {}) {
   const startMs = new Date(startTime).getTime();
   const endMs = new Date(endTime).getTime();

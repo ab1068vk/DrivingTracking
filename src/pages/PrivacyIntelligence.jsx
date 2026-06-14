@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock3,
   Database,
+  Download,
   EyeOff,
   Filter,
   History,
@@ -21,11 +22,20 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Upload,
   XCircle,
 } from 'lucide-react';
 import { authenticateDevice } from '@/lib/biometricGate';
 import { loadPrivacyIntelligence } from '@/lib/privacyIntelligence';
 import { clearTransmissionLog } from '@/lib/transmissionLog';
+import { exportAuditCheckpoint, verifyCheckpoint } from '@/lib/hashChainLog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Activity },
@@ -37,16 +47,31 @@ const TABS = [
 
 const statusClass = {
   ok: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100',
+  configured: 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100',
   warn: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100',
+  unknown: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200',
   error: 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100',
+  not_applicable: 'border-border bg-secondary/40 text-muted-foreground',
 };
 
 const privacyLevelClass = {
   blocked: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200',
   raw: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-100',
   protected: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100',
+  unverified: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
   none: 'bg-secondary text-muted-foreground',
 };
+
+const STATUS_LABELS = {
+  ok: 'Verified',
+  configured: 'Configured',
+  warn: 'Needs attention',
+  unknown: 'Unverified',
+  error: 'Failing',
+  not_applicable: 'N/A',
+};
+
+const V2_BANNER_KEY = 'privacy_intel_v2_banner_dismissed';
 
 const auditLabels = {
   TRANSMISSION: ['External request recorded', 'An outbound request was added to the privacy history.'],
@@ -188,7 +213,9 @@ export default function PrivacyIntelligence() {
   const ActiveIcon = activeTab.icon;
   const tabCounts = {
     transmissions: data?.transmissions?.entries?.length || 0,
-    protections: (data?.protectionSummary?.warnings || 0) + (data?.protectionSummary?.errors || 0),
+    protections: (data?.protectionSummary?.warnings || 0) +
+      (data?.protectionSummary?.unknown || 0) +
+      (data?.protectionSummary?.errors || 0),
     zones: data?.zoneSummary?.zoneCount || 0,
     audit: data?.chain?.length || 0,
   };
@@ -251,8 +278,40 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const zoneSummary = data?.zoneSummary || {};
   const transmissions = data?.transmissions || {};
   const recommendations = data?.recommendations || [];
+  const [showThreatModel, setShowThreatModel] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(() => (
+    globalThis.localStorage?.getItem(V2_BANNER_KEY) === 'true'
+  ));
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">
+      {!bannerDismissed && (
+        <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sky-950 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+          <div className="font-semibold">Privacy Intelligence now verifies protections in real time</div>
+          <p className="mt-1 text-sm opacity-90">Your score may look different because unverified checks no longer receive full credit.</p>
+          <button
+            type="button"
+            onClick={() => {
+              globalThis.localStorage?.setItem(V2_BANNER_KEY, 'true');
+              setBannerDismissed(true);
+            }}
+            className="mt-3 rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white"
+          >
+            Got it
+          </button>
+        </section>
+      )}
+      {(score.summary?.unknown || 0) > 0 && (
+        <button type="button" onClick={() => onOpenTab('protections')} className="flex w-full items-center gap-2 rounded-xl border border-slate-300 bg-slate-100 p-3 text-left text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100">
+          <Info className="h-4 w-4 shrink-0" />
+          {score.summary.unknown} protection{score.summary.unknown === 1 ? '' : 's'} could not be verified this session.
+        </button>
+      )}
+      {(score.summary?.error || 0) > 0 && (
+        <button type="button" onClick={() => onOpenTab('protections')} className="flex w-full items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {score.summary.error} protection{score.summary.error === 1 ? '' : 's'} failed verification.
+        </button>
+      )}
       <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <section className={`min-w-0 rounded-3xl border p-5 shadow-sm ${statusClass[score.tone] || statusClass.warn}`}>
           <div className="flex items-center justify-between gap-3">
@@ -266,11 +325,15 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
         <section className="grid min-w-0 gap-3 sm:grid-cols-2">
           {(score.layers || []).map((layer) => (
             <div key={layer.id} className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-sm">
-              <div className="flex min-w-0 items-center justify-between gap-3"><div className="min-w-0 break-words font-semibold">{layer.label}</div><div className="shrink-0 font-grotesk text-2xl font-bold" style={{ color: layer.color }}>{layer.score}</div></div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full" style={{ width: `${layer.score}%`, background: layer.color }} /></div>
+              <div className="flex min-w-0 items-center justify-between gap-3"><div className="min-w-0 break-words font-semibold">{layer.label}</div><div className="shrink-0 font-grotesk text-2xl font-bold" style={{ color: layer.color }}>{layer.score ?? 'N/A'}</div></div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full" style={{ width: `${layer.score ?? 0}%`, background: layer.color }} /></div>
             </div>
           ))}
         </section>
+      </div>
+      <div className="text-center text-xs text-muted-foreground">
+        {score.summary?.ok || 0} verified · {score.summary?.configured || 0} configured · {score.summary?.warn || 0} need attention · {score.summary?.unknown || 0} unverified · {score.summary?.error || 0} failing
+        {(score.summary?.not_applicable || 0) > 0 ? ` · ${score.summary.not_applicable} not applicable` : ''}
       </div>
 
       <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -304,8 +367,37 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
           </div>
         </section>
       </div>
+      <button type="button" onClick={() => setShowThreatModel(true)} className="w-full text-center text-xs text-muted-foreground underline underline-offset-4">
+        Local privacy activity and protection checks - not an external security audit.
+      </button>
+      <Dialog open={showThreatModel} onOpenChange={setShowThreatModel}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>What this dashboard does and does not show</DialogTitle>
+            <DialogDescription>These checks provide local evidence, not a guarantee against a fully compromised device or application.</DialogDescription>
+          </DialogHeader>
+          <ThreatList title="Can help with" items={[
+            'Accidental privacy regressions',
+            'Awareness of external requests',
+            'Visibility into privacy-zone suppression',
+            'Detecting simple audit-log corruption',
+            'Identifying missing user-side protections',
+          ]} />
+          <ThreatList title="Does not fully protect against" items={[
+            'A compromised app bundle or malicious same-origin JavaScript',
+            'A rooted device controlled by an attacker',
+            'An attacker who rewrites both the local chain and its local anchor',
+            'Network observation by a powerful adversary',
+            'A malicious or compromised external data provider',
+          ]} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function ThreatList({ title, items }) {
+  return <section><h3 className="text-sm font-semibold">{title}</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{items.map((item) => <li key={item}>{item}</li>)}</ul></section>;
 }
 
 function SummaryCard({ icon: Icon, label, value, detail, tone = 'default', onClick = null }) {
@@ -340,7 +432,7 @@ function TransmissionsTab({ data, onClear }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard icon={ShieldCheck} label="Protected sends" value={data?.transmissions?.protectedTotal || 0} detail="Coordinates reduced, masked, rounded, or boxed" />
+        <SummaryCard icon={ShieldCheck} label="Verified protections" value={data?.transmissions?.protectedTotal || 0} detail={`${data?.transmissions?.claimedButUnverifiedCount || 0} claimed but unverified`} />
         <SummaryCard icon={Ban} label="Blocked requests" value={data?.transmissions?.blockedTotal || 0} detail="Nothing was sent" />
         <SummaryCard icon={AlertTriangle} label="Raw-coordinate sends" value={data?.transmissions?.totalRawCoords || 0} detail="Review any non-zero count" tone={data?.transmissions?.totalRawCoords ? 'error' : 'default'} />
         <SummaryCard icon={Database} label="Outbound metadata" value={formatBytes(data?.transmissions?.totalBytesOut)} detail="Retained locally for 30 days" />
@@ -365,12 +457,12 @@ function TransmissionsTab({ data, onClear }) {
 }
 
 function TransmissionCard({ entry }) {
-  const privacyLabel = entry.privacyLevel === 'raw' ? 'Raw coordinates' : entry.privacyLevel === 'protected' ? 'Protected' : entry.privacyLevel === 'blocked' ? 'Blocked' : 'No coordinates';
+  const privacyLabel = entry.displayClassification?.label || 'Unverified';
   return (
     <article className="rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><div className="font-semibold">{entry.type}</div><div className="mt-1 text-xs text-muted-foreground">{entry.service} - {formatTime(entry.timestamp)}</div></div>
-        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${privacyLevelClass[entry.privacyLevel] || privacyLevelClass.none}`}>{privacyLabel}</span>
+        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${privacyLevelClass[entry.privacyLevel] || privacyLevelClass.unverified}`}>{privacyLabel}</span>
       </div>
       <div className="mt-3 grid gap-2 rounded-xl bg-secondary/40 p-3 text-xs sm:grid-cols-3">
         <div><span className="font-semibold">Data shape:</span> {entry.sentCoords || 'Nothing'}</div>
@@ -389,18 +481,19 @@ function ProtectionsTab({ data, onOpenSettings }) {
   const categories = [...new Set(protections.map((item) => item.category))];
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <SummaryCard icon={CheckCircle2} label="Active" value={data?.protectionSummary?.active || 0} detail="Checks currently passing" />
-        <SummaryCard icon={AlertTriangle} label="Warnings" value={data?.protectionSummary?.warnings || 0} detail="Optional or environment-dependent" />
-        <SummaryCard icon={XCircle} label="Errors" value={data?.protectionSummary?.errors || 0} detail="Important protections needing attention" tone={data?.protectionSummary?.errors ? 'error' : 'default'} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard icon={CheckCircle2} label="Verified" value={data?.protectionSummary?.active || 0} detail={`${data?.protectionSummary?.configured || 0} configured`} />
+        <SummaryCard icon={Info} label="Unverified" value={data?.protectionSummary?.unknown || 0} detail={`${data?.protectionSummary?.notApplicable || 0} not applicable`} />
+        <SummaryCard icon={AlertTriangle} label="Warnings" value={data?.protectionSummary?.warnings || 0} detail="Degraded checks" />
+        <SummaryCard icon={XCircle} label="Failing" value={data?.protectionSummary?.errors || 0} detail="Protections needing attention" tone={data?.protectionSummary?.errors ? 'error' : 'default'} />
       </div>
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card p-3 shadow-sm"><Filter className="h-4 w-4 text-muted-foreground" />{['all', 'error', 'warn', 'ok', ...categories].map((option) => <button key={option} type="button" onClick={() => setFilter(option)} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${filter === option ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>{option === 'all' ? 'All checks' : option === 'warn' ? 'Warnings' : titleCase(option)}</button>)}</div>
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card p-3 shadow-sm"><Filter className="h-4 w-4 text-muted-foreground" />{['all', 'error', 'warn', 'unknown', 'configured', 'ok', 'not_applicable', ...categories].map((option) => <button key={option} type="button" onClick={() => setFilter(option)} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${filter === option ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'}`}>{option === 'all' ? 'All checks' : STATUS_LABELS[option] || titleCase(option)}</button>)}</div>
       <div className="grid gap-3 md:grid-cols-2">
         {visible.map((item) => (
           <article key={item.id} className={`rounded-2xl border p-4 shadow-sm ${statusClass[item.status] || statusClass.warn}`}>
             <div className="flex items-start gap-3">
-              {item.status === 'ok' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'error' ? <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
-              <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{item.label}</span><span className="rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">{item.category}</span></div><div className="mt-1 text-sm font-medium">{item.value}</div><div className="mt-1 text-xs opacity-80">{item.detail}</div>{item.action && <button type="button" onClick={onOpenSettings} className="mt-3 inline-flex items-center gap-1 text-xs font-bold underline underline-offset-2">{item.action}<ChevronRight className="h-3.5 w-3.5" /></button>}</div>
+              {item.status === 'ok' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'error' ? <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'unknown' || item.status === 'not_applicable' ? <Info className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
+              <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{item.label}</span><span className="rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">{item.category}</span><span className="rounded bg-background/60 px-2 py-0.5 text-[10px] font-bold uppercase">{STATUS_LABELS[item.status] || 'Unknown'}</span></div><div className="mt-1 text-xs opacity-90">{item.evidence || item.detail}</div>{item.rotation && <div className="mt-2 text-[11px] opacity-75">Active v{item.rotation.activeKeyVersion} · Oldest {item.rotation.oldestPayloadKeyVersion == null ? 'none' : `v${item.rotation.oldestPayloadKeyVersion}`} · Pending {item.rotation.payloadsPendingRotation || 0}</div>}{item.action && item.status !== 'not_applicable' && <button type="button" onClick={onOpenSettings} className="mt-3 inline-flex items-center gap-1 text-xs font-bold underline underline-offset-2">{item.action}<ChevronRight className="h-3.5 w-3.5" /></button>}</div>
             </div>
           </article>
         ))}
@@ -452,6 +545,8 @@ function AuditTab({ data }) {
   const entries = (data?.chain || []).slice().reverse();
   const [query, setQuery] = useState('');
   const [operation, setOperation] = useState('all');
+  const [checkpointResult, setCheckpointResult] = useState(null);
+  const fileInputRef = useRef(null);
   const operations = data?.auditSummary?.operations || [];
   const filtered = useMemo(() => entries.filter((entry) => {
     if (operation !== 'all' && entry.op !== operation) return false;
@@ -465,6 +560,56 @@ function AuditTab({ data }) {
         <div className="flex items-start gap-3">{data?.chainResult?.valid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{data?.chainResult?.valid ? 'Audit chain verified' : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{data?.chainResult?.valid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}.` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
       </div>
       <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log proves</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry's hash. Editing, reordering, or deleting an entry breaks verification. The log records privacy operations and intentionally excludes coordinates, addresses, tokens, and zone radius details.</p></div></div></div>
+      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const checkpoint = await exportAuditCheckpoint();
+                const blob = new Blob([JSON.stringify(checkpoint, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `road-sage-audit-checkpoint-${checkpoint.seq}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+              } catch (checkpointError) {
+                setCheckpointResult({ valid: false, reason: checkpointError?.message });
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+          >
+            <Download className="h-4 w-4" /> Export checkpoint
+          </button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">
+            <Upload className="h-4 w-4" /> Verify checkpoint
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={async (event) => {
+              try {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                setCheckpointResult(await verifyCheckpoint(JSON.parse(await file.text())));
+              } catch (checkpointError) {
+                setCheckpointResult({ valid: false, reason: checkpointError?.message || 'Checkpoint file is invalid' });
+              } finally {
+                event.target.value = '';
+              }
+            }}
+          />
+        </div>
+        {checkpointResult && (
+          <div className={`mt-3 rounded-lg border p-3 text-xs ${checkpointResult.valid ? statusClass.ok : statusClass.error}`}>
+            {checkpointResult.valid ? 'Chain history matches the saved checkpoint.' : checkpointResult.reason}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-muted-foreground">A saved checkpoint makes later history changes detectable across time. It is tamper-evident, not tamper-proof.</p>
+      </section>
       <div className="grid gap-3 sm:grid-cols-3"><SummaryCard icon={History} label="Entries today" value={data?.auditSummary?.todayTotal || 0} detail={`${data?.auditSummary?.weekTotal || 0} this week`} /><SummaryCard icon={Activity} label="Operation types" value={operations.length} detail="Distinct privacy actions" /><SummaryCard icon={Clock3} label="Latest entry" value={data?.auditSummary?.latestAt ? formatRelativeTime(data.auditSummary.latestAt) : 'None'} detail={data?.auditSummary?.latestAt ? formatTime(data.auditSummary.latestAt) : 'No audit activity yet'} /></div>
       <div className="grid gap-2 rounded-2xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1fr_220px]"><label className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search audit activity" className="h-9 w-full rounded-xl border border-input bg-background pl-9 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring" /></label><select value={operation} onChange={(event) => setOperation(event.target.value)} className="h-9 rounded-xl border border-input bg-background px-3 text-sm"><option value="all">All operations</option>{operations.map((item) => <option key={item.operation} value={item.operation}>{titleCase(item.operation)} ({item.count})</option>)}</select></div>
       <div className="text-xs text-muted-foreground">Showing {filtered.length} of {entries.length} audit entr{entries.length === 1 ? 'y' : 'ies'}</div>

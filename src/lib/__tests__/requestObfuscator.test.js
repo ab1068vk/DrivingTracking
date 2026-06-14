@@ -4,6 +4,7 @@ import {
   REQUEST_OBFUSCATION_TIMING,
   resetRequestObfuscatorForTests,
 } from '@/lib/requestObfuscator';
+import { localSettings } from '@/lib/trackingStore';
 
 describe('request timing obfuscation', () => {
   beforeEach(() => {
@@ -15,6 +16,10 @@ describe('request timing obfuscation', () => {
         values[0] = 0;
         return values;
       }),
+    });
+    localSettings.update({
+      request_obfuscation_enabled: true,
+      decoy_traffic_mode: 'off',
     });
   });
 
@@ -36,7 +41,7 @@ describe('request timing obfuscation', () => {
 
     await expect(resultPromise).resolves.toBe('weather-result');
     expect(request).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledTimes(REQUEST_OBFUSCATION_TIMING.decoyMinCount);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('batches requests, adds decoys, and preserves individual outcomes', async () => {
@@ -54,6 +59,16 @@ describe('request timing obfuscation', () => {
     await failedExpectation;
     expect(successful).toHaveBeenCalledTimes(1);
     expect(failed).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('uses only the existing Open-Meteo endpoint when first-party decoys are enabled', async () => {
+    localSettings.update({ decoy_traffic_mode: 'first_party' });
+    const resultPromise = enqueueLocationRequest('weather', async () => 'ok');
+    await vi.runAllTimersAsync();
+    await expect(resultPromise).resolves.toBe('ok');
     expect(fetch).toHaveBeenCalledTimes(REQUEST_OBFUSCATION_TIMING.decoyMinCount);
+    expect(fetch.mock.calls[0][0]).toContain('api.open-meteo.com');
+    expect(fetch.mock.calls[0][0]).toContain('latitude=0&longitude=0');
   });
 });

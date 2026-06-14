@@ -92,9 +92,9 @@ function noisyCount(value, metricName = 'event_count') {
 }
 
 export function applyDifferentialPrivacyToAggregates(value = {}) {
-  if (!value || typeof value !== 'object' || value._dpApplied === true) return value;
+  if (!value || typeof value !== 'object' || /** @type {Record<string, any>} */ (value)._dpApplied === true) return value;
 
-  const privatized = { ...value };
+  const privatized = /** @type {Record<string, any>} */ ({ ...value });
   const noisedFields = [];
   const applyField = (field, metricName, digits = 0, count = false) => {
     if (!(field in privatized) || finiteMetric(privatized[field]) == null) return;

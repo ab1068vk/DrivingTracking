@@ -667,6 +667,8 @@ export default function Settings() {
     return `Not yet accepted - Version ${LEGAL_NOTICE_ACK_VERSION}`;
   }, [cfg.legal_notice_ack_version, cfg.legal_notice_acknowledged_at]);
 
+  const legalNoticeNeedsReview = (Number(cfg.legal_notice_ack_version) || 0) < LEGAL_NOTICE_ACK_VERSION;
+
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
   }, [cfg.osrm_map_matching_url]);
@@ -1131,6 +1133,25 @@ export default function Settings() {
       title: 'Legal notice opened',
       category: 'settings',
     });
+  };
+
+  const acknowledgeLegalNoticeReview = () => {
+    if (legalNoticeNeedsReview) {
+      const acknowledgedAt = new Date().toISOString();
+      updateCfg({
+        legal_notice_ack_version: LEGAL_NOTICE_ACK_VERSION,
+        legal_notice_acknowledged_at: acknowledgedAt,
+      });
+      recordSystemEvent('legal_notice_review_acknowledged', {
+        notice_version: LEGAL_NOTICE_ACK_VERSION,
+        acknowledged_at: acknowledgedAt,
+        source: 'settings_privacy_data',
+      }, {
+        title: 'Legal notice reviewed',
+        category: 'settings',
+      });
+    }
+    setLegalNoticeOpen(false);
   };
 
   const stopNativeAutoTrackingSafely = async (title = 'Auto tracking could not be turned off') => {
@@ -2207,7 +2228,7 @@ export default function Settings() {
               {[
                 { id: 'manual', label: 'Manual Only', sub: 'Start/stop trips manually' },
                 { id: 'auto_detect', label: 'Auto-Detect', sub: 'Detects driving when app is open' },
-                { id: 'background_auto', label: 'Background Auto', sub: '⚠️ Uses more battery' },
+                { id: 'background_auto', label: 'Background Auto', sub: 'Uses background location when enabled' },
               ].map(opt => (
                 <button
                   key={opt.id}
@@ -2349,7 +2370,7 @@ export default function Settings() {
             },
             {
               label: 'Background auto tracking for richer repeated-route history',
-              sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications.',
+              sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications, and it can collect location while the app is closed or not in use.',
               value: permissionStatus?.backgroundLocation,
               action: requestBackgroundLocationPermission,
             },
@@ -3195,6 +3216,16 @@ export default function Settings() {
               onChange={enableOsrmMapMatching}
             />
           </SettingRow>
+          <SettingRow
+            icon={Shield}
+            label="Block OSRM near any privacy zone"
+            sublabel="Recommended. Prevents route matching when a route endpoint is inside or within 100 m of a configured privacy zone."
+          >
+            <Toggle
+              value={cfg.osrm_block_near_any_zone !== false}
+              onChange={(value) => updateCfg({ osrm_block_near_any_zone: value })}
+            />
+          </SettingRow>
           <div className="px-1 py-3 border-b border-border/50">
             <div className="flex justify-between gap-3 text-xs mb-1.5">
               <span className="font-medium">Network timeout</span>
@@ -3615,7 +3646,7 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Legal, safety, data & privacy notice"
-            sublabel={`Reread the first-launch notice, local data rules, safety limits, and external-service warnings. ${legalNoticeStatus}.`}
+            sublabel={`Reread the first-launch notice, permission disclosures, local data rules, safety limits, and external-service warnings. ${legalNoticeStatus}.`}
             onClick={showPrivacyPolicy}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -3634,6 +3665,31 @@ export default function Settings() {
               )}
               <ChevronRight className="w-4 h-4 text-muted-foreground" />
             </div>
+          </SettingRow>
+          <SettingRow
+            icon={Clock}
+            label="Request timing obfuscation"
+            sublabel="Batches weather and road-data requests with randomized delays."
+          >
+            <Toggle
+              value={cfg.request_obfuscation_enabled !== false}
+              onChange={(value) => updateCfg({ request_obfuscation_enabled: value })}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Route}
+            label="Decoy traffic"
+            sublabel="Off by default. Optional decoys use only the existing Open-Meteo endpoint and a neutral location."
+          >
+            <select
+              value={cfg.decoy_traffic_mode || 'off'}
+              onChange={(event) => updateCfg({ decoy_traffic_mode: event.target.value })}
+              disabled={cfg.request_obfuscation_enabled === false}
+              className="max-w-[12rem] rounded-lg border border-input bg-background px-2 py-1.5 text-xs"
+            >
+              <option value="off">Off (recommended)</option>
+              <option value="first_party">Open-Meteo only</option>
+            </select>
           </SettingRow>
           {isAndroid() && (
             <SettingRow
@@ -4580,8 +4636,9 @@ export default function Settings() {
       <LegalNoticeDialog
         open={legalNoticeOpen}
         onOpenChange={setLegalNoticeOpen}
-        onAcknowledge={() => setLegalNoticeOpen(false)}
+        onAcknowledge={acknowledgeLegalNoticeReview}
         reviewMode
+        actionLabel={legalNoticeNeedsReview ? 'Mark reviewed' : 'Close'}
       />
 
       {/* About */}
@@ -4589,7 +4646,7 @@ export default function Settings() {
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
         <div>Version 1.0.0 (Capacitor Android)</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
-        <div>Data: Stored locally by default - No ads - Survey labels stay local</div>
+        <div>Data: Stored locally by default - No ads - Background tracking and external road data are opt-in</div>
         <div>{LEGAL_DISCLAIMER_SHORT}</div>
       </div>
     </div>

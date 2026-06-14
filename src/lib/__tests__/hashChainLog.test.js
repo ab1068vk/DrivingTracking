@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendPrivacyEvent,
+  exportAuditCheckpoint,
   loadPrivacyAuditChain,
   PRIVACY_AUDIT_ANCHOR_KEY,
   PRIVACY_AUDIT_CHAIN_KEY,
   verifyChain,
+  verifyCheckpoint,
 } from '@/lib/hashChainLog';
 
 const storage = new Map();
@@ -101,5 +103,30 @@ describe('hashChainLog', () => {
     expect(serialized).not.toContain('43.65');
     expect(serialized).not.toContain('-79.38');
     expect(serialized).not.toContain('radius_m');
+  });
+
+  it('exports and verifies a hash-only checkpoint on web', async () => {
+    await appendPrivacyEvent({ op: 'ZONE_SAVED' });
+    const checkpoint = await exportAuditCheckpoint();
+    expect(checkpoint).toMatchObject({
+      schema: 'ds_audit_checkpoint_v1',
+      seq: 1,
+      signature: null,
+      signing_pubkey: null,
+    });
+    await expect(verifyCheckpoint(checkpoint)).resolves.toMatchObject({ valid: true });
+  });
+
+  it('rejects checkpoint verification when current history was modified', async () => {
+    await appendPrivacyEvent({ op: 'ZONE_SAVED' });
+    const checkpoint = await exportAuditCheckpoint();
+    const chain = JSON.parse(storage.get(PRIVACY_AUDIT_CHAIN_KEY));
+    chain[0].op = 'ZONE_DELETED';
+    storage.set(PRIVACY_AUDIT_CHAIN_KEY, JSON.stringify(chain));
+    await expect(verifyCheckpoint(checkpoint)).resolves.toMatchObject({ valid: false });
+  });
+
+  it('refuses to export an empty audit chain', async () => {
+    await expect(exportAuditCheckpoint()).rejects.toThrow('Audit chain is empty');
   });
 });

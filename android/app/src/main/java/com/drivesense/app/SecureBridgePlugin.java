@@ -78,6 +78,20 @@ public class SecureBridgePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void echo(PluginCall call) {
+        try {
+            BridgeEnvelope envelope = decryptBridgePayload(call, "SecureBridge", "echo");
+            JSObject result = new JSObject();
+            result.put("canary", envelope.payload.optLong("canary"));
+            resolveEncrypted(call, envelope, "SecureBridge", "echo", result);
+        } catch (SecurityException error) {
+            call.reject(error.getMessage());
+        } catch (Exception error) {
+            call.reject("SECURE_BRIDGE_ECHO_FAILED", error);
+        }
+    }
+
+    @PluginMethod
     public void setPreference(PluginCall call) {
         try {
             BridgeEnvelope envelope = decryptBridgePayload(call, "SecureBridge", "setPreference");

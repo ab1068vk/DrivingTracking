@@ -13,8 +13,6 @@ import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sen
 import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidBatteryOptimizationStatus, openAndroidBatteryOptimizationSettings, openAndroidUsageAccessSettings, startNativeAutoTracking } from '@/lib/activityRecognition';
 import { useNavigate } from 'react-router-dom';
-import { getJson, setJson } from '@/lib/mobileStorage';
-import { FIRST_LAUNCH_PERMISSION_PROMPTED_KEY } from '@/lib/appConstants';
 
 const STEPS = [
   {
@@ -31,7 +29,7 @@ const STEPS = [
     icon: MapPin,
     title: 'Location Access',
     subtitle: 'Required for trip tracking',
-    description: 'Road Sage needs your GPS location to track routes, calculate speed, and detect driving events. Location is only used when you are actively tracking a trip.',
+    description: 'Road Sage needs GPS location to track routes, calculate speed, and detect driving events. Manual and foreground modes use location while tracking is active; Background Auto can also use location when the app is closed or not in use.',
     color: 'gradient-success',
     textColor: 'text-white',
     permissionType: 'location',
@@ -84,10 +82,10 @@ const TRACKING_OPTIONS = [
   {
     id: 'background_auto',
     title: 'Background Auto',
-    description: 'Tracks trips automatically, even when app is closed. Uses more battery.',
+    description: 'Tracks trips automatically, including when the app is closed or not in use. Uses more battery.',
     icon: Globe2,
     recommended: false,
-    warning: 'Uses more battery. Requires background location permission.',
+    warning: 'Requires background location, activity, notification, and battery setup.',
   },
 ];
 
@@ -208,7 +206,7 @@ export default function Onboarding({ onComplete }) {
 
   const handleRecommendedSetup = async ({ autoOpenUsageAccess = false } = {}) => {
     setRequesting(true);
-    setSetupStatus('Requesting location, notifications, motion, activity, and background tracking permissions...');
+    setSetupStatus('Requesting only the permissions you confirm here: location, notifications, motion, activity, and background tracking.');
     const recommendedMode = isAndroid() ? 'background_auto' : 'auto_detect';
     setTrackingMode(recommendedMode);
     await requestTrackingModePermissions(recommendedMode);
@@ -221,25 +219,6 @@ export default function Onboarding({ onComplete }) {
       await openAndroidUsageAccessSettings().catch(() => {});
     }
   };
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer;
-    getJson(FIRST_LAUNCH_PERMISSION_PROMPTED_KEY, false).then(async (prompted) => {
-      if (cancelled || prompted === true) return;
-      await setJson(FIRST_LAUNCH_PERMISSION_PROMPTED_KEY, true);
-      if (cancelled) return;
-      timer = setTimeout(() => {
-        handleRecommendedSetup({ autoOpenUsageAccess: true }).catch(() => {
-          setRequesting(false);
-        });
-      }, 700);
-    }).catch(() => {});
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
 
   useEffect(() => {
     refreshSetupStatus().catch(() => {});
@@ -395,7 +374,7 @@ export default function Onboarding({ onComplete }) {
                 disabled={requesting}
                 className="w-full rounded-2xl border border-primary/30 bg-primary/10 p-3 text-left text-sm font-semibold text-primary disabled:opacity-50"
               >
-                {requesting ? 'Requesting permissions...' : 'Enable all recommended permissions'}
+                {requesting ? 'Requesting permissions...' : 'Enable recommended permissions'}
                 {setupStatus && <span className="mt-1 block text-xs font-normal text-muted-foreground">{setupStatus}</span>}
               </button>
               {isAndroid() && (
@@ -449,6 +428,14 @@ export default function Onboarding({ onComplete }) {
                   );
                 })()
               ))}
+              {trackingMode === 'background_auto' && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                  <div className="font-semibold">Background Auto disclosure</div>
+                  <div className="mt-1">
+                    Road Sage collects location and activity signals in the background only if you choose Background Auto and grant Android permissions. This enables automatic trip capture while the app is closed or not in use. You can pause tracking, switch to Manual Only, or revoke permissions at any time.
+                  </div>
+                </div>
+              )}
               <div className="space-y-2 rounded-2xl bg-secondary/40 p-3">
                 <div className="text-xs font-bold uppercase tracking-normal text-muted-foreground">Setup checklist</div>
                 <SetupChecklistRow
@@ -476,7 +463,7 @@ export default function Onboarding({ onComplete }) {
                   <>
                     <SetupChecklistRow
                       label="Background location"
-                      detail="Needed for automatic trip capture while the app sleeps."
+                      detail="Needed for automatic trip capture while the app is closed or not in use."
                       ready={backgroundGranted}
                       onAction={handleBackgroundLocationRequest}
                       disabled={requesting}

@@ -1,4 +1,5 @@
 import { isNativePlatform } from '@/lib/nativePlatform';
+import { registerPlugin } from '@capacitor/core';
 
 export const PRIVACY_AUDIT_CHAIN_KEY = 'drivesense_privacy_audit_chain_v1';
 export const PRIVACY_AUDIT_ANCHOR_KEY = 'drivesense_privacy_audit_anchor_v1';
@@ -30,6 +31,7 @@ const DETAIL_ALLOWLIST = new Set([
   'zone_count',
 ]);
 const SENSITIVE_KEY = /(^|[_-])(lat|lng|longitude|latitude|coordinate|coordinates|radius|radius_m|route_points|driving_events|address|email|phone|token|password|secret)($|[_-])/i;
+const AuditAnchor = registerPlugin('AuditAnchor');
 
 const hasLocalStorage = () => {
   try {
@@ -159,7 +161,12 @@ async function verifyAuditState({ chainResult, anchorResult, chain, anchor }) {
   let expected = GENESIS_HASH;
   for (let index = 0; index < chain.length; index += 1) {
     const entry = chain[index] || {};
-    const { hash, ...body } = entry;
+    const {
+      hash,
+      tipSignature: _tipSignature,
+      signingPublicKey: _signingPublicKey,
+      ...body
+    } = entry;
     if (body.seq !== index + 1) {
       return { valid: false, brokenAt: index, reason: `Sequence mismatch at seq ${body.seq ?? index + 1}` };
     }
@@ -205,6 +212,16 @@ export async function appendPrivacyEvent(event = {}) {
     ...body,
     hash: await sha256hex(canonicalStringify(body)),
   };
+  if (isNativePlatform()) {
+    try {
+      const signed = await AuditAnchor.signTipHash({ tipHash: entry.hash });
+      entry.tipSignature = signed.signature || null;
+      entry.signingPublicKey = signed.publicKey || null;
+    } catch {
+      entry.tipSignature = null;
+      entry.signingPublicKey = null;
+    }
+  }
   const chain = [...state.chain, entry];
   await writeRaw(PRIVACY_AUDIT_CHAIN_KEY, JSON.stringify(chain));
   await writeRaw(PRIVACY_AUDIT_ANCHOR_KEY, JSON.stringify({
@@ -218,4 +235,92 @@ export async function appendPrivacyEvent(event = {}) {
 
 export async function verifyChain() {
   return verifyAuditState(await readAuditState());
+}
+
+export async function exportAuditCheckpoint() {
+  const chain = await loadPrivacyAuditChain();
+  if (!chain.length) throw new Error('Audit chain is empty');
+  const tip = chain.at(-1);
+  return {
+    schema: 'ds_audit_checkpoint_v1',
+    seq: tip.seq,
+    tip_hash: tip.hash,
+    signature: tip.tipSignature || null,
+    signing_pubkey: tip.signingPublicKey || null,
+    chain_length: chain.length,
+    exported_at: Date.now(),
+  };
+}
+
+const base64Bytes = (value) => {
+  const binary = atob(String(value || ''));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+};
+
+const derEcdsaToRaw = (signature) => {
+  const bytes = base64Bytes(signature);
+  if (bytes[0] !== 0x30) throw new Error('Invalid ECDSA signature encoding');
+  let offset = bytes[1] & 0x80 ? 2 + (bytes[1] & 0x7f) : 2;
+  if (bytes[offset++] !== 0x02) throw new Error('Invalid ECDSA r value');
+  const rLength = bytes[offset++];
+  const r = bytes.slice(offset, offset + rLength);
+  offset += rLength;
+  if (bytes[offset++] !== 0x02) throw new Error('Invalid ECDSA s value');
+  const sLength = bytes[offset++];
+  const s = bytes.slice(offset, offset + sLength);
+  const raw = new Uint8Array(64);
+  raw.set(r.slice(Math.max(0, r.length - 32)), 32 - Math.min(32, r.length));
+  raw.set(s.slice(Math.max(0, s.length - 32)), 64 - Math.min(32, s.length));
+  return raw;
+};
+
+async function verifyCheckpointSignature(hash, signature, publicKey) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return false;
+  const key = await subtle.importKey(
+    'spki',
+    base64Bytes(publicKey),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify']
+  );
+  return subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    derEcdsaToRaw(signature),
+    new TextEncoder().encode(hash)
+  );
+}
+
+export async function verifyCheckpoint(checkpoint = {}) {
+  if (checkpoint.schema !== 'ds_audit_checkpoint_v1') {
+    return { valid: false, reason: 'Unsupported audit checkpoint schema' };
+  }
+  const currentVerification = await verifyChain();
+  if (!currentVerification.valid) {
+    return { valid: false, reason: `Current audit chain is invalid: ${currentVerification.reason}` };
+  }
+  const chain = await loadPrivacyAuditChain();
+  if (chain.length < checkpoint.seq) {
+    return { valid: false, reason: `Chain is shorter (${chain.length}) than checkpoint seq (${checkpoint.seq})` };
+  }
+  const entry = chain.find((item) => item.seq === checkpoint.seq);
+  if (!entry) return { valid: false, reason: `No audit entry exists at seq ${checkpoint.seq}` };
+  if (entry.hash !== checkpoint.tip_hash) {
+    return { valid: false, reason: `Hash at seq ${checkpoint.seq} does not match the checkpoint` };
+  }
+  if (checkpoint.signature && checkpoint.signing_pubkey) {
+    try {
+      if (!await verifyCheckpointSignature(
+        checkpoint.tip_hash,
+        checkpoint.signature,
+        checkpoint.signing_pubkey
+      )) {
+        return { valid: false, reason: 'Checkpoint signature is invalid' };
+      }
+    } catch {
+      return { valid: false, reason: 'Checkpoint signature could not be verified' };
+    }
+  }
+  return { valid: true, verifiedAt: Date.now() };
 }

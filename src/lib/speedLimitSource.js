@@ -290,6 +290,12 @@ async function fetchOverpassWaysFromUrl(bounds, url) {
     await logTransmission({
       service: 'overpass',
       type: 'Speed limit query',
+      coordinateDisclosure: 'bounding_box',
+      privacyTransformVerified: (
+        queryString.includes(`${bounds.south},${bounds.west},${bounds.north},${bounds.east}`) &&
+        !/\bnode\s*\(/i.test(queryString)
+      ),
+      privacyTransformSource: 'speedLimitSource.js:overpassQuery',
       sentCoords: 'Bounding box',
       protections: ['privacy-zone excluded bbox', 'zone guard +50m'],
       offsetMeters: null,
@@ -428,6 +434,9 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
       await logTransmission({
         service: 'overpass',
         type: 'Speed limit query',
+        coordinateDisclosure: 'blocked',
+        privacyTransformVerified: true,
+        privacyTransformSource: 'speedLimitSource.js:privacySafeRoutePoints',
         sentCoords: null,
         protections: ['all route points inside privacy guard - request blocked'],
         offsetMeters: null,

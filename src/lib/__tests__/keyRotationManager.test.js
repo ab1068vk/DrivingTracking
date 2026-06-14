@@ -9,6 +9,9 @@ const rotateTripEncryptionKey = vi.fn(async () => ({
   fallbackStoreRotated: true,
 }));
 const recordSystemEvent = vi.fn();
+const encryptedStorage = new Map();
+const getActiveEncryptionKeyVersion = vi.fn(async () => 1);
+const inspectStoredTripKeyVersions = vi.fn(async () => []);
 
 vi.mock('@/lib/mobileStorage', () => ({
   getJson: vi.fn(async (key, fallback) => storage.has(key) ? storage.get(key) : fallback),
@@ -20,9 +23,15 @@ vi.mock('@/lib/securePayloadCrypto', () => ({
   ensureEncryptionKeyVersion,
   deleteEncryptionKeyVersion,
   rotateEncryptedJsonKey,
+  getActiveEncryptionKeyVersion,
+  getEncryptedJson: vi.fn(async (key, fallback) => encryptedStorage.has(key) ? encryptedStorage.get(key) : fallback),
+  setEncryptedJson: vi.fn(async (key, value) => encryptedStorage.set(key, value)),
 }));
 
-vi.mock('@/lib/localTripRepository', () => ({ rotateTripEncryptionKey }));
+vi.mock('@/lib/localTripRepository', () => ({
+  rotateTripEncryptionKey,
+  inspectStoredTripKeyVersions,
+}));
 vi.mock('@/lib/systemLog', () => ({
   logSystemFailure: vi.fn(),
   recordSystemEvent,
@@ -31,7 +40,10 @@ vi.mock('@/lib/systemLog', () => ({
 describe('keyRotationManager', () => {
   beforeEach(() => {
     storage.clear();
+    encryptedStorage.clear();
     vi.clearAllMocks();
+    getActiveEncryptionKeyVersion.mockResolvedValue(1);
+    inspectStoredTripKeyVersions.mockResolvedValue([]);
   });
 
   it('initializes rotation metadata without rewriting records', async () => {
@@ -71,5 +83,31 @@ describe('keyRotationManager', () => {
       expect.objectContaining({ indexeddb_record_count: 3 }),
       expect.any(Object)
     );
+  });
+
+  it('reports unknown with no encrypted records and warns for pending versions', async () => {
+    const { getKeyRotationStatus } = await import('@/lib/keyRotationManager');
+    await expect(getKeyRotationStatus()).resolves.toMatchObject({
+      status: 'unknown',
+      activeKeyVersion: 1,
+    });
+
+    getActiveEncryptionKeyVersion.mockResolvedValue(2);
+    inspectStoredTripKeyVersions.mockResolvedValue([1, 2]);
+    await expect(getKeyRotationStatus()).resolves.toMatchObject({
+      status: 'warn',
+      payloadsPendingRotation: 1,
+    });
+  });
+
+  it('caps the encrypted rotation log at 20 entries', async () => {
+    encryptedStorage.set(
+      'drivesense_key_rotation_log_v1',
+      Array.from({ length: 25 }, (_, index) => ({ status: 'ok', completedAt: index }))
+    );
+    const { loadRotationLog } = await import('@/lib/keyRotationManager');
+    const log = await loadRotationLog();
+    expect(log).toHaveLength(20);
+    expect(log[0].completedAt).toBe(5);
   });
 });

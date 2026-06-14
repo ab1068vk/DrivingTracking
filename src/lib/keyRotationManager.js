@@ -3,8 +3,12 @@ import {
   deleteEncryptionKeyVersion,
   ENCRYPTION_KEY_META_KEY,
   ensureEncryptionKeyVersion,
+  getActiveEncryptionKeyVersion,
+  getEncryptedJson,
   rotateEncryptedJsonKey,
+  setEncryptedJson,
 } from '@/lib/securePayloadCrypto';
+import { inspectStoredTripKeyVersions } from '@/lib/localTripRepository';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 export const KEY_ROTATION_DAYS = 30;
@@ -16,6 +20,7 @@ const ROTATING_ENCRYPTED_JSON_KEYS = [
   'drivesense_privacy_zones_config_v1',
   'drivesense_transmission_log_v1',
 ];
+export const KEY_ROTATION_LOG_KEY = 'drivesense_key_rotation_log_v1';
 
 let rotationPromise = null;
 
@@ -53,6 +58,7 @@ async function rotate(now) {
   }
 
   const { rotateTripEncryptionKey } = await import('@/lib/localTripRepository');
+  const startedAt = Number(meta.rotationStartedAt) || now;
   const result = await rotateTripEncryptionKey(nextVersion);
   let encryptedJsonValuesRotated = 0;
   for (const key of ROTATING_ENCRYPTED_JSON_KEYS) {
@@ -65,6 +71,14 @@ async function rotate(now) {
   await setJson(ENCRYPTION_KEY_META_KEY, {
     version: nextVersion,
     lastRotated: now,
+  });
+  await appendRotationLog({
+    fromVersion: currentVersion,
+    toVersion: nextVersion,
+    startedAt,
+    completedAt: Date.now(),
+    recordsReencrypted: result.indexedDbRecordsRotated + encryptedJsonValuesRotated,
+    status: 'ok',
   });
 
   recordSystemEvent('encryption_key_rotated', {
@@ -91,6 +105,12 @@ export function checkAndRotateEncryptionKey({ now = Date.now() } = {}) {
   if (!rotationPromise) {
     rotationPromise = rotate(now)
       .catch((error) => {
+        void appendRotationLog({
+          startedAt: now,
+          completedAt: Date.now(),
+          status: 'error',
+          error: error?.message || 'Unknown key rotation error',
+        });
         logSystemFailure('encryption_key_rotation', error, {
           rotation_interval_days: KEY_ROTATION_DAYS,
         });
@@ -101,4 +121,69 @@ export function checkAndRotateEncryptionKey({ now = Date.now() } = {}) {
       });
   }
   return rotationPromise;
+}
+
+async function appendRotationLog(entry) {
+  const log = await loadRotationLog();
+  await setEncryptedJson(KEY_ROTATION_LOG_KEY, [...log, entry].slice(-20));
+}
+
+export async function loadRotationLog() {
+  try {
+    const log = await getEncryptedJson(KEY_ROTATION_LOG_KEY, []);
+    return Array.isArray(log) ? log.slice(-20) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getKeyRotationStatus() {
+  const [versions, rotationLog, activeKeyVersion] = await Promise.all([
+    inspectStoredTripKeyVersions(),
+    loadRotationLog(),
+    getActiveEncryptionKeyVersion(),
+  ]);
+  const lastRotation = rotationLog.at(-1) || null;
+  const rotationErrors = rotationLog.filter((entry) => entry.status === 'error');
+
+  if (!versions.length) {
+    return {
+      status: lastRotation?.status === 'error' ? 'error' : 'unknown',
+      evidence: lastRotation?.status === 'error'
+        ? `Latest key rotation failed: ${lastRotation.error || 'unknown error'}`
+        : 'No encrypted trip records were available to inspect',
+      activeKeyVersion,
+      oldestPayloadKeyVersion: null,
+      newestPayloadKeyVersion: null,
+      payloadsPendingRotation: 0,
+      lastRotationAt: lastRotation?.completedAt || null,
+      rotationErrors: rotationErrors.length,
+    };
+  }
+
+  const oldestPayloadKeyVersion = Math.min(...versions);
+  const newestPayloadKeyVersion = Math.max(...versions);
+  const payloadsPendingRotation = versions.filter((version) => version < activeKeyVersion).length;
+  const status = rotationErrors.length
+    ? 'error'
+    : payloadsPendingRotation
+      ? 'warn'
+      : lastRotation
+        ? 'ok'
+        : 'unknown';
+
+  return {
+    status,
+    activeKeyVersion,
+    oldestPayloadKeyVersion,
+    newestPayloadKeyVersion,
+    payloadsPendingRotation,
+    lastRotationAt: lastRotation?.completedAt || null,
+    rotationErrors: rotationErrors.length,
+    evidence: rotationErrors.length
+      ? `${rotationErrors.length} recorded key rotation failure(s)`
+      : payloadsPendingRotation
+        ? `${payloadsPendingRotation} payload(s) still use key v${oldestPayloadKeyVersion}; active key is v${activeKeyVersion}`
+        : `All ${versions.length} inspected payloads use active key v${activeKeyVersion}`,
+  };
 }

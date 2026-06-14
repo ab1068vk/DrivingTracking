@@ -454,6 +454,31 @@ export async function rotateTripEncryptionKey(targetKeyVersion, { yieldEvery = 2
   return { indexedDbRecordsRotated, fallbackStoreRotated };
 }
 
+export async function inspectStoredTripKeyVersions() {
+  if (canUseIndexedDb()) {
+    try {
+      const db = await openDb();
+      try {
+        const tx = db.transaction(TRIP_STORE, 'readonly');
+        const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+        return records
+          .filter((record) => !isSecureDeleteTombstone(record))
+          .map((record) => Number(record?.encrypted_payload?.key_version))
+          .filter(Number.isInteger);
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to the encrypted JSON store.
+    }
+  }
+
+  const fallbackPayload = await getJson(TRIPS_KEY, null);
+  return Number.isInteger(Number(fallbackPayload?.key_version))
+    ? [Number(fallbackPayload.key_version)]
+    : [];
+}
+
 const putTrip = async (trip) => {
   const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
   try {

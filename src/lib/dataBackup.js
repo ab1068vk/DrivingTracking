@@ -616,6 +616,11 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   await logTransmission({
     service: 'export',
     type: encrypted ? 'Encrypted full backup' : 'Full backup',
+    coordinateDisclosure: 'committed',
+    privacyTransformVerified: !JSON.stringify(
+      signedBackup?.payload?.zone_commitments || []
+    ).match(/"lat(?:itude)?"|"lng"|"longitude"/i),
+    privacyTransformSource: 'dataBackup.js:buildDriveSenseBackup',
     sentCoords: '0 - zone coordinates excluded, boundary points committed',
     protections: ['HMAC-signed', 'commitment scheme', 'no zone centers included'],
     offsetMeters: null,

@@ -211,7 +211,14 @@ function openMeteoUrl({ lat, lng, date }) {
   return url;
 }
 
-async function fetchOpenMeteoWeather({ lat, lng, date, tripId = null, zonesSuppressed = [] }) {
+async function fetchOpenMeteoWeather({
+  lat,
+  lng,
+  date,
+  tripId = null,
+  zonesSuppressed = [],
+  privacyTransformVerified = false,
+}) {
   const startDate = dayKey(date);
   const url = openMeteoUrl({ lat, lng, date });
 
@@ -221,6 +228,9 @@ async function fetchOpenMeteoWeather({ lat, lng, date, tripId = null, zonesSuppr
     await logTransmission({
       service: 'open-meteo',
       type: 'Weather lookup',
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified,
+      privacyTransformSource: 'weatherContext.js:safeWeatherPoint',
       sentCoords: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
       protections: ['privacy-zone buffer +100m', 'rounded to 4 decimals'],
       offsetMeters: null,
@@ -311,6 +321,9 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
       await logTransmission({
         service: 'open-meteo',
         type: 'Weather lookup',
+        coordinateDisclosure: 'blocked',
+        privacyTransformVerified: true,
+        privacyTransformSource: 'weatherContext.js:safeWeatherPoint',
         sentCoords: null,
         protections: ['all route points inside privacy buffer - request blocked'],
         offsetMeters: null,
@@ -342,6 +355,8 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
       lng: center.lng,
       date: startTime,
       zonesSuppressed: privacyZones.map((zone) => zone.label),
+      privacyTransformVerified: privacyZones.length === 0 ||
+        !insidePrivacyWeatherBuffer(center, privacyZones),
     };
     data = await enqueueLocationRequest(
       'weather',

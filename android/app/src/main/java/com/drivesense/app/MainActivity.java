@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(RaspPlugin.class);
         registerPlugin(SecureBridgePlugin.class);
         registerPlugin(RoadDataQueuePlugin.class);
+        registerPlugin(AuditAnchorPlugin.class);
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
     }

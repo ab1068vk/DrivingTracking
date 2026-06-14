@@ -106,6 +106,8 @@ The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFEREN
 - named constants, hard-coded values, and literal rationale for scoring and integration review
 - routes, optional REST/external calls, storage surfaces, security analysis, performance notes, test coverage, dependencies, and deployment notes
 
+The Privacy Intelligence feature documentation and release-readiness critique is [PRIVACY_INTELLIGENCE.md](PRIVACY_INTELLIGENCE.md). It covers the dashboard, score model, protection checks, privacy zones, transmission logging, audit chain, storage/encryption behavior, test gaps, and the current hard truths about what is not yet proof-grade.
+
 Regenerate it after meaningful code or README changes:
 
 ```bash
