@@ -46,6 +46,32 @@ export const isExternalContextAutoFetchEnabled = (settings = {}) => (
   settings.external_context_auto_fetch_consented_at.trim().length > 0
 );
 
+export const isRoadDataLookupConfigured = (settings = {}) => (
+  settings.speed_limit_lookup_enabled !== false ||
+  settings.weather_context_enabled !== false ||
+  isOsrmMapMatchingConfigured(settings)
+);
+
+export function buildRoadDataDisabledMessage(settings = {}) {
+  const osrmState = settings.map_matching_enabled === false
+    ? 'Snap route to roads is off.'
+    : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true
+      ? 'Snap route to roads needs OSRM consent.'
+      : settings.osrm_map_matching_url
+        ? 'Snap route to roads needs a trusted, non-demo OSRM endpoint.'
+        : 'Snap route to roads needs a trusted OSRM endpoint and consent.';
+  return [
+    'Nothing to get right now.',
+    '',
+    'All online road-data lookups are off or not ready:',
+    `- Speed limits: ${settings.speed_limit_lookup_enabled === false ? 'off' : 'on'}`,
+    `- Weather: ${settings.weather_context_enabled === false ? 'off' : 'on'}`,
+    `- ${osrmState}`,
+    '',
+    'Turn on Speed limits, Weather, or Snap route to roads in Settings > Speed & Road Data, then tap Get Road Data again.',
+  ].join('\n');
+}
+
 export function buildPrivacySafeOsrmRoute(routePoints = [], settings = {}) {
   const zones = getPrivacyZones(settings);
   if (!zones.length) return routePoints;
@@ -107,18 +133,19 @@ function mergePublicMapMatchingMetadata(originalPoints = [], matchedPoints = [])
 
 export function buildRoadContextPrivacyMessage(settings = {}) {
   const lines = [
-    'Get Road Data will check online services for this selected trip:',
+    'Get Road Data will run the enabled online lookups for this selected trip only.',
+    'Privacy-zone coordinates are excluded before anything leaves the app.',
     '',
   ];
   if (settings.speed_limit_lookup_enabled !== false) {
-    lines.push('- Speed limits: immediately sends privacy-filtered route-area boxes, then gets road names, road geometry, and maxspeed tags from OpenStreetMap Overpass.');
+    lines.push('- Speed limits: send privacy-filtered public road boxes to OpenStreetMap for road names and posted maxspeed limits. Missing maxspeed tags may use labeled road-type estimates, not official legal data.');
   }
   if (settings.weather_context_enabled !== false) {
-    lines.push('- Weather: immediately sends a privacy-safe route point and trip date to Open-Meteo; skips weather if every route point is inside a privacy zone buffer.');
+    lines.push('- Weather: send one privacy-safe route point and the trip date to Open-Meteo.');
   }
   if (isOsrmMapMatchingConfigured(settings)) {
     const zones = getPrivacyZones(settings);
-    lines.push(`- Snap route to roads: excludes ${zones.length} privacy zone(s) and exact boundary points, then sends sampled public GPS coordinate pairs to your configured OSRM endpoint, one request per public route segment.`);
+    lines.push(`- Snap route to roads: exclude ${zones.length} privacy zone(s), then send sampled public GPS segments to your OSRM endpoint.`);
   } else if (settings.map_matching_enabled !== false && isPublicOsrmDemoUrl(settings.osrm_map_matching_url)) {
     lines.push('- Snap route to roads is blocked because the public OSRM demo is help text only, not a usable endpoint.');
   } else if (settings.map_matching_enabled !== false && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true) {
@@ -255,6 +282,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       fallback_country: speedLimitContext.fallback_country,
       query_count: speedLimitContext.query_count,
       error: speedLimitContext.error,
+      skipped_reason: speedLimitContext.skipped_reason,
     },
     map_matching_context: {
       provider: mapMatchingContext.provider,
@@ -277,16 +305,22 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (!context || !context.status) {
     return 'OpenStreetMap speed limits have not been fetched for this trip yet.';
   }
-  if (context.status === 'manual_required') return 'Speed limits have not been fetched. Tap Get Road Data when you want to send route-area boxes to OpenStreetMap.';
+  if (context.status === 'manual_required') return 'Speed limits have not been fetched. Tap Get Road Data when you want to send privacy-filtered public road boxes to OpenStreetMap.';
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
-  if (context.status === 'empty_route') return 'This trip does not have enough GPS points to fetch OpenStreetMap speed limits.';
+  if (context.status === 'empty_route' && context.skipped_reason === 'all_points_private') {
+    return 'OpenStreetMap speed-limit lookup was skipped because every usable route point is inside a privacy-zone guard.';
+  }
+  if (context.status === 'empty_route' && context.skipped_reason === 'privacy_bounds_overlap') {
+    return 'OpenStreetMap speed-limit lookup was skipped because the route query area would overlap a privacy-zone guard.';
+  }
+  if (context.status === 'empty_route') return 'This trip does not have enough usable GPS coordinates to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';
   if (context.status === 'no_tagged_ways') return 'OpenStreetMap did not return usable road tags near this route, so GPS fallback thresholds are used.';
   if (context.status === 'unavailable') return context.error || 'OpenStreetMap speed-limit lookup is unavailable. Check internet access and try refresh again.';
   if (context.status === 'partial_fetched' && context.coverage === 0) return 'OpenStreetMap partially responded, but no route points matched usable road-limit data.';
   if (context.status === 'partial_fetched') return `${context.coverage}% of route points have speed limits from partial OpenStreetMap results.`;
   if (context.coverage === 0) return 'OpenStreetMap was checked, but no route points matched usable road-limit data.';
-  return `${context.coverage}% of route points have OpenStreetMap maxspeed or road-type default limits.`;
+  return `${context.coverage}% of route points have OpenStreetMap maxspeed or labeled road-type estimates.`;
 }
 
 export function describeMapMatchingStatus(context = {}) {

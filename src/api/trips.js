@@ -3,12 +3,29 @@ import { localTripRepository } from "@/lib/localTripRepository";
 import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
+import { buildTripSummary } from "@/lib/tripSummary";
 
 export const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
 
 const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 
 export const tripService = {
+  listSummaries: async ({ sort = "-start_time", limit = 100 } = {}) => {
+    const local = repository();
+    const trips = local
+      ? await local.listSummaries({ sort, limit })
+      : await apiClient.get("/trips", { query: { sort, limit } });
+    return trips.map(buildTripSummary);
+  },
+
+  listAllSummaries: async ({ sort = "-start_time" } = {}) => {
+    const local = repository();
+    const trips = local
+      ? await local.listAllSummaries({ sort })
+      : await apiClient.get("/trips", { query: { sort, limit: 10000 } });
+    return trips.map(buildTripSummary);
+  },
+
   list: ({ sort = "-start_time", limit = 100 } = {}) => {
     const local = repository();
     return local ? local.list({ sort, limit }) : apiClient.get("/trips", { query: { sort, limit } });
@@ -90,3 +107,15 @@ export const tripService = {
     };
   },
 };
+
+export const tripQueryKeys = {
+  summaries: ['trip-summaries'],
+  detail: (id) => ['trip', String(id)],
+  map: ['map-trips'],
+};
+
+export const tripSummaryQueryOptions = () => ({
+  queryKey: tripQueryKeys.summaries,
+  queryFn: () => tripService.listAllSummaries({ sort: '-start_time' }),
+  staleTime: 5 * 60 * 1000,
+});

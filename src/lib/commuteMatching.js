@@ -10,6 +10,7 @@ const routeCell = (point) => {
 };
 
 export function routeKeyForTrip(trip = {}) {
+  if (typeof trip.route_key === 'string' && trip.route_key) return trip.route_key;
   const points = Array.isArray(trip.route_points) ? trip.route_points : [];
   if (points.length < 2) return null;
   const start = routeCell(points[0]);

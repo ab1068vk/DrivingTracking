@@ -4,13 +4,13 @@ Road Sage is a local-first driving tracker built with React, Vite, Capacitor, an
 
 ## Current App Surface
 
-- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, diagnostics, settings, and vehicles pages.
+- Dashboard, trip history, trip detail, live map, driving coach, insights, achievements, reports, diagnostics, system logs, Privacy Intelligence, settings, and vehicles pages. The Android reference page is debug-only via development mode or `VITE_SHOW_DEBUG_ROUTES=true`.
 - Manual trip capture, foreground auto-detect, and Android native background auto tracking with activity recognition, GPS fallback, quick settings tile support, pause/resume controls, and native trip import.
 - Trip scoring for safety, GPS/OBD motion smoothness, eco driving estimates, confirmed Android Usage Access phone-use evidence, speed compliance with posted-or-inferred limit provenance, road-type segments, brake onset smoothness, cornering, braking efficiency, optional IMU-assisted lane-changing, contextual urban/highway stop-start patterns, fatigue exposure, heading drift Beta, source-attributed weather context, estimated brake-turn manoeuvre alerts, historical context signals, and diagnostic-only GPS phone/overtake pattern counts.
 - Map playback with route simplification, stop handling, privacy-masked coordinate handling, HTML-escaped Leaflet popups, speed-limit coloring, fatigue overlays, event markers, repeated-route comparison support, persisted fallback map centers, last-parked context, and deployment-configurable default coordinates.
 - Vehicle profiles with fuel/electric economy, odometer estimates, maintenance reminders, renewal tracking, localized per-car cost, CO2 estimate metadata, and engine-health summaries, default vehicle handling, and vehicle comparison.
 - Reports with CSV export carrying metric provenance metadata, monthly and UBI PDF metric-reference pages, estimated-score notation, UBI score-card PDF export gated until 50 km of evidence and visibly marked not an insurance rating, confidence-aware rolling baseline comparison, carbon impact, configurable-currency estimated fuel cost, and vehicle-backed CO2/fuel savings estimates that stay unavailable without an assigned vehicle baseline.
-- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, reviewed event feedback, fallback speed-limit provenance, and legacy heading-event migration, with confirmation required before importing truncated notes.
+- Full backup export/import for trips, GPS route points, events, vehicles, settings, privacy-zone metadata, saved filters, reviewed event feedback, fallback speed-limit provenance, and legacy heading-event migration, with confirmation required before importing truncated notes. Raw GPS route retention can be shortened separately from trip summaries.
 - Diagnostics capture unhandled app errors, handled critical operation failures, isolated React section crashes, OBD/Web Bluetooth readiness, motion-sensor readiness, possible incident-signal readiness, and native sensor evidence with sanitized messages and stack previews; development builds can seed and remove local synthetic trips only behind the explicit synthetic-test-data guard.
 
 ## GPS-Derived Safety Proxy Limits
@@ -80,7 +80,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 - Auth tokens are session-scoped. Legacy `localStorage` tokens are migrated into `sessionStorage` and removed, and logout clears both token names from browser storage.
 - Open road context is explicit and privacy-aware. OpenStreetMap speed limits and Open-Meteo weather are manual by default unless automatic context fetch is enabled. When weather is disabled, unavailable, privacy-skipped, or has no matching hourly sample, the app stores weather risk as null with source attribution and displays it as unavailable instead of defaulting to low risk; GPS stopping-distance context can be shown separately as a weather-context fallback. When a posted map speed limit is absent, Settings can choose Global, Canada, United States, United Kingdom, Germany, Australia, or France approximate road-type defaults, with the chosen fallback provenance preserved in reports, backups, Trip Detail, and context metadata. OSRM route snapping requires a trusted custom endpoint, explicit raw-coordinate data-sharing consent, endpoint health metadata, and a manual Get Road Data action; the public demo endpoint is rejected for saved settings.
 - Trip Detail and Map no longer silently hide additional repeated-event route stretches or repeated driving-event areas: initial lists remain compact, and show-all controls report hidden counts. Trip Detail separates scored driving events from diagnostic-only events, shows feedback-adjusted event counts, shows inferred speed-limit scoring notes, and displays a Usage Access banner when phone-use evidence is unavailable. Heading drift Beta color and fatigue critical markers now follow actual levels and exported thresholds, and compliance bars use the canonical score color tiers.
-- Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, detection features, currency/economics, advanced models, and data controls with searchable sections, safer validation, OSRM endpoint health checks, OBD connection actions, motion-sensor permission actions, and rescore progress.
+- Settings now explains tracking, Android permissions, privacy, notifications, speed warnings, detection features, currency/economics, advanced models, and data controls with searchable sections, safer validation, OSRM endpoint health checks, OBD connection actions, motion-sensor permission actions, app lock, screen-capture protection, raw GPS retention controls, and rescore progress.
 - Android tracking updates include immediate native notification state, quick settings tile sync, clearer off/paused handling, named notification identifiers, device-local fixed-hour night classification aligned to the shared 22:00-04:59 window, deduplicated trip/safety notifications, battery optimization guidance, phone usage access support, native IMU motion samples capped at 5,000 per trip, and native diagnostics surfaced in the app. Android Gradle setup now removes obsolete AGP flags and reapplies clean AGP 9-compatible plugin DSL patches after install or sync.
 - Privacy-zone and map fixes keep private locations masked, allow radius editing, hide private events, exclude masked null coordinates from distance/playback math, HTML-escape user/external values in Leaflet popups, and preserve original GPS geometry when route snapping or old map-matching data would collapse playback.
 - Calculation fixes keep map-matching confidence and snapped coverage numeric even when OSRM sends invalid confidence, omit invalid speed limits from popups, preserve Android `ON_BICYCLE` as `on_bicycle` while retaining legacy `cycling`, and make native platform checks module-level constants.
@@ -98,7 +98,7 @@ The markdown is regenerated from the current source tree and reflects the latest
 
 ## Documentation
 
-The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:
+The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:
 
 - source/module inventory, import/export map, and function/method catalogue
 - actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking
@@ -106,7 +106,11 @@ The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFEREN
 - named constants, hard-coded values, and literal rationale for scoring and integration review
 - routes, optional REST/external calls, storage surfaces, security analysis, performance notes, test coverage, dependencies, and deployment notes
 
-The Privacy Intelligence feature documentation and release-readiness critique is [PRIVACY_INTELLIGENCE.md](PRIVACY_INTELLIGENCE.md). It covers the dashboard, score model, protection checks, privacy zones, transmission logging, audit chain, storage/encryption behavior, test gaps, and the current hard truths about what is not yet proof-grade.
+Other project documentation lives in [docs/](docs/):
+
+- [Privacy Intelligence](docs/PRIVACY_INTELLIGENCE.md) covers the privacy dashboard, score model, protection checks, transmission logging, audit chain, storage/encryption behavior, test gaps, and release-readiness limits.
+- [Speed and fallback behavior](docs/speed-and-fallbacks.md) covers speed capture, limit inference, OpenStreetMap enrichment, and live voice alerts.
+- [Recovery plan](docs/RECOVERY_PLAN.md), [upgrade verification](docs/UPGRADE_VERIFICATION.md), and [version code 2 verification](docs/VERSION_CODE_2_VERIFICATION.md) record Android in-place upgrade safety work.
 
 Regenerate it after meaningful code or README changes:
 
@@ -128,11 +132,13 @@ node scripts/generate-technical-reference.mjs
 
 ## Privacy And Security Defaults
 
-- Trips, vehicles, settings, diagnostics, and reports stay local by default.
+- Trips, vehicles, settings, diagnostics, privacy intelligence records, system logs, and reports stay local by default.
+- Android can require device authentication for app entry, blocks screen capture by default unless the user allows it, and re-locks after the app returns from the background for more than five minutes.
 - No ads are implemented. Calibration-label sharing is opt-in only; without that setting, survey feedback stays local and raw GPS, exact addresses, route polylines, personal identifiers, and trip notes are never included in calibration payloads.
 - OSRM route snapping is disabled until the user saves a trusted endpoint, consents to raw sampled GPS coordinate sharing, and requests road data. The public demo endpoint is rejected for saved settings.
 - Automatic road/weather context fetch is off by default; manual Get Road Data prompts before sending route context to external services.
-- Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones.
+- Privacy zones mask route points and events around private places; backups do not restore private coordinates for privacy zones, and secure-device guards can block adding new zones on compromised Android/debug setups.
+- Raw GPS retention can be reduced independently from trip history; expired route points are removed while trip summaries, scores, distance, and duration remain.
 - Imported backups and settings are treated as untrusted input, migrated from supported legacy schemas, sanitized before merge, and require confirmation before any note-truncating import completes.
 - Leaflet popup values from trips, routes, events, repeated driving-event areas, privacy zones, and parked locations are escaped before rendering as HTML.
 

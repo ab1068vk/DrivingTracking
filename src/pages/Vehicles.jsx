@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { tripService } from '@/api/trips';
+import { tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
@@ -234,8 +234,7 @@ export default function Vehicles() {
   });
 
   const { data: trips = [] } = useQuery({
-    queryKey: ['all-trips-vehicles'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    ...tripSummaryQueryOptions(),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });

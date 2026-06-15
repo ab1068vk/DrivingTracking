@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Award, CalendarDays, CheckCircle2, Clock, Flag, MapPinned, Route, ShieldAlert, Target, TrendingUp } from 'lucide-react';
-import { tripService } from '@/api/trips';
+import { tripSummaryQueryOptions } from '@/api/trips';
 import { localSettings } from '@/lib/trackingStore';
 import { formatDistance, getScoreColor } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
@@ -30,8 +30,7 @@ export default function Insights() {
   }, [monthOffset]);
 
   const { data: trips = [], isLoading } = useQuery({
-    queryKey: ['insight-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    ...tripSummaryQueryOptions(),
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');

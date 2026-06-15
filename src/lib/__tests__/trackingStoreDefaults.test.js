@@ -25,15 +25,23 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.osrm_data_sharing_consented).toBe(false);
     expect(DEFAULT_SETTINGS.osrm_health_status).toBe('');
     expect(DEFAULT_SETTINGS.osrm_timeout_ms).toBe(12000);
+    expect(DEFAULT_SETTINGS.osrm_block_near_any_zone).toBe(true);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 11,
+      osrm_block_near_any_zone: false,
+    }).settings.osrm_block_near_any_zone).toBe(true);
     expect(sanitizeImportedSettings({
       osrm_map_matching_url: 'https://evil.example.com',
       osrm_data_sharing_consented: true,
       osrm_last_reachable_at: '2026-05-30T12:00:00.000Z',
+      osrm_block_near_any_zone: false,
       osrm_timeout_ms: 45000,
     }).osrm_map_matching_url).toBeUndefined();
+    expect(sanitizeImportedSettings({ osrm_block_near_any_zone: false })).not.toHaveProperty('osrm_block_near_any_zone');
     expect(sanitizeImportedSettings({ osrm_timeout_ms: 45000 }).osrm_timeout_ms).toBe(30000);
     expect(validateSettingsPatch({ osrm_timeout_ms: 5000 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ osrm_timeout_ms: 4999 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_block_near_any_zone: false })).toMatchObject({ valid: false });
   });
 
   it('does not import native privacy sync state from backups', () => {

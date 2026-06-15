@@ -128,6 +128,10 @@ function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
 }
 
+function SettingsSubheading({ children }) {
+  return <div className="px-1 pt-3 pb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{children}</div>;
+}
+
 function SettingsSection({ id, activeId, children }) {
   if (activeId !== id) return null;
   return (
@@ -1944,9 +1948,9 @@ export default function Settings() {
     { id: 'settings-driving-goals', title: 'Driving Goals', icon: Target, detail: 'Weekly score, mileage, night driving, and behavior targets.', keywords: 'weekly score harsh brake speeding night goals target' },
     { id: 'settings-night-window', title: 'Night Window', icon: Clock, detail: 'Night-trip detection window and sunset fallback.', keywords: 'night window sunset sunrise custom time late drive scoring' },
     { id: 'settings-detection-thresholds', title: 'Detection Features', icon: SlidersHorizontal, detail: 'Detection toggles, sensitivity, calibration, and re-scoring.', keywords: 'harsh braking rapid acceleration speeding idle lane changing brake turn heading drift calibration rescore feedback accurate wrong false positive' },
-    { id: 'settings-advanced-models', title: 'Advanced Models', icon: Route, detail: 'Sensor fusion, crash, route risk, voice, OBD, weather, and OSRM.', keywords: 'weather osrm route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
+    { id: 'settings-advanced-models', title: 'Advanced Models', icon: Route, detail: 'Sensor fusion, crash, route risk, voice alerts, OBD, and map overlays.', keywords: 'route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
     { id: 'settings-phone-use', title: 'Phone Use Detection', icon: Smartphone, detail: 'Distraction detection, map display, scoring, and expert tuning.', keywords: 'distraction usage access phone score map foreground app' },
-    { id: 'settings-speed-warning', title: 'Speed & Road Data', icon: Gauge, detail: 'Live speed warnings, speed limits, weather, and road-data fetching.', keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather' },
+    { id: 'settings-speed-warning', title: 'Speed & Road Data', icon: Gauge, detail: 'Live speed warnings, speed limits, weather, and automatic road-data lookup.', keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather' },
     { id: 'settings-privacy-data', title: 'Privacy & Data', icon: Shield, detail: 'Privacy zones, backups, exports, imports, deletion, and feedback data.', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
   ], []);
   const activeSettingsSectionMeta = settingsSections.find((section) => section.id === activeSettingsSection);
@@ -3182,101 +3186,6 @@ export default function Settings() {
             />
           </SettingRow>
           <SettingRow
-            icon={Route}
-            label="Snap route to roads (OSRM)"
-            sublabel="Manual only. Excludes privacy zones, then sends sampled public GPS segments when you tap Get Road Data."
-          >
-            <Toggle
-              value={cfg.map_matching_enabled !== false && Boolean(cfg.osrm_map_matching_url) && cfg.osrm_data_sharing_consented === true}
-              onChange={enableOsrmMapMatching}
-            />
-          </SettingRow>
-          <SettingRow
-            icon={Shield}
-            label="Block OSRM near any privacy zone"
-            sublabel="Recommended. Prevents route matching when a route endpoint is inside or within 100 m of a configured privacy zone."
-          >
-            <Toggle
-              value={cfg.osrm_block_near_any_zone !== false}
-              onChange={(value) => updateCfg({ osrm_block_near_any_zone: value })}
-            />
-          </SettingRow>
-          <div className="px-1 py-3 border-b border-border/50">
-            <div className="flex justify-between gap-3 text-xs mb-1.5">
-              <span className="font-medium">Network timeout</span>
-              <span className="text-primary font-semibold">
-                {Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)} sec
-              </span>
-            </div>
-            <input
-              type="range"
-              min={5}
-              max={30}
-              step={1}
-              value={Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)}
-              onChange={event => updateCfg({ osrm_timeout_ms: Number(event.target.value) * 1000 })}
-              className="w-full accent-primary"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>5 sec</span>
-              <span>30 sec</span>
-            </div>
-          </div>
-          <div className="px-1 py-3 border-b border-border/50">
-            <div className="mb-1 text-xs font-medium">Trusted OSRM endpoint</div>
-            <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
-              <input
-                value={osrmEndpointDraft}
-                onChange={event => setOsrmEndpointDraft(event.target.value)}
-                placeholder="https://your-osrm.example"
-                className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
-              />
-              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                <span>
-                  OSRM endpoints receive sampled GPS coordinate pairs. Save only a private or trusted server.
-                </span>
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={requestSaveOsrmEndpoint}
-                disabled={osrmHealthCheckState === 'checking'}
-                className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-              >
-                {osrmHealthCheckState === 'checking' ? 'Checking...' : 'Save endpoint'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOsrmEndpointDraft('');
-                  saveOsrmEndpoint('', true);
-                }}
-                disabled={!cfg.osrm_map_matching_url && !osrmEndpointDraft}
-                className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
-              >
-                Turn off + clear
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {PUBLIC_OSRM_DEMO_URL}. The public demo is not saved or used by Road Sage because it receives route points and has no service guarantee.</p>
-            <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-              {cfg.osrm_health_status === 'connected' && cfg.osrm_last_reachable_at
-                ? `Connected. OSRM last reachable: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`
-                : cfg.osrm_health_status === 'unreachable'
-                  ? `Unreachable${cfg.osrm_last_health_error ? `: ${cfg.osrm_last_health_error}` : '.'}`
-                  : cfg.map_matching_enabled === false
-                ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
-                  : cfg.osrm_map_matching_url
-                    ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
-                      ? 'Blocked: the public OSRM demo cannot be used as a route-snapping endpoint.'
-                      : cfg.osrm_data_sharing_consented === true
-                        ? 'On: Get Road Data excludes privacy zones, sends sampled public GPS segments to this OSRM link, and stores snapped road points if OSRM matches them.'
-                        : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
-                  : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
-            </div>
-          </div>
-          <SettingRow
             icon={Target}
             label="Historical context estimate"
             sublabel="Estimate current context from your history, repeated event areas, and time"
@@ -3492,22 +3401,24 @@ export default function Settings() {
         </SettingsSection>
 
         <SettingsSection id="settings-speed-warning" activeId={activeSettingsSection}>
-        {/* Speed Warning */}
-        <SectionTitle id="settings-speed-warning">Speed Warning</SectionTitle>
+        {/* Speed & Road Data */}
+        <SectionTitle id="settings-speed-warning">Speed & Road Data</SectionTitle>
+        <SettingsSubheading>Live speed alert</SettingsSubheading>
         <SettingRow
           icon={Bell}
           label="Live Speed Warning"
-          sublabel={cfg.speed_warning_enabled === false ? 'Dashboard speed warnings are disabled' : 'Warn during a trip when speed exceeds the fallback limit plus margin'}
+          sublabel={cfg.speed_warning_enabled === false ? 'Dashboard speed warnings are disabled' : 'Warn during a trip when speed exceeds the current or fallback limit plus margin'}
         >
           <Toggle
             value={cfg.speed_warning_enabled !== false}
             onChange={v => updateCfg({ speed_warning_enabled: v })}
           />
         </SettingRow>
+        <SettingsSubheading>Online road data</SettingsSubheading>
         <SettingRow
           icon={Gauge}
-          label="Get posted speed limits"
-          sublabel="Uses privacy-filtered route-area boxes. Automatic lookups are delayed; manual Get Road Data runs immediately."
+          label="Speed limits from OpenStreetMap"
+          sublabel="On: Get Road Data can add posted OSM maxspeed limits. If OSM has no maxspeed, the app may use a clearly labeled estimate."
         >
           <Toggle
             value={cfg.speed_limit_lookup_enabled !== false}
@@ -3516,8 +3427,8 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Gauge}
-          label="Fallback limit country"
-          sublabel={`Used when OpenStreetMap has no maxspeed tag; Trip Detail shows the ${SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[speedLimitDefaultCountryKey(cfg)] || 'Global'} fallback profile in compliance provenance`}
+          label="Fallback estimate country"
+          sublabel={`Not an official legal-speed database. Used only when OSM gives a road type but no maxspeed; current estimate profile: ${SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[speedLimitDefaultCountryKey(cfg)] || 'Global'}.`}
         >
           <select
             className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
@@ -3541,8 +3452,8 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Droplets}
-          label="Get trip weather"
-          sublabel="Uses a privacy-safe route point and date. Automatic lookups are delayed; manual Get Road Data runs immediately."
+          label="Weather from Open-Meteo"
+          sublabel="On: Get Road Data can add trip weather using one privacy-safe point and date. Off: no weather score adjustment."
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
@@ -3551,28 +3462,123 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Info}
-          label="Automatic road-data fetching"
-          sublabel="Off until you approve it. Saved trips stay local unless you enable automatic OpenStreetMap/Open-Meteo lookups."
+          label="Auto-fetch speed limits + weather"
+          sublabel="Off: saved trips stay local until you tap Get Road Data. On: future trips fetch speed limits and weather after a private delay. OSRM is never automatic."
         >
           <Toggle
             value={isExternalContextAutoFetchEnabled(cfg)}
             onChange={updateExternalContextAutoFetch}
           />
         </SettingRow>
+        <SettingsSubheading>Optional route-line cleanup</SettingsSubheading>
+        <SettingRow
+          icon={Route}
+          label="Optional: snap route to roads (OSRM)"
+          sublabel="Manual only. This does not add speed limits or weather; it only cleans up a wobbly GPS line after you save a trusted OSRM endpoint."
+        >
+          <Toggle
+            value={cfg.map_matching_enabled !== false && Boolean(cfg.osrm_map_matching_url) && cfg.osrm_data_sharing_consented === true}
+            onChange={enableOsrmMapMatching}
+          />
+        </SettingRow>
+        <SettingRow
+          icon={Shield}
+          label="Privacy-zone OSRM guard"
+          sublabel="Always on. Privacy-zone interiors and boundary points are never sent to OSRM; route matching is blocked when an endpoint is inside or within 100 m of a privacy zone."
+        >
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+            Always on
+          </span>
+        </SettingRow>
+        <div className="px-1 py-3 border-b border-border/50">
+          <div className="flex justify-between gap-3 text-xs mb-1.5">
+            <span className="font-medium">OSRM timeout</span>
+            <span className="text-primary font-semibold">
+              {Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)} sec
+            </span>
+          </div>
+          <input
+            type="range"
+            min={5}
+            max={30}
+            step={1}
+            value={Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)}
+            onChange={event => updateCfg({ osrm_timeout_ms: Number(event.target.value) * 1000 })}
+            className="w-full accent-primary"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground mt-1">
+            <span>5 sec</span>
+            <span>30 sec</span>
+          </div>
+        </div>
+        <div className="px-1 py-3 border-b border-border/50">
+          <div className="mb-1 text-xs font-medium">Trusted OSRM endpoint</div>
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.85fr)] lg:items-stretch">
+            <input
+              value={osrmEndpointDraft}
+              onChange={event => setOsrmEndpointDraft(event.target.value)}
+              placeholder="https://your-osrm.example"
+              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs disabled:opacity-50"
+            />
+            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <span>
+                OSRM receives sampled public GPS segments. Leave this blank unless you trust the server.
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={requestSaveOsrmEndpoint}
+              disabled={osrmHealthCheckState === 'checking'}
+              className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              {osrmHealthCheckState === 'checking' ? 'Checking...' : 'Save endpoint'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOsrmEndpointDraft('');
+                saveOsrmEndpoint('', true);
+              }}
+              disabled={!cfg.osrm_map_matching_url && !osrmEndpointDraft}
+              className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              Turn off + clear
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Blank keeps route snapping off. Example only: {PUBLIC_OSRM_DEMO_URL}. The public demo is not saved or used by Road Sage because it receives route points and has no service guarantee.</p>
+          <div className="mt-2 rounded-xl bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            {cfg.osrm_health_status === 'connected' && cfg.osrm_last_reachable_at
+              ? `Connected. OSRM last reachable: ${new Date(cfg.osrm_last_reachable_at).toLocaleString()}.`
+              : cfg.osrm_health_status === 'unreachable'
+                ? `Unreachable${cfg.osrm_last_health_error ? `: ${cfg.osrm_last_health_error}` : '.'}`
+                : cfg.map_matching_enabled === false
+              ? 'Off: Get Road Data will not contact OSRM, and map/playback use the original GPS line.'
+                : cfg.osrm_map_matching_url
+                  ? isPublicOsrmDemoUrl(cfg.osrm_map_matching_url)
+                    ? 'Blocked: the public OSRM demo cannot be used as a route-snapping endpoint.'
+                    : cfg.osrm_data_sharing_consented === true
+                      ? 'On: Get Road Data excludes privacy zones, sends sampled public GPS segments to this OSRM link, and stores snapped road points if OSRM matches them.'
+                      : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
+                : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
+          </div>
+        </div>
         <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
-          <div className="font-semibold text-foreground">What Get Road Data does</div>
+          <div className="font-semibold text-foreground">On/off examples</div>
           <div className="mt-2 grid gap-2">
             <div>
-              <span className="font-semibold text-foreground">Get posted speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
+              <span className="font-semibold text-foreground">Speed limits {cfg.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.speed_limit_lookup_enabled === false
-                ? 'skips OpenStreetMap; scoring and map colors use GPS/fallback limits only.'
-                : `immediately sends privacy-filtered route-area boxes to OpenStreetMap Overpass after confirmation and adds road names plus posted/default limits. Road-type defaults use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} profile and remain approximations, not legal advice.`}
+                ? 'a 100 km/h highway trip is judged against GPS/fallback rules; OpenStreetMap is not contacted.'
+                : `after you confirm Get Road Data, privacy-filtered public road boxes are sent to OpenStreetMap so the trip can show road names and posted maxspeed limits. Missing maxspeed tags use the ${String(cfg.country_code || cfg.configurable_country_defaults || 'global').toUpperCase()} estimate profile, not an official traffic-law lookup.`}
             </div>
             <div>
-              <span className="font-semibold text-foreground">Get trip weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
+              <span className="font-semibold text-foreground">Weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.weather_context_enabled === false
-                ? 'skips Open-Meteo; scores do not get weather adjustment.'
-                : 'immediately sends a privacy-safe route point and date to Open-Meteo after confirmation, then can adjust scores for rain, snow, fog, or freezing weather.'}
+                ? 'Open-Meteo is not contacted; rain, snow, fog, or ice do not change the score.'
+                : 'after you confirm Get Road Data, one non-private route point plus the trip date is sent to Open-Meteo for rain, snow, fog, or freezing risk.'}
             </div>
             <div>
               <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}:</span>{' '}
@@ -3587,10 +3593,10 @@ export default function Settings() {
                   : 'will be skipped until an OSRM endpoint is added.'}
             </div>
             <div>
-              <span className="font-semibold text-foreground">Automatic road-data fetching {isExternalContextAutoFetchEnabled(cfg) ? 'ON' : 'OFF'}:</span>{' '}
+              <span className="font-semibold text-foreground">Auto-fetch {isExternalContextAutoFetchEnabled(cfg) ? 'ON' : 'OFF'}:</span>{' '}
               {isExternalContextAutoFetchEnabled(cfg)
-                ? 'new saved trips queue OpenStreetMap speed limits and Open-Meteo weather with randomized privacy timing; OSRM still waits for manual Get Road Data.'
-                : 'new saved trips stay local for map/weather services until the user taps Get Road Data.'}
+                ? 'future saved trips fetch speed limits and weather after a randomized privacy delay. OSRM still waits for manual Get Road Data.'
+                : 'nothing is sent automatically after saving a trip; the user must tap Get Road Data for that trip.'}
             </div>
           </div>
         </div>

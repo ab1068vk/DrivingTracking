@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { tripService } from '@/api/trips';
+import { tripQueryKeys, tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
@@ -15,10 +15,12 @@ import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
+  buildRoadDataDisabledMessage,
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
   isOsrmMapMatchingConfigured,
+  isRoadDataLookupConfigured,
 } from '@/lib/openSourceTripContext';
 import { runRoadContextRefresh } from '@/lib/roadContextQueue';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
@@ -113,8 +115,7 @@ export default function MapScreen() {
         ));
       }
       qc.invalidateQueries({ queryKey: ['map-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
+      qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
       if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
       setShowSpeedLimits(hasSpeedLimits);
@@ -222,6 +223,10 @@ export default function MapScreen() {
   const confirmAndFetchRoadContext = () => {
     if (!selectedTrip) return;
     const latestSettings = localSettings.get();
+    if (!isRoadDataLookupConfigured(latestSettings)) {
+      if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
+      return;
+    }
     if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
       return;
     }
@@ -501,12 +506,12 @@ export default function MapScreen() {
           </div>
           {selectedTrip && (
             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
-              <div className="font-semibold text-foreground">What Get Road Data does</div>
-              <div className="mt-1">For this selected trip only:</div>
+              <div className="font-semibold text-foreground">Get Road Data, in plain words</div>
+              <div className="mt-1">Runs only the enabled online lookups for this selected trip. Privacy-zone coordinates are excluded before anything leaves the app.</div>
               <div className="mt-2 grid gap-1">
-                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skipped; map uses GPS/fallback limits.' : 'runs the privacy-filtered OpenStreetMap lookup immediately.'}</div>
-                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skipped; scores get no weather adjustment.' : 'runs the privacy-safe Open-Meteo lookup immediately.'}</div>
-                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skipped until a trusted OSRM endpoint and consent are saved in Settings.'}</div>
+                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'OpenStreetMap is skipped; map uses GPS/fallback limits.' : 'sends privacy-filtered public road boxes to OpenStreetMap for posted maxspeed; missing tags may use labeled estimates.'}</div>
+                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'Open-Meteo is skipped; scores get no weather adjustment.' : 'sends one privacy-safe route point and trip date to Open-Meteo.'}</div>
+                <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'OSRM is skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled public GPS segments to your OSRM endpoint.' : 'OSRM is skipped until a trusted endpoint and consent are saved in Settings.'}</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : selectedLayerEffect}

@@ -144,6 +144,79 @@ describe('mapMatching', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('keeps the privacy-zone endpoint guard on even if a legacy setting disables it', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(3), point(4)], {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+      osrm_block_near_any_zone: false,
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 150 }],
+    });
+
+    expect(result.status).toBe('blocked_private_endpoint');
+    expect(result.routePoints[0]).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_gap: true,
+      privacy_zone_id: 'home',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('splits raw OSRM input around privacy zones even if a legacy setting disables the guard', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = new URL(String(url)).pathname;
+      const coords = decodeURIComponent(path.split('/').pop() || '')
+        .split(';')
+        .map((pair) => pair.split(',').map(Number));
+      return {
+        ok: true,
+        json: async () => ({
+          matchings: [{
+            confidence: 0.9,
+            geometry: { coordinates: coords },
+          }],
+        }),
+      };
+    }));
+
+    const route = [
+      { lat: 43.646, lng: -79.38, accuracy: 8 },
+      { lat: 43.647, lng: -79.38, accuracy: 8 },
+      { lat: 43.65, lng: -79.38, accuracy: 8 },
+      { lat: 43.653, lng: -79.38, accuracy: 8 },
+      { lat: 43.654, lng: -79.38, accuracy: 8 },
+    ];
+
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+      osrm_block_near_any_zone: false,
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 80 }],
+    });
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      segment_count: 2,
+      privacy_gap_count: 1,
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const requestedCoords = fetch.mock.calls.flatMap(([url]) => (
+      decodeURIComponent(new URL(String(url)).pathname)
+        .split('/')
+        .pop()
+        .split(';')
+        .map((pair) => pair.split(',').map(Number))
+    ));
+    expect(requestedCoords).not.toContainEqual([-79.38, 43.65]);
+    expect(result.routePoints.find((item) => item.privacy_gap)).toMatchObject({
+      lat: null,
+      lng: null,
+      privacy_zone_id: 'home',
+    });
+  });
+
   it('splits OSRM requests at privacy gaps instead of sending teleporting waypoints', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => {
       const path = new URL(String(url)).pathname;

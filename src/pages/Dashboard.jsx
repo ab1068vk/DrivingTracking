@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { tripService } from '@/api/trips';
+import { tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -62,7 +62,6 @@ import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
-import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
@@ -119,6 +118,8 @@ import {
   isPrivateTrip,
   processPrivateTripPoint,
 } from '@/lib/privateTripMode';
+
+const TripMap = lazy(() => import('@/components/TripMap'));
 
 const MIN_MANUAL_SAVE_SECONDS = 5;
 const MANUAL_SPARSE_GPS_MIN_SECONDS = 30;
@@ -270,7 +271,7 @@ export default function Dashboard() {
       if (document.visibilityState === 'visible') refreshTrackingStatusContext();
     };
     const interval = isAndroid()
-      ? window.setInterval(refreshTrackingStatusContext, 2000)
+      ? window.setInterval(refreshTrackingStatusContext, tracking ? 10_000 : 60_000)
       : null;
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleVisibility);
@@ -279,7 +280,7 @@ export default function Dashboard() {
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [refreshTrackingStatusContext]);
+  }, [refreshTrackingStatusContext, tracking]);
 
   useEffect(() => {
     trackingRef.current = tracking;
@@ -322,8 +323,7 @@ export default function Dashboard() {
 
   // Load recent trips
   const { data: recentTrips = [], refetch } = useQuery({
-    queryKey: ['recent-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    ...tripSummaryQueryOptions(),
   });
 
   const { data: vehicles = [] } = useQuery({
@@ -2115,14 +2115,16 @@ export default function Dashboard() {
 
             {!activeTripIsPrivate && (activeTrip?.route_points?.length > 0 || currentLocation) && (
               <div className="mb-4 overflow-hidden rounded-2xl border border-white/15 bg-white/10">
-                <TripMap
-                  routePoints={activeTrip?.route_points || []}
-                  currentLocation={currentLocation}
-                  showCurrentLocation
-                  parkedLocation={activeTripIsCandidate ? parkedLocation : null}
-                  smoothRoute={false}
-                  height="220px"
-                />
+                <Suspense fallback={<div className="h-[220px] animate-pulse bg-white/10" />}>
+                  <TripMap
+                    routePoints={activeTrip?.route_points || []}
+                    currentLocation={currentLocation}
+                    showCurrentLocation
+                    parkedLocation={activeTripIsCandidate ? parkedLocation : null}
+                    smoothRoute={false}
+                    height="220px"
+                  />
+                </Suspense>
               </div>
             )}
 

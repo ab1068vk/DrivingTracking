@@ -32,6 +32,9 @@ export const SPEED_LIMIT_DEFAULT_COUNTRY_LABELS = Object.freeze({
   au: 'Australia',
   fr: 'France',
 });
+
+// Rough road-type estimates used only when OSM returns a highway tag without
+// a posted maxspeed. These are not official legal speed-limit references.
 export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
   global: Object.freeze({
     living_street: 20,
@@ -105,6 +108,18 @@ export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
 
 const round = (value, places = 4) => Number(value).toFixed(places);
 
+const finiteNumber = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const normalizeRoutePointCoordinates = (point) => {
+  const lat = finiteNumber(point?.lat);
+  const lng = finiteNumber(point?.lng);
+  return lat == null || lng == null ? null : { ...point, lat, lng };
+};
+
 export function parseMaxspeedKmh(value) {
   if (value == null) return null;
   const raw = String(value).toLowerCase().trim();
@@ -126,16 +141,18 @@ function isInsidePrivacyGuard(point, zones = []) {
 }
 
 function finiteRoutePoints(points = []) {
-  return points.filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng));
+  return (Array.isArray(points) ? points : [])
+    .map(normalizeRoutePointCoordinates)
+    .filter(Boolean);
 }
 
 function isPublicRoadDataPoint(point, privacyZones = []) {
-  return Number.isFinite(point?.lat) &&
-    Number.isFinite(point?.lng) &&
+  const normalized = normalizeRoutePointCoordinates(point);
+  return Boolean(normalized) &&
     point?.masked_for_privacy !== true &&
     point?.privacy_boundary !== true &&
     point?.privacy_gap !== true &&
-    !isInsidePrivacyGuard(point, privacyZones);
+    !isInsidePrivacyGuard(normalized, privacyZones);
 }
 
 function privacySafeRoutePoints(points = [], privacyZones = []) {
@@ -150,8 +167,9 @@ function privacySafeRouteSegments(points = [], privacyZones = []) {
   const segments = [];
   let current = [];
   for (const point of Array.isArray(points) ? points : []) {
-    if (isPublicRoadDataPoint(point, privacyZones)) {
-      current.push(point);
+    const normalized = normalizeRoutePointCoordinates(point);
+    if (normalized && isPublicRoadDataPoint(point, privacyZones)) {
+      current.push(normalized);
       continue;
     }
     if (current.length) {
@@ -245,7 +263,7 @@ function uniqueBy(items = [], keyFor) {
 }
 
 function sampleRoutePoints(points = [], maxPoints = MAX_CORRIDOR_SAMPLE_POINTS) {
-  const valid = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  const valid = finiteRoutePoints(points);
   if (valid.length <= maxPoints) return valid;
   const step = (valid.length - 1) / (maxPoints - 1);
   return Array.from({ length: maxPoints }, (_, index) => valid[Math.round(index * step)]);
@@ -580,8 +598,9 @@ export async function annotateRouteSpeedLimits(routePoints = [], settings = {}) 
 
     let matched = 0;
     const annotated = routePoints.map((point) => {
-      if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lng)) return point;
-      const match = nearestWayLimit(point, result.ways);
+      const normalized = normalizeRoutePointCoordinates(point);
+      if (!normalized) return point;
+      const match = nearestWayLimit(normalized, result.ways);
       if (!match) return point;
       matched++;
       return {

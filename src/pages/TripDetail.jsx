@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { calibrationLabelService } from '@/api/calibrationLabels';
-import { tripService } from '@/api/trips';
+import { tripQueryKeys, tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
 import {
@@ -15,7 +15,6 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
-import TripMap from '@/components/TripMap';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
 import {
@@ -38,9 +37,11 @@ import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimat
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
+  buildRoadDataDisabledMessage,
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
+  isRoadDataLookupConfigured,
 } from '@/lib/openSourceTripContext';
 import { runRoadContextRefresh } from '@/lib/roadContextQueue';
 import {
@@ -79,6 +80,8 @@ import {
   WAS_DRIVER_OPTIONS,
 } from '@/lib/calibrationLabeling';
 import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
+
+const TripMap = lazy(() => import('@/components/TripMap'));
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 
 const roadTypeConfig = {
@@ -190,6 +193,9 @@ export default function TripDetail() {
   const [calibrationSurveyStatus, setCalibrationSurveyStatus] = useState(null);
   const [calibrationLabelCount, setCalibrationLabelCount] = useState(null);
   const metadataSectionRef = useRef(null);
+  const invalidateTripLists = () => {
+    qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
+  };
 
   const { data: trip, isLoading } = useQuery({
     queryKey: ['trip', id],
@@ -204,8 +210,7 @@ export default function TripDetail() {
   const deleteMutation = useMutation({
     mutationFn: () => tripService.delete(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      invalidateTripLists();
       navigate('/trips');
     },
   });
@@ -218,8 +223,7 @@ export default function TripDetail() {
       return subTrips;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      invalidateTripLists();
       navigate('/trips');
     },
   });
@@ -231,8 +235,7 @@ export default function TripDetail() {
     onSuccess: (updatedTrip) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      invalidateTripLists();
       setMetadataDraft({
         nickname: updatedTrip?.nickname || trip?.nickname || '',
         notes: updatedTrip?.notes || trip?.notes || '',
@@ -244,8 +247,7 @@ export default function TripDetail() {
     mutationFn: (/** @type {any} */ patch) => tripService.update(id, patch),
     onSuccess: (updatedTrip) => {
       qc.invalidateQueries({ queryKey: ['trip', id] });
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      invalidateTripLists();
       setMetadataDraft({
         nickname: updatedTrip?.nickname || '',
         notes: updatedTrip?.notes || '',
@@ -276,8 +278,7 @@ export default function TripDetail() {
     onSuccess: (updatedTrip, vars) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      invalidateTripLists();
       setFeedbackStatus(vars.verdict === 'wrong'
         ? 'Marked wrong. This event is removed from scoring on rescore and used to raise future thresholds.'
         : 'Marked accurate. This event stays in scoring and helps keep calibration from becoming too loose.');
@@ -294,8 +295,7 @@ export default function TripDetail() {
     onSuccess: (updatedTrip) => {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
-      qc.invalidateQueries({ queryKey: ['all-trips'] });
-      qc.invalidateQueries({ queryKey: ['recent-trips'] });
+      invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
     },
     onError: (error) => {
@@ -332,6 +332,10 @@ export default function TripDetail() {
 
   const confirmAndFetchRoadContext = () => {
     const latestSettings = localSettings.get();
+    if (!isRoadDataLookupConfigured(latestSettings)) {
+      if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
+      return;
+    }
     if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
       return;
     }
@@ -596,12 +600,12 @@ export default function TripDetail() {
     ? speedLimitDefaultCountryLabels.join(', ')
     : SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[currentSpeedLimitFallbackCountry] || 'Global';
   const speedLimitDefaultCountryText = speedLimitDefaultCountries.length
-    ? ` Country assumption for OSM road-type defaults: ${speedLimitDefaultCountries.join(', ')}.`
+    ? ` Country estimate profile for missing OSM maxspeed tags: ${speedLimitDefaultCountries.join(', ')}.`
     : '';
   const speedLimitProvenanceSummary = [
     `${speedLimitCoverage.postedPct}% of this route used posted OpenStreetMap limits`,
     speedLimitCoverage.fallbackDefaultPct > 0
-      ? `${speedLimitCoverage.fallbackDefaultPct}% used ${speedLimitDefaultCountryLabel} road-type defaults`
+      ? `${speedLimitCoverage.fallbackDefaultPct}% used ${speedLimitDefaultCountryLabel} road-type estimates`
       : null,
     speedLimitCoverage.inferredPct > 0
       ? `${speedLimitCoverage.inferredPct}% used GPS-inferred limits`
@@ -774,11 +778,11 @@ export default function TripDetail() {
     const inferredTypes = ['lane_change_detected', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
     const confidenceText = evt.source === 'android_usage_access'
       ? 'Measured phone activity'
-      : evt.type === 'speeding' && evt.speed_limit_source
+          : evt.type === 'speeding' && evt.speed_limit_source
         ? evt.speed_limit_source === 'inferred'
           ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
           : evt.speed_limit_source === 'osm_highway_default'
-            ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
+            ? `Estimated from OSM road type${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} profile)` : ''}; not official legal data`
             : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
         : diagnostic
           ? 'Diagnostic GPS inference - not scored'
@@ -1043,7 +1047,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Matched/default limits: ${osmSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
+                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Matched posted/estimated values: ${osmSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
               </div>
               {speedLimitContext.error && (
                 <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
@@ -1243,7 +1247,7 @@ export default function TripDetail() {
                 <div>
                   <div className="font-semibold">Speed limit data unavailable</div>
                   <div className="mt-0.5 text-xs">
-                    {osmCoveragePct}% speed-limit coverage - tap to fetch road context for accurate speeding detection.
+                    {osmCoveragePct}% speed-limit coverage - tap Get Road Data to add speed limits and weather for this trip.
                   </div>
                 </div>
               </div>
@@ -1254,7 +1258,7 @@ export default function TripDetail() {
                 className="inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-orange-700 disabled:opacity-60"
               >
                 <Route className="h-3.5 w-3.5" />
-                {contextMutation.isPending ? osmFetchStatus || 'Fetching...' : 'Fetch Road Context'}
+                {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
               </button>
             </div>
           </div>
@@ -1266,7 +1270,7 @@ export default function TripDetail() {
             className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors disabled:opacity-60"
           >
             <Route className="h-3.5 w-3.5" />
-            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get / Refresh Road Data'}
+            {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
           </button>
           <button
             onClick={() => setShowSpeedLimitsOnMap((value) => !value)}
@@ -1294,15 +1298,14 @@ export default function TripDetail() {
           </div>
         )}
         <div className="mb-2 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
-          <div className="font-semibold text-foreground">Trip map buttons</div>
+          <div className="font-semibold text-foreground">What these buttons do</div>
           <div className="mt-1 break-words">
-            {tripPointSummary}. Get Road Data checks online map/weather services for this trip. Show Speed-Limit Layer only changes the colors after speed limits are available.
+            {tripPointSummary}. Get Road Data checks only the enabled online services for this one trip. Privacy-zone coordinates are excluded before anything leaves the app.
           </div>
           <div className="mt-2 grid gap-1">
-            <div>Get Road Data: runs weather and speed-limit lookups immediately after confirmation.</div>
-            <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'skips OpenStreetMap; the app uses GPS/fallback limits.' : 'queues route-area boxes before contacting OpenStreetMap for road names and posted/default limits.'}</div>
-            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'skips Open-Meteo; scores get no weather adjustment.' : 'queues a privacy-safe route point and date before contacting Open-Meteo.'}</div>
-            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'skips OSRM; map/playback keep the GPS line.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled GPS points to your configured OSRM endpoint to clean up the route line.' : 'skips OSRM until a trusted endpoint and consent are saved in Settings.'}</div>
+            <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'OpenStreetMap is skipped; the app uses GPS/fallback limits.' : 'sends privacy-filtered public road boxes to OpenStreetMap for road names and posted maxspeed limits; missing tags may use labeled estimates.'}</div>
+            <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'Open-Meteo is skipped; scores get no weather adjustment.' : 'sends one privacy-safe route point and trip date to Open-Meteo.'}</div>
+            <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'OSRM is skipped; map/playback keep the GPS line.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled public GPS segments to your OSRM endpoint to clean up the route line.' : 'OSRM is skipped until a trusted endpoint and consent are saved in Settings.'}</div>
             <div>Show Speed-Limit Layer: only changes colors after speed limits are available.</div>
             <div>Cornering Heatmap: local-only visual overlay for sharper turns.</div>
           </div>
@@ -1330,16 +1333,18 @@ export default function TripDetail() {
           </div>
         ) : (
           <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
-            <TripMap
-              routePoints={trip.route_points || []}
-              events={mapEvents}
-              showCorneringHeatmap={showCorneringHeatmap}
-              showSpeedLimits={showSpeedLimitsOnMap}
-              showRouteRisk={routeRiskSegments.length > 0}
-              routeRiskSegments={routeRiskSegments}
-              rawPointCount={trip.route_points_raw_count}
-              height="300px"
-            />
+            <Suspense fallback={<div className="flex h-[300px] items-center justify-center animate-pulse bg-secondary/50 text-sm text-muted-foreground">Loading trip map...</div>}>
+              <TripMap
+                routePoints={trip.route_points || []}
+                events={mapEvents}
+                showCorneringHeatmap={showCorneringHeatmap}
+                showSpeedLimits={showSpeedLimitsOnMap}
+                showRouteRisk={routeRiskSegments.length > 0}
+                routeRiskSegments={routeRiskSegments}
+                rawPointCount={trip.route_points_raw_count}
+                height="300px"
+              />
+            </Suspense>
           </div>
         )}
       </motion.div>
@@ -1628,7 +1633,7 @@ export default function TripDetail() {
             <div>{speedLimitProvenanceSummary}</div>
             {speedLimitCoverage.mapDerivedPct === 0 && (
               <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 font-medium text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                This entire compliance score is based on inferred limits. Enable Automatic road-data fetching in Settings, or tap Get / Refresh Road Data for this trip, to use posted OpenStreetMap limits when available.
+                This entire compliance score is based on inferred limits. Enable auto-fetch in Settings, or tap Get Road Data for this trip, to use posted OpenStreetMap limits when available.
               </div>
             )}
           </div>
@@ -1655,7 +1660,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type default${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} assumption)` : ''}` : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type estimate${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} profile, not official legal data)` : ''}` : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
                 </div>
               </div>
             ))}
@@ -2042,7 +2047,7 @@ export default function TripDetail() {
                   ? evt.speed_limit_source === 'inferred'
                     ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
                     : evt.speed_limit_source === 'osm_highway_default'
-                      ? `Limit from OSM road-type default${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} assumption)` : ''}`
+                      ? `Estimated from OSM road type${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} profile)` : ''}; not official legal data`
                     : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
                   : inferredTypes.includes(evt.type)
                     ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
@@ -2514,7 +2519,7 @@ function TripScoreOverview({ trip }) {
       )}
       {inferredSpeedLimitScoring && (
         <p role="note" className="mt-3 rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">Speed-limit score uses inferred limits.</span> OpenStreetMap had no posted maxspeed for part of this trip, so road-type estimates were used and speeding penalties were half-weighted.
+          <span className="font-semibold text-foreground">Speed-limit score uses estimated limits.</span> OpenStreetMap had no posted maxspeed for part of this trip, so road-type estimates were used. These are not official legal limits, and speeding penalties are half-weighted.
         </p>
       )}
       {phoneUsePermissionRequired && (

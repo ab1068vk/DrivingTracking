@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { tripService } from '@/api/trips';
+import { tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
@@ -17,6 +17,8 @@ import {
   isHighRiskTrip,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
+
+const TRIP_PAGE_SIZE = 25;
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -141,13 +143,13 @@ export default function TripHistory() {
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(TRIP_PAGE_SIZE);
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const qc = useQueryClient();
 
   const { data: trips = [], isLoading } = useQuery({
-    queryKey: ['all-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 1000 }),
+    ...tripSummaryQueryOptions(),
   });
 
   const { data: vehicles = [] } = useQuery({
@@ -157,8 +159,7 @@ export default function TripHistory() {
 
   const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
   const invalidateTrips = () => {
-    qc.invalidateQueries({ queryKey: ['all-trips'] });
-    qc.invalidateQueries({ queryKey: ['recent-trips'] });
+    qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
 
   const updateTripMut = useMutation({
@@ -201,6 +202,7 @@ export default function TripHistory() {
       default: return 0;
     }
   });
+  const visibleTrips = sorted.slice(0, visibleCount);
   const historySummary = buildTripHistorySummary(sorted, units);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
   const activeTagLabel = selectedTag === 'all'
@@ -230,6 +232,10 @@ export default function TripHistory() {
     if (!savedFiltersLoaded) return;
     setJson(SAVED_FILTERS_KEY, savedFilters).catch(() => {});
   }, [savedFilters, savedFiltersLoaded]);
+
+  useEffect(() => {
+    setVisibleCount(TRIP_PAGE_SIZE);
+  }, [filterBy, search, selectedTag, sortBy]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();
@@ -498,7 +504,7 @@ export default function TripHistory() {
 
       {!isLoading && sorted.length > 0 && (
         <div className="space-y-3">
-          {sorted.map((trip, index) => (
+          {visibleTrips.map((trip, index) => (
             <TripCard
               key={trip.id}
               trip={trip}
@@ -511,6 +517,15 @@ export default function TripHistory() {
               })}
             />
           ))}
+          {visibleCount < sorted.length && (
+            <button
+              type="button"
+              onClick={() => setVisibleCount((count) => Math.min(sorted.length, count + TRIP_PAGE_SIZE))}
+              className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold hover:bg-secondary"
+            >
+              Show {Math.min(TRIP_PAGE_SIZE, sorted.length - visibleCount)} more trips
+            </button>
+          )}
         </div>
       )}
 

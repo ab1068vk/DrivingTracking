@@ -3,7 +3,7 @@ import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { tripService } from '@/api/trips';
+import { tripSummaryQueryOptions } from '@/api/trips';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import {
@@ -40,8 +40,7 @@ export default function DrivingCoach() {
   const settings = localSettings.get();
   const units = settings.units || 'metric';
   const { data: allTrips = [], isLoading } = useQuery({
-    queryKey: ['coach-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    ...tripSummaryQueryOptions(),
   });
 
   const completed = allTrips.filter((trip) => trip.status === 'completed');

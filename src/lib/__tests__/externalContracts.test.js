@@ -78,6 +78,44 @@ describe('external service contracts', () => {
     });
   });
 
+  it('normalizes numeric-string route coordinates before checking OSM speed limits', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        elements: [{
+          id: 111,
+          tags: { highway: 'residential', maxspeed: '50', name: 'String Coordinate Street' },
+          geometry: [
+            { lat: 43.6499, lon: -79.3801 },
+            { lat: 43.6510, lon: -79.3803 },
+          ],
+        }],
+      }),
+    })));
+    const stringRoute = route.map((point) => ({
+      ...point,
+      lat: String(point.lat),
+      lng: String(point.lng),
+      accuracy: String(point.accuracy),
+      speed_kmh: String(point.speed_kmh),
+    }));
+
+    const result = await annotateRouteSpeedLimits(stringRoute, {
+      overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('fetched');
+    expect(result.coverage).toBeGreaterThan(0);
+    expect(result.routePoints[0]).toMatchObject({
+      lat: '43.65',
+      lng: '-79.38',
+      speed_limit_kmh: 50,
+      speed_limit_source: 'openstreetmap',
+      speed_limit_road_name: 'String Coordinate Street',
+    });
+  });
+
   it('marks country-aware OSM highway defaults when maxspeed is missing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,

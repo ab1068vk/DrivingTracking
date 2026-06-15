@@ -7,10 +7,12 @@ import {
   enforceRawGpsRetention,
   expireTripRouteData,
   localTripRepository,
+  inspectStoredTripKeyVersions,
   migrateIndexedDbName,
   migrateLegacyTripStorageToEncrypted,
   normalizeRetiredTripEventTypes,
   preserveNativePrivacyAggregateStats,
+  rotateTripEncryptionKey,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
   TRIP_SCHEMA_VERSION,
@@ -82,7 +84,14 @@ class FakeObjectStore {
   }
 
   getAll() {
-    return makeIdbRequest(() => [...this.state.records.values()]);
+    return makeIdbRequest(() => {
+      this.state.getAllCount += 1;
+      return [...this.state.records.values()];
+    });
+  }
+
+  count() {
+    return makeIdbRequest(() => this.state.records.size);
   }
 
   delete(id) {
@@ -130,6 +139,7 @@ class FakeDatabase {
       indexKeyPaths: new Map(),
       records: new Map(),
       putHistory: [],
+      getAllCount: 0,
       databaseState: this.state,
     };
     this.state.stores.set(name, store);
@@ -137,9 +147,10 @@ class FakeDatabase {
   }
 
   transaction(name) {
-    if (!this.state.stores.has(name)) {
-      throw new Error(`Missing object store: ${name}`);
-    }
+    const names = Array.isArray(name) ? name : [name];
+    names.forEach((storeName) => {
+      if (!this.state.stores.has(storeName)) throw new Error(`Missing object store: ${storeName}`);
+    });
     return new FakeTransaction(this.state);
   }
 
@@ -343,6 +354,7 @@ describe('localTripRepository IndexedDB migrations', () => {
 
     const database = fakeIndexedDb.databases.get('drivesense_mobile');
     const trips = database.stores.get('trips');
+    const summaries = database.stores.get('trip_summaries');
 
     expect(DB_NAME).toBe('drivesense_mobile');
     expect(database.version).toBe(DB_VERSION);
@@ -351,6 +363,9 @@ describe('localTripRepository IndexedDB migrations', () => {
     expect(trips.indexKeyPaths.get('start_time')).toBe('start_time');
     expect(trips.indexes.has('status')).toBe(true);
     expect(trips.indexKeyPaths.get('status')).toBe('status');
+    expect(summaries.keyPath).toBe('id');
+    expect(summaries.indexes.has('start_time')).toBe(true);
+    expect(summaries.indexes.has('status')).toBe(true);
     const [storedRecord] = [...trips.records.values()];
     expect(storedRecord).toMatchObject({
       status: 'draft',
@@ -361,6 +376,58 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
     expect(JSON.stringify(storedRecord)).not.toContain('43.6532');
     expect(JSON.stringify(storedRecord)).not.toContain('-79.3832');
+  });
+
+  it('opens one trip by key and serves lightweight summaries without scanning full trip records', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+
+    await localTripRepository.create({
+      id: 'direct-read-trip',
+      status: 'draft',
+      start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [
+        { lat: 43.6532, lng: -79.3832, speed_kmh: 30 },
+        { lat: 43.6542, lng: -79.3842, speed_kmh: 35 },
+      ],
+    });
+
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    const tripStore = database.stores.get('trips');
+    tripStore.getAllCount = 0;
+
+    const trip = await localTripRepository.getById('direct-read-trip');
+    const summaries = await localTripRepository.listAllSummaries();
+
+    expect(trip.route_points).toHaveLength(2);
+    expect(tripStore.getAllCount).toBe(0);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      id: 'direct-read-trip',
+      status: 'draft',
+      summary_version: 1,
+    });
+    expect(summaries[0].route_points).toBeUndefined();
+  });
+
+  it('rotates both full trip and summary encryption records together', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+
+    await localTripRepository.create({
+      id: 'rotation-trip',
+      status: 'draft',
+      start_time: '2026-05-22T10:00:00.000Z',
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
+    });
+
+    const result = await rotateTripEncryptionKey(2);
+    const versions = await inspectStoredTripKeyVersions();
+    const summaries = await localTripRepository.listAllSummaries();
+
+    expect(result.indexedDbRecordsRotated).toBe(2);
+    expect(versions).toEqual([2, 2]);
+    expect(summaries[0].id).toBe('rotation-trip');
   });
 
   it('redacts private route and event coordinates at the repository write boundary', async () => {

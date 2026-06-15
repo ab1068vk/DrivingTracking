@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Award, CheckCircle2, Lock, Trophy } from 'lucide-react';
-import { tripService } from '@/api/trips';
+import { tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { localSettings } from '@/lib/trackingStore';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
@@ -39,8 +39,7 @@ const nextStepLabel = (badge) => {
 export default function Achievements() {
   const settings = localSettings.get();
   const { data: allTrips = [], isLoading } = useQuery({
-    queryKey: ['achievement-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    ...tripSummaryQueryOptions(),
   });
   const { data: vehicles = [] } = useQuery({
     queryKey: ['achievement-vehicles'],

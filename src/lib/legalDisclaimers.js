@@ -89,7 +89,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Privacy & data',
     title: 'Optional external requests',
-    body: 'Optional road, weather, and route-matching features can send limited route-area boxes to OpenStreetMap, a privacy-safe route point and date to Open-Meteo, or sampled GPS coordinate pairs to the OSRM endpoint you configure and explicitly approve. Public or third-party services have their own availability, logging, privacy, and retention practices.',
+    body: 'Optional road, weather, and route-matching features can send privacy-filtered public road boxes to OpenStreetMap, a privacy-safe route point and date to Open-Meteo, or sampled public GPS segments to the OSRM endpoint you configure and explicitly approve. Public or third-party services have their own availability, logging, privacy, and retention practices.',
   },
   {
     group: 'Privacy & data',

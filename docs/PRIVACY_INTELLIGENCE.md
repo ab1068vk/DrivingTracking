@@ -11,7 +11,7 @@ The feature does several genuinely valuable things:
 - It has meaningful local protections around privacy zones, encrypted storage wrappers, native Android crypto hooks, audit-chain checks, and transmission logging.
 - It is test-covered at the summary/classification layer.
 
-The harsh truth: the current "privacy score" is too optimistic. Several checks in `src/lib/deviceStatus.js` are hardcoded to return `true`, so the score can imply protections are active without proving that the underlying implementation is actually working. The hash-chain audit log detects casual edits, but it is not tamper-proof because the chain and the anchor live on the same device. The transmission classifier is metadata/string based, not a cryptographic or packet-level proof. This feature is a strong UX and transparency layer, not a security guarantee.
+The important limitation: the current "privacy score" is still local attestation, not an outside security audit. The app now runs runtime self-tests through `src/lib/controlSelfTests.js` instead of the old hardcoded `true` checks, but those tests still execute inside the same app runtime they are judging. The hash-chain audit log detects casual edits, but it is not tamper-proof because the chain and the anchor live on the same device. The transmission classifier is typed metadata provided by app call sites, not a packet capture or cryptographic proof of the payload. This feature is a strong UX and transparency layer, not a security guarantee.
 
 If this is being positioned as a real privacy/security feature, it needs hardening before release claims are made.
 
@@ -38,6 +38,7 @@ Main source files:
 src/pages/PrivacyIntelligence.jsx
 src/lib/privacyIntelligence.js
 src/lib/deviceStatus.js
+src/lib/controlSelfTests.js
 src/lib/privacyZones.js
 src/lib/transmissionLog.js
 src/lib/hashChainLog.js
@@ -94,6 +95,8 @@ authenticateDevice('Access Privacy Intelligence')
 
 It also re-authenticates when the app returns from background after at least five minutes.
 
+If Android app lock is enabled in Settings, the whole app is locked on launch and after returning from the background for five minutes. That app-wide lock is implemented in `src/App.jsx` with `authenticateDevice('Verify to open your private driving data')`; Privacy Intelligence still performs its own page-level authentication before showing the dashboard.
+
 ## Data Loading Flow
 
 The main orchestration function is:
@@ -102,11 +105,11 @@ The main orchestration function is:
 loadPrivacyIntelligence()
 ```
 
-It loads these in parallel:
+It first gathers protection statuses, then computes the score from those controls and loads activity summaries:
 
 ```txt
-computePrivacyScore()
 getProtectionStatus()
+computePrivacyScoreFromControls()
 getZoneStats()
 getTransmissionSummary()
 loadPrivacyAuditChain()
@@ -133,24 +136,36 @@ The page refreshes quietly every 30 seconds while authenticated.
 
 ## Privacy Score Model
 
-The overall score is weighted from four layer scores:
+The overall score is weighted from four layer scores. Each layer is calculated from applicable controls in `CONTROL_REGISTRY` plus setting-backed controls.
 
-| Layer | Weight | Function |
+| Layer | Weight | Source |
 | --- | ---: | --- |
-| Device | 30% | `scoreDevice()` |
-| Network | 25% | `scoreNetwork()` |
-| Inference | 25% | `scoreInference()` |
-| Integrity | 20% | `scoreIntegrity()` |
+| Device | 30% | Storage encryption, secure deletion, root/jailbreak check, key rotation, app lock, screenshot prevention |
+| Network | 25% | Certificate pinning, bridge encryption, request obfuscation, OSRM consent |
+| Inference | 25% | Memory zeroing, timestamp fuzzing, kinematic nulling, differential privacy, export commitments |
+| Integrity | 20% | Export signing, crash scrubbing, local audit chain |
 
-Formula:
+Each control returns one of these statuses:
+
+| Status | Points | Meaning |
+| --- | ---: | --- |
+| `ok` | 1.0 | Runtime self-test passed. |
+| `configured` | 0.6 | Setting-backed protection is enabled, but not fully self-tested. |
+| `warn` | 0.3 | Protection exists but needs review. |
+| `unknown` | 0.0 | The app could not prove the state. |
+| `error` | 0.0 | The check failed or the protection is off. |
+| `not_applicable` | excluded | Control does not apply to this runtime, such as native-only pinning on web. |
+
+Layer formula:
 
 ```txt
-overall = round(
-  device * 0.30 +
-  network * 0.25 +
-  inference * 0.25 +
-  integrity * 0.20
-)
+layer = round(earned_control_points / applicable_control_points * 100)
+```
+
+Overall formula:
+
+```txt
+overall = round(weighted_applicable_layer_scores / applicable_layer_weight)
 ```
 
 Score bands:
@@ -162,82 +177,17 @@ Score bands:
 | 55-74 | Needs review | Some protections need attention. |
 | 0-54 | At risk | Important protections are unavailable or failing. |
 
-### Device Layer
-
-Starts at 100 and subtracts:
-
-| Condition | Penalty |
-| --- | ---: |
-| RASP/device integrity says insecure | -30 |
-| Storage encryption inactive | -25 |
-| Biometric gate inactive | -10 |
-| Screenshot prevention inactive | -10 |
-| Key rotation overdue | -15 |
-| Key rotation due within seven days | -5 |
-
-### Network Layer
-
-Starts at 100 and subtracts:
-
-| Condition | Penalty |
-| --- | ---: |
-| Certificate pinning inactive | -20 |
-| Native bridge encryption inactive | -10 |
-| Request obfuscation inactive | -10 |
-| OSRM enabled while at least one privacy zone allows sharing | -15 |
-| OSRM consent outdated after privacy-zone change | -10 |
-
-### Inference Layer
-
-Starts at 100 and subtracts:
-
-| Condition | Penalty |
-| --- | ---: |
-| Timestamp fuzzing inactive | -25 |
-| Kinematic nulling inactive | -25 |
-| Differential privacy inactive | -20 |
-| Commitment scheme inactive | -20 |
-
-### Integrity Layer
-
-Starts at 100 and subtracts:
-
-| Condition | Penalty |
-| --- | ---: |
-| Audit chain verification fails | -40 |
-| HMAC export signing inactive | -30 |
-| Crash scrubbing inactive | -20 |
-| Audit logging inactive | -10 |
-
 ### Honest Score Assessment
 
-The score is only as real as the checks behind it. Right now, several checks are not true runtime validations.
+The score is only as real as the checks behind it. The current implementation is much better than the previous hardcoded status model: `src/lib/deviceStatus.js` delegates to `src/lib/controlSelfTests.js`, and the self-tests exercise real code paths such as AES-GCM round trips, `SecureGpsBuffer.zero()`, privacy export masking, export HMAC signing, crash scrubbing, and audit-chain append/verify.
 
-Examples from `src/lib/deviceStatus.js`:
+Remaining limitations:
 
-```js
-export const isStorageEncrypted = () => true;
-export const isMemoryZeroingEnabled = () => true;
-export const isSecureDeletionEnabled = () => true;
-export const isRequestObfuscationEnabled = () => true;
-export const isTimestampFuzzingEnabled = () => true;
-export const isKinematicNullingEnabled = () => true;
-export const isDifferentialPrivacyEnabled = () => true;
-export const isCommitmentSchemeEnabled = () => true;
-export const isHmacExportEnabled = () => true;
-export const isCrashScrubbingEnabled = () => true;
-export const isAuditLogEnabled = () => true;
-```
-
-That means the score can look strong even if a future refactor breaks the actual behavior. These should become active health checks, not constants.
-
-Also, `scoreDevice()` treats failed integrity checks as secure if `checkIntegrity()` throws:
-
-```js
-checkIntegrity().catch(() => ({ secure: true, threats: [] }))
-```
-
-That is too forgiving. A failed integrity check should be at least a warning and probably a score penalty.
+- Self-tests run inside the same JavaScript/native app runtime and can be fooled by a compromised app bundle.
+- Some controls are still setting-backed (`configured`) rather than fully proven (`ok`).
+- Request obfuscation can be `unknown` until a batch runs in the current session.
+- `checkDeviceIntegrity()` now returns `unknown` when integrity checking is unavailable, but unknown still needs careful UI language so users do not read it as proof of safety.
+- `getKeyRotationStatus()` is based on key metadata and rotation timing; a stronger version would inspect stored payload key versions and report pending rotations.
 
 ## Protection Checks
 
@@ -245,20 +195,24 @@ That is too forgiving. A failed integrity check should be at least a warning and
 
 | ID | Category | What it reports | Current reliability |
 | --- | --- | --- | --- |
-| `storage` | Device | Storage encryption, key version, days since rotation. | Mixed. Encryption exists, but status is hardcoded true. |
-| `key_rotation` | Device | Days until next 30-day rotation target. | Partial. Based on setting metadata, not proof of successful rotation. |
-| `memory_zeroing` | Inference | Sensitive route buffers cleared after processing. | Partial. Some buffers use `SecureGpsBuffer.zero()`, but status is hardcoded true. |
-| `secure_deletion` | Device | Private GPS purge uses secure deletion. | Weak. Status is hardcoded true; implementation needs verification. |
-| `certificate_pinning` | Network | Native endpoint pinning active. | Reasonable on native only; web runtime fallback has no pinning. |
-| `bridge_encryption` | Network | JS-to-Android sensitive payload bridge encryption. | Reasonable on Android; unavailable in web runtime. |
-| `screenshots` | Device | Android sensitive screens use screenshot blocking. | Setting driven; depends on native plugin behavior. |
+| `storage_encryption` | Device | AES-256-GCM sensitive-payload encryption round trip. | Runtime self-test; strong local signal. |
+| `key_rotation` | Device | Days until next 30-day rotation target. | Partial. Based on setting metadata and key status, not a full payload inventory. |
+| `memory_zeroing` | Inference | Route masking invokes `SecureGpsBuffer.zero()`. | Runtime self-test; proves the masking path calls zeroing. |
+| `secure_deletion` | Device | IndexedDB canary is overwritten and removed with `secureDelete()`. | Runtime self-test where IndexedDB is available; otherwise unknown. |
+| `cert_pinning` | Network | Native endpoint pinning is configured. | Native-only; web runtime is not applicable. |
+| `bridge_encryption` | Network | JS-to-Android sensitive payload bridge encryption. | Native-only encrypted bridge echo test. |
+| `screenshot_prevention` | Device | Android screen capture is blocked unless the user allows it. | Setting driven; depends on native plugin behavior. |
 | `biometric_gate` | Device | App lock and Privacy Intelligence authentication. | Useful UX control, but not data-at-rest protection by itself. |
-| `root_detection` | Integrity | RASP check result. | Useful, but mobile RASP is bypassable. Treat as signal, not certainty. |
-| `request_obfuscation` | Network | Randomized outbound scheduling. | Implementation exists, but status is hardcoded true. |
-| `crash_scrubbing` | Integrity | Crash report coordinate scrubbing. | Status hardcoded true; latest scrub count comes from settings. |
+| `root_detection` | Device | RASP check result. | Useful, but mobile RASP is bypassable. Treat as signal, not certainty. |
+| `request_obfuscation` | Network | Randomized outbound scheduling queue health. | Runtime queue status; can be unknown until a batch has run. |
+| `timestamp_fuzzing` | Inference | Privacy export boundary timestamps are fuzzed. | Runtime self-test with a synthetic private boundary. |
+| `kinematic_nulling` | Inference | Privacy export placeholders omit motion fields. | Runtime self-test with a synthetic private boundary. |
+| `differential_privacy` | Inference | Aggregate noise varies across samples. | Runtime canary; validates behavior, not statistical privacy policy. |
+| `commitment_scheme` | Inference | Zone export commitments omit coordinates and vary by export. | Runtime self-test. |
+| `crash_scrubbing` | Integrity | Crash report coordinate scrubbing. | Runtime self-test with coordinate canaries. |
 | `osrm_consent` | Network | OSRM data-sharing and privacy-zone guard status. | Useful and tied to actual settings. |
 | `audit_chain` | Integrity | Local audit chain validity and tip hash. | Good for accidental/local edits, weak against full local compromise. |
-| `export_signing` | Integrity | Backup export HMAC signing. | Status hardcoded true; should verify signing module readiness. |
+| `export_signing` | Integrity | Backup export HMAC signing and tamper rejection. | Runtime self-test. |
 
 ## Privacy Zones
 
@@ -532,8 +486,8 @@ src/lib/requestObfuscator.js
 Behavior:
 
 - Batches location requests after a random 3-9 minute delay.
-- Shuffles real requests with decoys.
-- Adds 1-3 decoy requests.
+- Shuffles real requests with decoys only when `decoy_traffic_mode` is `first_party`.
+- Adds 1-3 first-party Open-Meteo decoy requests only in that opt-in mode.
 - Adds 800-3500 ms between requests in a batch.
 - Uses native road-data queue when a native request is available.
 
@@ -552,12 +506,12 @@ decoyMaxCount: 3
 
 The idea is useful, but the implementation needs scrutiny:
 
-- The status check is hardcoded true.
-- Decoys call `https://httpbin.org/get`, which leaks traffic to a third-party service. That may be unacceptable in a privacy feature.
+- Privacy Intelligence only reports `ok` after the obfuscator queue has initialized and processed a batch; otherwise it can report `not_applicable` or `unknown`.
+- Decoys are off by default. When enabled, they use a first-party-style Open-Meteo weather request at neutral coordinates, which is better than the old generic public decoy but still creates extra external traffic.
 - Obfuscation does not remove the need to minimize payloads.
 - Network timing privacy is hard. This is a speed bump, not anonymity.
 
-Recommended improvement: remove public third-party decoys or make them opt-in/test-only, and log obfuscation health based on actual queue behavior.
+Recommended improvement: keep decoys opt-in, make the UI clear about the extra external request, and consider a user-controlled endpoint for deployments that need stricter privacy.
 
 ## OSRM Privacy
 
@@ -570,8 +524,9 @@ Current safeguards:
 - OSRM requires a trusted custom endpoint.
 - OSRM requires raw-coordinate sharing consent.
 - Privacy-zone changes invalidate prior OSRM consent.
-- Privacy zones can exclude protected interiors from route snapping.
-- The Privacy Intelligence score penalizes outdated consent and zones that allow OSRM coordinate sharing.
+- Privacy-zone interiors and boundary points are always excluded from route snapping.
+- Settings blocks the public demo endpoint for saved OSRM configuration.
+- The Privacy Intelligence score penalizes outdated consent and treats the OSRM privacy-zone guard as always on.
 
 ### Honest OSRM Assessment
 
@@ -603,7 +558,7 @@ Important UI details:
 
 UI risk:
 
-- The page is polished enough to feel authoritative. That raises the bar for correctness. If the score is optimistic because checks are hardcoded, the UI can mislead users.
+- The page is polished enough to feel authoritative. That raises the bar for correctness. If users read local self-tests as an external security audit, the UI can mislead them even when the checks are technically passing.
 
 ## Test Coverage
 
@@ -673,44 +628,16 @@ Privacy Intelligence proves all sensitive data is protected.
 Privacy Intelligence is tamper-proof.
 Privacy Intelligence guarantees no raw coordinates left the device.
 The privacy score is a security certification.
-All listed protections are actively verified.
+Every listed protection is independently verified outside the app runtime.
 ```
 
 Those claims would be too strong for the current implementation.
 
 ## Priority Fix List
 
-### P0: Stop Overstating Protection Status
+### P0: Verify Transmission Metadata At Call Sites
 
-Replace hardcoded `true` checks in `src/lib/deviceStatus.js` with real runtime checks or return `unknown`.
-
-Needed status values:
-
-```txt
-ok
-warn
-error
-unknown
-not_applicable
-```
-
-Right now a missing proof often appears as success. That is the biggest credibility problem.
-
-### P0: Treat Failed Integrity Checks As Risk
-
-Change `scoreDevice()` so a thrown `checkIntegrity()` result does not silently become secure.
-
-Better behavior:
-
-```txt
-check passed -> ok
-check failed with threats -> error
-check unavailable -> warn
-```
-
-### P0: Make Transmission Classification Typed
-
-Replace string matching on `protections` with structured payload metadata:
+Transmission records now use typed fields, but each outbound call site still needs tests that compare the actual payload shape against the logged metadata:
 
 ```txt
 coordinateDisclosure: none | blocked | raw | rounded | bounding_box | masked | committed
@@ -718,7 +645,11 @@ privacyTransformVerified: boolean
 privacyTransformSource: module/function name
 ```
 
-Require outbound call-site tests.
+The most important cases are OSM speed-limit lookups, Open-Meteo weather lookups, OSRM route snapping, and export-related flows.
+
+### P0: Preserve Unknown As Unknown
+
+The scoring model supports `unknown` and `not_applicable`. Keep UI copy, report copy, and release language from converting unknown local evidence into proof of safety.
 
 ### P1: Add External Or Hardware-Backed Audit Anchoring
 
@@ -731,13 +662,13 @@ Options:
 - Optional server-side append-only anchor.
 - QR/exported checkpoint the app cannot silently rewrite.
 
-### P1: Fix Request Obfuscation Decoys
+### P1: Review Request Obfuscation Decoys
 
-The current `httpbin.org` decoy is questionable for a privacy product. Remove it, make it test-only, or route decoys to a user-controlled endpoint.
+First-party Open-Meteo decoys are safer than generic public decoys, but they still create extra network traffic. Keep them opt-in and consider a user-controlled endpoint for stricter deployments.
 
 ### P1: Verify Key Rotation For Real
 
-The dashboard should inspect encrypted payload metadata and report:
+The dashboard should inspect encrypted payload metadata across stored sensitive records and report:
 
 ```txt
 active key version
@@ -750,7 +681,7 @@ rotation errors
 
 ### P1: Add UI Language For Unknowns
 
-The UI needs an "unknown" state. Unknown is not the same as OK.
+The UI has status filtering, but unknown states need to remain visually and verbally distinct from both success and failure. Unknown is not the same as OK.
 
 ### P2: Strengthen Documentation In-App
 
@@ -762,28 +693,25 @@ This dashboard reports app-recorded privacy activity and local protection checks
 
 Do this without making the UI wordy.
 
-## Suggested Better Score Model
+## Current Score Model Direction
 
-The current score is easy to understand, but too forgiving.
-
-Better model:
+The current score model follows the right direction:
 
 ```txt
 verified controls: can score high
 configured controls: can score medium
-claimed controls: no score boost without evidence
 unknown controls: warning, not success
 failed controls: penalty
 not applicable controls: excluded from denominator
 ```
 
-Example:
+Current implementation:
 
 ```txt
-score = verified_points / applicable_points
+score = weighted_control_points / applicable_control_points
 ```
 
-Each control should have:
+Each control has or should preserve:
 
 ```txt
 id
@@ -838,16 +766,16 @@ Manual checks:
 
 ## Open Design Questions
 
-1. Should Privacy Intelligence show "unknown" explicitly instead of converting unverified protections into OK or warning?
+1. Should Privacy Intelligence make "unknown" more visually prominent even though the status exists today?
 2. Should clearing transmission records append an audit event?
 3. Should the audit log be exportable with a signed checkpoint?
 4. Should raw-coordinate OSRM sharing be blocked whenever any privacy zone exists near a route endpoint?
 5. Should the score exist at all before checks become real evidence-based health checks?
 6. Should web runtime receive a lower maximum possible score because browser storage cannot match Android hardware-backed protections?
-7. Should request obfuscation decoys be removed to avoid sending privacy-feature traffic to `httpbin.org`?
+7. Should request obfuscation decoys remain Open-Meteo based, move to a user-controlled endpoint, or stay disabled for most users?
 
 ## Bottom Line
 
 Privacy Intelligence is not useless. The core idea is good, and the app already has meaningful privacy machinery around zones, masking, encrypted storage, audit records, and outbound request transparency.
 
-But the current implementation is too optimistic and too self-attesting. It should be treated as a promising privacy dashboard, not a trustworthy privacy assurance system. The next serious work is not adding more UI. The next serious work is making every green check earn its color with real evidence.
+But the current implementation is still self-attesting. It should be treated as a useful privacy dashboard, not a trustworthy privacy assurance system. The next serious work is tightening call-site payload tests, key-rotation evidence, and any external or hardware-backed audit anchoring.

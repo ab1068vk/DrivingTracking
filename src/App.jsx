@@ -106,20 +106,7 @@ const AuthenticatedApp = () => {
       setAppLockEnabled(lockEnabled);
       setAppLocked(lockEnabled);
       await loadPrivacyZonesFromStorage(settings);
-      await import('@/lib/localTripRepository')
-        .then(async ({ enforceRawGpsRetention, migrateLegacyTripStorageToEncrypted }) => {
-          await migrateLegacyTripStorageToEncrypted();
-          await enforceRawGpsRetention();
-        })
-        .catch(() => {});
-      await checkAndRotateEncryptionKey().catch(() => {});
       await activeTripStore.hydrate();
-      import('@/lib/roadContextQueue')
-        .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
-        .catch(() => {});
-      import('@/lib/rescoringWorker')
-        .then(({ startRescoringWorker }) => startRescoringWorker())
-        .catch(() => {});
       notificationService
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
         .catch(() => {});
@@ -132,6 +119,24 @@ const AuthenticatedApp = () => {
       }
 
       applyThemeMode(settings.dark_mode);
+
+      const runDeferredMaintenance = async () => {
+        await import('@/lib/localTripRepository')
+          .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance())
+          .catch(() => {});
+        await checkAndRotateEncryptionKey().catch(() => {});
+        import('@/lib/roadContextQueue')
+          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
+          .catch(() => {});
+        import('@/lib/rescoringWorker')
+          .then(({ startRescoringWorker }) => startRescoringWorker())
+          .catch(() => {});
+      };
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(runDeferredMaintenance, { timeout: 1500 });
+      } else {
+        window.setTimeout(runDeferredMaintenance, 0);
+      }
     };
     bootstrapSettings();
   }, []);

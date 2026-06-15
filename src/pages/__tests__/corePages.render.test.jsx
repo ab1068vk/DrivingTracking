@@ -263,7 +263,7 @@ describe('core page component renders', () => {
   beforeEach(() => {
     queryData.clear();
     delete settings.advanced_safety_detection_enabled;
-    queryData.set(JSON.stringify(['recent-trips']), [sampleTrip]);
+    queryData.set(JSON.stringify(['trip-summaries']), [sampleTrip]);
     queryData.set(JSON.stringify(['vehicles']), [{ id: 'vehicle-1', name: 'Commuter', fuel_type: 'gasoline' }]);
     queryData.set(JSON.stringify(['trip', 'trip-1']), sampleTrip);
     queryData.set(JSON.stringify(['settings-trips']), [sampleTrip]);
@@ -283,7 +283,7 @@ describe('core page component renders', () => {
   }, 10_000);
 
   it('labels historical context as estimated and shows its signal breakdown', async () => {
-    queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
+    queryData.set(JSON.stringify(['trip-summaries']), Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
       id: `trip-${index + 1}`,
       start_time: new Date(Date.now() - index * 3600000).toISOString(),
@@ -298,7 +298,7 @@ describe('core page component renders', () => {
   });
 
   it('withholds historical context when completed history has no recorded distance', async () => {
-    queryData.set(JSON.stringify(['recent-trips']), Array.from({ length: 5 }, (_, index) => ({
+    queryData.set(JSON.stringify(['trip-summaries']), Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
       id: `zero-trip-${index + 1}`,
       distance_km: 0,
@@ -327,7 +327,7 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<TripDetail />);
 
     expect(html).toContain('Back');
-    expect(html).toContain('Trip map placeholder');
+    expect(html).toContain('Loading trip map');
     expect(html).toContain('OpenStreetMap');
     expect(html).toContain('Open-Meteo');
     expect(html).toContain('Safety');
@@ -374,7 +374,8 @@ describe('core page component renders', () => {
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const html = renderToStaticMarkup(<TripDetail />);
 
-    expect(html).toContain('Speed-limit score uses inferred limits');
+    expect(html).toContain('Speed-limit score uses estimated limits');
+    expect(html).toContain('not official legal limits');
     expect(html).toContain('half-weighted');
     expect(html).toContain('Sources');
     expect(html).toContain('GPS-inferred speed limit');
@@ -503,7 +504,7 @@ describe('core page component renders', () => {
       fuel_efficiency_l_per_100km: 8.5,
       tire_rotation_interval_km: 10000,
     }]);
-    queryData.set(JSON.stringify(['all-trips-vehicles']), [{
+    queryData.set(JSON.stringify(['trip-summaries']), [{
       ...sampleTrip,
       vehicle_id: 'vehicle-1',
       trip_tire_wear_units: 220,
@@ -519,7 +520,7 @@ describe('core page component renders', () => {
   });
 
   it('renders only insufficient-data UBI status below the score-card evidence threshold', async () => {
-    queryData.set(JSON.stringify(['report-trips']), [{
+    queryData.set(JSON.stringify(['trip-summaries']), [{
       ...sampleTrip,
       distance_km: 8.4,
       start_time: new Date().toISOString(),
@@ -538,7 +539,7 @@ describe('core page component renders', () => {
   });
 
   it('shows the insurance-validation warning beside a scored UBI card', async () => {
-    queryData.set(JSON.stringify(['report-trips']), [{
+    queryData.set(JSON.stringify(['trip-summaries']), [{
       ...sampleTrip,
       distance_km: 60,
       start_time: new Date().toISOString(),
@@ -561,7 +562,7 @@ describe('core page component renders', () => {
 
   it('labels report fuel outputs as estimates and withholds savings without an assigned vehicle', async () => {
     queryData.set(JSON.stringify(['vehicles']), []);
-    queryData.set(JSON.stringify(['report-trips']), [{
+    queryData.set(JSON.stringify(['trip-summaries']), [{
       ...sampleTrip,
       vehicle_id: null,
       distance_km: 60,
@@ -637,7 +638,7 @@ describe('core page component renders', () => {
   });
 
   it('renders a read-only trip-history snapshot for the current filters', async () => {
-    queryData.set(JSON.stringify(['all-trips']), [
+    queryData.set(JSON.stringify(['trip-summaries']), [
       sampleTrip,
       {
         ...sampleTrip,

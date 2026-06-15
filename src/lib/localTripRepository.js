@@ -37,6 +37,7 @@ import {
 } from '@/lib/securePayloadCrypto';
 import { isSecureDeleteTombstone, secureDelete } from '@/lib/encryptedStore';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
+import { buildTripSummary } from '@/lib/tripSummary';
 
 const TRIPS_KEY = 'drivesense_trips';
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
@@ -46,6 +47,7 @@ const DEFAULT_DB_NAME = 'drivesense_mobile';
 export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
 export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
 const TRIP_STORE = 'trips';
+const TRIP_SUMMARY_STORE = 'trip_summaries';
 export const TRIP_SCHEMA_VERSION = 23;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
@@ -146,6 +148,13 @@ const getTripStoreForUpgrade = (db, transaction) => {
   return transaction.objectStore(TRIP_STORE);
 };
 
+const getTripSummaryStoreForUpgrade = (db, transaction) => {
+  if (!hasStore(db, TRIP_SUMMARY_STORE)) {
+    return db.createObjectStore(TRIP_SUMMARY_STORE, { keyPath: 'id' });
+  }
+  return transaction.objectStore(TRIP_SUMMARY_STORE);
+};
+
 export const createIndexedDbMigrationRunner = (migrations) => {
   const orderedMigrations = [...migrations].sort((a, b) => a.version - b.version);
   const latestVersion = orderedMigrations.at(-1)?.version ?? 1;
@@ -165,6 +174,14 @@ const tripDbMigrationRunner = createIndexedDbMigrationRunner([
     version: 1,
     migrate({ db, transaction }) {
       const store = getTripStoreForUpgrade(db, transaction);
+      ensureTripIndex(store, 'start_time', 'start_time');
+      ensureTripIndex(store, 'status', 'status');
+    },
+  },
+  {
+    version: 2,
+    migrate({ db, transaction }) {
+      const store = getTripSummaryStoreForUpgrade(db, transaction);
       ensureTripIndex(store, 'start_time', 'start_time');
       ensureTripIndex(store, 'status', 'status');
     },
@@ -213,6 +230,7 @@ const idbTransactionDone = (tx) => new Promise((resolve, reject) => {
 });
 
 const tripEncryptionContext = (id) => `trip:${String(id)}`;
+const tripSummaryEncryptionContext = (id) => `trip-summary:${String(id)}`;
 
 const encodeTripRecord = async (trip, options = {}) => {
   const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
@@ -228,12 +246,32 @@ const encodeTripRecord = async (trip, options = {}) => {
   };
 };
 
+const encodeTripSummaryRecord = async (trip, options = {}) => {
+  const summary = buildTripSummary(trip);
+  return {
+    id: summary.id,
+    start_time: summary.start_time || '',
+    status: summary.status || '',
+    encrypted_payload: await encryptSensitiveValue(
+      summary,
+      tripSummaryEncryptionContext(summary.id),
+      options
+    ),
+  };
+};
+
 const decodeTripRecord = async (record) => {
   if (!isEncryptedPayload(record?.encrypted_payload)) return record;
   return decryptSensitiveValue(record.encrypted_payload, tripEncryptionContext(record.id));
 };
 
+const decodeTripSummaryRecord = async (record) => {
+  if (!isEncryptedPayload(record?.encrypted_payload)) return record;
+  return decryptSensitiveValue(record.encrypted_payload, tripSummaryEncryptionContext(record.id));
+};
+
 const decodeTripRecords = (records = []) => Promise.all(records.map(decodeTripRecord));
+const decodeTripSummaryRecords = (records = []) => Promise.all(records.map(decodeTripSummaryRecord));
 const sanitizeTripsForPrivacyStorage = (trips = []) => (
   Promise.all((Array.isArray(trips) ? trips : []).map((trip) => sanitizeTripForPrivacyStorageAsync(trip)))
 );
@@ -257,6 +295,21 @@ const writeTripsToDb = async (dbName, trips) => {
     const tx = db.transaction(TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
     encryptedTrips.forEach((trip) => store.put(trip));
+    await idbTransactionDone(tx);
+  } finally {
+    db.close();
+  }
+};
+
+const writeTripSummariesToDb = async (dbName, trips) => {
+  if (!trips.length) return;
+  const encryptedSummaries = await Promise.all(trips.map(encodeTripSummaryRecord));
+  const db = await openDbByName(dbName);
+  try {
+    if (!db.objectStoreNames.contains(TRIP_SUMMARY_STORE)) return;
+    const tx = db.transaction(TRIP_SUMMARY_STORE, 'readwrite');
+    const store = tx.objectStore(TRIP_SUMMARY_STORE);
+    encryptedSummaries.forEach((summary) => store.put(summary));
     await idbTransactionDone(tx);
   } finally {
     db.close();
@@ -358,6 +411,70 @@ const getAllTrips = async () => {
   }
 };
 
+const getStoredTripById = async (id) => {
+  try {
+    const db = await openDb();
+    let record;
+    try {
+      const tx = db.transaction(TRIP_STORE, 'readonly');
+      const store = tx.objectStore(TRIP_STORE);
+      record = await idbRequest(store.get(id));
+      if (!record && typeof id === 'string' && id.trim() && Number.isFinite(Number(id))) {
+        const numericTx = db.transaction(TRIP_STORE, 'readonly');
+        record = await idbRequest(numericTx.objectStore(TRIP_STORE).get(Number(id)));
+      }
+    } finally {
+      db.close();
+    }
+    if (!record || isSecureDeleteTombstone(record)) return null;
+    const trip = await decodeTripRecord(record);
+    const sanitized = await sanitizeTripForPrivacyStorageAsync(trip);
+    if (!isEncryptedPayload(record.encrypted_payload) || JSON.stringify(sanitized) !== JSON.stringify(trip)) {
+      await putTrip(sanitized);
+    }
+    return sanitized;
+  } catch {
+    const trips = await getEncryptedJson(TRIPS_KEY, []);
+    return trips.find((trip) => String(trip.id) === String(id)) || null;
+  }
+};
+
+const getAllTripSummaries = async () => {
+  if (!canUseIndexedDb()) {
+    return (await getAllTrips()).map(buildTripSummary);
+  }
+
+  try {
+    const db = await openDb();
+    let summaryRecords;
+    let tripCount;
+    try {
+      if (!db.objectStoreNames.contains(TRIP_SUMMARY_STORE)) throw new Error('Trip summary store unavailable');
+      const summaryTx = db.transaction(TRIP_SUMMARY_STORE, 'readonly');
+      summaryRecords = await idbRequest(summaryTx.objectStore(TRIP_SUMMARY_STORE).getAll());
+      const tripTx = db.transaction(TRIP_STORE, 'readonly');
+      tripCount = await idbRequest(tripTx.objectStore(TRIP_STORE).count());
+    } finally {
+      db.close();
+    }
+
+    const liveSummaries = summaryRecords.filter((record) => !isSecureDeleteTombstone(record));
+    if (liveSummaries.length === tripCount) {
+      try {
+        return await decodeTripSummaryRecords(liveSummaries);
+      } catch {
+        // Rebuild below if a summary was interrupted or encrypted with a retired key.
+      }
+    }
+  } catch {
+    // Fall through to a one-time, source-of-truth backfill.
+  }
+
+  const trips = await getAllTrips();
+  await writeTripSummariesToDb(DB_NAME, trips).catch(() => {});
+  return trips.map(buildTripSummary);
+};
+
 export async function migrateLegacyTripStorageToEncrypted() {
   let indexedDbRecordsMigrated = 0;
   let fallbackStoreMigrated = false;
@@ -436,6 +553,27 @@ export async function rotateTripEncryptionKey(targetKeyVersion, { yieldEvery = 2
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
+      if (db.objectStoreNames.contains(TRIP_SUMMARY_STORE)) {
+        const summaryReadTx = db.transaction(TRIP_SUMMARY_STORE, 'readonly');
+        const summaries = await idbRequest(summaryReadTx.objectStore(TRIP_SUMMARY_STORE).getAll());
+        for (const record of summaries) {
+          if (isSecureDeleteTombstone(record)) {
+            const cleanupTx = db.transaction(TRIP_SUMMARY_STORE, 'readwrite');
+            await idbRequest(cleanupTx.objectStore(TRIP_SUMMARY_STORE).delete(record.id));
+            continue;
+          }
+          if (Number(record?.encrypted_payload?.key_version) === normalizedTarget) continue;
+          const summary = await decodeTripSummaryRecord(record);
+          const encryptedRecord = await encodeTripSummaryRecord(summary, { keyVersion: normalizedTarget });
+          const writeTx = db.transaction(TRIP_SUMMARY_STORE, 'readwrite');
+          await idbRequest(writeTx.objectStore(TRIP_SUMMARY_STORE).put(encryptedRecord));
+          indexedDbRecordsRotated += 1;
+          processed += 1;
+          if (yieldEvery > 0 && processed % yieldEvery === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+        }
+      }
     } finally {
       db.close();
     }
@@ -461,7 +599,11 @@ export async function inspectStoredTripKeyVersions() {
       try {
         const tx = db.transaction(TRIP_STORE, 'readonly');
         const records = await idbRequest(tx.objectStore(TRIP_STORE).getAll());
+        const summaryRecords = db.objectStoreNames.contains(TRIP_SUMMARY_STORE)
+          ? await idbRequest(db.transaction(TRIP_SUMMARY_STORE, 'readonly').objectStore(TRIP_SUMMARY_STORE).getAll())
+          : [];
         return records
+          .concat(summaryRecords)
           .filter((record) => !isSecureDeleteTombstone(record))
           .map((record) => Number(record?.encrypted_payload?.key_version))
           .filter(Number.isInteger);
@@ -482,10 +624,16 @@ export async function inspectStoredTripKeyVersions() {
 const putTrip = async (trip) => {
   const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
   try {
-    const encryptedTrip = await encodeTripRecord(storageTrip);
+    const [encryptedTrip, encryptedSummary] = await Promise.all([
+      encodeTripRecord(storageTrip),
+      encodeTripSummaryRecord(storageTrip),
+    ]);
     const db = await openDb();
-    const tx = db.transaction(TRIP_STORE, 'readwrite');
-    await idbRequest(tx.objectStore(TRIP_STORE).put(encryptedTrip));
+    const hasSummaryStore = db.objectStoreNames.contains(TRIP_SUMMARY_STORE);
+    const tx = db.transaction(hasSummaryStore ? [TRIP_STORE, TRIP_SUMMARY_STORE] : TRIP_STORE, 'readwrite');
+    tx.objectStore(TRIP_STORE).put(encryptedTrip);
+    if (hasSummaryStore) tx.objectStore(TRIP_SUMMARY_STORE).put(encryptedSummary);
+    await idbTransactionDone(tx);
     db.close();
   } catch {
     const trips = await getEncryptedJson(TRIPS_KEY, []);
@@ -498,11 +646,19 @@ const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
   const storageTrips = await sanitizeTripsForPrivacyStorage(incomingTrips);
   try {
-    const encryptedTrips = await Promise.all(storageTrips.map(encodeTripRecord));
+    const [encryptedTrips, encryptedSummaries] = await Promise.all([
+      Promise.all(storageTrips.map(encodeTripRecord)),
+      Promise.all(storageTrips.map(encodeTripSummaryRecord)),
+    ]);
     const db = await openDb();
-    const tx = db.transaction(TRIP_STORE, 'readwrite');
+    const hasSummaryStore = db.objectStoreNames.contains(TRIP_SUMMARY_STORE);
+    const tx = db.transaction(hasSummaryStore ? [TRIP_STORE, TRIP_SUMMARY_STORE] : TRIP_STORE, 'readwrite');
     const store = tx.objectStore(TRIP_STORE);
     encryptedTrips.forEach((trip) => store.put(trip));
+    if (hasSummaryStore) {
+      const summaryStore = tx.objectStore(TRIP_SUMMARY_STORE);
+      encryptedSummaries.forEach((summary) => summaryStore.put(summary));
+    }
     await idbTransactionDone(tx);
     db.close();
   } catch {
@@ -880,6 +1036,18 @@ const rescoreTripsIfNeeded = async (trips = []) => {
   return next;
 };
 
+const prepareTripForRead = async (trip) => {
+  if (!trip) return null;
+  const thresholds = buildDrivingThresholds(localSettings.get());
+  let prepared = normalizeRetiredTripEventTypes(tagLegacyScoreProvenance(trip));
+  if (needsRescore(prepared, thresholds)) {
+    const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
+    prepared = rescoreTrip(prepared, vehicles);
+  }
+  if (prepared !== trip) await putTrip(prepared);
+  return prepared;
+};
+
 const importNativeCompletedTrips = async () => {
   if (!isAndroid() || importingNativeTrips) return;
 
@@ -966,6 +1134,9 @@ const deleteTrip = async (id) => {
     const db = await openDb();
     try {
       const recordFound = await secureDelete(db, TRIP_STORE, id);
+      if (db.objectStoreNames.contains(TRIP_SUMMARY_STORE)) {
+        await secureDelete(db, TRIP_SUMMARY_STORE, id).catch(() => false);
+      }
       return {
         recordFound,
         deletionMethod: 'indexeddb_overwrite_then_delete',
@@ -1140,6 +1311,30 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
   }
 }
 
+let repositoryMaintenancePromise = null;
+
+export async function runTripRepositoryMaintenance() {
+  if (repositoryMaintenancePromise) return repositoryMaintenancePromise;
+
+  repositoryMaintenancePromise = (async () => {
+    await migrateLegacyTripStorageToEncrypted();
+    await importNativeCompletedTrips();
+    await pruneExpiredTrips();
+    await enforceRawGpsRetention();
+    await migrateRetiredTripEventTypesOnce();
+    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    const trips = await rescoreTripsIfNeeded(taggedTrips);
+    await writeTripSummariesToDb(DB_NAME, trips).catch(() => {});
+    return { tripCount: trips.length };
+  })();
+
+  try {
+    return await repositoryMaintenancePromise;
+  } finally {
+    repositoryMaintenancePromise = null;
+  }
+}
+
 const sortTrips = (trips, sort) => {
   const field = sort?.replace('-', '') || 'start_time';
   const dir = sort?.startsWith('-') ? -1 : 1;
@@ -1160,6 +1355,16 @@ const withId = (trip) => ({
 });
 
 export const localTripRepository = {
+  async listSummaries({ sort = '-start_time', limit = 100 } = {}) {
+    await importNativeCompletedTrips();
+    return sortTrips(await getAllTripSummaries(), sort).slice(0, limit);
+  },
+
+  async listAllSummaries({ sort = '-start_time' } = {}) {
+    await importNativeCompletedTrips();
+    return sortTrips(await getAllTripSummaries(), sort);
+  },
+
   async list({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
     await pruneExpiredTrips();
@@ -1180,13 +1385,9 @@ export const localTripRepository = {
 
   async getById(id) {
     await importNativeCompletedTrips();
-    await pruneExpiredTrips();
-    await migrateRetiredTripEventTypesOnce();
-    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
-    const trips = await rescoreTripsIfNeeded(taggedTrips);
-    const trip = trips.find((item) => String(item.id) === String(id));
+    const trip = await getStoredTripById(id);
     if (!trip) throw new Error('Trip not found');
-    return trip;
+    return prepareTripForRead(trip);
   },
 
   async create(trip) {

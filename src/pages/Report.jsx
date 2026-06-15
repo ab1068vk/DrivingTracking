@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { tripService } from '@/api/trips';
+import { tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
   BarChart3, TrendingUp, AlertTriangle,
@@ -75,8 +75,7 @@ export default function Reports() {
   const units = settings.units || 'metric';
 
   const { data: allTrips = [], isLoading } = useQuery({
-    queryKey: ['report-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
+    ...tripSummaryQueryOptions(),
   });
 
   const { data: vehicles = [] } = useQuery({

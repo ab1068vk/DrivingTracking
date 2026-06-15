@@ -1,9 +1,9 @@
 import { clamp } from '@/lib/mathUtils';
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
-import { haversineDistance, weightedBlend } from '@/lib/tripEngine';
+import { weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
-import { getPrivacyZones } from '@/lib/privacyZones';
+import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { pinnedFetch } from '@/lib/pinnedFetch';
 import { logTransmission } from '@/lib/transmissionLog';
@@ -158,13 +158,7 @@ const gpsWeatherContextFromScores = (scores = {}) => {
 };
 
 function insidePrivacyWeatherBuffer(point, zones = []) {
-  return zones.some((zone) => {
-    const lat = Number(zone?.lat);
-    const lng = Number(zone?.lng);
-    const radiusM = Number(zone?.radius_m);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM) || radiusM <= 0) return false;
-    return haversineDistance(point.lat, point.lng, lat, lng) * 1000 <= radiusM + ZONE_BUFFER_M;
-  });
+  return Boolean(isPointInPrivacyZone(point, zones, ZONE_BUFFER_M));
 }
 
 function safeWeatherPoint(routePoints = [], privacyZones = []) {

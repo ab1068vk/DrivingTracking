@@ -1466,6 +1466,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
   const noSharpTrips = completed.filter((trip) => (trip.sharp_turns_count || 0) === 0).length;
   const noSpeedingTrips = completed.filter((trip) => (trip.speeding_events_count || 0) === 0).length;
   const routeReplayTrips = completed.filter((trip) => {
+    if (trip.route_replay_available === true) return true;
     const points = Array.isArray(trip.route_points) ? trip.route_points : [];
     const pointCount = Number(trip.route_points_raw_count) || points.length;
     return pointCount >= 20 && points.some((point) => Number(point.speed_kmh) > 0);

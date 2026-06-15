@@ -3,16 +3,18 @@ import { defaultSpeedLimitKmhForOsmHighway, parseMaxspeedKmh } from '@/lib/speed
 import {
   buildPrivacySafeOsrmRoute,
   buildOpenSourceTripContextPatch,
+  buildRoadDataDisabledMessage,
   buildRoadContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
   isExternalContextAutoFetchEnabled,
   isOsrmMapMatchingConfigured,
+  isRoadDataLookupConfigured,
   PUBLIC_OSRM_DEMO_URL,
 } from '@/lib/openSourceTripContext';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
-import { maskTripForPrivacy } from '@/lib/privacyZones';
+import { createPrivacyCellHashes, maskTripForPrivacy } from '@/lib/privacyZones';
 
 describe('open-source trip context', () => {
   it('parses common OSM maxspeed formats', () => {
@@ -47,6 +49,8 @@ describe('open-source trip context', () => {
     expect(describeMapMatchingStatus({ status: 'needs_consent' })).toContain('consent');
     expect(describeMapMatchingStatus({ status: 'manual_required' })).toContain('Get Road Data');
     expect(describeOsmSpeedLimitStatus({ status: 'manual_required' })).toContain('Get Road Data');
+    expect(describeOsmSpeedLimitStatus({ status: 'empty_route', skipped_reason: 'all_points_private' })).toContain('privacy-zone guard');
+    expect(describeOsmSpeedLimitStatus({ status: 'empty_route', skipped_reason: 'privacy_bounds_overlap' })).toContain('overlap a privacy-zone guard');
   });
 
   it('describes external road-context data before manual fetch', () => {
@@ -64,10 +68,29 @@ describe('open-source trip context', () => {
       osrm_map_matching_url: 'https://example.test',
       osrm_data_sharing_consented: true,
     });
-    expect(message).toContain('OpenStreetMap Overpass');
+    expect(message).toContain('OpenStreetMap');
     expect(message).toContain('Open-Meteo');
     expect(message).toContain('Snap route to roads');
     expect(message).not.toContain('allowed for OSRM');
+  });
+
+  it('explains when Get Road Data has no enabled lookup to run', () => {
+    const settings = {
+      speed_limit_lookup_enabled: false,
+      weather_context_enabled: false,
+      map_matching_enabled: true,
+      osrm_map_matching_url: '',
+      osrm_data_sharing_consented: false,
+    };
+
+    expect(isRoadDataLookupConfigured(settings)).toBe(false);
+    expect(buildRoadDataDisabledMessage(settings)).toContain('Nothing to get right now');
+    expect(buildRoadDataDisabledMessage(settings)).toContain('Settings > Speed & Road Data');
+    expect(isRoadDataLookupConfigured({
+      ...settings,
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+    })).toBe(true);
   });
 
   it('identifies the public OSRM demo endpoint as reference text only', () => {
@@ -168,6 +191,31 @@ describe('open-source trip context', () => {
       weather_risk_score: null,
       weather_score_adjustment: 0,
     });
+  });
+
+  it('skips Open-Meteo when only cell-hashed privacy-zone geometry is available', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const zoneCenter = { lat: 43.65, lng: -79.38, radius_m: 200 };
+    const result = await fetchWeatherContextForTrip([
+      { lat: 43.65, lng: -79.38, timestamp: '2026-01-01T12:00:00.000Z' },
+    ], '2026-01-01T12:00:00.000Z', '2026-01-01T12:05:00.000Z', {
+      weather_context_enabled: true,
+      privacy_zones: [{
+        id: 'home',
+        label: 'Home',
+        radius_m: zoneCenter.radius_m,
+        privacy_cell_hashes: createPrivacyCellHashes(zoneCenter),
+        privacy_cell_size_m: 50,
+        masked_for_privacy: true,
+      }],
+    });
+
+    expect(result).toMatchObject({
+      status: 'skipped_privacy',
+      weather_skipped_reason: 'all_points_within_privacy_zones',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it('clips route coordinates to privacy-zone boundaries and hides private events', () => {

@@ -339,10 +339,12 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.raw_gps_retention_days = 0;
   }
 
+  const osrmZoneGuardChanged = merged.osrm_block_near_any_zone !== true;
+  merged.osrm_block_near_any_zone = true;
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: calibrationSharingChanged || ecoSettingsRepaired || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: calibrationSharingChanged || ecoSettingsRepaired || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
@@ -581,6 +583,10 @@ export function validateSettingsPatch(patch = {}) {
         return;
       }
       if (isPublicOsrmDemoUrl(endpoint)) errors.push('Use a private or trusted OSRM endpoint; the public OSRM demo cannot be saved as a route-snapping endpoint.');
+      return;
+    }
+    if (key === 'osrm_block_near_any_zone' && value !== true) {
+      errors.push('osrm_block_near_any_zone is always enabled because privacy-zone coordinates must never be eligible for OSRM.');
       return;
     }
     if (SETTINGS_ENUMS[key] && !SETTINGS_ENUMS[key].includes(value)) {

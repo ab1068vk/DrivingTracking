@@ -42,11 +42,7 @@ export const isOsrmEnabled = () => (
 export const isOsrmConsentOutdated = () => (
   getSetting('osrm_consent_invalidated_reason') === 'privacy_zone_changed'
 );
-export const isOsrmEnabledWithoutZoneGuard = () => (
-  isOsrmEnabled() &&
-  getSetting('osrm_data_sharing_consented') === true &&
-  getSetting('osrm_block_near_any_zone') === false
-);
+export const isOsrmEnabledWithoutZoneGuard = () => false;
 
 export async function checkDeviceIntegrity() {
   try {

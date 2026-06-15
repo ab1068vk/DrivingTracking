@@ -12,6 +12,7 @@ const MAX_MATCH_POINTS = 100;
 export const DEFAULT_OSRM_TIMEOUT_MS = 12000;
 export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || DEFAULT_OSRM_TIMEOUT_MS;
 const OSRM_HEALTH_TIMEOUT_MS = 5000;
+const OSRM_PRIVACY_ENDPOINT_GUARD_M = 100;
 
 const round = (value, places = 5) => +Number(value).toFixed(places);
 const isValidRoutePoint = (point) => (
@@ -101,6 +102,40 @@ function privacyGapPoint(point = {}) {
     privacy_gap: true,
     masked_for_privacy: point?.masked_for_privacy ?? true,
   };
+}
+
+function privacyZoneGapPoint(point = {}, zone = null) {
+  return privacyGapPoint({
+    ...point,
+    privacy_zone_id: point?.privacy_zone_id || zone?.id,
+    privacy_zone_label: point?.privacy_zone_label || zone?.label,
+  });
+}
+
+function enforcePrivacyZonesForOsrm(routePoints = [], settings = {}) {
+  const zones = getPrivacyZones(settings);
+  if (!zones.length) return { routePoints, zones };
+
+  const safe = [];
+  let gapOpen = false;
+  for (const point of Array.isArray(routePoints) ? routePoints : []) {
+    const zone = isPointInPrivacyZone(point, zones);
+    const shouldHidePoint = Boolean(zone) ||
+      point?.masked_for_privacy === true ||
+      point?.privacy_boundary === true ||
+      point?.privacy_gap === true;
+
+    if (shouldHidePoint) {
+      if (!gapOpen) safe.push(privacyZoneGapPoint(point, zone));
+      gapOpen = true;
+      continue;
+    }
+
+    safe.push(point);
+    gapOpen = false;
+  }
+
+  return { routePoints: safe, zones };
 }
 
 function mergeMatchedSegments(template = [], segmentResults = []) {
@@ -356,36 +391,43 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
-  if (settings.osrm_block_near_any_zone !== false) {
-    const zones = getPrivacyZones(settings);
-    const endpoints = [routePoints[0], routePoints.at?.(-1)].filter(Boolean);
-    const nearPrivateEndpoint = endpoints.some((point) => (
-      point?.masked_for_privacy === true ||
-      point?.privacy_gap === true ||
-      Boolean(isPointInPrivacyZone(point, zones, 100))
-    ));
-    if (nearPrivateEndpoint) {
-      await logTransmission({
-        service: 'osrm',
-        type: 'Route matching',
-        coordinateDisclosure: 'blocked',
-        privacyTransformVerified: true,
-        privacyTransformSource: 'mapMatching.js:osrm_block_near_any_zone',
-        sentCoords: null,
-        protections: ['route endpoint near privacy zone - request blocked'],
-        bytesOut: 0,
-        status: 'blocked',
-        zonesSuppressed: zones.map((zone) => zone.label),
-      });
-      return {
-        routePoints,
+  const privacyFiltered = enforcePrivacyZonesForOsrm(routePoints, settings);
+  const osrmRoutePoints = privacyFiltered.routePoints;
+  const zones = privacyFiltered.zones;
+  const endpoints = [osrmRoutePoints[0], osrmRoutePoints.at?.(-1)].filter(Boolean);
+  const nearPrivateEndpoint = endpoints.some((point) => (
+    point?.masked_for_privacy === true ||
+    point?.privacy_gap === true ||
+    Boolean(isPointInPrivacyZone(point, zones, OSRM_PRIVACY_ENDPOINT_GUARD_M))
+  ));
+  if (nearPrivateEndpoint) {
+    await logTransmission({
+      service: 'osrm',
+      type: 'Route matching',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'mapMatching.js:always_on_privacy_zone_guard',
+      sentCoords: null,
+      protections: ['route endpoint near privacy zone - request blocked'],
+      bytesOut: 0,
+      status: 'blocked',
+      zonesSuppressed: zones.map((zone) => zone.label),
+    });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED_PRIVACY_ENDPOINT',
+      details: {
         status: 'blocked_private_endpoint',
-        provider: 'osrm',
-        isOsrmDemoUrl,
-      };
-    }
+        privacy_zone_count: zones.length,
+      },
+    });
+    return {
+      routePoints: osrmRoutePoints,
+      status: 'blocked_private_endpoint',
+      provider: 'osrm',
+      isOsrmDemoUrl,
+    };
   }
-  const { segments, mergedTemplate, gapCount } = splitAtNullPoints(routePoints);
+  const { segments, mergedTemplate, gapCount } = splitAtNullPoints(osrmRoutePoints);
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
   const validCount = segments.reduce((count, segment) => count + segment.length, 0);
   if (!matchableSegments.length) {
@@ -401,7 +443,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       bytesOut: 0,
       status: 'blocked',
       tripId: null,
-      zonesSuppressed: routePoints
+      zonesSuppressed: osrmRoutePoints
         .map((point) => point?.privacy_zone_label)
         .filter(Boolean),
     });
@@ -417,7 +459,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
         privacy_gap_count: gapCount,
       },
     });
-    return { routePoints, status: 'not_enough_points', provider: 'osrm', isOsrmDemoUrl };
+    return { routePoints: osrmRoutePoints, status: 'not_enough_points', provider: 'osrm', isOsrmDemoUrl };
   }
 
   const key = gapCount ? routeCacheKey(segments) : routeCacheKeyForFlatPoints(segments[0] || []);
@@ -442,7 +484,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
         },
       });
       return {
-        routePoints,
+        routePoints: osrmRoutePoints,
         status: 'needs_endpoint',
         provider: 'osrm',
         error: 'The OSRM endpoint is not a valid URL.',
@@ -508,18 +550,18 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   } catch (error) {
     logSystemFailure('osrm_map_matching', error, {
       endpoint_origin: endpointOrigin(settings.osrm_map_matching_url),
-      point_count: Array.isArray(routePoints) ? routePoints.length : 0,
+      point_count: Array.isArray(osrmRoutePoints) ? osrmRoutePoints.length : 0,
     });
     appendOsrmAuditEvent({
       op: 'OSRM_MAP_MATCHING_FAILED',
       details: {
         status: 'unavailable',
-        point_count: Array.isArray(routePoints) ? routePoints.length : 0,
+        point_count: Array.isArray(osrmRoutePoints) ? osrmRoutePoints.length : 0,
       },
     });
     const detail = error?.message ? ` ${error.message}` : '';
     return {
-      routePoints,
+      routePoints: osrmRoutePoints,
       status: 'unavailable',
       provider: 'osrm',
       error: `OSRM could not snap this route. The original GPS route was kept.${detail}`,
