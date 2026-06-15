@@ -452,8 +452,13 @@ describe('core page component renders', () => {
 
     expect(html).toContain('Settings');
     expect(html).toContain('Settings areas');
-    expect(html).toContain('Pick one area to keep this page short');
-    expect(html).toContain('Choose a settings area');
+    expect(html).toContain('Choose an area to configure');
+    expect(html).toContain('Driving &amp; Device');
+    expect(html).toContain('Preferences');
+    expect(html).toContain('Coaching &amp; Detection');
+    expect(html).toContain('Select a settings area');
+    expect(html).toContain('Search settings, permissions, tracking, privacy');
+    expect(html).not.toContain('Choose a settings area');
     expect(html).toContain('Tracking');
     expect(html).toContain('Android Permissions');
     expect(html).toContain('Advanced Models');

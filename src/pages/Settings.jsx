@@ -6,7 +6,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
 } from 'lucide-react';
 import {
   Dialog,
@@ -123,6 +123,7 @@ import {
   getDeviceAuthenticationAvailability,
 } from '@/lib/biometricGate';
 import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
+import { searchSettingsSections } from '@/lib/settingsSearch';
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -144,7 +145,8 @@ function SettingsSection({ id, activeId, children }) {
 function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false }) {
   return (
     <div
-      className={`flex items-center justify-between gap-3 py-3 px-1 border-b border-border/50 last:border-0 ${onClick ? 'cursor-pointer hover:bg-secondary/50 rounded-xl -mx-1 px-2 transition-colors' : ''}`}
+      data-setting-label={label}
+      className={`scroll-mt-24 flex items-center justify-between gap-3 py-3 px-1 border-b border-border/50 last:border-0 ${onClick ? 'cursor-pointer hover:bg-secondary/50 rounded-xl -mx-1 px-2 transition-colors' : ''}`}
       onClick={onClick}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -211,6 +213,291 @@ function FeaturePermissionBadge({ value }) {
     );
   }
   return <PermissionBadge value={value} />;
+}
+
+const SETTINGS_NAV_GROUPS = [
+  { id: 'driving-device', label: 'Driving & Device' },
+  { id: 'preferences', label: 'Preferences' },
+  { id: 'coaching-detection', label: 'Coaching & Detection' },
+  { id: 'privacy-data', label: 'Privacy & Data' },
+];
+
+const SETTINGS_SECTIONS = [
+  {
+    id: 'settings-tracking',
+    group: 'driving-device',
+    title: 'Tracking',
+    icon: Shield,
+    detail: 'Manual, auto-detect, background tracking, and pause controls.',
+    keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement',
+    searchItems: [
+      { label: 'Tracking mode', keywords: 'manual only auto detect background auto' },
+      { label: 'Pause all tracking', keywords: 'stop disable trip detection' },
+      { label: 'Auto-tracking', keywords: 'automatic start driving signals' },
+      { label: 'Background tracking', keywords: 'record app closed location' },
+    ],
+  },
+  {
+    id: 'settings-android-permissions',
+    group: 'driving-device',
+    title: 'Android Permissions',
+    icon: Shield,
+    detail: 'Location, activity, notification, battery, and native service setup.',
+    keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt',
+    searchItems: [
+      { label: 'Foreground location permission', targetLabel: 'Location', keywords: 'gps while using app' },
+      { label: 'Background location permission', targetLabel: 'Background Location', keywords: 'always allow location' },
+      { label: 'Activity recognition permission', targetLabel: 'Physical Activity', keywords: 'physical activity driving detection' },
+      { label: 'Notification permission', targetLabel: 'Notifications', keywords: 'alerts prompt' },
+      { label: 'Battery optimization', keywords: 'unrestricted battery background service' },
+      { label: 'Native auto-tracking service', targetLabel: 'Native Auto Tracking', keywords: 'android background automatic trips' },
+    ],
+  },
+  {
+    id: 'settings-feature-permissions',
+    group: 'driving-device',
+    title: 'Feature Permissions',
+    icon: Info,
+    detail: 'See which app features need setup before they can work.',
+    keywords: 'blocked unavailable permission feature status',
+    searchItems: [
+      { label: 'Motion sensor access', keywords: 'accelerometer gyroscope crash detection' },
+      { label: 'Phone Usage Access', keywords: 'distraction foreground app android' },
+      { label: 'OBD-II Bluetooth diagnostics', keywords: 'nearby devices ble adapter' },
+      { label: 'Road data and weather access', keywords: 'openstreetmap open meteo osrm network' },
+      { label: 'Voice alerts', keywords: 'speech coaching microphone' },
+    ],
+  },
+  {
+    id: 'settings-appearance',
+    group: 'preferences',
+    title: 'Appearance',
+    icon: Monitor,
+    detail: 'Theme and unit preferences.',
+    keywords: 'theme dark light system units metric imperial kmh mph',
+    searchItems: [
+      { label: 'Theme', keywords: 'light dark system display' },
+      { label: 'Units', keywords: 'metric imperial kmh mph kilometers miles' },
+    ],
+  },
+  {
+    id: 'settings-economics',
+    group: 'preferences',
+    title: 'Economics',
+    icon: Banknote,
+    detail: 'Currency, fuel, EV, carbon, and savings assumptions.',
+    keywords: 'currency symbol money cost price co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics',
+    searchItems: [
+      { label: 'Currency symbol', keywords: 'money cost dollar euro pound' },
+      { label: 'Average vehicle CO2 baseline', keywords: 'emissions carbon comparison' },
+      { label: 'Default EV efficiency', keywords: 'electric kwh per 100 km' },
+      { label: 'Grid CO2 intensity', keywords: 'electricity emissions' },
+      { label: 'Tree-year equivalent', keywords: 'carbon impact summary' },
+    ],
+  },
+  {
+    id: 'settings-notifications',
+    group: 'preferences',
+    title: 'Notifications',
+    icon: Bell,
+    detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.',
+    keywords: 'quiet hours trip summary coaching maintenance nudges alert',
+    searchItems: [
+      { label: 'Enable all notifications', keywords: 'master alerts toggle' },
+      { label: 'Quiet hours', keywords: 'do not disturb start end time' },
+      { label: 'Safety alerts', keywords: 'driving warning phone heading speeding danger zone' },
+      { label: 'Trip started and ended notifications', keywords: 'start finish summary' },
+      { label: 'Post-trip smart summary', keywords: 'score change phone use fuel saving' },
+      { label: 'Coaching notifications', keywords: 'achievements streak weekly driving summary tips' },
+      { label: 'Maintenance reminders', keywords: 'vehicle service' },
+      { label: 'No-trip nudge', keywords: 'inactive reminder days' },
+    ],
+  },
+  {
+    id: 'settings-driving-goals',
+    group: 'coaching-detection',
+    title: 'Driving Goals',
+    icon: Target,
+    detail: 'Weekly score, mileage, night driving, and behavior targets.',
+    keywords: 'weekly score harsh brake speeding night goals target',
+    searchItems: [
+      { label: 'Maximum harsh brakes', keywords: 'weekly goal braking' },
+      { label: 'Maximum speeding events', keywords: 'weekly goal speed' },
+      { label: 'Minimum average score', keywords: 'weekly target' },
+      { label: 'Maximum night distance and trips', keywords: 'night km driving goal' },
+      { label: 'UBI annual mileage target', keywords: 'insurance mileage score' },
+    ],
+  },
+  {
+    id: 'settings-night-window',
+    group: 'coaching-detection',
+    title: 'Night Window',
+    icon: Clock,
+    detail: 'Night-trip detection window and sunset fallback.',
+    keywords: 'night window sunset sunrise custom time late drive scoring',
+    searchItems: [
+      { label: 'Night driving start time', keywords: 'late evening begins' },
+      { label: 'Night driving end time', keywords: 'morning ends' },
+      { label: 'Sunset and sunrise fallback', keywords: 'automatic night window' },
+    ],
+  },
+  {
+    id: 'settings-detection-thresholds',
+    group: 'coaching-detection',
+    title: 'Detection Features',
+    icon: SlidersHorizontal,
+    detail: 'Detection toggles, sensitivity, calibration, and re-scoring.',
+    keywords: 'harsh braking rapid acceleration speeding idle lane changing brake turn heading drift calibration rescore feedback accurate wrong false positive',
+    searchItems: [
+      { label: 'Detection feature switches', keywords: 'braking acceleration cornering speeding idle heading' },
+      { label: 'Detection sensitivity', keywords: 'threshold strict lenient false positive' },
+      { label: 'Calibration labels', keywords: 'feedback correct incorrect events' },
+      { label: 'Re-score trip history', keywords: 'recalculate scoring version migration' },
+      { label: 'Lane change and heading event scoring', keywords: 'advanced safety beta' },
+    ],
+  },
+  {
+    id: 'settings-advanced-models',
+    group: 'coaching-detection',
+    title: 'Advanced Models',
+    icon: Route,
+    detail: 'Sensor fusion, crash, route risk, voice alerts, OBD, and map overlays.',
+    keywords: 'route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap',
+    searchItems: [
+      { label: 'Sensor fusion', keywords: 'motion accelerometer gyroscope gps' },
+      { label: 'Crash detection', keywords: 'impact emergency safety' },
+      { label: 'Emergency workflow', keywords: 'crash response' },
+      { label: 'Predictive route risk', keywords: 'route warning hazard' },
+      { label: 'Voice alerts', keywords: 'spoken warning test volume' },
+      { label: 'OBD-II Bluetooth', keywords: 'vehicle adapter diagnostics ble' },
+      { label: 'Map overlays', keywords: 'event markers heatmap route line' },
+    ],
+  },
+  {
+    id: 'settings-phone-use',
+    group: 'coaching-detection',
+    title: 'Phone Use Detection',
+    icon: Smartphone,
+    detail: 'Distraction detection, map display, scoring, and expert tuning.',
+    keywords: 'distraction usage access phone score map foreground app',
+    searchItems: [
+      { label: 'Android Usage Access', keywords: 'permission foreground app' },
+      { label: 'Phone use detection', keywords: 'distraction monitoring' },
+      { label: 'Live phone use alert', keywords: 'driving warning notification' },
+      { label: 'Show phone use on trip map', keywords: 'route markers' },
+      { label: 'Include phone use in trip score', keywords: 'safety penalty' },
+      { label: 'Phone detection expert tuning', keywords: 'threshold sensitivity duration' },
+    ],
+  },
+  {
+    id: 'settings-speed-warning',
+    group: 'coaching-detection',
+    title: 'Speed & Road Data',
+    icon: Gauge,
+    detail: 'Live speed warnings, speed limits, weather, and automatic road-data lookup.',
+    keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather',
+    searchItems: [
+      { label: 'Live speed warning', keywords: 'over limit alert' },
+      { label: 'Speed limits from OpenStreetMap', keywords: 'osm posted maxspeed' },
+      { label: 'Fallback estimate country', keywords: 'canada united states global legal limit' },
+      { label: 'Weather from Open-Meteo', keywords: 'rain snow fog ice' },
+      { label: 'Automatic road-data lookup', keywords: 'auto fetch speed weather' },
+      { label: 'Snap route to roads with OSRM', keywords: 'map matching cleanup endpoint' },
+      { label: 'OSRM timeout and endpoint', keywords: 'server route matching link' },
+      { label: 'Speed warning margin', keywords: 'strict lenient over limit kmh' },
+    ],
+  },
+  {
+    id: 'settings-privacy-data',
+    group: 'privacy-data',
+    title: 'Privacy & Data',
+    icon: Shield,
+    detail: 'Privacy zones, backups, exports, imports, deletion, and feedback data.',
+    keywords: 'privacy export import backup retention delete data saved filters event feedback security',
+    searchItems: [
+      { label: 'Legal and privacy notice', targetLabel: 'Legal, safety, data & privacy notice', keywords: 'safety data external services' },
+      { label: 'Privacy Intelligence', keywords: 'outbound records protections audit health' },
+      { label: 'Request timing obfuscation', keywords: 'random delay network privacy' },
+      { label: 'Decoy traffic', keywords: 'open meteo neutral location' },
+      { label: 'App lock', keywords: 'fingerprint face device authentication' },
+      { label: 'Screenshots and screen sharing', keywords: 'screen capture privacy' },
+      { label: 'Privacy zones', keywords: 'home work hidden location radius map' },
+      { label: 'Export all trips', keywords: 'csv download' },
+      { label: 'Export full backup', keywords: 'encrypted save password' },
+      { label: 'Import backup', keywords: 'restore encrypted json' },
+      { label: 'Data retention', keywords: 'delete trips days forever' },
+      { label: 'Privacy log retention', keywords: 'operation records hours' },
+      { label: 'Raw GPS retention', keywords: 'route coordinates delete days' },
+      { label: 'Verify audit log', keywords: 'tamper chain integrity' },
+      { label: 'Delete all trips', keywords: 'erase permanent danger' },
+    ],
+  },
+];
+
+function SettingsAreaNavigation({ sections, activeId, onSelect, variant }) {
+  const mobile = variant === 'mobile';
+
+  return (
+    <nav aria-label="Settings areas" className={mobile ? 'space-y-4' : 'space-y-5'}>
+      {SETTINGS_NAV_GROUPS.map((group) => {
+        const groupedSections = sections.filter((section) => section.group === group.id);
+        if (!groupedSections.length) return null;
+
+        return (
+          <div key={group.id}>
+            <div className={`font-bold uppercase tracking-widest text-muted-foreground ${
+              mobile ? 'mb-2 px-1 text-[11px]' : 'mb-1.5 px-2 text-[10px]'
+            }`}>
+              {group.label}
+            </div>
+            <div className={mobile ? 'overflow-hidden rounded-xl border border-border bg-card divide-y divide-border/70' : 'space-y-1'}>
+              {groupedSections.map(({ id, title, detail, icon: Icon }) => {
+                const active = activeId === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onSelect(id)}
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex w-full items-center text-left transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/40 ${
+                      mobile
+                        ? 'min-h-[72px] gap-3 px-3 py-3 hover:bg-secondary/50'
+                        : `min-h-11 gap-2.5 rounded-lg px-2.5 py-2 ${
+                            active
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-foreground hover:bg-secondary'
+                          }`
+                    }`}
+                  >
+                    <span className={`grid shrink-0 place-items-center rounded-lg ${
+                      mobile
+                        ? 'h-9 w-9 bg-secondary text-muted-foreground'
+                        : `h-8 w-8 ${active ? 'bg-primary-foreground/15 text-primary-foreground' : 'bg-secondary text-muted-foreground'}`
+                    }`}>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold leading-snug">{title}</span>
+                      {mobile && (
+                        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                          {detail}
+                        </span>
+                      )}
+                    </span>
+                    {mobile ? (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : active ? (
+                      <Check className="h-4 w-4 shrink-0" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </nav>
+  );
 }
 
 const DRIVING_PATTERN_DEFINITIONS = [
@@ -1938,49 +2225,27 @@ export default function Settings() {
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
   const settingsSearchQuery = settingsSearch.trim().toLowerCase();
-  const settingsSections = useMemo(() => [
-    { id: 'settings-tracking', title: 'Tracking', icon: Shield, detail: 'Manual, auto-detect, background tracking, and pause controls.', keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement' },
-    { id: 'settings-android-permissions', title: 'Android Permissions', icon: Shield, detail: 'Location, activity, notification, battery, and native service setup.', keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt' },
-    { id: 'settings-feature-permissions', title: 'Feature Permissions', icon: Info, detail: 'See which app features need setup before they can work.', keywords: 'blocked unavailable permission feature status' },
-    { id: 'settings-appearance', title: 'Appearance', icon: Monitor, detail: 'Theme and unit preferences.', keywords: 'theme dark light system units metric imperial kmh mph' },
-    { id: 'settings-economics', title: 'Economics', icon: Banknote, detail: 'Currency, fuel, EV, carbon, and savings assumptions.', keywords: 'currency symbol money cost price co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics' },
-    { id: 'settings-notifications', title: 'Notifications', icon: Bell, detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.', keywords: 'quiet hours trip summary coaching maintenance nudges alert' },
-    { id: 'settings-driving-goals', title: 'Driving Goals', icon: Target, detail: 'Weekly score, mileage, night driving, and behavior targets.', keywords: 'weekly score harsh brake speeding night goals target' },
-    { id: 'settings-night-window', title: 'Night Window', icon: Clock, detail: 'Night-trip detection window and sunset fallback.', keywords: 'night window sunset sunrise custom time late drive scoring' },
-    { id: 'settings-detection-thresholds', title: 'Detection Features', icon: SlidersHorizontal, detail: 'Detection toggles, sensitivity, calibration, and re-scoring.', keywords: 'harsh braking rapid acceleration speeding idle lane changing brake turn heading drift calibration rescore feedback accurate wrong false positive' },
-    { id: 'settings-advanced-models', title: 'Advanced Models', icon: Route, detail: 'Sensor fusion, crash, route risk, voice alerts, OBD, and map overlays.', keywords: 'route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap' },
-    { id: 'settings-phone-use', title: 'Phone Use Detection', icon: Smartphone, detail: 'Distraction detection, map display, scoring, and expert tuning.', keywords: 'distraction usage access phone score map foreground app' },
-    { id: 'settings-speed-warning', title: 'Speed & Road Data', icon: Gauge, detail: 'Live speed warnings, speed limits, weather, and automatic road-data lookup.', keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather' },
-    { id: 'settings-privacy-data', title: 'Privacy & Data', icon: Shield, detail: 'Privacy zones, backups, exports, imports, deletion, and feedback data.', keywords: 'privacy export import backup retention delete data saved filters event feedback' },
-  ], []);
+  const settingsSections = SETTINGS_SECTIONS;
   const activeSettingsSectionMeta = settingsSections.find((section) => section.id === activeSettingsSection);
-  const settingSearchResults = useMemo(() => settingsSections.map((section) => {
-    const item = {
-      label: section.title,
-      section: section.title,
-      sectionId: section.id,
-      detail: section.detail,
-      keywords: section.keywords,
-    };
-    if (!settingsSearchQuery) return { ...item, score: 0 };
-    const haystack = `${item.label} ${item.section} ${item.detail} ${item.keywords}`.toLowerCase();
-    const terms = settingsSearchQuery.split(/\s+/).filter(Boolean);
-    const score = terms.reduce((sum, term) => (
-      sum + (item.label.toLowerCase().includes(term) ? 6 : 0)
-      + (item.section.toLowerCase().includes(term) ? 4 : 0)
-      + (haystack.includes(term) ? 1 : 0)
-    ), 0);
-    return { ...item, score };
-  }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6), [settingsSearchQuery, settingsSections]);
+  const settingSearchResults = useMemo(
+    () => searchSettingsSections(settingsSections, settingsSearchQuery),
+    [settingsSearchQuery]
+  );
   const showSettingsSection = (sectionId) => {
     setActiveSettingsSection(sectionId);
     setSettingsSearch('');
   };
-  const scrollSettingSection = (sectionId) => {
+  const scrollSettingSection = (sectionId, targetLabel = '') => {
     showSettingsSection(sectionId);
     if (typeof window !== 'undefined') {
       window.requestAnimationFrame(() => {
-        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const normalizedTargetLabel = String(targetLabel || '').trim().toLowerCase();
+        const settingTarget = normalizedTargetLabel
+          ? Array.from(document.querySelectorAll('[data-setting-label]')).find(
+              (element) => String(element.dataset.settingLabel || '').trim().toLowerCase() === normalizedTargetLabel
+            )
+          : null;
+        (settingTarget || document.getElementById(sectionId))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
   };
@@ -2050,8 +2315,20 @@ export default function Settings() {
           <input
             value={settingsSearch}
             onChange={(event) => setSettingsSearch(event.target.value)}
-            placeholder="Search settings, permissions, auto start, map, feedback..."
-            className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-10 text-sm outline-none focus:border-primary"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setSettingsSearch('');
+                return;
+              }
+              if (event.key === 'Enter' && settingSearchResults[0]) {
+                event.preventDefault();
+                scrollSettingSection(settingSearchResults[0].sectionId, settingSearchResults[0].targetLabel);
+              }
+            }}
+            placeholder="Search settings, permissions, tracking, privacy..."
+            aria-label="Search settings"
+            aria-controls={settingsSearchQuery ? 'settings-search-results' : undefined}
+            className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-10 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
           {settingsSearch && (
             <button
@@ -2065,21 +2342,37 @@ export default function Settings() {
           )}
         </div>
         {settingsSearch.trim() && (
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
-              <button
-                key={`${item.section}-${item.label}`}
-                type="button"
-                onClick={() => scrollSettingSection(item.sectionId)}
-                className="rounded-xl border border-border bg-secondary/60 px-3 py-2 text-left text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
-              >
-                <span className="font-semibold text-foreground">{item.label}</span>
-                <span className="ml-1">in {item.section}</span>
-                <span className="mt-1 block">{item.detail}</span>
-              </button>
-            )) : (
-              <span className="text-xs text-muted-foreground">No matching settings found.</span>
-            )}
+          <div id="settings-search-results" className="mt-3" aria-live="polite">
+            <div className="mb-2 flex items-center justify-between gap-3 px-1">
+              <span className="text-xs font-semibold text-foreground">
+                {settingSearchResults.length} result{settingSearchResults.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
+                <button
+                  key={`${item.kind}-${item.sectionId}-${item.label}`}
+                  type="button"
+                  onClick={() => scrollSettingSection(item.sectionId, item.targetLabel)}
+                  className="min-h-[70px] rounded-xl border border-border bg-background px-3 py-2.5 text-left transition-colors hover:border-primary/50 hover:bg-secondary/40 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <span className="flex items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold leading-snug text-foreground">{item.label}</span>
+                      <span className="mt-0.5 block text-[11px] font-medium text-primary">
+                        {item.kind === 'setting' ? item.section : 'Settings area'}
+                      </span>
+                    </span>
+                    <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  </span>
+                  <span className="mt-1.5 block text-xs leading-snug text-muted-foreground">{item.detail}</span>
+                </button>
+              )) : (
+                <div className="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground md:col-span-2">
+                  No matching settings found.
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -2115,86 +2408,61 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold">Settings areas</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">Pick one area to keep this page short.</div>
+      <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:items-start lg:gap-6">
+        <aside className="hidden lg:block">
+          <div className="sticky top-4 border-r border-border/70 pr-4">
+            <div className="mb-4 px-2">
+              <div className="text-sm font-semibold">Settings areas</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">Choose an area to configure.</div>
+            </div>
+            <SettingsAreaNavigation
+              sections={settingsSections}
+              activeId={activeSettingsSection}
+              onSelect={showSettingsSection}
+              variant="sidebar"
+            />
           </div>
-          {activeSettingsSection !== 'overview' && (
-            <button
-              type="button"
-              onClick={() => setActiveSettingsSection('overview')}
-              className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-secondary"
-            >
-              All areas
-            </button>
-          )}
-        </div>
-        <label className="mt-3 block text-xs font-semibold text-muted-foreground md:hidden">
-          Open area
-          <select
-            value={activeSettingsSection}
-            onChange={(event) => {
-              const next = event.target.value;
-              if (next === 'overview') {
-                setActiveSettingsSection('overview');
-                return;
-              }
-              showSettingsSection(next);
-            }}
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm font-semibold text-foreground outline-none focus:border-primary"
-          >
-            <option value="overview">Choose a settings area</option>
-            {settingsSections.map((section) => (
-              <option key={section.id} value={section.id}>{section.title}</option>
-            ))}
-          </select>
-        </label>
-        <div className="mt-3 hidden gap-2 md:grid md:grid-cols-3 xl:grid-cols-4">
-          {settingsSections.map(({ id, title, detail, icon: Icon }) => {
-            const active = activeSettingsSection === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => showSettingsSection(id)}
-                className={`min-h-[58px] rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                  active
-                    ? 'border-primary bg-primary/5 text-primary'
-                    : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground'}`}>
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold">{title}</span>
-                    <span className="mt-0.5 block truncate text-[11px] leading-relaxed text-muted-foreground">{detail}</span>
-                  </span>
-                  {active && <Check className="mt-1 h-4 w-4 shrink-0" />}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+        </aside>
 
-      {activeSettingsSection !== 'overview' && (
-      <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-        <div data-settings-shell="true" className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
-          <div>
-            <div className="text-lg font-semibold">{activeSettingsSectionMeta?.title || 'Settings'}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{activeSettingsSectionMeta?.detail}</div>
-          </div>
+        <div className="min-w-0">
+          {activeSettingsSection === 'overview' ? (
+            <>
+              <div className="lg:hidden">
+                <div className="mb-3 px-1">
+                  <div className="text-sm font-semibold">Settings areas</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">Choose an area to configure.</div>
+                </div>
+                <SettingsAreaNavigation
+                  sections={settingsSections}
+                  activeId={activeSettingsSection}
+                  onSelect={scrollSettingSection}
+                  variant="mobile"
+                />
+              </div>
+              <div className="hidden min-h-[22rem] items-center justify-center border border-border bg-card p-8 text-center shadow-sm lg:flex">
+                <div className="max-w-sm">
+                  <div className="mx-auto grid h-11 w-11 place-items-center rounded-lg bg-secondary text-muted-foreground">
+                    <SlidersHorizontal className="h-5 w-5" />
+                  </div>
+                  <div className="mt-3 text-base font-semibold">Select a settings area</div>
+                </div>
+              </div>
+            </>
+          ) : (
+      <div data-settings-content="true" className="border border-border bg-card p-4 shadow-sm sm:p-5">
+        <div data-settings-shell="true" className="mb-4 flex items-start gap-3 border-b border-border/60 pb-4">
           <button
             type="button"
             onClick={() => setActiveSettingsSection('overview')}
-            className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-secondary"
+            aria-label="Back to settings areas"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground lg:hidden"
           >
-            Back to areas
+            <ArrowLeft className="h-4 w-4" />
           </button>
+          <div className="min-w-0">
+            <div className="text-lg font-semibold">{activeSettingsSectionMeta?.title || 'Settings'}</div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{activeSettingsSectionMeta?.detail}</div>
+          </div>
         </div>
 
         <SettingsSection id="settings-tracking" activeId={activeSettingsSection}>
@@ -4246,7 +4514,9 @@ export default function Settings() {
         </div>
         </SettingsSection>
       </div>
-      )}
+          )}
+        </div>
+      </div>
 
       <input
         ref={importInputRef}
