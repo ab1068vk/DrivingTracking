@@ -51,6 +51,7 @@ export const NOTIFICATION_IDS = {
   FUEL_COST_MONTHLY: 4033,
   INACTIVE_DRIVER_NUDGE: 4034,
   BACKGROUND_TRACKING_ACTIVE: 4040,
+  FOREGROUND_MANUAL_TRACKING_WARNING: 4041,
   EXPORT_SAVED: 4050,
 };
 // Backward-compatible notification identifiers for persisted scheduled items.
@@ -427,6 +428,24 @@ export async function notifyTripStarted(trip = {}) {
       dedupeKey: `trip_started:${tripKey}`,
       cooldownMs: 5 * 60 * 1000,
     });
+}
+
+export async function notifyForegroundManualTrackingWarning(trip = {}) {
+  if (!isNativePlatform()) return null;
+  const granted = await requestNotificationPermission();
+  if (!granted) return null;
+
+  const tripKey = trip?.id || trip?.start_time || 'active';
+  return scheduleNotification({
+    id: NOTIFICATION_IDS.FOREGROUND_MANUAL_TRACKING_WARNING,
+    title: 'Keep Road Sage open',
+    body: 'This manual trip is using foreground GPS. Closing the app can pause route recording.',
+    channelId: TRACKING_CHANNEL_ID,
+    extra: { type: 'foreground_manual_tracking_warning', tripId: trip?.id || null },
+  }, {
+    dedupeKey: `foreground_manual_tracking:${tripKey}`,
+    cooldownMs: 5 * 60 * 1000,
+  });
 }
 
 export async function notifyTripCompleted(trip, { dedupeKey = null, replaceIds = [] } = {}) {

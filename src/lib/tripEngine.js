@@ -59,6 +59,9 @@ const OBD_ECO_PENALTY_MAX = 15;
 const MAX_REASONABLE_GPS_SPEED_KMH = 220;
 const MAX_REASONABLE_OBD_SPEED_KMH = 260;
 const ROUTE_GAP_SECONDS = 120;
+const MIN_MANUAL_SAVE_SECONDS = 30;
+const MANUAL_SPARSE_GPS_MIN_SECONDS = 30;
+const MANUAL_SPARSE_GPS_MIN_SPEED_KMH = 10;
 /**
  * Provisional brake-turn manoeuvre alert score decay per detected GPS proxy event.
  * Not calibrated to incident, crash, or following-distance outcome data.
@@ -696,6 +699,13 @@ function hasValidCoordinates(point) {
   return finiteCoordinate(point?.lat) != null && finiteCoordinate(point?.lng) != null;
 }
 
+function hasUsableManualTripCoordinates(point, thresholds = DEFAULT_THRESHOLDS) {
+  const accuracy = point?.accuracy == null ? null : Number(point.accuracy);
+  const maxAccuracyM = thresholds.MAX_GPS_ACCURACY_M ?? DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M;
+  return hasValidCoordinates(point) &&
+    (accuracy == null || !Number.isFinite(accuracy) || accuracy <= maxAccuracyM);
+}
+
 // ─── Heading Calculation ───────────────────────────────────────────────────────
 /**
  * Calculate bearing (heading) between two GPS points.
@@ -955,6 +965,36 @@ export function shouldAcceptLocationPoint(point, previousPoint = null, threshold
   if (impliedSpeed > MAX_REASONABLE_GPS_SPEED_KMH || reportedSpeed > MAX_REASONABLE_GPS_SPEED_KMH) return false;
 
   return true;
+}
+
+export function getLocationPointRejectionReason(point, previousPoint = null, thresholds = DEFAULT_THRESHOLDS) {
+  if (!point || !hasValidCoordinates(point)) return 'invalid_coordinates';
+  if (point.accuracy != null && point.accuracy > thresholds.MAX_GPS_ACCURACY_M) {
+    return `accuracy_too_poor_${Math.round(point.accuracy)}m`;
+  }
+  if (Number.isFinite(Number(point.speed_kmh)) && Number(point.speed_kmh) > MAX_REASONABLE_GPS_SPEED_KMH) {
+    return `reported_speed_unreasonable_${Math.round(point.speed_kmh)}kmh`;
+  }
+  if (Number.isFinite(Number(point.obd_speed_kmh)) && Number(point.obd_speed_kmh) > MAX_REASONABLE_OBD_SPEED_KMH) {
+    return `obd_speed_unreasonable_${Math.round(point.obd_speed_kmh)}kmh`;
+  }
+  if (!previousPoint) return null;
+
+  const dt = (new Date(point.timestamp).getTime() - new Date(previousPoint.timestamp).getTime()) / 1000;
+  if (dt <= 0) return 'timestamp_non_increasing';
+
+  const segment = calculateSegmentMetrics(previousPoint, point, thresholds);
+  if (segment.isNoise && dt < 45) return `noise_too_soon_dt${Math.round(dt)}s`;
+
+  const impliedSpeed = segment.impliedSpeedKmh;
+  const reportedSpeed = segment.reportedSpeedKmh ?? impliedSpeed;
+  if (impliedSpeed > MAX_REASONABLE_GPS_SPEED_KMH) {
+    return `implied_speed_unreasonable_${Math.round(impliedSpeed)}kmh`;
+  }
+  if (reportedSpeed > MAX_REASONABLE_GPS_SPEED_KMH) {
+    return `reported_speed_unreasonable_${Math.round(reportedSpeed)}kmh`;
+  }
+  return null;
 }
 
 function isPrivacyRouteStorageStub(point) {
@@ -1572,9 +1612,85 @@ function calculateRouteDistanceKm(points = [], thresholds = DEFAULT_THRESHOLDS) 
   let distance = 0;
   for (let i = 1; i < points.length; i++) {
     const segment = calculateSegmentMetrics(points[i - 1], points[i], thresholds);
-    if (segment.dt > 0 && segment.dt <= 120 && !segment.isNoise) distance += segment.distanceKm;
+    if (
+      segment.dt > 0 &&
+      segment.dt <= 120 &&
+      !segment.isNoise &&
+      segment.impliedSpeedKmh <= MAX_REASONABLE_GPS_SPEED_KMH
+    ) {
+      distance += segment.distanceKm;
+    }
   }
   return distance + calculateEstimatedPrivateDistanceKm(points, { includeAdjacentBoundaries: false });
+}
+
+/**
+ * Decide whether a manually ended trip has enough movement evidence to save.
+ *
+ * Manual trips can have very sparse GPS on Android while the screen is locked.
+ * The coordinate-displacement fallback intentionally skips the short segment
+ * cap used by normal route distance, but still rejects impossible GPS jumps.
+ */
+export function reviewManualTripSave({ points = [], stats = {}, startTime, endTime, thresholds = DEFAULT_THRESHOLDS } = {}) {
+  const startMs = new Date(startTime).getTime();
+  const endMs = new Date(endTime).getTime();
+  const wallClockSeconds = Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? Math.max(0, Math.round((endMs - startMs) / 1000))
+    : 0;
+  const durationSeconds = Math.max(Number(stats.duration_seconds) || 0, wallClockSeconds);
+  const distanceKm = Number(stats.distance_km) || 0;
+  const maxSpeedKmh = Number(stats.max_speed_kmh) || 0;
+
+  const coordinatePoints = (points || []).filter((point) => hasUsableManualTripCoordinates(point, thresholds));
+  const movingSpeedSamples = coordinatePoints.filter(
+    (point) => Number(point?.speed_kmh) >= MANUAL_SPARSE_GPS_MIN_SPEED_KMH
+  );
+
+  const diag = {
+    durationSeconds,
+    distanceKm,
+    coordinatePointCount: coordinatePoints.length,
+    maxSpeedKmh,
+    movingSpeedSampleCount: movingSpeedSamples.length,
+    cumulativeCoordKm: 0,
+  };
+
+  if (durationSeconds < MIN_MANUAL_SAVE_SECONDS) {
+    return { shouldSave: false, reason: 'manual_duration_too_short', ...diag };
+  }
+
+  const minDistKm = thresholds.MIN_TRIP_DISTANCE_KM ?? DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM;
+  if (distanceKm >= minDistKm) {
+    return { shouldSave: true, reason: 'manual_distance_confirmed', ...diag };
+  }
+
+  if (coordinatePoints.length >= 2) {
+    let cumulativeCoordKm = 0;
+    for (let i = 1; i < coordinatePoints.length; i++) {
+      const segment = calculateSegmentMetrics(coordinatePoints[i - 1], coordinatePoints[i], thresholds);
+      if (
+        segment.distanceKm > 0 &&
+        !segment.isNoise &&
+        segment.impliedSpeedKmh <= MAX_REASONABLE_GPS_SPEED_KMH
+      ) {
+        cumulativeCoordKm += segment.distanceKm;
+      }
+    }
+    diag.cumulativeCoordKm = Math.round(cumulativeCoordKm * 1000) / 1000;
+    if (cumulativeCoordKm >= minDistKm) {
+      return { shouldSave: true, reason: 'manual_coordinate_displacement_confirmed', ...diag };
+    }
+  }
+
+  if (
+    durationSeconds >= MANUAL_SPARSE_GPS_MIN_SECONDS &&
+    coordinatePoints.length >= 2 &&
+    (movingSpeedSamples.length >= 2 || maxSpeedKmh >= MANUAL_SPARSE_GPS_MIN_SPEED_KMH)
+  ) {
+    return { shouldSave: true, reason: 'manual_sparse_gps_vehicle_speed', ...diag };
+  }
+
+  return { shouldSave: false, reason: 'manual_no_movement_evidence', ...diag };
 }
 
 function calculateTerminalStoppedSeconds(points = [], endTime = null, thresholds = DEFAULT_THRESHOLDS) {
@@ -5581,6 +5697,10 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
       }
     }
     if (segment.isNoise) {
+      flushIdleRun();
+      continue;
+    }
+    if (segment.impliedSpeedKmh > MAX_REASONABLE_GPS_SPEED_KMH) {
       flushIdleRun();
       continue;
     }

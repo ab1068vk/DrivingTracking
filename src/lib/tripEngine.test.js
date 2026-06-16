@@ -504,7 +504,7 @@ describe('tripEngine', () => {
     ));
 
     const shortTrip = detectSpeedCreepWithThresholds(route(5), DEFAULT_THRESHOLDS);
-    const longTrip = detectSpeedCreepWithThresholds(route(100), DEFAULT_THRESHOLDS);
+    const longTrip = detectSpeedCreepWithThresholds(route(10), DEFAULT_THRESHOLDS);
 
     expect(shortTrip.speed_creep_event_count).toBe(3);
     expect(longTrip.speed_creep_event_count).toBe(3);

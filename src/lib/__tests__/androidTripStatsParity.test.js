@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import fixture from '@/lib/__fixtures__/androidTripStatsParityFixture.json';
-import { calculateSegmentMetrics, calculateTripStats, DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
+import { calculateSegmentMetrics, calculateTripStats, DEFAULT_THRESHOLDS, reviewManualTripSave } from '@/lib/tripEngine';
 
 function jsParityResult() {
   const stats = calculateTripStats(
@@ -74,6 +74,57 @@ describe('Android auto-tracking stats parity', () => {
     expect(noiseFloorCase.expectedNoiseFloorM).toBe(18);
     expect(segment.distanceM).toBeLessThan(noiseFloorCase.expectedNoiseFloorM);
     expect(segment.isNoise).toBe(true);
+  });
+
+  it('saves sparse manual GPS trips when coordinate displacement confirms movement', () => {
+    const startTime = '2026-01-01T12:00:00.000Z';
+    const endTime = '2026-01-01T12:10:00.000Z';
+    const points = [
+      { lat: 43.65, lng: -79.38, timestamp: startTime, speed_kmh: 0, accuracy: 8 },
+      { lat: 43.85, lng: -79.38, timestamp: endTime, speed_kmh: 0, accuracy: 8 },
+    ];
+
+    const review = reviewManualTripSave({
+      points,
+      stats: { duration_seconds: 600, distance_km: 0, max_speed_kmh: 0 },
+      startTime,
+      endTime,
+      thresholds: DEFAULT_THRESHOLDS,
+    });
+
+    expect(review).toMatchObject({
+      shouldSave: true,
+      reason: 'manual_coordinate_displacement_confirmed',
+      coordinatePointCount: 2,
+      movingSpeedSampleCount: 0,
+      maxSpeedKmh: 0,
+    });
+    expect(review.cumulativeCoordKm).toBeGreaterThan(20);
+  });
+
+  it('excludes short-interval GPS jumps from route distance and manual displacement fallback', () => {
+    const startTime = '2026-01-01T12:00:00.000Z';
+    const endTime = '2026-01-01T12:01:00.000Z';
+    const points = [
+      { lat: 43.65, lng: -79.38, timestamp: startTime, speed_kmh: 0, accuracy: 8 },
+      { lat: 44.37, lng: -79.38, timestamp: endTime, speed_kmh: 0, accuracy: 8 },
+    ];
+
+    const stats = calculateTripStats(points, startTime, endTime, DEFAULT_THRESHOLDS);
+    const review = reviewManualTripSave({
+      points,
+      stats: { duration_seconds: 60, distance_km: 0, max_speed_kmh: 0 },
+      startTime,
+      endTime,
+      thresholds: DEFAULT_THRESHOLDS,
+    });
+
+    expect(stats.distance_km).toBe(0);
+    expect(review).toMatchObject({
+      shouldSave: false,
+      reason: 'manual_no_movement_evidence',
+      cumulativeCoordKm: 0,
+    });
   });
 
   it('stores native completed trips as unscored until JavaScript rescoring runs', () => {

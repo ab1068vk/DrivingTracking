@@ -13,6 +13,7 @@ import {
   TRIP_STATES,
   buildDrivingThresholds,
   calculateAngularStdDev,
+  calculateSegmentMetrics,
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   getInferredLimitForPoint,
@@ -22,6 +23,7 @@ import {
   getScoreProvenanceStatus,
   formatDistance, formatDuration, formatSpeed,
   isNearRecentParkedLocation,
+  reviewManualTripSave,
   trimParkedTail,
   validateCandidateTrip
 } from '@/lib/tripEngine';
@@ -32,6 +34,7 @@ import {
   cancelLongTripReminder,
   notifyStayAlert,
   notifyTripStarted,
+  notifyForegroundManualTrackingWarning,
   syncAchievementNotifications,
   dispatchTripCompletedNotification,
   checkAndNotifyPhoneUsePattern,
@@ -104,6 +107,7 @@ import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { injectTimestampGapMarkers, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import {
   getPrivacyZones,
   isInsidePrivacyZone,
@@ -121,9 +125,6 @@ import {
 
 const TripMap = lazy(() => import('@/components/TripMap'));
 
-const MIN_MANUAL_SAVE_SECONDS = 5;
-const MANUAL_SPARSE_GPS_MIN_SECONDS = 30;
-const MANUAL_SPARSE_GPS_MIN_SPEED_KMH = 10;
 const RECOVERABLE_TRIP_STATES = new Set([TRIP_STATES.CANDIDATE, TRIP_STATES.CONFIRMED]);
 const AUTO_START_TRIGGER_SECONDS = 2;
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
@@ -137,69 +138,15 @@ function isRecoverableActiveTrip(trip) {
   return RECOVERABLE_TRIP_STATES.has(trip.trip_state);
 }
 
-function hasUsableCoordinates(point, thresholds = DEFAULT_THRESHOLDS) {
-  const lat = Number(point?.lat);
-  const lng = Number(point?.lng);
-  const accuracy = point?.accuracy == null ? null : Number(point.accuracy);
-  return Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    (accuracy == null || !Number.isFinite(accuracy) || accuracy <= thresholds.MAX_GPS_ACCURACY_M);
-}
-
-/**
- * @param {{
- *   points?: Array<Record<string, any>>,
- *   stats?: {
- *     duration_seconds?: number,
- *     distance_km?: number,
- *     max_speed_kmh?: number,
- *   },
- *   startTime?: string | number | Date,
- *   endTime?: string | number | Date,
- *   thresholds?: typeof DEFAULT_THRESHOLDS,
- * }} options
- */
-function reviewManualTripSave({ points = [], stats = {}, startTime, endTime, thresholds = DEFAULT_THRESHOLDS } = {}) {
-  const startMs = new Date(startTime).getTime();
-  const endMs = new Date(endTime).getTime();
-  const wallClockSeconds = Number.isFinite(startMs) && Number.isFinite(endMs)
-    ? Math.max(0, Math.round((endMs - startMs) / 1000))
-    : 0;
-  const durationSeconds = Math.max(Number(stats.duration_seconds) || 0, wallClockSeconds);
-  const distanceKm = Number(stats.distance_km) || 0;
-  const coordinatePoints = (points || []).filter((point) => hasUsableCoordinates(point, thresholds));
-  const movingSpeedSamples = coordinatePoints.filter((point) => (
-    Number(point?.speed_kmh) >= MANUAL_SPARSE_GPS_MIN_SPEED_KMH
-  ));
-
-  if (durationSeconds < MIN_MANUAL_SAVE_SECONDS) {
-    return { shouldSave: false, reason: 'manual_duration_too_short' };
-  }
-
-  if (distanceKm >= DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM) {
-    return { shouldSave: true, reason: 'manual_distance_confirmed' };
-  }
-
-  if (
-    durationSeconds >= MANUAL_SPARSE_GPS_MIN_SECONDS &&
-    coordinatePoints.length >= 2 &&
-    (
-      movingSpeedSamples.length >= 2 ||
-      Number(stats.max_speed_kmh) >= MANUAL_SPARSE_GPS_MIN_SPEED_KMH
-    )
-  ) {
-    return { shouldSave: true, reason: 'manual_sparse_gps_vehicle_speed' };
-  }
-
-  return { shouldSave: false, reason: 'manual_no_movement_evidence' };
-}
-
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [locationError, setLocationError] = useState(null);
+  const [manualForegroundWarning, setManualForegroundWarning] = useState(false);
+  const [gpsPointWarning, setGpsPointWarning] = useState(false);
+  const [trackingServiceMode, setTrackingServiceMode] = useState(null);
   const locationService = useRef(null);
   const autoLocationService = useRef(null);
   const activityStopRef = useRef(null);
@@ -222,9 +169,12 @@ export default function Dashboard() {
   const lastProximityAlertRef = useRef(0);
   const inferredSpeedZonesRef = useRef([]);
   const privateTripRuntimeRef = useRef(null);
+  const gpsPointWarningLoggedRef = useRef(false);
   const [settings, setSettings] = useState(() => localSettings.get());
   const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
   const [pendingStartOptions, setPendingStartOptions] = useState(null);
+  const [manualForegroundConfirmOpen, setManualForegroundConfirmOpen] = useState(false);
+  const [pendingManualForegroundStartOptions, setPendingManualForegroundStartOptions] = useState(null);
   const [hazardMessage, setHazardMessage] = useState(null);
   const [readinessDismissed, setReadinessDismissed] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
@@ -295,10 +245,36 @@ export default function Dashboard() {
       endingTripRef.current = false;
       incidentAlertRef.current = 0;
       inferredSpeedZonesRef.current = [];
+      gpsPointWarningLoggedRef.current = false;
+      setGpsPointWarning(false);
+      setManualForegroundWarning(false);
+      setTrackingServiceMode(null);
       setHazardMessage(null);
       sensorFusionRef.current?.stop();
     }
   }, [tracking]);
+
+  useEffect(() => {
+    if (!tracking || !activeTrip || isPrivateTrip(activeTrip) || activeTrip.trip_state === TRIP_STATES.CANDIDATE) {
+      setGpsPointWarning(false);
+      return;
+    }
+    const rawPointCount = Array.isArray(activeTrip.route_points) ? activeTrip.route_points.length : 0;
+    const tooFewPoints = elapsed >= 90 && rawPointCount <= 1;
+    setGpsPointWarning(tooFewPoints);
+    if (tooFewPoints && !gpsPointWarningLoggedRef.current) {
+      gpsPointWarningLoggedRef.current = true;
+      recordTrackingDiagnostic({
+        type: 'gps_points_not_arriving',
+        title: 'GPS points are not arriving',
+        reason: 'too_few_points_after_start',
+        elapsed_seconds: elapsed,
+        route_points_raw_count: rawPointCount,
+        background_tracking: activeTrip.background_tracking === true,
+        start_source: activeTrip.start_source || 'unknown',
+      });
+    }
+  }, [activeTrip, elapsed, tracking]);
 
   useEffect(() => {
     if (!tracking || Date.now() - lastStayAlertAtRef.current < 10 * 60 * 1000) return;
@@ -523,16 +499,18 @@ export default function Dashboard() {
     scheduleLongTripReminder(promoted.start_time);
   }, [refreshTrackingStatusContext]);
 
-  const startGPS = useCallback(() => {
+  const startGPS = useCallback(async () => {
     const cfg = localSettings.get();
-    const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    const useBackground = activeTripRef.current?.background_tracking === true ||
+      cfg.background_tracking_enabled ||
+      cfg.tracking_mode === 'background_auto';
     if (!locationService.current) {
       locationService.current = createDrivingTrackingService({
         background: useBackground,
         privateMode: isPrivateTrip(activeTripRef.current),
       });
     }
-    locationService.current.start(
+    const status = await locationService.current.start(
       async (point) => {
         setCurrentLocation(point);
         setLocationError(null);
@@ -814,11 +792,15 @@ export default function Dashboard() {
       },
       handleLocationTrackingError
     );
+    setTrackingServiceMode(status || null);
+    return status || null;
   }, [discardCandidateTrip, handleLocationTrackingError, promoteCandidateTrip]);
 
   const handleStartTrip = useCallback(async ({
     autoStarted = false,
     bypassFatigueWarning = false,
+    bypassManualForegroundWarning = false,
+    forceBackgroundTracking = false,
     candidate = false,
     privateTrip = false,
     initialPoint = null,
@@ -834,6 +816,8 @@ export default function Dashboard() {
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
       setPendingStartOptions({
         autoStarted,
+        bypassManualForegroundWarning,
+        forceBackgroundTracking,
         candidate,
         privateTrip,
         initialPoint,
@@ -854,9 +838,50 @@ export default function Dashboard() {
       return;
     }
 
-    const useBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    const summaryOnlyPrivateTrip = privateTrip === true && !autoStarted && !candidate;
+    const configuredBackground = cfg.background_tracking_enabled || cfg.tracking_mode === 'background_auto';
+    const manualAndroidTrip = !autoStarted && !candidate && !summaryOnlyPrivateTrip && isAndroid();
+    const manualBackgroundReady = manualAndroidTrip &&
+      cfg.background_location_granted === true &&
+      cfg.notification_permission_granted === true;
+    const useBackground = forceBackgroundTracking || configuredBackground || manualBackgroundReady;
+    const needsManualForegroundConfirmation = !autoStarted &&
+      !candidate &&
+      !summaryOnlyPrivateTrip &&
+      !configuredBackground &&
+      !manualBackgroundReady &&
+      isAndroid();
+    if (manualBackgroundReady && !forceBackgroundTracking && !configuredBackground) {
+      recordTrackingDiagnostic({
+        type: 'manual_background_tracking_auto_selected',
+        title: 'Manual trip using available background tracking',
+        reason: 'android_background_permissions_ready',
+        background_tracking: true,
+      });
+    }
+    if (needsManualForegroundConfirmation && !bypassManualForegroundWarning) {
+      setPendingManualForegroundStartOptions({
+        autoStarted,
+        bypassFatigueWarning,
+        forceBackgroundTracking,
+        candidate,
+        privateTrip,
+        initialPoint,
+        nearParkedLocation,
+        triggerReason,
+      });
+      setManualForegroundConfirmOpen(true);
+      recordTrackingDiagnostic({
+        type: 'manual_foreground_confirmation_required',
+        title: 'Manual foreground tracking confirmation required',
+        reason: 'android_background_tracking_recommended',
+        background_tracking: false,
+      });
+      return;
+    }
+
     let pausedNativeAuto = false;
-    if (!autoStarted && useBackground && isAndroid()) {
+    if (!autoStarted && configuredBackground && isAndroid()) {
       await stopNativeAutoTracking().catch(() => {});
       pausedNativeAuto = true;
     }
@@ -894,7 +919,6 @@ export default function Dashboard() {
       return;
     }
 
-    const summaryOnlyPrivateTrip = privateTrip === true && !autoStarted && !candidate;
     const startTime = initialPoint?.timestamp || new Date().toISOString();
     const storedInitialPoint = initialPoint && !summaryOnlyPrivateTrip
       ? redactRoutePointForPrivacyStorage(initialPoint, getPrivacyZones(cfg))
@@ -923,7 +947,7 @@ export default function Dashboard() {
       } : {}),
       background_tracking: useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
-      resume_native_auto: !autoStarted && useBackground && isAndroid(),
+      resume_native_auto: !autoStarted && configuredBackground && isAndroid(),
       candidate_started_at: candidate ? startTime : null,
       candidate_first_point: candidate && storedInitialPoint ? storedInitialPoint : null,
       candidate_near_parked: candidate ? nearParkedLocation === true : false,
@@ -981,7 +1005,44 @@ export default function Dashboard() {
       );
     }
     startTimer(new Date(startTime));
-    startGPS();
+    const trackingStartStatus = await startGPS();
+    if (
+      manualAndroidTrip &&
+      useBackground &&
+      !summaryOnlyPrivateTrip &&
+      trackingStartStatus?.mode !== 'background'
+    ) {
+      recordTrackingDiagnostic({
+        type: 'manual_background_tracking_failed',
+        title: 'Manual background tracking did not start',
+        reason: trackingStartStatus?.reason || 'background_watcher_not_started',
+        expected_mode: 'background',
+        actual_mode: trackingStartStatus?.mode || 'not_started',
+        watcher_type: trackingStartStatus?.watcher_type || null,
+        background_tracking: true,
+      });
+      await locationService.current?.stop();
+      locationService.current = null;
+      stopTimer();
+      activeTripStore.clear();
+      await activeTripStore.flush();
+      activeTripRef.current = null;
+      trackingRef.current = false;
+      setActiveTrip(null);
+      setTracking(false);
+      setElapsed(0);
+      setTrackingServiceMode(null);
+      setManualForegroundWarning(false);
+      setLocationError('Background GPS did not start, so this trip was not recorded. Enable Background Tracking and keep the app open until the Background GPS active chip appears.');
+      refreshTrackingStatusContext();
+      return;
+    }
+    if (needsManualForegroundConfirmation && !useBackground) {
+      setManualForegroundWarning(true);
+      notifyForegroundManualTrackingWarning(tripData).catch(() => {});
+    } else {
+      setManualForegroundWarning(false);
+    }
     if (!candidate) {
       notifyTripStarted(tripData);
       scheduleLongTripReminder(tripData.start_time);
@@ -1245,6 +1306,30 @@ export default function Dashboard() {
         thresholds,
       })
       : null;
+    if (isManualTrip && manualSaveReview) {
+      const startMs = new Date(tripToEnd.start_time).getTime();
+      const endMs = new Date(endTime).getTime();
+      const wallClockDurationSeconds = Number.isFinite(startMs) && Number.isFinite(endMs)
+        ? Math.max(0, Math.round((endMs - startMs) / 1000))
+        : 0;
+      recordTrackingDiagnostic({
+        type: 'manual_save_review',
+        title: 'Manual save review completed',
+        should_save: manualSaveReview.shouldSave,
+        reason: manualSaveReview.reason,
+        duration_seconds: Math.round(manualSaveReview.durationSeconds ?? preliminaryStats.duration_seconds ?? 0),
+        wall_clock_duration_seconds: wallClockDurationSeconds,
+        distance_km: Number(Number(manualSaveReview.distanceKm ?? preliminaryStats.distance_km ?? 0).toFixed(3)),
+        max_speed_kmh: Math.round(manualSaveReview.maxSpeedKmh ?? preliminaryStats.max_speed_kmh ?? 0),
+        route_points_raw_count: rawPoints.length,
+        route_points_clean_count: cleanedPoints.length,
+        coordinate_point_count: manualSaveReview.coordinatePointCount ?? 0,
+        cumulative_coord_km: Number(Number(manualSaveReview.cumulativeCoordKm ?? 0).toFixed(3)),
+        moving_speed_sample_count: manualSaveReview.movingSpeedSampleCount ?? 0,
+        start_source: tripToEnd.start_source ?? 'unknown',
+        background_tracking: tripToEnd.background_tracking ?? false,
+      });
+    }
     const shouldDiscard = isManualTrip
       ? !manualSaveReview.shouldSave
       : preliminaryStats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
@@ -1267,9 +1352,14 @@ export default function Dashboard() {
       recordTrackingDiagnostic({
         type: 'trip_discarded',
         title: 'Trip discarded',
-        reason: isManualTrip ? manualSaveReview.reason : 'auto_too_short',
+        reason: isManualTrip ? manualSaveReview?.reason : 'auto_too_short',
         duration_seconds: Math.round(preliminaryStats.duration_seconds || 0),
-        distance_km: preliminaryStats.distance_km || 0,
+        distance_km: Number((preliminaryStats.distance_km || 0).toFixed(3)),
+        max_speed_kmh: Math.round(preliminaryStats.max_speed_kmh || 0),
+        route_points_raw_count: rawPoints.length,
+        route_points_clean_count: cleanedPoints.length,
+        start_source: tripToEnd.start_source ?? 'unknown',
+        background_tracking: tripToEnd.background_tracking ?? false,
       });
       await activityStopRef.current?.();
       activityStopRef.current = null;
@@ -1458,6 +1548,27 @@ export default function Dashboard() {
       distance_km: completedTrip.distance_km || 0,
       parking_stop_duration_seconds: completedTrip.parking_stop_duration_seconds || 0,
     });
+    if (isManualTrip) {
+      const visualPoints = prepareMapRoutePoints(cleanedPoints, { maxPoints: null, smooth: false });
+      const visualPointsWithGaps = injectTimestampGapMarkers(visualPoints);
+      const segmentSpeeds = [];
+      for (let i = 1; i < visualPoints.length; i++) {
+        const segment = calculateSegmentMetrics(visualPoints[i - 1], visualPoints[i], thresholds);
+        if (segment.impliedSpeedKmh > 0) segmentSpeeds.push(segment.impliedSpeedKmh);
+      }
+      recordTrackingDiagnostic({
+        type: 'manual_route_geometry_review',
+        title: 'Manual route geometry reviewed',
+        tripId: savedTrip?.id || completedTrip.id,
+        route_points_raw_count: rawPoints.length,
+        route_points_clean_count: cleanedPoints.length,
+        route_points_visual_count: visualPoints.length,
+        tracking_gap_count: visualPointsWithGaps.filter((point) => point.tracking_gap === true).length,
+        highest_visual_implied_speed_kmh: segmentSpeeds.length ? Math.round(Math.max(...segmentSpeeds)) : 0,
+        likely_straight_line: visualPoints.length < 3,
+        map_matching_status: mapMatchingContext.status,
+      });
+    }
     await invalidateDangerZoneCache();
     await invalidateRouteRiskIndex();
     const parkedPoint = pts[pts.length - 1];
@@ -1730,6 +1841,28 @@ export default function Dashboard() {
   const units = settings.units || 'metric';
   const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;
   const activeTripIsPrivate = isPrivateTrip(activeTrip);
+  const trackingMode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+  const isAndroidManualMode = isAndroid() && trackingMode === 'manual' && !settings.tracking_paused;
+  const permissionStatus = trackingStatusContext.permissionStatus || {};
+  const foregroundLocationReady = permissionStatus.foregroundLocation === 'granted' || settings.location_permission_granted === true;
+  const backgroundLocationReady = permissionStatus.backgroundLocation === 'granted' || settings.background_location_granted === true;
+  const notificationsReady = permissionStatus.notifications === 'granted' || settings.notification_permission_granted === true;
+  const androidManualBackgroundReady = isAndroidManualMode && foregroundLocationReady && backgroundLocationReady && notificationsReady;
+  const activeTripExpectedBackground = tracking &&
+    isAndroid() &&
+    !activeTripIsPrivate &&
+    activeTrip?.background_tracking === true;
+  const activeTripIsManualForeground = tracking &&
+    isAndroid() &&
+    !activeTripIsPrivate &&
+    activeTrip?.start_source === 'manual' &&
+    (activeTrip?.background_tracking !== true || trackingServiceMode?.mode === 'foreground');
+  const activeTripIsBackgroundTracking = tracking &&
+    isAndroid() &&
+    !activeTripIsPrivate &&
+    trackingServiceMode?.mode === 'background';
+  const activeTripIsStartingBackground = activeTripExpectedBackground && !trackingServiceMode;
+  const showManualForegroundWarning = manualForegroundWarning || activeTripIsManualForeground;
   const handleTrackingSetupAction = async (action) => {
     if (action === 'location') await requestForegroundLocationPermission();
     if (action === 'activity') await requestActivityRecognitionPermission();
@@ -1740,7 +1873,7 @@ export default function Dashboard() {
     await refreshTrackingStatusContext();
   };
   const trackingReadiness = (() => {
-    const mode = settings.tracking_paused ? 'paused' : (settings.tracking_mode || 'manual');
+    const mode = trackingMode;
     const checks = [
       {
         label: 'Tracking mode',
@@ -1778,19 +1911,23 @@ export default function Dashboard() {
       },
       {
         label: 'Background',
-        ready: mode !== 'background_auto' || settings.background_location_granted === true,
+        ready: !isAndroid() || (mode !== 'background_auto' && mode !== 'manual') || settings.background_location_granted === true,
         action: 'background',
         detail: mode === 'background_auto'
           ? settings.background_location_granted ? 'Background location is ready.' : 'Allow all-the-time location for background auto tracking.'
-          : 'Background location is not needed for this mode.',
+          : isAndroid() && mode === 'manual'
+            ? settings.background_location_granted ? 'Background location is ready for reliable manual trips.' : 'Recommended for Android manual trips so recording can continue if the app is minimized.'
+            : 'Background location is not needed for this mode.',
       },
       {
         label: 'Notifications',
-        ready: mode !== 'background_auto' || settings.notification_permission_granted === true,
+        ready: !isAndroid() || (mode !== 'background_auto' && mode !== 'manual') || settings.notification_permission_granted === true,
         action: 'notifications',
         detail: mode === 'background_auto'
           ? settings.notification_permission_granted ? 'Foreground service notifications are ready.' : 'Android background tracking needs notifications for its persistent status.'
-          : 'Notifications improve trip summaries and safety alerts.',
+          : isAndroid() && mode === 'manual'
+            ? settings.notification_permission_granted ? 'Notifications are ready for tracking status.' : 'Recommended for Android manual background tracking and foreground warnings.'
+            : 'Notifications improve trip summaries and safety alerts.',
       },
       {
         label: 'Battery',
@@ -2039,6 +2176,121 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {manualForegroundConfirmOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 12 }}
+              className="w-full max-w-sm rounded-3xl border border-amber-200 bg-card p-5 shadow-2xl dark:border-amber-800/50"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-1 h-5 w-5 text-amber-500" />
+                <div>
+                  <h2 className="font-semibold">Keep the app open for this trip</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Android stops foreground GPS when Road Sage is closed. Use Background Tracking if you want to close or minimize the app during a manual trip.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextOptions = pendingManualForegroundStartOptions || {};
+                    setManualForegroundConfirmOpen(false);
+                    setPendingManualForegroundStartOptions(null);
+                    recordTrackingDiagnostic({
+                      type: 'manual_background_tracking_selected',
+                      title: 'Manual trip background tracking selected',
+                      reason: 'user_selected_background_tracking',
+                      background_tracking: true,
+                    });
+                    handleStartTrip({
+                      ...nextOptions,
+                      bypassManualForegroundWarning: true,
+                      forceBackgroundTracking: true,
+                    });
+                  }}
+                  className="rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+                >
+                  Use Background Tracking
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextOptions = pendingManualForegroundStartOptions || {};
+                    setManualForegroundConfirmOpen(false);
+                    setPendingManualForegroundStartOptions(null);
+                    recordTrackingDiagnostic({
+                      type: 'manual_foreground_confirmation_accepted',
+                      title: 'Manual foreground tracking accepted',
+                      reason: 'user_will_keep_app_open',
+                      background_tracking: false,
+                    });
+                    handleStartTrip({ ...nextOptions, bypassManualForegroundWarning: true });
+                  }}
+                  className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100"
+                >
+                  Start Foreground Only - I will keep it open
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualForegroundConfirmOpen(false);
+                    setPendingManualForegroundStartOptions(null);
+                    recordTrackingDiagnostic({
+                      type: 'manual_foreground_confirmation_cancelled',
+                      title: 'Manual foreground tracking cancelled',
+                      reason: 'user_cancelled_before_start',
+                      background_tracking: false,
+                    });
+                  }}
+                  className="rounded-xl border border-border px-3 py-2 text-sm font-semibold hover:bg-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {showManualForegroundWarning && tracking && (
+        <div
+          role="alert"
+          style={{
+            background: '#fef3c7',
+            border: '1px solid #f59e0b',
+            borderRadius: 8,
+            padding: '10px 14px',
+            fontSize: 13,
+            color: '#92400e',
+            marginBottom: 8,
+          }}
+        >
+          Keep Road Sage open while driving - GPS tracking pauses if you close the app. Enable Background Tracking in Settings for full reliability.
+        </div>
+      )}
+
+      {gpsPointWarning && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <div>
+            <div className="text-sm font-semibold">GPS points are not arriving</div>
+            <div className="mt-0.5 text-xs">
+              Keep Road Sage open and check location permission. For closed-app recording, use Background Tracking.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Active Trip Card */}
       <AnimatePresence mode="wait">
         {tracking ? (
@@ -2056,6 +2308,21 @@ export default function Dashboard() {
                   <span className="text-white/80 text-sm font-medium">
                     {activeTripIsCandidate ? 'Checking Movement' : activeTripIsPrivate ? 'Private Trip Active' : 'Trip Active'}
                   </span>
+                  {activeTripIsBackgroundTracking && (
+                    <span className="rounded-full border border-emerald-200/50 bg-emerald-300/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
+                      Background GPS active
+                    </span>
+                  )}
+                  {activeTripIsStartingBackground && (
+                    <span className="rounded-full border border-emerald-200/50 bg-emerald-300/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
+                      Starting background GPS
+                    </span>
+                  )}
+                  {showManualForegroundWarning && (
+                    <span className="rounded-full border border-amber-200/50 bg-amber-300/20 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
+                      Foreground GPS - keep app open
+                    </span>
+                  )}
                 </div>
                 <div className="font-grotesk font-bold text-4xl">{formatDuration(elapsed)}</div>
                 <div className="text-white/70 text-sm mt-1">
@@ -2214,6 +2481,56 @@ export default function Dashboard() {
                 <Play className="w-7 h-7 text-white ml-0.5" />
               </button>
             </div>
+            {isAndroidManualMode && (
+              <div className={`mt-4 rounded-2xl border p-3 ${
+                androidManualBackgroundReady
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-100'
+                  : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100'
+              }`}>
+                <div className="flex items-start gap-3">
+                  {androidManualBackgroundReady ? (
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold">
+                      {androidManualBackgroundReady
+                        ? 'Manual trips will use Background GPS'
+                        : 'Manual trips are foreground-only right now'}
+                    </div>
+                    <div className="mt-0.5 text-xs opacity-85">
+                      {androidManualBackgroundReady
+                        ? 'You can minimize Road Sage after starting; Android will keep the tracking service visible.'
+                        : 'Keep Road Sage open while driving, or enable Background Tracking before you start.'}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-medium">
+                      <span className="rounded-full bg-background/60 px-2 py-1">Location: {foregroundLocationReady ? 'ready' : 'needed'}</span>
+                      <span className="rounded-full bg-background/60 px-2 py-1">Background: {backgroundLocationReady ? 'ready' : 'needed'}</span>
+                      <span className="rounded-full bg-background/60 px-2 py-1">Notifications: {notificationsReady ? 'ready' : 'needed'}</span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {!androidManualBackgroundReady && (
+                        <button
+                          type="button"
+                          onClick={() => handleTrackingSetupAction('background')}
+                          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                        >
+                          Enable Background Tracking
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={refreshTrackingStatusContext}
+                        className="rounded-lg border border-border bg-background/70 px-3 py-1.5 text-xs font-semibold"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => handleStartTrip({ privateTrip: true })}

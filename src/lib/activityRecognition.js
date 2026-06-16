@@ -27,6 +27,26 @@ export const ACTIVITY_TYPES = {
   UNKNOWN: 'unknown',
 };
 
+const emptyPhoneUsageSummary = (usageAccessGranted = false) => ({
+  usage_access_granted: usageAccessGranted,
+  events: [],
+  event_count: 0,
+  total_seconds: 0,
+});
+
+const normalizedUsageWindow = (startMs, endMs) => {
+  const normalizedStartMs = Number(startMs);
+  const normalizedEndMs = Number(endMs);
+  if (!Number.isFinite(normalizedStartMs) || !Number.isFinite(normalizedEndMs) || normalizedEndMs <= normalizedStartMs) {
+    return null;
+  }
+  return { startMs: normalizedStartMs, endMs: normalizedEndMs };
+};
+
+const isMissingUsageWindowError = (error) => (
+  String(error?.message || error || '').toLowerCase().includes('startms and endms are required')
+);
+
 const nativePrivacyZoneSyncBlocked = () => {
   try {
     if (typeof localStorage === 'undefined') return false;
@@ -219,26 +239,21 @@ export async function openAndroidUsageAccessSettings() {
 }
 
 export async function getAndroidPhoneUsageSummary(startMs, endMs) {
-  if (!isAndroid()) {
-    return {
-      usage_access_granted: false,
-      events: [],
-      event_count: 0,
-      total_seconds: 0,
-    };
-  }
+  const usageWindow = normalizedUsageWindow(startMs, endMs);
+  if (!isAndroid() || !usageWindow) return emptyPhoneUsageSummary();
   try {
-    const result = await ActivityRecognition.getPhoneUsageSummary({ startMs, endMs });
+    const result = await ActivityRecognition.getPhoneUsageSummary(usageWindow);
     recordSystemEvent('android_phone_usage_summary_loaded', {
       event_count: Number(result?.event_count) || (Array.isArray(result?.events) ? result.events.length : 0),
       total_seconds: Math.round(Number(result?.total_seconds) || 0),
       usage_access_granted: result?.usage_access_granted === true,
-      window_seconds: Math.max(0, Math.round((Number(endMs) - Number(startMs)) / 1000)),
+      window_seconds: Math.max(0, Math.round((usageWindow.endMs - usageWindow.startMs) / 1000)),
     }, { category: 'background', source: 'android', title: 'Phone usage summary loaded' });
     return result;
   } catch (error) {
+    if (isMissingUsageWindowError(error)) return emptyPhoneUsageSummary();
     logSystemFailure('android_phone_usage_summary', error, {
-      window_seconds: Math.max(0, Math.round((Number(endMs) - Number(startMs)) / 1000)),
+      window_seconds: Math.max(0, Math.round((usageWindow.endMs - usageWindow.startMs) / 1000)),
     });
     throw error;
   }

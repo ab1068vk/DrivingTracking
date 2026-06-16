@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Crosshair, Layers, Maximize2 } from 'lucide-react';
 import { escapeHtml } from '@/lib/htmlUtils';
-import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
+import { buildPlaybackTimeline, injectTimestampGapMarkers, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import {
   buildDangerZonePopupHtml,
   buildRouteRiskSegmentPopupHtml,
@@ -140,6 +140,7 @@ const timeMs = (value) => {
 };
 
 const ROUTE_GAP_SECONDS = 120;
+const MIN_POLYLINE_ROUTE_POINTS = 3;
 
 const isRouteGapSegment = (prev, curr) => {
   if (!prev || !curr) return false;
@@ -392,7 +393,13 @@ function TripMapContent({
     return routeSets.find((route) => route.selected) || routeSets[0] || {};
   }, [routePoints, routes]);
   const selectedRoutePoints = useMemo(
-    () => prepareMapRoutePoints(selectedRoute.route_points || [], { maxPoints: null, smooth: smoothRoute }),
+    () => {
+      const points = prepareMapRoutePoints(selectedRoute.route_points || [], {
+        maxPoints: null,
+        smooth: smoothRoute,
+      });
+      return injectTimestampGapMarkers(points);
+    },
     [selectedRoute, smoothRoute]
   );
   const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
@@ -401,6 +408,7 @@ function TripMapContent({
   ) || selectedRoutePoints.length;
   const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
   const hasRoute = telemetry.pointCount > 1;
+  const routeIncomplete = hasRoute && telemetry.pointCount < MIN_POLYLINE_ROUTE_POINTS;
 
   useEffect(() => {
     setSelectedSegment(null);
@@ -491,14 +499,15 @@ function TripMapContent({
     const validRoutes = routeSets
       .map((route) => {
         const maskedPoints = maskRoutePointsForPrivacy(route.route_points || [], privacySettings);
+        const visualPoints = prepareMapRoutePoints(maskedPoints, {
+          maxPoints: route.selected ? 900 : 450,
+          smooth: smoothRoute,
+        });
         return {
           ...route,
           color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
           opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-          route_points: prepareMapRoutePoints(maskedPoints, {
-            maxPoints: route.selected ? 900 : 450,
-            smooth: smoothRoute,
-          }),
+          route_points: injectTimestampGapMarkers(visualPoints),
         };
       })
       .filter((route) => route.route_points.length > 1);
@@ -540,6 +549,7 @@ function TripMapContent({
         const latLngSegments = routePointSegmentsToLatLngs(pointSegments);
         const latLngs = route.route_points.map(p => [p.lat, p.lng]);
         latLngs.forEach((latLng) => bounds.extend(latLng));
+        if (route.route_points.length < MIN_POLYLINE_ROUTE_POINTS) return;
 
         const timeline = route.selected || !Array.isArray(routes)
           ? buildPlaybackTimeline(route.route_points, mapEvents)
@@ -930,6 +940,14 @@ function TripMapContent({
           )}
         </div>
       )}
+      {routeIncomplete && (
+        <div className="absolute left-3 top-3 z-10 w-[min(360px,calc(100%-5.5rem))] rounded-2xl border border-amber-200 bg-amber-50/95 p-3 text-xs text-amber-900 shadow backdrop-blur dark:border-amber-800/50 dark:bg-amber-950/90 dark:text-amber-100">
+          <div className="font-semibold">Incomplete GPS route</div>
+          <div className="mt-1">
+            Only {telemetry.pointCount} usable GPS point{telemetry.pointCount === 1 ? '' : 's'} were saved, so the map is showing markers instead of drawing a straight-line route.
+          </div>
+        </div>
+      )}
       {showInsights && hasRoute && (
         <button
           type="button"
@@ -997,10 +1015,10 @@ function OfflineRoutePreview({
   const privacyDisplayReferences = routeSets.flatMap((route) => route.route_points || []);
   const maskedRoutes = routeSets.map((route) => ({
     ...route,
-    route_points: prepareMapRoutePoints(
+    route_points: injectTimestampGapMarkers(prepareMapRoutePoints(
       maskRoutePointsForPrivacy(route.route_points || [], settings),
       { maxPoints: route.selected ? 900 : 450 }
-    ),
+    )),
   })).filter((route) => route.route_points.length > 1);
   const allPoints = maskedRoutes.flatMap((route) => route.route_points);
   const validPrivacyZones = (showPrivacyCircles ? getPrivacyZones(settings) : [])
@@ -1077,7 +1095,7 @@ function OfflineRoutePreview({
             />
           );
         })}
-        {maskedRoutes.map((route) => (
+        {maskedRoutes.filter((route) => route.route_points.length >= MIN_POLYLINE_ROUTE_POINTS).map((route) => (
           <polyline
             key={route.id || route.label || route.color}
             points={route.route_points.map(scale).join(' ')}

@@ -6,6 +6,7 @@ const MAX_VISUAL_ACCURACY_M = 100;
 const MAX_VISUAL_SPEED_KMH = 230;
 const MAX_SEGMENT_JUMP_SPEED_KMH = 240;
 const MAX_VISUAL_SEGMENT_GAP_SECONDS = 120;
+const ROUTE_GAP_SECONDS = MAX_VISUAL_SEGMENT_GAP_SECONDS;
 const MAX_SMOOTHING_ACCURACY_M = 45;
 const DEFAULT_RENDER_POINTS = 700;
 
@@ -66,9 +67,7 @@ const shouldKeepVisualPoint = (point, previous) => {
   const impliedSpeedKmh = segmentImpliedSpeedKmh(previous, point);
   if (impliedSpeedKmh == null) return true;
 
-  const reportedSpeed = finiteNumber(point.speed_kmh ?? previous.speed_kmh);
-  const reportedAllowsJump = reportedSpeed != null && reportedSpeed > 120;
-  if (impliedSpeedKmh > MAX_SEGMENT_JUMP_SPEED_KMH && !reportedAllowsJump) return false;
+  if (impliedSpeedKmh > MAX_SEGMENT_JUMP_SPEED_KMH) return false;
   if (point.accuracy != null && point.accuracy > 60 && impliedSpeedKmh > 140) return false;
   return true;
 };
@@ -194,6 +193,27 @@ export function downsampleRoutePoints(points = [], maxPoints = 250) {
   return result;
 }
 
+export function injectTimestampGapMarkers(points, gapThresholdSeconds = ROUTE_GAP_SECONDS) {
+  if (!Array.isArray(points) || points.length < 2) return points;
+  return points.map((point, index) => {
+    if (index === 0) return point;
+    if (point.tracking_gap === true || point.route_gap === true) return point;
+
+    const previous = points[index - 1];
+    const previousMs = pointTimeMs(previous);
+    const currentMs = pointTimeMs(point);
+    if (
+      previousMs != null &&
+      currentMs != null &&
+      currentMs > previousMs &&
+      (currentMs - previousMs) / 1000 > gapThresholdSeconds
+    ) {
+      return { ...point, tracking_gap: true };
+    }
+    return point;
+  });
+}
+
 export function prepareMapRoutePoints(points = [], options = {}) {
   const {
     maxPoints = DEFAULT_RENDER_POINTS,
@@ -201,8 +221,8 @@ export function prepareMapRoutePoints(points = [], options = {}) {
   } = options;
   const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
   const visualPoints = smooth ? smoothRoutePoints(clean) : clean;
-  if (!maxPoints || visualPoints.length <= maxPoints) return visualPoints;
-  return downsampleRoutePoints(visualPoints, maxPoints);
+  if (!maxPoints || visualPoints.length <= maxPoints) return injectTimestampGapMarkers(visualPoints);
+  return injectTimestampGapMarkers(downsampleRoutePoints(visualPoints, maxPoints));
 }
 
 export function eventIndexForRoute(event, points = []) {

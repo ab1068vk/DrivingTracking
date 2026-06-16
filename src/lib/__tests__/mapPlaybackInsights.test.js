@@ -4,6 +4,7 @@ import {
   buildRouteComparison,
   downsampleRoutePoints,
   hasRecoverableOriginalRouteGeometry,
+  injectTimestampGapMarkers,
   playbackPositionAtElapsed,
   prepareMapRoutePoints,
   restoreOriginalRouteGeometry,
@@ -118,6 +119,47 @@ describe('mapPlaybackInsights', () => {
     expect(prepared[2].tracking_gap).toBe(true);
     expect(timeline.stats.distanceKm).toBeLessThan(0.3);
     expect(timeline.segments.every((segment) => segment.durationSeconds <= 120)).toBe(true);
+  });
+
+  it('drops impossible visual jumps even when GPS reports high speed', () => {
+    const route = [
+      point(0, 40, { lat: 43.65, timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 180, { lat: 44.1, timestamp: '2026-01-01T12:01:00.000Z' }),
+      point(2, 40, { lat: 43.651, timestamp: '2026-01-01T12:02:00.000Z' }),
+    ];
+
+    const prepared = prepareMapRoutePoints(route, { maxPoints: null, smooth: false });
+
+    expect(prepared).toHaveLength(2);
+    expect(prepared.some((item) => item.speed_kmh === 180)).toBe(false);
+  });
+
+  it('re-injects timestamp gap markers after visual downsampling removes the marked point', () => {
+    const route = [
+      point(0, 40, { timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 40, { timestamp: '2026-01-01T12:00:10.000Z' }),
+      point(2, 40, { timestamp: '2026-01-01T12:05:00.000Z', tracking_gap: true }),
+      point(3, 40, { timestamp: '2026-01-01T12:05:10.000Z' }),
+      point(4, 40, { timestamp: '2026-01-01T12:05:20.000Z' }),
+    ];
+
+    const prepared = prepareMapRoutePoints(route, { maxPoints: 3, smooth: false });
+
+    expect(prepared).toHaveLength(3);
+    expect(prepared[1].timestamp).toBe('2026-01-01T12:05:10.000Z');
+    expect(prepared[1].tracking_gap).toBe(true);
+  });
+
+  it('can inject timestamp gap markers directly without changing existing gap points', () => {
+    const marked = point(2, 40, { timestamp: '2026-01-01T12:05:00.000Z', route_gap: true });
+    const injected = injectTimestampGapMarkers([
+      point(0, 40, { timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 40, { timestamp: '2026-01-01T12:03:00.000Z' }),
+      marked,
+    ]);
+
+    expect(injected[1].tracking_gap).toBe(true);
+    expect(injected[2]).toBe(marked);
   });
 
   it('drops privacy-masked null coordinates instead of treating them as zero-zero', () => {
